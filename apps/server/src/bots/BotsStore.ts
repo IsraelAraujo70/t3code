@@ -73,7 +73,11 @@ export class BotsStore extends Context.Service<
   }
 >()("t3/bots/BotsStore") {}
 
-const BotRow = Schema.Struct({ ...Bot.fields, model: Schema.fromJsonString(ModelSelection) });
+const BotRow = Schema.Struct({
+  ...Bot.fields,
+  model: Schema.fromJsonString(ModelSelection),
+  canManageBots: Schema.BooleanFromBit,
+});
 const MemoryRow = Schema.Struct({ ...BotMemory.fields, enabled: Schema.BooleanFromBit });
 const SectionRow = BotSection;
 const AboutMeRow = Schema.Struct({ aboutMe: Schema.String });
@@ -99,6 +103,7 @@ const make = Effect.gen(function* () {
       home_generation AS "homeGeneration",
       section_id AS "sectionId",
       position,
+      can_manage_bots AS "canManageBots",
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM bots
@@ -121,11 +126,12 @@ const make = Effect.gen(function* () {
 
   const insertBotRow = (row: typeof BotRow.Encoded, onConflict: "fail" | "skip") => sql`
     INSERT INTO bots (
-      id, name, role, model_json, home_generation, section_id, position, created_at, updated_at
+      id, name, role, model_json, home_generation, section_id, position, can_manage_bots,
+      created_at, updated_at
     )
     VALUES (
       ${row.id}, ${row.name}, ${row.role}, ${row.model}, ${row.homeGeneration}, ${row.sectionId},
-      ${row.position}, ${row.createdAt}, ${row.updatedAt}
+      ${row.position}, ${row.canManageBots}, ${row.createdAt}, ${row.updatedAt}
     )
     ${onConflict === "skip" ? sql`ON CONFLICT DO NOTHING` : sql``}
   `;
@@ -176,6 +182,7 @@ const make = Effect.gen(function* () {
               home_generation = ${row.homeGeneration},
               section_id = ${row.sectionId},
               position = ${row.position},
+              can_manage_bots = ${row.canManageBots},
               created_at = ${row.createdAt},
               updated_at = ${row.updatedAt}
             WHERE id = ${row.id}

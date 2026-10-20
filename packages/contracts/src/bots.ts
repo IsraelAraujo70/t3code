@@ -85,6 +85,8 @@ export const Bot = Schema.Struct({
   sectionId: Schema.NullOr(BotSectionId),
   /** Sidebar order within its section, ascending. */
   position: Schema.Int,
+  /** The user lets this bot create, edit and delete bots through its MCP tools. */
+  canManageBots: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -139,6 +141,7 @@ export const BotCreateInput = Schema.Struct({
   name: BotName,
   role: BotRole,
   model: ModelSelection,
+  canManageBots: Schema.optionalKey(Schema.Boolean),
 });
 export type BotCreateInput = typeof BotCreateInput.Type;
 
@@ -147,6 +150,7 @@ export const BotUpdateInput = Schema.Struct({
   name: Schema.optionalKey(BotName),
   role: Schema.optionalKey(BotRole),
   model: Schema.optionalKey(ModelSelection),
+  canManageBots: Schema.optionalKey(Schema.Boolean),
 });
 export type BotUpdateInput = typeof BotUpdateInput.Type;
 

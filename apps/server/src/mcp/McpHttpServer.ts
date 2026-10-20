@@ -72,9 +72,10 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
-// Fork (friend): bots read and write their own memories, and threads watch threads, over /mcp.
+// Fork (friend): bots read and write their own memories, allowed bots manage bots, and threads
+// watch threads, over /mcp.
 import * as BotMemoryHandlers from "../bots/mcp/handlers.ts";
-import { BotMemoryToolkit } from "../bots/mcp/tools.ts";
+import { BotManagementToolkit, BotMemoryToolkit } from "../bots/mcp/tools.ts";
 import * as ThreadWatchHandlers from "../bots/threadWatch/handlers.ts";
 import { ThreadWatchToolkit } from "../bots/threadWatch/tools.ts";
 
@@ -1082,8 +1083,9 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
-  // Fork (friend): bot memory tools (handlers refuse every caller that is not a bot thread) and
-  // thread watches.
+  // Fork (friend): bot memory tools (handlers refuse every caller that is not a bot thread), bot
+  // management (only bots the user allowed), and thread watches.
   toolkitRegistration(BotMemoryToolkit, BotMemoryHandlers.layer),
+  toolkitRegistration(BotManagementToolkit, BotMemoryHandlers.managementLayer),
   toolkitRegistration(ThreadWatchToolkit, ThreadWatchHandlers.layer),
 ).pipe(Layer.provideMerge(layerMcpTransport));

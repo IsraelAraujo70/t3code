@@ -51,6 +51,7 @@ import {
   type BotsImportResult,
   type BotsOwnerUpdateInput,
   type BotUpdateInput,
+  type ModelSelection,
   type ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -150,6 +151,21 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  // Bots also pick models through MCP; a disabled or unknown instance would only fail on the bot's
+  // first turn.
+  const requireEnabledInstance = (model: ModelSelection) =>
+    providers
+      .getInstance(model.instanceId)
+      .pipe(
+        Effect.flatMap((instance) =>
+          instance?.enabled === true
+            ? Effect.void
+            : Effect.fail(
+                new BotsError({ message: `No enabled provider instance ${model.instanceId}.` }),
+              ),
+        ),
+      );
 
   /** Idempotent: the command id is fixed per bot generation, so retries replay the receipt. */
   const launchMainThread = (bot: Bot) =>
@@ -257,6 +273,7 @@ const make = Effect.gen(function* () {
 
   const createBot = (input: BotCreateInput) =>
     Effect.gen(function* () {
+      yield* requireEnabledInstance(input.model);
       const bots = yield* store.listBots;
       const now = yield* nowIso;
       const bot: Bot = {
@@ -267,6 +284,7 @@ const make = Effect.gen(function* () {
         homeGeneration: 1,
         sectionId: null,
         position: nextPosition(bots),
+        canManageBots: input.canManageBots ?? false,
         createdAt: now,
         updatedAt: now,
       };
@@ -279,12 +297,14 @@ const make = Effect.gen(function* () {
   const updateBot = (input: BotUpdateInput) =>
     Effect.gen(function* () {
       const current = yield* requireBot(input.botId);
+      if (input.model !== undefined) yield* requireEnabledInstance(input.model);
       const bot: Bot = {
         ...current,
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.role !== undefined ? { role: input.role } : {}),
         // The live thread keeps its model; the next conversation generation starts with this one.
         ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.canManageBots !== undefined ? { canManageBots: input.canManageBots } : {}),
         updatedAt: yield* nowIso,
       };
       yield* store.updateBot(bot);
