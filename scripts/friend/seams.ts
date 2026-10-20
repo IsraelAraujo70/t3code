@@ -48,6 +48,12 @@ export const SEAMS: readonly Seam[] = [
     why: "bots RPC trace labels",
   },
   { file: "apps/server/src/ws.ts", markers: 3, why: "bots RPC handlers" },
+  { file: "apps/server/src/mcp/McpHttpServer.ts", markers: 2, why: "register bots memory tools" },
+  {
+    file: "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
+    markers: 2,
+    why: "stub BotsService for the MCP layer",
+  },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
     markers: 3,

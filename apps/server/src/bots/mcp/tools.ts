@@ -28,7 +28,7 @@ const MemoryListTool = Tool.make("memory_list", {
   ...shared,
   description:
     "List your memories: durable facts about the user and your work that hold in every future conversation. Enabled memories are already in your instructions.",
-  parameters: Schema.Struct({}),
+  // No `parameters`: the default Tool.EmptyParams encodes to an object schema, as MCP requires.
   success: Schema.Struct({ memories: Schema.Array(MemoryView) }),
 })
   .annotate(Tool.Readonly, true)
