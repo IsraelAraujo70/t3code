@@ -13,31 +13,45 @@
  * - `directory` publishes only after a write commits.
  */
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Option from "effect/Option";
-import type * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 
-import type {
-  Bot,
-  BotCreateInput,
-  BotDirectory,
+import {
   BotId,
-  BotMemory,
-  BotMemoryCreateInput,
-  BotMemoryRef,
-  BotMemorySource,
-  BotMemoryUpdateInput,
-  BotRef,
+  BotMemoryId,
   BotsError,
-  BotsImportInput,
-  BotsImportResult,
-  BotsOwnerUpdateInput,
-  BotUpdateInput,
-  ThreadId,
+  botThreadId,
+  CommandId,
+  parseBotThreadId,
+  type Bot,
+  type BotCreateInput,
+  type BotDirectory,
+  type BotMemory,
+  type BotMemoryCreateInput,
+  type BotMemoryRef,
+  type BotMemorySource,
+  type BotMemoryUpdateInput,
+  type BotRef,
+  type BotsImportInput,
+  type BotsImportResult,
+  type BotsOwnerUpdateInput,
+  type BotUpdateInput,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import type { BotsStore } from "./BotsStore.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { FRIEND_DB_RELATIVE_PATH, planFriendImport, readFriendDatabase } from "./BotsImport.ts";
+import { BotsStore } from "./BotsStore.ts";
 
 export class BotsService extends Context.Service<
   BotsService,
@@ -66,11 +80,344 @@ export class BotsService extends Context.Service<
   }
 >()("t3/bots/BotsService") {}
 
+const SCRATCH_UNAVAILABLE_MESSAGE =
+  'Bots need the "No project" folder, which this environment does not offer because its T3 data directory is inside a Git checkout.';
+
+const randomHex = randomUuidV4.pipe(Effect.map((uuid) => uuid.replaceAll("-", "")));
+const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
+const botsError = (message: string) => (cause: unknown) => new BotsError({ message, cause });
+
+const threadTitle = (bot: Pick<Bot, "emoji" | "name">) => `${bot.emoji} ${bot.name}`;
+
+const make = Effect.gen(function* () {
+  const store = yield* BotsStore;
+  const launches = yield* ThreadLaunchService.ThreadLaunchService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const managed = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const providers = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const path = yield* Path.Path;
+
+  // Sliding(1): every signal re-reads the whole directory, so only the latest one matters.
+  const changes = yield* PubSub.sliding<void>(1);
+  const publish = PubSub.publish(changes, undefined).pipe(Effect.asVoid);
+
+  const requireBot = (botId: BotId) =>
+    store.getBot(botId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new BotsError({ message: `Bot ${botId} does not exist.` })),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+
+  const requireMemory = (memoryId: BotMemoryId) =>
+    store.getMemory(memoryId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(new BotsError({ message: `Memory ${memoryId} does not exist.` })),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+
+  /** Idempotent: the command id is fixed per bot generation, so retries replay the receipt. */
+  const launchMainThread = (bot: Bot) =>
+    Effect.gen(function* () {
+      const { projectId } = yield* managed.ensureScratchProject.pipe(
+        Effect.mapError((error) =>
+          error._tag === "ScratchUnavailableError"
+            ? new BotsError({ message: SCRATCH_UNAVAILABLE_MESSAGE })
+            : new BotsError({ message: error.message, cause: error }),
+        ),
+      );
+      yield* launches
+        .launch({
+          commandId: CommandId.make(`bots:launch:${bot.id}:${bot.homeGeneration}`),
+          threadId: botThreadId(bot.id, bot.homeGeneration),
+          projectId,
+          title: threadTitle(bot),
+          generateTitle: false,
+          modelSelection: bot.model,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          createdBy: "system",
+          creationSource: "server",
+        })
+        .pipe(
+          Effect.mapError(botsError(`Could not start the conversation of ${threadTitle(bot)}.`)),
+        );
+    });
+
+  /** An archived, deleted or missing thread is left as it is. */
+  const archiveThread = (botId: BotId, generation: number) =>
+    Effect.gen(function* () {
+      const threadId = botThreadId(botId, generation);
+      const shell = yield* threads.getThreadShell(threadId);
+      if (shell === null || shell.archivedAt !== null || shell.deletedAt !== null) return;
+      yield* threads.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`bots:archive:${botId}:${generation}`),
+        threadId,
+      });
+    }).pipe(Effect.mapError(botsError(`Could not archive the conversation of bot ${botId}.`)));
+
+  const retitleThread = (bot: Bot) =>
+    Effect.gen(function* () {
+      const threadId = botThreadId(bot.id, bot.homeGeneration);
+      const shell = yield* threads.getThreadShell(threadId);
+      if (shell === null || shell.deletedAt !== null) return;
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        // One command per committed rename; renaming back later is a new command.
+        commandId: CommandId.make(`bots:retitle:${bot.id}:${bot.homeGeneration}:${bot.updatedAt}`),
+        threadId,
+        title: threadTitle(bot),
+      });
+    }).pipe(
+      Effect.mapError(botsError(`Could not rename the conversation of ${threadTitle(bot)}.`)),
+    );
+
+  const readDirectory: Effect.Effect<BotDirectory, BotsError> = Effect.gen(function* () {
+    const bots = yield* store.listBots;
+    const memories = yield* store.listMemories();
+    const aboutMe = yield* store.getAboutMe;
+    const memoriesByBot = new Map<BotId, Array<BotMemory>>();
+    for (const memory of memories) {
+      const list = memoriesByBot.get(memory.botId);
+      if (list === undefined) memoriesByBot.set(memory.botId, [memory]);
+      else list.push(memory);
+    }
+    return {
+      bots: bots.map((bot) => ({
+        ...bot,
+        homeThreadId: botThreadId(bot.id, bot.homeGeneration),
+        memories: memoriesByBot.get(bot.id) ?? [],
+      })),
+      aboutMe,
+    };
+  });
+
+  const directory = Stream.unwrap(
+    Effect.gen(function* () {
+      // Subscribe before the first read so a change landing in between is not lost.
+      const subscription = yield* PubSub.subscribe(changes);
+      return Stream.concat(
+        Stream.fromEffect(readDirectory),
+        Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => readDirectory)),
+      );
+    }),
+  );
+
+  const assertNewMemoryText = (botId: BotId, text: string, except?: BotMemoryId) =>
+    store
+      .listMemories(botId)
+      .pipe(
+        Effect.flatMap((memories) =>
+          memories.some((memory) => memory.text === text && memory.id !== except)
+            ? Effect.fail(new BotsError({ message: "This bot already remembers that." }))
+            : Effect.void,
+        ),
+      );
+
+  const createBot = (input: BotCreateInput) =>
+    Effect.gen(function* () {
+      const bots = yield* store.listBots;
+      const now = yield* nowIso;
+      const bot: Bot = {
+        id: BotId.make(`b_${yield* randomHex}`),
+        name: input.name,
+        emoji: input.emoji,
+        role: input.role,
+        model: input.model,
+        homeGeneration: 1,
+        position: bots.reduce((max, existing) => Math.max(max, existing.position), -1) + 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      yield* store.insertBot(bot);
+      yield* publish;
+      yield* launchMainThread(bot);
+      return bot;
+    });
+
+  const updateBot = (input: BotUpdateInput) =>
+    Effect.gen(function* () {
+      const current = yield* requireBot(input.botId);
+      const bot: Bot = {
+        ...current,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.emoji !== undefined ? { emoji: input.emoji } : {}),
+        ...(input.role !== undefined ? { role: input.role } : {}),
+        // The live thread keeps its model; the next conversation generation starts with this one.
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.position !== undefined ? { position: input.position } : {}),
+        updatedAt: yield* nowIso,
+      };
+      yield* store.updateBot(bot);
+      yield* publish;
+      if (bot.name !== current.name || bot.emoji !== current.emoji) yield* retitleThread(bot);
+      return bot;
+    });
+
+  const deleteBot = (input: BotRef) =>
+    Effect.gen(function* () {
+      const bot = yield* store.getBot(input.botId);
+      if (Option.isSome(bot)) yield* archiveThread(bot.value.id, bot.value.homeGeneration);
+      yield* store.deleteBot(input.botId);
+      yield* publish;
+      return input;
+    });
+
+  const resetConversation = (input: BotRef) =>
+    Effect.gen(function* () {
+      const current = yield* requireBot(input.botId);
+      const bot: Bot = {
+        ...current,
+        homeGeneration: current.homeGeneration + 1,
+        updatedAt: yield* nowIso,
+      };
+      yield* store.updateBot(bot);
+      yield* publish;
+      yield* archiveThread(current.id, current.homeGeneration);
+      yield* launchMainThread(bot);
+      return bot;
+    });
+
+  const createMemory = (input: BotMemoryCreateInput, source: BotMemorySource) =>
+    Effect.gen(function* () {
+      yield* requireBot(input.botId);
+      yield* assertNewMemoryText(input.botId, input.text);
+      const now = yield* nowIso;
+      const memory: BotMemory = {
+        id: BotMemoryId.make(`mem_${yield* randomHex}`),
+        botId: input.botId,
+        text: input.text,
+        source,
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      yield* store.insertMemory(memory);
+      yield* publish;
+      return memory;
+    });
+
+  const updateMemory = (input: BotMemoryUpdateInput) =>
+    Effect.gen(function* () {
+      const current = yield* requireMemory(input.memoryId);
+      if (input.text !== undefined && input.text !== current.text) {
+        yield* assertNewMemoryText(current.botId, input.text, current.id);
+      }
+      const memory: BotMemory = {
+        ...current,
+        ...(input.text !== undefined ? { text: input.text } : {}),
+        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        updatedAt: yield* nowIso,
+      };
+      yield* store.updateMemory(memory);
+      yield* publish;
+      return memory;
+    });
+
+  const deleteMemory = (input: BotMemoryRef) =>
+    store.deleteMemory(input.memoryId).pipe(Effect.andThen(publish), Effect.as(input));
+
+  const updateOwner = (input: BotsOwnerUpdateInput) =>
+    store.setAboutMe(input.aboutMe).pipe(Effect.andThen(publish), Effect.as(input));
+
+  const importFriend = (input: BotsImportInput) =>
+    Effect.gen(function* () {
+      const friendPath =
+        input.path ?? path.join(yield* HostProcess.HomeDirectory, FRIEND_DB_RELATIVE_PATH);
+      const snapshot = yield* readFriendDatabase(friendPath);
+      const existing = yield* store.listBots;
+      const instances = yield* providers.listInstances;
+      const { result, batch } = planFriendImport({
+        snapshot,
+        path: friendPath,
+        existingBotIds: new Set(existing.map((bot) => bot.id)),
+        existingAboutMe: yield* store.getAboutMe,
+        instances: instances
+          .filter((instance) => instance.enabled)
+          .map((instance) => ({
+            instanceId: instance.instanceId,
+            driver: instance.driverKind,
+            enabled: instance.enabled,
+          })),
+        now: yield* nowIso,
+      });
+      if (!input.apply) return result;
+      // Imported bots go after the ones already here, keeping friend's order among themselves.
+      const firstPosition = existing.reduce((max, bot) => Math.max(max, bot.position), -1) + 1;
+      const bots = batch.bots.map((bot, index) => ({ ...bot, position: firstPosition + index }));
+      yield* store.importBatch({ ...batch, bots });
+      yield* publish;
+      const launchWarnings = yield* Effect.forEach(bots, (bot) =>
+        launchMainThread(bot).pipe(
+          Effect.as(Option.none<string>()),
+          Effect.catch((error) =>
+            Effect.logWarning("Could not start an imported bot's conversation", {
+              botId: bot.id,
+              error,
+            }).pipe(Effect.as(Option.some(error.message))),
+          ),
+        ),
+      );
+      return {
+        ...result,
+        applied: true,
+        warnings: [...result.warnings, ...launchWarnings.flatMap(Option.toArray)],
+      } satisfies BotsImportResult;
+    });
+
+  const botForThread = (threadId: ThreadId) => {
+    const parsed = parseBotThreadId(threadId);
+    return parsed === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(parsed.botId);
+  };
+
+  // Heals a crash between a bot's row write and its launch. Runs beside startup, not before it.
+  yield* store.listBots.pipe(
+    Effect.flatMap((bots) =>
+      Effect.forEach(
+        bots,
+        (bot) =>
+          launchMainThread(bot).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not reconcile a bot's conversation", {
+                botId: bot.id,
+                error,
+              }),
+            ),
+          ),
+        { discard: true },
+      ),
+    ),
+    Effect.catch((error) => Effect.logWarning("Could not list bots to reconcile", { error })),
+    Effect.forkScoped,
+  );
+
+  return BotsService.of({
+    directory,
+    createBot,
+    updateBot,
+    deleteBot,
+    resetConversation,
+    createMemory,
+    updateMemory,
+    deleteMemory,
+    memoriesOf: (botId) => store.listMemories(botId),
+    updateOwner,
+    importFriend,
+    botForThread,
+  });
+});
+
 /**
- * Also needs the orchestration runtime (ThreadLaunchService, ManagedProjectFolders,
+ * Needs the orchestration runtime (ThreadLaunchService, ManagedProjectFolders,
  * ThreadManagementService, provider instances), which server.ts provides beneath it.
  */
-export const layer: Layer.Layer<BotsService, never, BotsStore> = Layer.effect(
-  BotsService,
-  Effect.die("not implemented: BotsService.layer"),
-);
+export const layer = Layer.effect(BotsService, make);
