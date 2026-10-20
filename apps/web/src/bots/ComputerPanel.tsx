@@ -1,6 +1,6 @@
-import type { ComputerStreamInfo, EnvironmentId } from "@t3tools/contracts";
-import { MonitorIcon, PauseIcon, PlayIcon } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { ComputerStreamInfo, ComputerStreamInput, EnvironmentId } from "@t3tools/contracts";
+import { MonitorIcon, MousePointerClickIcon, PauseIcon, PlayIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -11,9 +11,11 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../components/ui/empty";
+import { Toggle } from "../components/ui/toggle";
 import { useBotsEnvironmentId } from "../state/bots";
 import { useEnvironment } from "../state/environments";
-import { createComputerStreamClient } from "./computerStream";
+import { type ComputerStreamClient, createComputerStreamClient } from "./computerStream";
+import { useComputerControl } from "./useComputerControl";
 
 type ComputerView =
   | { readonly phase: "connecting" }
@@ -30,7 +32,8 @@ const isPageVisible = () => document.visibilityState === "visible";
 
 /**
  * The right panel's Computer tab: the bots host's whole screen, live. It streams only while
- * `visible`, the page is visible, and the viewer has not paused it.
+ * `visible`, the page is visible, and the viewer has not paused it. A viewer the host lets
+ * control it can turn on Control; every connection starts with it off.
  */
 export function ComputerPanel({ visible }: { readonly visible: boolean }) {
   const environmentId = useBotsEnvironmentId();
@@ -69,7 +72,24 @@ function ComputerScreen(props: {
   const streaming = props.visible && pageVisible && !paused;
   const [view, setView] = useState<ComputerView>(CONNECTING);
   const [hasFrame, setHasFrame] = useState(false);
+  const [canControl, setCanControl] = useState(false);
+  const [control, setControl] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const screenRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const clientRef = useRef<ComputerStreamClient | null>(null);
+  const controlling = control && canControl;
+
+  const send = useCallback((input: ComputerStreamInput) => clientRef.current?.send(input), []);
+  const leaveControl = useCallback(() => setControl(false), []);
+  useComputerControl({
+    active: controlling && hasFrame,
+    root: rootRef,
+    target: screenRef,
+    canvas: canvasRef,
+    send,
+    onLeave: leaveControl,
+  });
 
   useEffect(() => {
     if (!streaming) return;
@@ -77,11 +97,18 @@ function ComputerScreen(props: {
     const context = canvas?.getContext("2d") ?? null;
     let stopped = false;
     const client = createComputerStreamClient(environmentId, {
+      onAccess: (allowed) => {
+        setCanControl(allowed);
+        setControl(false);
+      },
       onInfo: (info) => setView({ phase: "live", info }),
       onError: (message) => setView({ phase: "error", message }),
-      // Keep the server's reason on screen while reconnecting after it.
-      onDisconnected: () =>
-        setView((current) => (current.phase === "error" ? current : CONNECTING)),
+      onDisconnected: () => {
+        setCanControl(false);
+        setControl(false);
+        // Keep the server's reason on screen while reconnecting after it.
+        setView((current) => (current.phase === "error" ? current : CONNECTING));
+      },
       // The server sends one frame per ack, so at most one decode is ever in flight.
       onFrame: (jpeg, ack) => {
         void createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }))
@@ -105,10 +132,14 @@ function ComputerScreen(props: {
           });
       },
     });
+    clientRef.current = client;
     return () => {
       stopped = true;
+      clientRef.current = null;
       client.stop();
       setView(CONNECTING);
+      setCanControl(false);
+      setControl(false);
     };
   }, [environmentId, streaming]);
 
@@ -130,12 +161,23 @@ function ComputerScreen(props: {
   );
 
   return (
-    <div className="flex size-full min-h-0 flex-col">
+    <div ref={rootRef} className="flex size-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs">
         <MonitorIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate font-medium text-foreground">{props.hostLabel}</span>
         {status}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          {canControl ? (
+            <Toggle
+              variant="ghost"
+              size="compact"
+              pressed={controlling}
+              onPressedChange={(pressed) => setControl(Boolean(pressed))}
+            >
+              <MousePointerClickIcon />
+              Control
+            </Toggle>
+          ) : null}
           <Button variant="ghost-muted" size="xs" onClick={() => setPaused((value) => !value)}>
             {paused ? <PlayIcon /> : <PauseIcon />}
             {paused ? "Resume" : "Pause"}
@@ -147,7 +189,17 @@ function ComputerScreen(props: {
           {view.message}
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 bg-background">
+      {/* While in control the screen keeps focus so Escape and Tab reach the host; the outline says so. */}
+      <div
+        ref={screenRef}
+        tabIndex={controlling ? 0 : -1}
+        aria-label={controlling ? `Controlling ${props.hostLabel}` : undefined}
+        className={
+          controlling
+            ? "relative min-h-0 flex-1 touch-none bg-background outline-2 -outline-offset-2 outline-primary"
+            : "relative min-h-0 flex-1 bg-background outline-none"
+        }
+      >
         <canvas
           ref={canvasRef}
           aria-label={`Screen of ${props.hostLabel}`}
