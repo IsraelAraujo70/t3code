@@ -133,7 +133,7 @@ it.effect("never upscales past the sharpest output", () =>
     const hidpi = yield* ScreenCapture.parseGeometry(
       JSON.stringify([monitor({ width: 3840, height: 2160, scale: 2 })]),
     );
-    expect(hidpi).toEqual({ width: 1920, height: 1080, maxScale: 2 });
+    expect(hidpi).toEqual({ left: 0, top: 0, width: 1920, height: 1080, maxScale: 2 });
     expect(ScreenCapture.captureScale(hidpi, 3840)).toBe(2);
     const rotated = yield* ScreenCapture.parseGeometry(JSON.stringify([monitor({ transform: 1 })]));
     expect(rotated).toMatchObject({ width: 1080, height: 1920 });
