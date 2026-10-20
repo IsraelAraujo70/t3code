@@ -7,8 +7,7 @@ import { useMemo, type ReactNode } from "react";
 import { CollapsibleSectionHeader } from "../components/ui/collapsible-section-header";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
-import { useBotDirectory } from "../state/bots";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useBotDirectory, useBotsEnvironmentId } from "../state/bots";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { cn } from "~/lib/utils";
 import {
@@ -21,9 +20,6 @@ import {
 
 const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
 const BOTS_TAB_KEY = "t3code:bots:sidebar-tab";
-// Registered by the Bots settings page; `href` keeps this link independent of that route's types.
-const BOTS_SETTINGS_HREF = "/settings/bots";
-
 const SidebarBotsTab = Schema.Literals(["bots", "threads"]);
 type SidebarBotsTab = typeof SidebarBotsTab.Type;
 
@@ -38,14 +34,16 @@ export function useSidebarBotsTab() {
 }
 
 /**
- * The primary environment's bots matched to their main thread shells. `rows` is null until the
- * directory loads. The section and the tabs both call this; they share one directory subscription.
+ * The bots host environment's bots matched to their main thread shells. `rows` is null until the
+ * directory loads; `hostConnected` is false when no connected environment hosts bots. The section
+ * and the tabs both call this; they share one directory subscription.
  */
 function useBotRows(threads: ReadonlyArray<BotThreadShell>): {
   readonly rows: ReadonlyArray<BotRowModel> | null;
   readonly error: string | null;
+  readonly hostConnected: boolean;
 } {
-  const environmentId = usePrimaryEnvironmentId();
+  const environmentId = useBotsEnvironmentId();
   const { directory, error } = useBotDirectory(environmentId);
   const rows = useMemo(
     () =>
@@ -54,7 +52,7 @@ function useBotRows(threads: ReadonlyArray<BotThreadShell>): {
         : resolveBotRows(directory.bots, environmentId, threads),
     [directory, environmentId, threads],
   );
-  return { rows, error };
+  return { rows, error, hostConnected: environmentId !== null };
 }
 
 function countRowsNeedingYou(rows: ReadonlyArray<BotRowModel> | null): number {
@@ -69,7 +67,7 @@ function compactTimeLabel(isoDate: string): string {
 
 function useOpenBotsSettings() {
   const navigate = useNavigate();
-  return () => void navigate({ href: BOTS_SETTINGS_HREF });
+  return () => void navigate({ to: "/settings/bots" });
 }
 
 function BotStatusMark(props: { status: BotStatus }) {
@@ -149,7 +147,7 @@ export function BotsSidebarSection(props: {
     true,
     Schema.Boolean,
   );
-  const { rows, error } = useBotRows(props.threads);
+  const { rows, error, hostConnected } = useBotRows(props.threads);
   const openBotsSettings = useOpenBotsSettings();
   // Re-renders the relative times once a minute.
   useNowMinute();
@@ -189,7 +187,13 @@ export function BotsSidebarSection(props: {
         </CollapsibleSectionHeader>
       ) : null}
       {!expanded ? null : rows === null ? (
-        <BotsNotice>{error === null ? "Loading bots…" : `Bots unavailable: ${error}`}</BotsNotice>
+        <BotsNotice>
+          {!hostConnected
+            ? "Bots live on another machine that is not connected."
+            : error === null
+              ? "Loading bots…"
+              : `Bots unavailable: ${error}`}
+        </BotsNotice>
       ) : rows.length === 0 ? (
         <BotsNotice>
           No bots yet.{" "}
