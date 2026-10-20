@@ -33,6 +33,8 @@ import {
   FileDiff,
   Files,
   Globe2,
+  // Fork (friend): Computer surface icon.
+  Monitor,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -78,6 +80,8 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
+// Fork (friend): the Computer surface appears only while the bots host is connected.
+import { useBotsEnvironmentId } from "~/state/bots";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import {
   newestPullRequestSummary,
@@ -143,6 +147,8 @@ interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Fork (friend): opens the bots host's live screen. */
+  onAddComputer?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -341,6 +347,8 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  // Fork (friend): absent while the bots host is not connected.
+  onAddComputer: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -410,6 +418,20 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
+    // Fork (friend): the bots host's live screen.
+    ...(props.onAddComputer
+      ? [
+          {
+            label: "Computer",
+            description: "Watch the bots host's screen.",
+            icon: Monitor,
+            shortcut: "C",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddComputer,
+          },
+        ]
+      : []),
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -620,6 +642,9 @@ function surfaceTitle(
       return "Pull requests";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    // Fork (friend): the bots host's live screen.
+    case "computer":
+      return "Computer";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -709,6 +734,9 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    // Fork (friend): the bots host's live screen.
+    case "computer":
+      return <Monitor className="size-3 shrink-0" />;
   }
 }
 
@@ -872,6 +900,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
+  // Fork (friend): the Computer surface appears only while the bots host is connected.
+  const onAddComputer = useBotsEnvironmentId() !== null ? props.onAddComputer : undefined;
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
@@ -991,6 +1021,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    // Fork (friend): the bots host's live screen.
+    ...(onAddComputer
+      ? [
+          {
+            label: "Computer",
+            icon: Monitor,
+            shortcut: "C",
+            available: true,
+            disabledReason: "",
+            onClick: onAddComputer,
+          },
+        ]
+      : []),
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1483,6 +1526,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            // Fork (friend): the bots host's live screen.
+            onAddComputer={onAddComputer}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}

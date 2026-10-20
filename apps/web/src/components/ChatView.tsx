@@ -719,6 +719,10 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+// Fork (friend): the bots host's live screen.
+const ComputerPanel = lazy(() =>
+  import("../bots/ComputerPanel").then((module) => ({ default: module.ComputerPanel })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -10943,6 +10947,11 @@ export default function ChatView(props: ChatViewProps) {
           }}
         />
       </Suspense>
+    ) : /* Fork (friend): the bots host's live screen. */
+    renderedRightPanelSurface?.kind === "computer" ? (
+      <Suspense fallback={null}>
+        <ComputerPanel visible={rightPanelOpen} />
+      </Suspense>
     ) : (renderedRightPanelSurface?.kind === "files" ||
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
@@ -11850,6 +11859,10 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
+          // Fork (friend): the bots host's live screen.
+          onAddComputer={() => {
+            if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "computer");
+          }}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -11909,6 +11922,10 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
+            // Fork (friend): the bots host's live screen.
+            onAddComputer={() => {
+              if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "computer");
+            }}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}
