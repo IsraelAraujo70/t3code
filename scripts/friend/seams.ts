@@ -89,7 +89,11 @@ export const SEAMS: readonly Seam[] = [
     markers: 3,
     why: "advertise bots only on the bots host",
   },
-  { file: "apps/server/src/server.ts", markers: 3, why: "bots layers around the runtime" },
+  {
+    file: "apps/server/src/server.ts",
+    markers: 5,
+    why: "bots layers and the Computer stream route",
+  },
   {
     file: "apps/web/src/components/Sidebar.tsx",
     markers: 2,
@@ -104,6 +108,26 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/web/src/components/settings/settingsSearch.ts",
     markers: 5,
     why: "Bots in sidebar setting and the Bots settings page",
+  },
+  {
+    file: "apps/web/src/rightPanelStore.ts",
+    markers: 3,
+    why: "Computer surface kind",
+  },
+  {
+    file: "apps/web/src/components/RightPanelTabs.tsx",
+    markers: 10,
+    why: "Computer in the surface launchers",
+  },
+  {
+    file: "apps/web/src/components/ChatView.tsx",
+    markers: 4,
+    why: "render the Computer surface",
+  },
+  {
+    file: "apps/web/src/closedViewStore.ts",
+    markers: 1,
+    why: "reopen a closed Computer tab",
   },
   {
     file: "apps/web/src/components/settings/SettingsSidebarNav.tsx",
