@@ -31,6 +31,8 @@ import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+// Fork (friend): bot conversations live in the Bots section.
+import { withoutBotThreads } from "../../bots/bots.logic";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -45,10 +47,12 @@ export function HomeRouteScreen() {
   // Streaming turns rewrite thread shells many times a second. While a Thread
   // covers Home, rebuilding this list is invisible work.
   const visible = useHomeRouteVisible();
-  const threads = useAtomValueWhileVisible(
+  const shells = useAtomValueWhileVisible(
     environmentThreadShells.navigationThreadShellsAtom,
     visible,
   );
+  // Fork (friend): bot conversations show in the Bots section, not as ordinary threads.
+  const threads = useMemo(() => withoutBotThreads(shells), [shells]);
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
