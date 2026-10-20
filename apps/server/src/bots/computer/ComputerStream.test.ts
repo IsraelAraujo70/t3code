@@ -175,9 +175,7 @@ it.effect("a controlling viewer's input is replayed while its frame awaits an ac
     expect(yield* Queue.take(commands)).toEqual([
       "hyprctl",
       "dispatch",
-      "movecursor",
-      "960",
-      "540",
+      "hl.dsp.cursor.move({ x = 960, y = 540 })",
     ]);
     expect(yield* Queue.take(commands)).toEqual(["ydotool", "click", "0xC0"]);
 
@@ -206,7 +204,7 @@ it.effect("a viewer that leaves mid-drag releases the button it held", () =>
     yield* Fiber.interrupt(served);
 
     expect(yield* Queue.takeAll(commands)).toEqual([
-      ["hyprctl", "dispatch", "movecursor", "1440", "540"],
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = 1440, y = 540 })"],
       ["ydotool", "click", "0x80"],
     ]);
   }).pipe(Effect.scoped),
