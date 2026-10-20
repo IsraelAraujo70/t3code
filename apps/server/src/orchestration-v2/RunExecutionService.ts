@@ -35,6 +35,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+// Fork (friend): bot threads get their role and memories as trusted turn instructions.
+import * as Option from "effect/Option";
+import * as BotsInstructions from "../bots/BotsInstructions.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -579,6 +582,8 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
+    // Fork (friend): optional, so runtimes and tests without bots keep the upstream behaviour.
+    const botsInstructions = yield* Effect.serviceOption(BotsInstructions.BotsInstructions);
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -1416,6 +1421,18 @@ export const layer: Layer.Layer<
             key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
             text: entry.text,
           }));
+          // Fork (friend): resolved every turn so role and memory edits reach the provider.
+          // A failed read costs the bot its instructions for this turn, not the turn itself.
+          const appInstructions = Option.isNone(botsInstructions)
+            ? undefined
+            : yield* botsInstructions.value.forThread(input.run.threadId).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to read bot instructions.", {
+                    threadId: input.run.threadId,
+                    cause,
+                  }).pipe(Effect.as(undefined)),
+                ),
+              );
           const turnInput = {
             appThread: input.appThread,
             threadId: input.run.threadId,
@@ -1437,6 +1454,8 @@ export const layer: Layer.Layer<
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
             ...(appContext.length === 0 ? {} : { appContext }),
+            // Fork (friend): only bot threads carry app instructions.
+            ...(appInstructions === undefined ? {} : { appInstructions }),
           };
           // Check after the context read: ingestion can settle the run while
           // it awaits. A failed ownership read fails the start below.
