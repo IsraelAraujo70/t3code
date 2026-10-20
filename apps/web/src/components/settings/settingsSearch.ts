@@ -23,6 +23,8 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
+  // Fork (friend): Settings → Bots.
+  | "/settings/bots"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -81,6 +83,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
+  // Fork (friend): Settings → Bots.
+  "/settings/bots": "Bots",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -1007,6 +1011,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  // Fork (friend): Settings → Bots anchors.
+  {
+    id: "bots",
+    title: "Bots",
+    to: "/settings/bots",
+    searchTerms: ["friend agents assistants new edit delete reset conversation role model emoji"],
+    environmentOnly: true,
+  },
+  {
+    id: "bot-memories",
+    title: "Bot memories",
+    to: "/settings/bots",
+    targetId: "bots",
+    searchTerms: ["friend bots remember notes facts enable disable"],
+    environmentOnly: true,
+  },
+  {
+    id: "bots-about-me",
+    title: "About me",
+    to: "/settings/bots",
+    searchTerms: ["friend bots owner profile personal context"],
+    environmentOnly: true,
+  },
+  {
+    id: "bots-import",
+    title: "Import from friend",
+    to: "/settings/bots",
+    searchTerms: ["friend app migrate bots memories database"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1026,6 +1060,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
+  // Fork (friend): Bots runs in single-environment scope, which renders at any selection.
+  "/settings/bots": null,
   "/settings/archived": "project-defaults",
 };
 
