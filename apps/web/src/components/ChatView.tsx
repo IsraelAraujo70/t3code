@@ -8830,6 +8830,10 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
+          // Fork (friend): the bots host's live screen.
+          onAddComputer={() => {
+            if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "computer");
+          }}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -8885,6 +8889,10 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
+            // Fork (friend): the bots host's live screen.
+            onAddComputer={() => {
+              if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "computer");
+            }}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}
