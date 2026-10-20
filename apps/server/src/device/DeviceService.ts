@@ -1,15 +1,3 @@
-/**
- * Device discovery, per-thread device sessions, and the state stream clients
- * render the Device panel from.
- *
- * Discovery and boot go through expo-device-hub's JSON API rather than
- * shelling out to simctl and adb here: the hub already normalizes both
- * platforms into one device shape and is the process that has to know a
- * device is booted before it can stream it. Sessions are the server's own
- * bookkeeping — which thread is looking at which device — so the panel and
- * the `device_*` tools agree, and so a `device_open` from an agent surfaces in
- * every connected client the way `preview_open` does.
- */
 import {
   type DeviceActionInput,
   type DeviceCloseInput,
@@ -35,6 +23,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
   type ThreadId,
 } from "@t3tools/contracts";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
@@ -69,8 +58,29 @@ import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
-/** Origin-relative prefix the hub is proxied under. See DeviceHubProxy. */
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
+
+const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
+  const cause = error.cause;
+  if (
+    !(cause instanceof SshCommandError) ||
+    cause.exitCode === null ||
+    cause.exitCode < 1 ||
+    cause.exitCode > 254
+  )
+    return "Could not connect to this host over SSH.";
+
+  // Only the known bootstrap diagnostic is safe to expose as Node guidance.
+  if (
+    cause.exitCode === 1 &&
+    cause.stderr
+      .split(/\r?\n/u)
+      .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
+  )
+    return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
+
+  return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
+};
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
@@ -86,13 +96,18 @@ const HubDevice = Schema.Struct({
 const HubDeviceList = Schema.Struct({
   simulators: Schema.Array(HubDevice),
   emulators: Schema.Array(HubDevice),
-  errors: Schema.optional(Schema.Array(Schema.Struct({ message: Schema.String }))),
+  errors: Schema.optional(
+    Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
+  ),
 });
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
   serial: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
+  errors: Schema.optional(
+    Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
+  ),
 });
 
 export interface DeviceScreenshot {
@@ -125,7 +140,6 @@ export class DeviceService extends Context.Service<
     readonly configure: (
       input: DeviceConfigureInput,
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
-    /** Refreshes devices only after device support has been enabled. */
     readonly list: Effect.Effect<DeviceServiceState, DeviceError>;
     readonly updateTool: (tool: "hub" | "agent") => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly inspect: Effect.Effect<DeviceServiceState>;
@@ -133,20 +147,13 @@ export class DeviceService extends Context.Service<
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
-    /** Current settings and foreground app for one device. */
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
-    /** Runs one action, then returns the refreshed detail. */
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly screenshot: (input: {
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
     }) => Effect.Effect<DeviceScreenshot, DeviceError>;
-    /** Host endpoints for the proxy and the provider environment. */
     readonly readiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness, DeviceError>;
-    /**
-     * `readiness` only when the host can run at least one platform; a machine
-     * with no simulator toolchain never installs or starts anything.
-     */
     readonly readinessIfSupported: (
       hostId?: DeviceHostId,
     ) => Effect.Effect<DeviceReadiness | null, DeviceError>;
@@ -271,7 +278,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail:
+                error._tag === "DeviceHostError" && error.step === "probe"
+                  ? sshProbeFailureMessage(error)
+                  : error.message,
+            }),
           ),
           Effect.mapError(
             (error) =>
@@ -281,7 +294,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   error._tag === "NodeRuntimeUnavailableError"
                     ? nodeRuntimeUnavailableMessage("Local device support")
                     : error.step === "probe"
-                      ? "Could not connect to this host over SSH."
+                      ? sshProbeFailureMessage(error)
                       : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
@@ -326,7 +339,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail:
+                error._tag === "DeviceHostError" && error.step === "probe"
+                  ? sshProbeFailureMessage(error)
+                  : error.message,
+            }),
           ),
           Effect.mapError(
             (error) =>
@@ -340,7 +359,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                       : error._tag === "AgentDeviceStartError"
                         ? error.message
                         : error.step === "probe"
-                          ? "Could not connect to this host over SSH."
+                          ? sshProbeFailureMessage(error)
                           : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
@@ -425,7 +444,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         }
       }
     }
-    return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
+    const warnings = list.errors?.filter(
+      (error) =>
+        // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
+        !(
+          error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
+          /\/CoreSimulator\/Devices\/[^/]+\/device\.plist:$/.test(error.message) &&
+          /(?:^Error:\s*ENOENT:|\bcode:\s*['"]ENOENT['"])/.test(error.error ?? "")
+        ),
+    );
+    return { devices, detail: warnings?.map((error) => error.message).join("\n") || undefined };
   });
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
@@ -600,9 +628,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   /**
-   * Boot through the hub so its device list and the streaming helper both see
-   * the device come up. Android AVDs change id when they boot (AVD name to
-   * emulator serial), so the returned id is authoritative.
+   * Android AVDs change id when they boot (AVD name to emulator serial), so the
+   * returned id is authoritative.
    */
   const boot = Effect.fn("DeviceService.boot")(function* (
     ready: DeviceReadiness,
@@ -617,16 +644,29 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.flatMap((request) => hubJson(request, HubActionResult, "boot", BOOT_TIMEOUT)),
     );
     if (!result.ok) {
+      // Keep the hub's launch command and nested failure available to agents for recovery.
+      const diagnostics = [
+        result.error,
+        ...(result.errors ?? []).flatMap((error) => [error.message, error.error]),
+      ]
+        .filter((text) => text?.trim())
+        .join("\n\n");
       return yield* new DeviceBootError({
         hostId: ready.hostId,
         deviceId: device.id,
         reason: /insufficient.*(?:disk|space)|not enough.*(?:disk|space)|no space left/i.test(
-          result.error ?? "",
+          diagnostics,
         )
           ? "disk_space"
-          : /timed? out|timeout/i.test(result.error ?? "")
+          : /timed? out|timeout/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
+        ...(diagnostics
+          ? {
+              diagnostics:
+                diagnostics.length > 2_000 ? `${diagnostics.slice(0, 1_999)}…` : diagnostics,
+            }
+          : {}),
         cause: result,
       });
     }
@@ -658,6 +698,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     if (!device) {
       return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
     }
+    if (device.platform === "android" && !device.physical) {
+      // Resolve the override on the device host the way its hub does.
+      const encoders = yield* ready.run(ready.nodePath, [
+        "-e",
+        `const { spawnSync } = require("node:child_process");
+const result = spawnSync(process.env.SERVE_EMU_FFMPEG?.trim() || "ffmpeg", ["-hide_banner", "-encoders"], {
+  stdio: "inherit", timeout: 10000, killSignal: "SIGKILL",
+});
+process.exitCode = result.error ? 1 : (result.status ?? 1);`,
+      ]);
+      if (encoders.code !== 0) {
+        return yield* new DevicePlatformUnavailableError({
+          hostId: host.id,
+          platform: "android",
+          reason:
+            "Android emulator video needs working ffmpeg with the libx264 encoder. Install it on the device host's PATH or set SERVE_EMU_FFMPEG there, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, turn device support off and on for SSH hosts, or restart the local environment server.",
+        });
+      }
+      if (!/^\s*V\S*[ \t]+libx264(?:[ \t]|$)/m.test(`${encoders.stdout}\n${encoders.stderr}`)) {
+        return yield* new DevicePlatformUnavailableError({
+          hostId: host.id,
+          platform: "android",
+          reason:
+            "Android emulator video needs the libx264 encoder. Install an ffmpeg build that includes libx264 on the device host, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, turn device support off and on for SSH hosts, or restart the local environment server.",
+        });
+      }
+    }
     if (!device.booted && input.boot !== false) {
       const booting = { ...device, threadId: input.threadId };
       yield* publish((current) => ({
@@ -685,7 +752,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
       }
     } else if (device.platform === "ios" && device.booted) {
-      // A simulator booted outside T3 has no helper attached yet.
       yield* HttpClientRequest.post(
         `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
       ).pipe(
@@ -767,8 +833,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     // serve-sim's shutdown closes its in-process capture session before it runs
     // `simctl shutdown`; the hub's generic shutdown can leave that session cached
     // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
-    // already off fails there. Accept that failure only when the hub confirms
-    // the simulator is off; a failure on a running one still surfaces.
+    // already off fails there.
     yield* platform === "ios"
       ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
           Effect.catch((cause) =>
@@ -830,7 +895,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     function* (input) {
       const host = yield* resolveHost(input.hostId);
       yield* shutdownDevice(host.id, input.deviceId, input.platform);
-      // Sessions on a powered-off device are stale in every thread.
       yield* publish((current) => ({
         ...current,
         sessions: current.sessions.filter(
@@ -990,6 +1054,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   };
 });
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
@@ -1057,6 +1122,8 @@ export const make = Effect.gen(function* () {
             new DeviceOperationError({
               operation: "update device tool",
               reason: "command_failed",
+              // Only the exit code goes into the shown message; npm's stderr can carry registry credentials.
+              ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
               cause,
             }),
         ),
@@ -1089,7 +1156,7 @@ export const make = Effect.gen(function* () {
             configured.delete(id);
             removed.push({ id, scope: previous.scope });
           }
-          yield* service.refreshHosts;
+          if (removed.length > 0) yield* service.refreshHosts;
           return removed;
         }),
       );
@@ -1105,8 +1172,10 @@ export const make = Effect.gen(function* () {
       );
       yield* service.withLifecycleLock(
         Effect.gen(function* () {
+          let added = false;
           for (const host of next) {
             if (configured.has(host.id)) continue;
+            added = true;
             const hostScope = yield* Scope.fork(scope);
             const instance = yield* SshDeviceHost.make(
               host,
@@ -1130,7 +1199,8 @@ export const make = Effect.gen(function* () {
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
           }
-          yield* service.refreshHosts;
+          // Refresh again after removed scopes closed so a late status write from an old host cannot linger.
+          if (added || removed.length > 0) yield* service.refreshHosts;
         }),
       );
     });
@@ -1173,7 +1243,6 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
 
-/** State stream for WS subscribers: current snapshot first, then every change. */
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
   Stream.unwrap(
     Effect.gen(function* () {

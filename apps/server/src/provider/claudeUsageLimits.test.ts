@@ -86,14 +86,23 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ overageIncluded: "Fable" });
   });
 
-  it("reports API key and Bedrock accounts as unsupported", () => {
-    expect(
-      claudeUsageResponseToLimits({
-        checkedAt,
-        response: { rate_limits_available: false, rate_limits: null },
-      }).limits,
-    ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
-  });
+  it.each([
+    { rateLimitsAvailable: false, reason: "unsupported" },
+    { rateLimitsAvailable: true, reason: "probeFailed" },
+  ])(
+    "reports null usage as $reason when availability is $rateLimitsAvailable",
+    ({ rateLimitsAvailable, reason }) => {
+      expect(
+        claudeUsageResponseToLimits({
+          checkedAt,
+          response: { rate_limits_available: rateLimitsAvailable, rate_limits: null },
+        }),
+      ).toEqual({
+        limits: { checkedAt, windows: [], unavailable: { reason } },
+        names: noNames,
+      });
+    },
+  );
 
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
@@ -151,7 +160,6 @@ describe("claudeRateLimitEventToUpdate", () => {
       rateLimitType: "seven_day_overage_included" as never,
       utilization: 0.4,
     } as const;
-    // No probe has named the bucket yet: guessing would open a stray row.
     expect(claudeRateLimitEventToUpdate(event, noNames)).toBeUndefined();
     expect(claudeRateLimitEventToUpdate(event, { overageIncluded: "Fable" })).toEqual({
       windows: [

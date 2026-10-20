@@ -2,7 +2,7 @@ import { parseBotThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Schema } from "effect";
 import { PlusIcon } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { CollapsibleSectionHeader } from "../components/ui/collapsible-section-header";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -45,13 +45,10 @@ function useBotRows(threads: ReadonlyArray<BotThreadShell>): {
 } {
   const environmentId = useBotsEnvironmentId();
   const { directory, error } = useBotDirectory(environmentId);
-  const rows = useMemo(
-    () =>
-      environmentId === null || directory === null
-        ? null
-        : resolveBotRows(directory.bots, environmentId, threads),
-    [directory, environmentId, threads],
-  );
+  const rows =
+    environmentId === null || directory === null
+      ? null
+      : resolveBotRows(directory.bots, environmentId, threads);
   return { rows, error, hostConnected: environmentId !== null };
 }
 

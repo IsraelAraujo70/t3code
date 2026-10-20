@@ -1,16 +1,3 @@
-/**
- * UsageLimitSources — quota from places this environment cannot run turns
- * on, today a CLIProxyAPI hub pooling several subscription accounts.
- *
- * Each configured `settings.usageLimitSources` entry is polled on the
- * provider health-check interval and on every settings change, then
- * published as one snapshot per source over `subscribeServerConfig`. A source
- * that fails keeps its row with `error` set so the user can see it is
- * configured but unreachable. Nothing is persisted: like provider status,
- * this is live state that re-derives on boot.
- *
- * @module usage/UsageLimitSources
- */
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
@@ -41,9 +28,7 @@ export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
   {
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** The current set followed by every change, with repeats dropped. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** Re-read every source now. Never fails; failures land on the snapshot. */
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
@@ -137,8 +122,6 @@ export const make = Effect.gen(function* () {
       return result;
     }).pipe(refreshLock.withPermits(1));
 
-  // Settings edits re-read straight away so a new hub shows up without
-  // waiting for the interval, and a removed one leaves the list.
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
@@ -154,10 +137,13 @@ export const make = Effect.gen(function* () {
   );
   yield* Effect.forever(
     interval.pipe(
-      Effect.flatMap((wait) =>
-        Effect.sleep(Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait),
+      Effect.flatMap((wait) => Effect.sleep(Duration.isPositive(wait) ? wait : "60 seconds")),
+      Effect.andThen(interval),
+      Effect.flatMap((current) =>
+        Duration.isPositive(current)
+          ? backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })
+          : Effect.succeed(false),
       ),
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
       Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
       Effect.ignoreCause({ log: true }),
     ),

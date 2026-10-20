@@ -15,7 +15,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Fork (friend): bot and memory mutations.
   ...BOTS_GUARDED_RPC_SCOPES,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
-  // Endpoint checks exist to configure exports, so they need the same grant as saving them.
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
