@@ -130,6 +130,8 @@ const makeOrchestration = Effect.gen(function* () {
     } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"]),
     Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       listInstances: Effect.succeed(instances),
+      getInstance: (id: ProviderInstanceId) =>
+        Effect.succeed(instances.find((instance) => instance.instanceId === id)),
     } as unknown as ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]),
     NodeServices.layer,
   );
@@ -187,6 +189,29 @@ describe("BotsService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "a bot only gets an enabled provider instance, and only the user's input grants management",
+    () =>
+      Effect.gen(function* () {
+        const { orchestration, startService } = yield* setup();
+        const service = yield* startService;
+        const missing = { instanceId: ProviderInstanceId.make("gone"), model: "gpt-6.1-sol" };
+
+        const refused = yield* Effect.flip(service.createBot({ ...input, model: missing }));
+        assert.strictEqual(refused.message, "No enabled provider instance gone.");
+        assert.deepStrictEqual(orchestration.launches, []);
+
+        const bot = yield* service.createBot(input);
+        assert.isFalse(bot.canManageBots);
+        const stale = yield* Effect.flip(service.updateBot({ botId: bot.id, model: missing }));
+        assert.strictEqual(stale.message, "No enabled provider instance gone.");
+
+        const granted = yield* service.updateBot({ botId: bot.id, canManageBots: true });
+        assert.isTrue(granted.canManageBots);
+        assert.deepStrictEqual(granted.model, input.model);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("startup launches a bot whose row has no thread, and a restart converges", () =>
     Effect.gen(function* () {
       const { orchestration, store, startService } = yield* setup();
@@ -197,6 +222,7 @@ describe("BotsService", () => {
         homeGeneration: 1,
         sectionId: null,
         position: 0,
+        canManageBots: false,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       };

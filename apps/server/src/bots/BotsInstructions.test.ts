@@ -28,6 +28,7 @@ const bot: Bot = {
   homeGeneration: 1,
   sectionId: null,
   position: 0,
+  canManageBots: false,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -75,6 +76,20 @@ describe("buildBotInstructions", () => {
       bare.sections.map((section) => section.key),
       ["bot", "memory-tools", "work-tools"],
     );
+  });
+
+  it("tells only a bot the user allowed to manage bots about the management tools", () => {
+    const manager = buildBotInstructions({
+      bot: { ...bot, canManageBots: true },
+      memories: [],
+      aboutMe: "",
+      peers: [],
+    });
+    assert.deepStrictEqual(
+      manager.sections.map((section) => section.key),
+      ["bot", "memory-tools", "work-tools", "manage-bots"],
+    );
+    assert.include(manager.sections[3]!.text, "bot_create");
   });
 
   it("splits a long section on line boundaries and hard-splits a single long line", () => {
