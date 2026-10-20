@@ -80,6 +80,9 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+// Fork (friend): Bots section above the thread list.
+import { BotsHomeSection } from "../../bots/BotsHomeSection";
+import { useBotsEnvironmentId } from "../../bots/state";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -917,8 +920,12 @@ export function HomeScreen(props: HomeScreenProps) {
   // that matches nothing needs the in-list "No results" state, not the
   // full-page "No threads yet". Settled threads are unarchived live shells,
   // so the archived-at check already covers the settled shelf.
+  // Fork (friend): with a bots host the list stays up so the Bots section shows above its empty state.
+  const botsEnvironmentId = useBotsEnvironmentId();
   const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
+    botsEnvironmentId !== null ||
+    props.threads.some((thread) => thread.archivedAt === null) ||
+    props.pendingTasks.length > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -983,6 +990,8 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      {/* Fork (friend): the bots host's bots sit above the threads, as in the desktop sidebar. */}
+      {botsEnvironmentId !== null ? <BotsHomeSection environmentId={botsEnvironmentId} /> : null}
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}
@@ -1025,7 +1034,8 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  // Fork (friend): keep the list (and its Bots section) when only the thread list is empty.
+  if (Platform.OS === "android" && threadListV2Items.length === 0 && botsEnvironmentId === null) {
     return (
       <View className="flex-1 bg-header">
         <View
