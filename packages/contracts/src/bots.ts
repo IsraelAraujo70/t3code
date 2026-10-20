@@ -283,3 +283,40 @@ type BotsWsMethod = (typeof BOTS_WS_METHODS)[keyof typeof BOTS_WS_METHODS];
 export const BOTS_RPC_AGGREGATES = Object.fromEntries(
   Object.values(BOTS_WS_METHODS).map((method) => [method, "bots"]),
 ) as { readonly [Method in BotsWsMethod]: "bots" };
+
+/**
+ * Live view of the bots host's whole screen (the "Computer" right-panel tab). A WebSocket at
+ * this path, served only by the bots host; viewing needs the `terminal:read` scope.
+ *
+ * Server → client: a JSON text message `ComputerStreamInfo` first and whenever the screen size
+ * changes, then one binary JPEG per frame. The server keeps at most one frame in flight: it sends
+ * the next frame only after the client answers `ComputerStreamAck` for the previous one, so a slow
+ * viewer gets fewer frames instead of a growing backlog. Capture runs only while a viewer is
+ * attached. A JSON `ComputerStreamError` precedes a close when capture cannot run.
+ *
+ * Query parameters: `maxWidth` (default 1600) and `quality` (1–100, default 70).
+ */
+export const COMPUTER_STREAM_PATH = "/api/computer-stream/ws";
+
+export const ComputerStreamInfo = Schema.Struct({
+  type: Schema.Literal("info"),
+  /** Size of the JPEG frames. */
+  width: Schema.Int,
+  height: Schema.Int,
+  /** Size of the captured screen in compositor pixels. */
+  screenWidth: Schema.Int,
+  screenHeight: Schema.Int,
+});
+export type ComputerStreamInfo = typeof ComputerStreamInfo.Type;
+
+export const ComputerStreamError = Schema.Struct({
+  type: Schema.Literal("error"),
+  message: Schema.String,
+});
+export type ComputerStreamError = typeof ComputerStreamError.Type;
+
+export const ComputerStreamServerMessage = Schema.Union([ComputerStreamInfo, ComputerStreamError]);
+export type ComputerStreamServerMessage = typeof ComputerStreamServerMessage.Type;
+
+export const ComputerStreamAck = Schema.Struct({ type: Schema.Literal("ack") });
+export type ComputerStreamAck = typeof ComputerStreamAck.Type;
