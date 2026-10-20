@@ -38,6 +38,8 @@ import {
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
+// Fork (friend): name the bot that sent a message.
+import { useBotSender } from "../../bots/useBotSender";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -2164,6 +2166,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
+  // Fork (friend): a message another bot sent names that bot.
+  const botSender = useBotSender(senderThreadId);
+  const agentAttribution = botSender === null ? "Sent by another agent" : `Sent by ${botSender}`;
   const resources = selectMessageImageResources(row.message.attachments);
   const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
   const [projectPreviews] = useState(createMessageAttachmentPreviewProjector);
@@ -2321,16 +2326,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </p>
       ) : userMessage.attribution === "agent" ? (
         <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
+          {/* Fork (friend): agentAttribution names the sending bot. */}
           {senderThreadId ? (
             <InlineButton
               onClick={() => ctx.onOpenThread(senderThreadId)}
               tone="muted"
               aria-label="Open sending thread"
             >
-              Sent by another agent
+              {agentAttribution}
             </InlineButton>
           ) : (
-            "Sent by another agent"
+            agentAttribution
           )}
         </p>
       ) : null}
