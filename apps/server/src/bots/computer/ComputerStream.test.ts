@@ -188,6 +188,30 @@ it.effect("a controlling viewer's input is replayed while its frame awaits an ac
   }).pipe(Effect.scoped),
 );
 
+it.effect("a viewer that leaves mid-drag releases the button it held", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeCommands;
+    const screen = yield* ScreenCapture.make(fake.commands);
+    const { input, commands } = yield* makeInput(screen);
+    const socket = yield* makeSocket;
+    const viewer = yield* screen.attach({ maxWidth: 1920, quality: 70 });
+    const replay = viewerReplay([AuthTerminalReadScope, AuthTerminalOperateScope], input);
+    const served = yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull, replay));
+
+    const pointer = (action: "down" | "move", x: number) =>
+      JSON.stringify({ type: "pointer", action, x, y: 0.5, button: "left" });
+    yield* socket.reply(pointer("down", 0.25), pointer("move", 0.75));
+    // move-down, press, move-move
+    for (let i = 0; i < 3; i++) yield* Queue.take(commands);
+    yield* Fiber.interrupt(served);
+
+    expect(yield* Queue.takeAll(commands)).toEqual([
+      ["hyprctl", "dispatch", "movecursor", "1440", "540"],
+      ["ydotool", "click", "0x80"],
+    ]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("a viewer without terminal:operate cannot control the host", () =>
   Effect.gen(function* () {
     const fake = yield* makeCommands;
