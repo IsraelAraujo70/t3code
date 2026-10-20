@@ -1,13 +1,18 @@
 /**
  * `GET COMPUTER_STREAM_PATH`: a live view of the bots host's whole screen. The socket carries a
- * `ComputerStreamInfo` first and whenever the geometry changes, then binary JPEG frames. Each
- * frame waits for the viewer's `{"type":"ack"}` of the previous one.
+ * `ComputerStreamAccess` first, a `ComputerStreamInfo` before the first frame and whenever the
+ * geometry changes, then binary JPEG frames. Each frame waits for the viewer's `{"type":"ack"}`
+ * of the previous one. Viewers holding `terminal:operate` may also send input to replay.
  */
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import {
+  type AuthEnvironmentScope,
+  AuthTerminalOperateScope,
   AuthTerminalReadScope,
   COMPUTER_STREAM_PATH,
-  ComputerStreamAck,
+  ComputerStreamClientMessage,
+  type ComputerPointerButton,
+  type ComputerStreamInput,
   ComputerStreamServerMessage,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -15,18 +20,24 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest } from "../../auth/http.ts";
 import { isBotsHost } from "../BotsHost.ts";
+import * as ComputerInput from "./ComputerInput.ts";
 import * as ScreenCapture from "./ScreenCapture.ts";
 
 const MAX_SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
+/** Inputs waiting for replay per viewer; a viewer that outruns the host loses the excess. */
+const MAX_PENDING_INPUTS = 256;
 const textDecoder = new TextDecoder();
 const encodeServerMessage = Schema.encodeSync(Schema.fromJsonString(ComputerStreamServerMessage));
-const decodeAck = Schema.decodeUnknownOption(Schema.fromJsonString(ComputerStreamAck));
+const decodeClientMessage = Schema.decodeUnknownOption(
+  Schema.fromJsonString(ComputerStreamClientMessage),
+);
 
 const clampedInt = (
   params: URLSearchParams,
@@ -48,20 +59,54 @@ export const viewerOptions = (params: URLSearchParams): ScreenCapture.ScreenView
 
 const isCaptureError = Schema.is(ScreenCapture.ScreenCaptureError);
 
-const isAck = (chunk: Uint8Array | string) =>
-  Option.isSome(decodeAck(typeof chunk === "string" ? chunk : textDecoder.decode(chunk)));
+/** Where a viewer's input goes: only a session holding `terminal:operate` may take control. */
+export const viewerReplay = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  input: ComputerInput.ComputerInput["Service"],
+) => (scopes.includes(AuthTerminalOperateScope) ? input.replay : undefined);
 
 /**
  * Streams one viewer until the socket ends. At most one frame is unacknowledged; frames captured
- * meanwhile are replaced by newer ones. A capture failure is sent as `ComputerStreamError`, then
- * this returns so the caller closes the socket.
+ * meanwhile are replaced by newer ones. Input goes to `replay` in arrival order, or is dropped
+ * when `replay` is undefined; acks and input never wait for each other. A capture failure is sent
+ * as `ComputerStreamError`, then this returns so the caller closes the socket.
  */
 export const serveViewer = <E>(
   viewer: ScreenCapture.ScreenViewer,
   send: (data: Uint8Array | string) => Effect.Effect<void, E>,
   pull: Effect.Effect<ReadonlyArray<Uint8Array | string>, E>,
+  replay: ((input: ComputerStreamInput) => Effect.Effect<void>) | undefined,
 ) =>
   Effect.gen(function* () {
+    yield* send(encodeServerMessage({ type: "access", canControl: replay !== undefined }));
+    const inputs = yield* Queue.dropping<ComputerStreamInput>(MAX_PENDING_INPUTS);
+    if (replay !== undefined) {
+      // Buttons this viewer pressed and has not released, with where the pointer last was.
+      const held = new Map<ComputerPointerButton, { readonly x: number; readonly y: number }>();
+      const track = (input: ComputerStreamInput) => {
+        if (input.type !== "pointer") return;
+        if (input.action === "down") held.set(input.button, input);
+        else if (input.action === "up" || input.action === "click") held.delete(input.button);
+        else for (const button of held.keys()) held.set(button, input);
+      };
+      // Registered before the replay fiber, so it runs after that fiber stops: a viewer that
+      // leaves mid-drag must not leave a button pressed on the host.
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(
+          [...held],
+          ([button, { x, y }]) => replay({ type: "pointer", action: "up", x, y, button }),
+          { discard: true },
+        ),
+      );
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Queue.take(inputs).pipe(
+            Effect.tap((input) => Effect.sync(() => track(input))),
+            Effect.flatMap((input) => replay(input)),
+          ),
+        ),
+      );
+    }
     let awaitingAck: Deferred.Deferred<void> | undefined;
     let sentInfo: ScreenCapture.ScreenFrame["info"] | undefined;
     const sendFrames = Effect.gen(function* () {
@@ -85,26 +130,39 @@ export const serveViewer = <E>(
       pull.pipe(
         Effect.flatMap((chunks) =>
           Effect.sync(() => {
-            // Anything but an ack is ignored, and a batch acks at most the one frame out.
-            if (awaitingAck === undefined || !chunks.some(isAck)) return;
+            let acked = false;
+            for (const chunk of chunks) {
+              const message = decodeClientMessage(
+                typeof chunk === "string" ? chunk : textDecoder.decode(chunk),
+              );
+              if (Option.isNone(message)) continue;
+              if (message.value.type === "ack") acked = true;
+              else if (replay !== undefined) Queue.offerUnsafe(inputs, message.value);
+            }
+            // A batch acks at most the one frame out.
+            if (awaitingAck === undefined || !acked) return;
             // Clear first: completing the ack can run the sender, which sets the next one.
-            const acked = awaitingAck;
+            const pending = awaitingAck;
             awaitingAck = undefined;
-            Deferred.doneUnsafe(acked, Exit.void);
+            Deferred.doneUnsafe(pending, Exit.void);
           }),
         ),
       ),
     );
     yield* Effect.raceFirst(sendFrames, receive);
-  });
+  }).pipe(Effect.scoped);
 
-const makeHandler = (screen: ScreenCapture.ScreenCapture["Service"], enabled: boolean) =>
+const makeHandler = (
+  screen: ScreenCapture.ScreenCapture["Service"],
+  input: ComputerInput.ComputerInput["Service"],
+  enabled: boolean,
+) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (!enabled || request.headers.upgrade?.toLowerCase() !== "websocket") {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
-    yield* authenticateMediaRequest(AuthTerminalReadScope);
+    const session = yield* authenticateMediaRequest(AuthTerminalReadScope);
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
     const options = viewerOptions(url.value.searchParams);
@@ -128,7 +186,7 @@ const makeHandler = (screen: ScreenCapture.ScreenCapture["Service"], enabled: bo
             }
             return writer.write(data);
           });
-        yield* serveViewer(viewer, send, reader.pull);
+        yield* serveViewer(viewer, send, reader.pull, viewerReplay(session.scopes, input));
         yield* writer.write(new Socket.CloseEvent(1011, "screen capture failed"));
         return HttpServerResponse.empty();
       }),
@@ -138,13 +196,17 @@ const makeHandler = (screen: ScreenCapture.ScreenCapture["Service"], enabled: bo
     );
   });
 
-/** The route without its capture service, so tests can supply fake commands. */
+/** The route without its capture and input services, so tests can supply fake commands. */
 export const routes = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const screen = yield* ScreenCapture.ScreenCapture;
+    const input = yield* ComputerInput.ComputerInput;
     const enabled = yield* isBotsHost;
-    yield* router.add("GET", COMPUTER_STREAM_PATH, makeHandler(screen, enabled));
+    yield* router.add("GET", COMPUTER_STREAM_PATH, makeHandler(screen, input, enabled));
   }),
 );
 
-export const routeLayer = routes.pipe(Layer.provide(ScreenCapture.layer));
+export const routeLayer = routes.pipe(
+  Layer.provide(ComputerInput.layer),
+  Layer.provide(ScreenCapture.layer),
+);

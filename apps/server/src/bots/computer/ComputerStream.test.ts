@@ -2,9 +2,11 @@ import { expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
+  AuthTerminalOperateScope,
   AuthTerminalReadScope,
   COMPUTER_STREAM_PATH,
   type AuthEnvironmentScope,
+  type ComputerStreamInput,
 } from "@t3tools/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -15,11 +17,29 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpRouter } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
-import { routes, serveViewer, viewerOptions } from "./ComputerStream.ts";
+import * as ComputerInput from "./ComputerInput.ts";
+import { routes, serveViewer, viewerOptions, viewerReplay } from "./ComputerStream.ts";
 import * as ScreenCapture from "./ScreenCapture.ts";
 
 const oneMonitor = JSON.stringify([{ x: 0, y: 0, width: 1920, height: 1080, scale: 1 }]);
 const ack = JSON.stringify({ type: "ack" });
+const click: ComputerStreamInput = {
+  type: "pointer",
+  action: "click",
+  x: 0.5,
+  y: 0.5,
+  button: "left",
+};
+
+/** The input service over a runner that records commands instead of sending input. */
+const makeInput = (screen: ScreenCapture.ScreenCapture["Service"]) =>
+  Effect.gen(function* () {
+    const commands = yield* Queue.unbounded<ReadonlyArray<string>>();
+    const input = yield* ComputerInput.make((command, args) =>
+      Queue.offer(commands, [command, ...args]).pipe(Effect.asVoid),
+    ).pipe(Effect.provideService(ScreenCapture.ScreenCapture, screen));
+    return { input, commands };
+  });
 
 /** Fake grim and hyprctl: every grim run waits for the test to release it. */
 const makeCommands = Effect.gen(function* () {
@@ -68,9 +88,13 @@ it.effect("sends info first, then one frame per ack, skipping stale frames", () 
     const screen = yield* ScreenCapture.make(fake.commands);
     const socket = yield* makeSocket;
     const viewer = yield* screen.attach({ maxWidth: 1920, quality: 70 });
-    yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull));
+    yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull, undefined));
 
     yield* fake.capture();
+    expect(JSON.parse(String(yield* Queue.take(socket.sent)))).toEqual({
+      type: "access",
+      canControl: false,
+    });
     expect(JSON.parse(String(yield* Queue.take(socket.sent)))).toEqual({
       type: "info",
       width: 1920,
@@ -113,16 +137,102 @@ it.effect("a capture failure is sent as an error and ends the stream", () =>
     const screen = yield* ScreenCapture.make(fake.commands);
     const socket = yield* makeSocket;
     const viewer = yield* screen.attach({ maxWidth: 1920, quality: 70 });
-    const served = yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull));
+    const served = yield* Effect.forkScoped(
+      serveViewer(viewer, socket.send, socket.pull, undefined),
+    );
 
     yield* fake.capture("fail");
     yield* Fiber.join(served);
     expect(yield* Queue.takeAll(socket.sent)).toEqual([
+      JSON.stringify({ type: "access", canControl: false }),
       JSON.stringify({
         type: "error",
         message: "grim is not installed. The Computer view needs grim on a Hyprland desktop.",
       }),
     ]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a controlling viewer's input is replayed while its frame awaits an ack", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeCommands;
+    const screen = yield* ScreenCapture.make(fake.commands);
+    const { input, commands } = yield* makeInput(screen);
+    const socket = yield* makeSocket;
+    const viewer = yield* screen.attach({ maxWidth: 1920, quality: 70 });
+    const replay = viewerReplay([AuthTerminalReadScope, AuthTerminalOperateScope], input);
+    yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull, replay));
+
+    expect(yield* Queue.take(socket.sent)).toBe(
+      JSON.stringify({ type: "access", canControl: true }),
+    );
+    yield* fake.capture();
+    yield* Queue.take(socket.sent);
+    expect(yield* Queue.take(socket.sent)).toEqual(new Uint8Array([1]));
+
+    // Frame 1 is unacknowledged; the click still runs, and garbage is dropped.
+    yield* socket.reply("{", JSON.stringify(click));
+    expect(yield* Queue.take(commands)).toEqual([
+      "hyprctl",
+      "dispatch",
+      "hl.dsp.cursor.move({ x = 960, y = 540 })",
+    ]);
+    expect(yield* Queue.take(commands)).toEqual(["ydotool", "click", "0xC0"]);
+
+    yield* fake.nextTick;
+    yield* fake.capture();
+    yield* socket.reply(ack);
+    expect(yield* Queue.take(socket.sent)).toEqual(new Uint8Array([2]));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a viewer that leaves mid-drag releases the button it held", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeCommands;
+    const screen = yield* ScreenCapture.make(fake.commands);
+    const { input, commands } = yield* makeInput(screen);
+    const socket = yield* makeSocket;
+    const viewer = yield* screen.attach({ maxWidth: 1920, quality: 70 });
+    const replay = viewerReplay([AuthTerminalReadScope, AuthTerminalOperateScope], input);
+    const served = yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull, replay));
+
+    const pointer = (action: "down" | "move", x: number) =>
+      JSON.stringify({ type: "pointer", action, x, y: 0.5, button: "left" });
+    yield* socket.reply(pointer("down", 0.25), pointer("move", 0.75));
+    // move-down, press, move-move
+    for (let i = 0; i < 3; i++) yield* Queue.take(commands);
+    yield* Fiber.interrupt(served);
+
+    expect(yield* Queue.takeAll(commands)).toEqual([
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = 1440, y = 540 })"],
+      ["ydotool", "click", "0x80"],
+    ]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a viewer without terminal:operate cannot control the host", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeCommands;
+    const screen = yield* ScreenCapture.make(fake.commands);
+    const { input, commands } = yield* makeInput(screen);
+    const socket = yield* makeSocket;
+    const viewer = yield* screen.attach({ maxWidth: 1920, quality: 70 });
+    const replay = viewerReplay([AuthTerminalReadScope], input);
+    yield* Effect.forkScoped(serveViewer(viewer, socket.send, socket.pull, replay));
+
+    expect(yield* Queue.take(socket.sent)).toBe(
+      JSON.stringify({ type: "access", canControl: false }),
+    );
+    yield* fake.capture();
+    yield* Queue.take(socket.sent);
+    expect(yield* Queue.take(socket.sent)).toEqual(new Uint8Array([1]));
+
+    // The ack in the same batch still works; the input is gone.
+    yield* socket.reply(JSON.stringify(click), JSON.stringify({ type: "text", text: "hi" }), ack);
+    yield* fake.nextTick;
+    yield* fake.capture();
+    expect(yield* Queue.take(socket.sent)).toEqual(new Uint8Array([2]));
+    expect(yield* Queue.size(commands)).toBe(0);
   }).pipe(Effect.scoped),
 );
 
@@ -169,6 +279,9 @@ it.effect.each([
       Effect.sync(() =>
         HttpRouter.toWebHandler(
           routes.pipe(
+            Layer.provide(
+              Layer.mock(ComputerInput.ComputerInput, { replay: () => Effect.die("no input") }),
+            ),
             Layer.provide(
               Layer.effect(ScreenCapture.ScreenCapture, ScreenCapture.make(fake.commands)),
             ),

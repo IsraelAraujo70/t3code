@@ -7,6 +7,7 @@ import {
   COMPUTER_STREAM_PATH,
   type ComputerStreamAck,
   type ComputerStreamInfo,
+  type ComputerStreamInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -47,6 +48,8 @@ function readComputerStreamUrl(environmentId: EnvironmentId): Promise<string | n
 }
 
 export interface ComputerStreamEvents {
+  /** First message of every connection: whether this viewer may send input. */
+  readonly onAccess: (canControl: boolean) => void;
   readonly onInfo: (info: ComputerStreamInfo) => void;
   /** The server's reason; a close follows, after which the client retries. */
   readonly onError: (message: string) => void;
@@ -58,6 +61,12 @@ export interface ComputerStreamEvents {
 
 const ACK_MESSAGE = JSON.stringify({ type: "ack" } satisfies ComputerStreamAck);
 
+export interface ComputerStreamClient {
+  /** Replays input on the host; dropped while the socket is not open. */
+  readonly send: (input: ComputerStreamInput) => void;
+  readonly stop: () => void;
+}
+
 /**
  * Watches the bots host's screen until `stop`. Unexpected closes reconnect with a capped
  * backoff; the count resets once a connection delivers its `info`.
@@ -65,7 +74,7 @@ const ACK_MESSAGE = JSON.stringify({ type: "ack" } satisfies ComputerStreamAck);
 export function createComputerStreamClient(
   environmentId: EnvironmentId,
   events: ComputerStreamEvents,
-): { readonly stop: () => void } {
+): ComputerStreamClient {
   let stopped = false;
   let socket: WebSocket | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -97,7 +106,9 @@ export function createComputerStreamClient(
       }
       if (typeof event.data !== "string") return;
       const message = parseComputerStreamMessage(event.data);
-      if (message?.type === "info") {
+      if (message?.type === "access") {
+        events.onAccess(message.canControl);
+      } else if (message?.type === "info") {
         failures = 0;
         events.onInfo(message);
       } else if (message?.type === "error") {
@@ -117,6 +128,11 @@ export function createComputerStreamClient(
   void connect();
 
   return {
+    send: (input) => {
+      if (socket !== null && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(input));
+      }
+    },
     stop: () => {
       stopped = true;
       if (retryTimer !== null) clearTimeout(retryTimer);

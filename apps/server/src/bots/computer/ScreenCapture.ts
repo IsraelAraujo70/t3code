@@ -66,11 +66,16 @@ export class ScreenCapture extends Context.Service<
     readonly attach: (
       options: ScreenViewerOptions,
     ) => Effect.Effect<ScreenViewer, never, Scope.Scope>;
+    /** The captured bounding box, from the same short-lived cache the capture loop reads. */
+    readonly geometry: Effect.Effect<ScreenGeometry, ScreenCaptureError>;
   }
 >()("t3/bots/computer/ScreenCapture") {}
 
 /** Bounding box of every enabled output, in compositor (logical) pixels. */
 export interface ScreenGeometry {
+  /** Top-left corner of the box in the compositor's global layout. */
+  readonly left: number;
+  readonly top: number;
   readonly width: number;
   readonly height: number;
   /** Largest output scale: capturing beyond it only upscales. */
@@ -123,6 +128,8 @@ export const parseGeometry = (json: string) =>
         );
       }
       return Effect.succeed<ScreenGeometry>({
+        left,
+        top,
         width: Math.round(right - left),
         height: Math.round(bottom - top),
         maxScale,
@@ -141,6 +148,8 @@ const DESKTOP_VARIABLES = [
   "XDG_RUNTIME_DIR",
   "WAYLAND_DISPLAY",
   "HYPRLAND_INSTANCE_SIGNATURE",
+  // ydotool finds its daemon here when it is not at $XDG_RUNTIME_DIR/.ydotool_socket.
+  "YDOTOOL_SOCKET",
 ] as const;
 
 const newestEntry = (root: string, matches: (name: string) => boolean, directories: boolean) => {
@@ -177,7 +186,13 @@ export const desktopEnv = (source: NodeJS.ProcessEnv = process.env) => {
   return env;
 };
 
-const run = (command: string, args: ReadonlyArray<string>, env: Record<string, string>) =>
+/** Runs a desktop command and returns its stdout; also used to replay input. */
+export const runDesktopCommand = (
+  command: string,
+  args: ReadonlyArray<string>,
+  env: Record<string, string>,
+  timeout = COMMAND_TIMEOUT_MS,
+) =>
   Effect.tryPromise({
     try: (signal) =>
       new Promise<Buffer>((resolve, reject) => {
@@ -189,7 +204,7 @@ const run = (command: string, args: ReadonlyArray<string>, env: Record<string, s
             signal,
             encoding: "buffer",
             maxBuffer: MAX_JPEG_BYTES,
-            timeout: COMMAND_TIMEOUT_MS,
+            timeout,
           },
           (error, stdout, stderr) => {
             if (error === null) return resolve(stdout);
@@ -210,9 +225,9 @@ export const desktopCommands = (): ScreenCommands => {
   return {
     monitors: Effect.suspend(() => {
       env = desktopEnv();
-      return run("hyprctl", ["monitors", "-j"], env);
+      return runDesktopCommand("hyprctl", ["monitors", "-j"], env);
     }).pipe(Effect.map((stdout) => stdout.toString())),
-    grim: (args) => Effect.suspend(() => run("grim", args, env)),
+    grim: (args) => Effect.suspend(() => runDesktopCommand("grim", args, env)),
   };
 };
 
@@ -319,6 +334,7 @@ export const make = (commands: ScreenCommands) =>
           ),
           detach,
         ).pipe(Effect.map((viewer) => ({ next: Queue.take(viewer.frames) }))),
+      geometry,
     });
   });
 
