@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ScopedThreadRef,
+  type SidebarBotsLayout,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -185,6 +186,12 @@ const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
 const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string> = {
   turn: "Text appears once the agent finishes its turn.",
   paragraph: "Each paragraph or code block appears as soon as it is complete.",
+};
+
+const SIDEBAR_BOTS_LAYOUT_LABELS: Record<SidebarBotsLayout, string> = {
+  sections: "Sections",
+  tabs: "Tabs",
+  mixed: "Mixed",
 };
 
 const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -578,6 +585,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
         : []),
+      ...(settings.sidebarBotsLayout !== DEFAULT_UNIFIED_SETTINGS.sidebarBotsLayout
+        ? ["Bots in sidebar"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -720,6 +730,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
+      settings.sidebarBotsLayout,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -820,6 +831,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarBotsLayout: DEFAULT_UNIFIED_SETTINGS.sidebarBotsLayout,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2413,6 +2425,41 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Working section (beta)"
             />
+          }
+        />
+
+        {/* Fork (friend): where bots sit in the sidebar. */}
+        <SettingsRow
+          {...searchableSetting("sidebar-bots-layout")}
+          description="Sections keep bots in their own block above threads. Tabs switch between the two lists. Mixed puts bot conversations in the thread list."
+          resetAction={
+            settings.sidebarBotsLayout !== DEFAULT_UNIFIED_SETTINGS.sidebarBotsLayout ? (
+              <SettingResetButton
+                label="bots in sidebar"
+                onClick={() =>
+                  updateSettings({ sidebarBotsLayout: DEFAULT_UNIFIED_SETTINGS.sidebarBotsLayout })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarBotsLayout}
+              onValueChange={(value) => {
+                if (value === "sections" || value === "tabs" || value === "mixed") {
+                  updateSettings({ sidebarBotsLayout: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-auto min-w-0" aria-label="Bots in sidebar">
+                <SelectValue>{SIDEBAR_BOTS_LAYOUT_LABELS[settings.sidebarBotsLayout]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="sections">{SIDEBAR_BOTS_LAYOUT_LABELS.sections}</SelectItem>
+                <SelectItem value="tabs">{SIDEBAR_BOTS_LAYOUT_LABELS.tabs}</SelectItem>
+                <SelectItem value="mixed">{SIDEBAR_BOTS_LAYOUT_LABELS.mixed}</SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

@@ -151,6 +151,13 @@ import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import {
+  BotsSidebarSection,
+  isBotThreadId,
+  SidebarBotsTabs,
+  SidebarThreadsHeading,
+  useSidebarBotsTab,
+} from "../friend/BotsSidebarSection";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -2429,7 +2436,16 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 
 export default function Sidebar() {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  // Fork (friend): bot conversations live in the Bots block unless the layout mixes them in.
+  const botsLayout = useClientSettings((s) => s.sidebarBotsLayout);
+  const threads = useMemo(
+    () =>
+      botsLayout === "mixed"
+        ? allThreads
+        : allThreads.filter((thread) => !isBotThreadId(thread.id)),
+    [allThreads, botsLayout],
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2931,6 +2947,12 @@ export default function Sidebar() {
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  // Fork (friend): Bots block placement. Search always shows the full thread results.
+  const [botsTab, setBotsTab] = useSidebarBotsTab();
+  const showBotsBlock =
+    !isSearchingThreads &&
+    (botsLayout === "sections" || (botsLayout === "tabs" && botsTab === "bots"));
+  const hideThreadList = !isSearchingThreads && botsLayout === "tabs" && botsTab === "bots";
   const searchableThreads = useMemo(
     () => [
       ...pinnedThreads,
@@ -5143,10 +5165,23 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {botsLayout === "tabs" ? (
+              <SidebarBotsTabs
+                value={botsTab}
+                onChange={setBotsTab}
+                threadsNeedingYou={activeThreads.length}
+              />
+            ) : null}
           </SidebarGroup>
         }
       >
-        <SidebarGroup className="flex-1" role="presentation">
+        {showBotsBlock ? (
+          <SidebarGroup className="shrink-0">
+            <BotsSidebarSection collapsible={botsLayout === "sections"} />
+            {botsLayout === "sections" ? <SidebarThreadsHeading /> : null}
+          </SidebarGroup>
+        ) : null}
+        <SidebarGroup className={cn("flex-1", hideThreadList && "hidden")} role="presentation">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
