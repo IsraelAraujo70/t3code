@@ -1,103 +1,35 @@
+import { parseBotThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { Schema } from "effect";
 import { PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { CollapsibleSectionHeader } from "../components/ui/collapsible-section-header";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useNowMinute } from "../hooks/useNowMinute";
+import { useBotDirectory } from "../state/bots";
+import { usePrimaryEnvironmentId } from "../state/environments";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import { cn } from "~/lib/utils";
+import {
+  countBotsNeedingYou,
+  resolveBotRows,
+  type BotRowModel,
+  type BotStatus,
+  type BotThreadShell,
+} from "./BotsSidebarSection.logic";
 
-type BotStatus =
-  | { readonly kind: "needs-you"; readonly detail: string }
-  | { readonly kind: "working"; readonly detail: string }
-  | { readonly kind: "idle" };
-
-interface PrototypeBot {
-  readonly id: string;
-  readonly emoji: string;
-  readonly name: string;
-  readonly model: string;
-  readonly status: BotStatus;
-  readonly lastActivityLabel: string;
-}
-
-/**
- * Prototype roster: names, emojis and models come from the user's friend database;
- * statuses are fixed. Replaced by the server bot directory in plan phase 1.
- */
-const PROTOTYPE_BOTS: readonly PrototypeBot[] = [
-  {
-    id: "moneria-pm",
-    emoji: "🏦",
-    name: "Moneria PM",
-    model: "Claude Opus 5.5",
-    status: { kind: "idle" },
-    lastActivityLabel: "4h",
-  },
-  {
-    id: "space-limp-po",
-    emoji: "🧽",
-    name: "Space Limp PO",
-    model: "Claude Opus 5.5",
-    status: { kind: "needs-you", detail: "Terminou · 3 PRs para revisar" },
-    lastActivityLabel: "1h",
-  },
-  {
-    id: "secretario",
-    emoji: "🗂️",
-    name: "Secretário",
-    model: "Claude Sonnet 5.5",
-    status: { kind: "idle" },
-    lastActivityLabel: "11h",
-  },
-  {
-    id: "financeiro",
-    emoji: "💸",
-    name: "Financeiro",
-    model: "GPT-6.1-Sol",
-    status: { kind: "idle" },
-    lastActivityLabel: "5d",
-  },
-  {
-    id: "linkedin",
-    emoji: "💼",
-    name: "LinkedIn",
-    model: "Claude Opus 5.5",
-    status: { kind: "idle" },
-    lastActivityLabel: "10h",
-  },
-  {
-    id: "insiderxl-pm",
-    emoji: "📈",
-    name: "InsiderXL PM",
-    model: "Claude Opus 5.5",
-    status: { kind: "needs-you", detail: "✋ Qual sprint eu fecho?" },
-    lastActivityLabel: "agora",
-  },
-  {
-    id: "father-bot",
-    emoji: "🛠️",
-    name: "FATHER BOT",
-    model: "Claude Opus 5.5",
-    status: { kind: "working", detail: "Rodando 2 tarefas" },
-    lastActivityLabel: "",
-  },
-];
-
-const BOT_THREAD_ID_PREFIX = "bot:";
 const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
 const BOTS_TAB_KEY = "t3code:bots:sidebar-tab";
+// Registered by the Bots settings page; `href` keeps this link independent of that route's types.
+const BOTS_SETTINGS_HREF = "/settings/bots";
 
 const SidebarBotsTab = Schema.Literals(["bots", "threads"]);
 type SidebarBotsTab = typeof SidebarBotsTab.Type;
 
-/** A bot's main conversation is a thread whose id starts with `bot:`; thread lists skip it. */
+/** A bot's main conversation is a `bot:<botId>:<generation>` thread; thread lists skip it. */
 export function isBotThreadId(threadId: string): boolean {
-  return threadId.startsWith(BOT_THREAD_ID_PREFIX);
-}
-
-/** How many bots are waiting on the user, for tab badges and the section header. */
-export function countBotsNeedingYou(): number {
-  return PROTOTYPE_BOTS.filter((bot) => bot.status.kind === "needs-you").length;
+  return parseBotThreadId(threadId) !== null;
 }
 
 /** The selected sidebar tab in the "tabs" layout, kept per device. */
@@ -105,11 +37,46 @@ export function useSidebarBotsTab() {
   return useLocalStorage<SidebarBotsTab, SidebarBotsTab>(BOTS_TAB_KEY, "bots", SidebarBotsTab);
 }
 
+/**
+ * The primary environment's bots matched to their main thread shells. `rows` is null until the
+ * directory loads. The section and the tabs both call this; they share one directory subscription.
+ */
+function useBotRows(threads: ReadonlyArray<BotThreadShell>): {
+  readonly rows: ReadonlyArray<BotRowModel> | null;
+  readonly error: string | null;
+} {
+  const environmentId = usePrimaryEnvironmentId();
+  const { directory, error } = useBotDirectory(environmentId);
+  const rows = useMemo(
+    () =>
+      environmentId === null || directory === null
+        ? null
+        : resolveBotRows(directory.bots, environmentId, threads),
+    [directory, environmentId, threads],
+  );
+  return { rows, error };
+}
+
+function countRowsNeedingYou(rows: ReadonlyArray<BotRowModel> | null): number {
+  return rows === null ? 0 : countBotsNeedingYou(rows.map((row) => row.status));
+}
+
+function compactTimeLabel(isoDate: string): string {
+  const label = formatRelativeTimeLabel(isoDate);
+  if (label === "just now") return "now";
+  return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}
+
+function useOpenBotsSettings() {
+  const navigate = useNavigate();
+  return () => void navigate({ href: BOTS_SETTINGS_HREF });
+}
+
 function BotStatusMark(props: { status: BotStatus }) {
   if (props.status.kind === "idle") return null;
   return (
     <span
-      aria-label={props.status.kind === "needs-you" ? "Precisa de você" : "Trabalhando"}
+      aria-label={props.status.kind === "needs-you" ? "Needs you" : "Working"}
       className={cn(
         "size-2 shrink-0 rounded-full",
         props.status.kind === "needs-you" ? "bg-warning" : "bg-primary",
@@ -118,20 +85,22 @@ function BotStatusMark(props: { status: BotStatus }) {
   );
 }
 
-function BotRow(props: { bot: PrototypeBot; selected: boolean; onSelect: () => void }) {
-  const { bot } = props;
-  const detail = bot.status.kind === "idle" ? null : bot.status.detail;
+function BotRow(props: { row: BotRowModel; selected: boolean; onOpen: () => void }) {
+  const { bot, status, activityAt } = props.row;
+  const timeLabel =
+    status.kind === "working" || activityAt === null ? "" : compactTimeLabel(activityAt);
   return (
     <li>
       <button
         type="button"
-        onClick={props.onSelect}
+        onClick={props.onOpen}
+        aria-current={props.selected ? "page" : undefined}
         className={cn(
           "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
           props.selected
             ? "bg-sidebar-row-selected text-sidebar-foreground"
             : "hover:bg-sidebar-row-hover",
-          bot.status.kind === "idle" && !props.selected
+          status.kind === "idle" && !props.selected
             ? "text-sidebar-muted-foreground"
             : "text-sidebar-foreground",
         )}
@@ -144,35 +113,49 @@ function BotRow(props: { bot: PrototypeBot; selected: boolean; onSelect: () => v
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{bot.name}</span>
-          {detail !== null ? (
-            <span className="block truncate text-2xs text-sidebar-muted-foreground">{detail}</span>
+          {status.detail !== null ? (
+            <span className="block truncate text-2xs text-sidebar-muted-foreground">
+              {status.detail}
+            </span>
           ) : null}
         </span>
-        <BotStatusMark status={bot.status} />
-        {bot.lastActivityLabel !== "" ? (
-          <span className="shrink-0 text-2xs text-sidebar-muted-foreground">
-            {bot.lastActivityLabel}
-          </span>
+        <BotStatusMark status={status} />
+        {timeLabel !== "" ? (
+          <span className="shrink-0 text-2xs text-sidebar-muted-foreground">{timeLabel}</span>
         ) : null}
       </button>
     </li>
   );
 }
 
+function BotsNotice(props: { children: ReactNode }) {
+  return <p className="px-2 py-1.5 text-xs text-sidebar-muted-foreground">{props.children}</p>;
+}
+
 /**
- * The Bots block of the sidebar: a fixed-order roster of long-lived bots. A bot never moves
- * between shelves; its mark says whether it needs the user or is working. The "tabs" layout
- * hides the collapsible header because the tab already names the list.
+ * The Bots block of the sidebar: the primary environment's bots in their fixed order. A bot
+ * never moves between shelves; its mark says whether it needs the user or is working. Each row
+ * opens the bot's main conversation. The "tabs" layout hides the collapsible header because the
+ * tab already names the list.
  */
-export function BotsSidebarSection(props: { collapsible: boolean }) {
+export function BotsSidebarSection(props: {
+  collapsible: boolean;
+  threads: ReadonlyArray<BotThreadShell>;
+  activeThreadRef: ScopedThreadRef | null;
+  onOpenThread: (threadRef: ScopedThreadRef) => void;
+}) {
   const [storedExpanded, setExpanded] = useLocalStorage(
     BOTS_SECTION_EXPANDED_KEY,
     true,
     Schema.Boolean,
   );
-  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
-  const needsYou = countBotsNeedingYou();
+  const { rows, error } = useBotRows(props.threads);
+  const openBotsSettings = useOpenBotsSettings();
+  // Re-renders the relative times once a minute.
+  useNowMinute();
+  const needsYou = countRowsNeedingYou(rows);
   const expanded = !props.collapsible || storedExpanded;
+  const activeThreadRef = props.activeThreadRef;
   return (
     <section aria-label="Bots" className="flex flex-col gap-px">
       {props.collapsible ? (
@@ -190,8 +173,11 @@ export function BotsSidebarSection(props: { collapsible: boolean }) {
               <span
                 role="button"
                 tabIndex={-1}
-                aria-label="Novo bot"
-                onClick={(event) => event.stopPropagation()}
+                aria-label="New bot"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openBotsSettings();
+                }}
                 className="flex size-4 items-center justify-center rounded hover:bg-sidebar-row-hover"
               >
                 <PlusIcon className="size-3" />
@@ -202,18 +188,35 @@ export function BotsSidebarSection(props: { collapsible: boolean }) {
           Bots
         </CollapsibleSectionHeader>
       ) : null}
-      {expanded ? (
+      {!expanded ? null : rows === null ? (
+        <BotsNotice>{error === null ? "Loading bots…" : `Bots unavailable: ${error}`}</BotsNotice>
+      ) : rows.length === 0 ? (
+        <BotsNotice>
+          No bots yet.{" "}
+          <button
+            type="button"
+            onClick={openBotsSettings}
+            className="cursor-pointer text-sidebar-foreground underline underline-offset-2"
+          >
+            Create one
+          </button>
+        </BotsNotice>
+      ) : (
         <ul className="flex flex-col gap-px">
-          {PROTOTYPE_BOTS.map((bot) => (
+          {rows.map((row) => (
             <BotRow
-              key={bot.id}
-              bot={bot}
-              selected={selectedBotId === bot.id}
-              onSelect={() => setSelectedBotId(bot.id)}
+              key={row.bot.id}
+              row={row}
+              selected={
+                activeThreadRef !== null &&
+                activeThreadRef.environmentId === row.threadRef.environmentId &&
+                activeThreadRef.threadId === row.threadRef.threadId
+              }
+              onOpen={() => props.onOpenThread(row.threadRef)}
             />
           ))}
         </ul>
-      ) : null}
+      )}
     </section>
   );
 }
@@ -232,10 +235,12 @@ export function SidebarThreadsHeading() {
 export function SidebarBotsTabs(props: {
   value: SidebarBotsTab;
   onChange: (tab: SidebarBotsTab) => void;
+  threads: ReadonlyArray<BotThreadShell>;
   threadsNeedingYou: number;
 }) {
+  const { rows } = useBotRows(props.threads);
   const tabs = [
-    { id: "bots", label: "Bots", badge: countBotsNeedingYou() },
+    { id: "bots", label: "Bots", badge: countRowsNeedingYou(rows) },
     { id: "threads", label: "Threads", badge: props.threadsNeedingYou },
   ] as const;
   return (
