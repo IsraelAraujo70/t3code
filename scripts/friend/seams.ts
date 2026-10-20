@@ -19,6 +19,7 @@ export const SEAMS: readonly Seam[] = [
     why: "sidebarBotsLayout client setting",
   },
   { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots contracts" },
+  { file: "packages/contracts/src/environment.ts", markers: 1, why: "bots host capability" },
   { file: "packages/contracts/src/rpc.ts", markers: 2, why: "bots RPCs in WsRpcGroup" },
   {
     file: "packages/contracts/src/clientRpcPermissions.ts",
@@ -47,6 +48,11 @@ export const SEAMS: readonly Seam[] = [
     why: "bots RPC trace labels",
   },
   { file: "apps/server/src/ws.ts", markers: 3, why: "bots RPC handlers" },
+  {
+    file: "apps/server/src/environment/ServerEnvironment.ts",
+    markers: 3,
+    why: "advertise bots only on the bots host",
+  },
   { file: "apps/server/src/server.ts", markers: 3, why: "bots layers around the runtime" },
   {
     file: "apps/web/src/components/Sidebar.tsx",

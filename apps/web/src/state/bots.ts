@@ -2,10 +2,23 @@ import { createBotsEnvironmentAtoms } from "@t3tools/client-runtime/state/bots";
 import type { BotDirectory, EnvironmentId } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { useServerConfigs } from "./entities";
 import { useEnvironmentQuery } from "./query";
 
 /** Bots (friend fork) commands and the live directory, bound to the web connection runtime. */
 export const botsEnvironment = createBotsEnvironmentAtoms(connectionAtomRuntime);
+
+/**
+ * The connected environment that hosts bots (it advertises the `bots` capability), or null.
+ * Bots live on one machine, so a client connected to several environments reads them from that
+ * one, never from whichever environment happens to be primary.
+ */
+export function useBotsEnvironmentId(): EnvironmentId | null {
+  for (const [environmentId, config] of useServerConfigs()) {
+    if (config.environment.capabilities.bots === true) return environmentId;
+  }
+  return null;
+}
 
 /**
  * The live bot directory of one environment. `directory` is null until the first snapshot
