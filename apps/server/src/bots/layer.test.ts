@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
@@ -16,10 +15,6 @@ import * as BotsLayer from "./layer.ts";
 
 const withEnv = (env: Record<string, string>) =>
   ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
-
-const offServer = Layer.merge(BotsLayer.layerCore, BotsLayer.layerService).pipe(
-  Layer.provide(withEnv({})),
-);
 
 describe("bots host gate", () => {
   it.effect("only T3CODE_BOTS_HOST=1 makes a server the bots host", () =>
@@ -52,6 +47,6 @@ describe("bots host gate", () => {
       assert.isTrue(Option.isNone(yield* service.botForThread(botThread)));
       assert.isUndefined(yield* instructions.forThread(botThread));
       assert.isUndefined(yield* instructions.forThread(ThreadId.make("ordinary-thread")));
-    }).pipe(Effect.provide(offServer)),
+    }).pipe(Effect.provide(BotsLayer.layerOff)),
   );
 });

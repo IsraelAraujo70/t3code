@@ -60,6 +60,9 @@ const layerServiceOff = Layer.succeed(
   }),
 );
 
+/** Everything a server that is not the bots host provides instead of bots. */
+export const layerOff = Layer.mergeAll(layerStoreOff, layerInstructionsOff, layerServiceOff);
+
 /** BotsStore and BotsInstructions, for the orchestration runtime (RunExecutionService). */
 export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
