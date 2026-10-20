@@ -11,6 +11,7 @@ import {
   AuthTerminalReadScope,
   COMPUTER_STREAM_PATH,
   ComputerStreamClientMessage,
+  type ComputerPointerButton,
   type ComputerStreamInput,
   ComputerStreamServerMessage,
 } from "@t3tools/contracts";
@@ -80,7 +81,31 @@ export const serveViewer = <E>(
     yield* send(encodeServerMessage({ type: "access", canControl: replay !== undefined }));
     const inputs = yield* Queue.dropping<ComputerStreamInput>(MAX_PENDING_INPUTS);
     if (replay !== undefined) {
-      yield* Effect.forkScoped(Effect.forever(Queue.take(inputs).pipe(Effect.flatMap(replay))));
+      // Buttons this viewer pressed and has not released, with where the pointer last was.
+      const held = new Map<ComputerPointerButton, { readonly x: number; readonly y: number }>();
+      const track = (input: ComputerStreamInput) => {
+        if (input.type !== "pointer") return;
+        if (input.action === "down") held.set(input.button, input);
+        else if (input.action === "up" || input.action === "click") held.delete(input.button);
+        else for (const button of held.keys()) held.set(button, input);
+      };
+      // Registered before the replay fiber, so it runs after that fiber stops: a viewer that
+      // leaves mid-drag must not leave a button pressed on the host.
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(
+          [...held],
+          ([button, { x, y }]) => replay({ type: "pointer", action: "up", x, y, button }),
+          { discard: true },
+        ),
+      );
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Queue.take(inputs).pipe(
+            Effect.tap((input) => Effect.sync(() => track(input))),
+            Effect.flatMap((input) => replay(input)),
+          ),
+        ),
+      );
     }
     let awaitingAck: Deferred.Deferred<void> | undefined;
     let sentInfo: ScreenCapture.ScreenFrame["info"] | undefined;
