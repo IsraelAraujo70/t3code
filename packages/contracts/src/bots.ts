@@ -294,6 +294,11 @@ export const BOTS_RPC_AGGREGATES = Object.fromEntries(
  * viewer gets fewer frames instead of a growing backlog. Capture runs only while a viewer is
  * attached. A JSON `ComputerStreamError` precedes a close when capture cannot run.
  *
+ * Taking control: the first text message is `ComputerStreamAccess`. When `canControl` is true
+ * (the session also holds `terminal:operate`), the client may send `ComputerStreamInput`
+ * messages, which the host replays as real pointer and keyboard input. Input from a viewer
+ * without control is dropped.
+ *
  * Query parameters: `maxWidth` (default 1600) and `quality` (1–100, default 70).
  */
 export const COMPUTER_STREAM_PATH = "/api/computer-stream/ws";
@@ -315,8 +320,80 @@ export const ComputerStreamError = Schema.Struct({
 });
 export type ComputerStreamError = typeof ComputerStreamError.Type;
 
-export const ComputerStreamServerMessage = Schema.Union([ComputerStreamInfo, ComputerStreamError]);
+export const ComputerStreamAccess = Schema.Struct({
+  type: Schema.Literal("access"),
+  canControl: Schema.Boolean,
+});
+export type ComputerStreamAccess = typeof ComputerStreamAccess.Type;
+
+export const ComputerStreamServerMessage = Schema.Union([
+  ComputerStreamInfo,
+  ComputerStreamError,
+  ComputerStreamAccess,
+]);
 export type ComputerStreamServerMessage = typeof ComputerStreamServerMessage.Type;
 
 export const ComputerStreamAck = Schema.Struct({ type: Schema.Literal("ack") });
 export type ComputerStreamAck = typeof ComputerStreamAck.Type;
+
+/** A position as a fraction of the frame (0 = left/top, 1 = right/bottom). */
+const ComputerFraction = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
+export const ComputerPointerButton = Schema.Literals(["left", "right", "middle"]);
+export type ComputerPointerButton = typeof ComputerPointerButton.Type;
+
+/**
+ * `move` only moves the cursor. `down`/`up` press and release (drags send move between them);
+ * `click` is a full press and release at the position.
+ */
+export const ComputerPointerInput = Schema.Struct({
+  type: Schema.Literal("pointer"),
+  action: Schema.Literals(["move", "down", "up", "click"]),
+  x: ComputerFraction,
+  y: ComputerFraction,
+  button: ComputerPointerButton,
+});
+export type ComputerPointerInput = typeof ComputerPointerInput.Type;
+
+/** Scroll at a position. Deltas are in wheel notches; positive `deltaY` scrolls down. */
+export const ComputerWheelInput = Schema.Struct({
+  type: Schema.Literal("wheel"),
+  x: ComputerFraction,
+  y: ComputerFraction,
+  deltaX: Schema.Int.check(Schema.isBetween({ minimum: -20, maximum: 20 })),
+  deltaY: Schema.Int.check(Schema.isBetween({ minimum: -20, maximum: 20 })),
+});
+export type ComputerWheelInput = typeof ComputerWheelInput.Type;
+
+export const ComputerKeyModifier = Schema.Literals(["ctrl", "alt", "shift", "meta"]);
+export type ComputerKeyModifier = typeof ComputerKeyModifier.Type;
+
+/**
+ * One key press with modifiers held. `key` is a DOM `KeyboardEvent.key` value ("a", "Enter",
+ * "ArrowLeft", "F5"); the host maps it to its own key names and ignores keys it does not know.
+ */
+export const ComputerKeyInput = Schema.Struct({
+  type: Schema.Literal("key"),
+  key: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  modifiers: Schema.Array(ComputerKeyModifier),
+});
+export type ComputerKeyInput = typeof ComputerKeyInput.Type;
+
+/** Literal text typed into the focused window, for phone keyboards and paste. */
+export const ComputerTextInput = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+});
+export type ComputerTextInput = typeof ComputerTextInput.Type;
+
+export const ComputerStreamInput = Schema.Union([
+  ComputerPointerInput,
+  ComputerWheelInput,
+  ComputerKeyInput,
+  ComputerTextInput,
+]);
+export type ComputerStreamInput = typeof ComputerStreamInput.Type;
+
+/** Everything a viewer sends. */
+export const ComputerStreamClientMessage = Schema.Union([ComputerStreamAck, ComputerStreamInput]);
+export type ComputerStreamClientMessage = typeof ComputerStreamClientMessage.Type;
