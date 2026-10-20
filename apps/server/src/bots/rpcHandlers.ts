@@ -32,6 +32,10 @@ export const layer = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.memoryDelete]: (input) => bots.deleteMemory(input),
       [BOTS_WS_METHODS.ownerUpdate]: (input) => bots.updateOwner(input),
       [BOTS_WS_METHODS.import]: (input) => bots.importFriend(input),
+      [BOTS_WS_METHODS.sectionCreate]: (input) => bots.createSection(input),
+      [BOTS_WS_METHODS.sectionRename]: (input) => bots.renameSection(input),
+      [BOTS_WS_METHODS.sectionDelete]: (input) => bots.deleteSection(input),
+      [BOTS_WS_METHODS.arrange]: (input) => bots.arrange(input),
     });
   }),
 );

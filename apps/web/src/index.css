@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Fork (friend): bot face animations. */
+@import "./bots/botAvatar.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));

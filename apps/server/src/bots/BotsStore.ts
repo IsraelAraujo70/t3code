@@ -1,5 +1,5 @@
 /**
- * Rows of `bots.sqlite`: bots, their memories, and the owner profile. The store keeps rows only;
+ * Rows of `bots.sqlite`: bots, their sidebar sections, their memories, and the owner profile. The store keeps rows only;
  * BotsService owns every rule about them (thread generations, limits, who may write what).
  *
  * The database is a separate file next to the upstream `statev2.sqlite`, with its own migration
@@ -15,10 +15,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 import {
   Bot,
   BotMemory,
+  BotSection,
   BotsError,
   ModelSelection,
   type BotId,
   type BotMemoryId,
+  type BotsArrangeInput,
+  type BotSectionId,
 } from "@t3tools/contracts";
 
 import * as BotsDb from "./BotsDb.ts";
@@ -43,6 +46,19 @@ export class BotsStore extends Context.Service<
     readonly updateBot: (bot: Bot) => Effect.Effect<void, BotsError>;
     /** Deletes the bot and, by cascade, its memories. Deleting a missing bot succeeds. */
     readonly deleteBot: (id: BotId) => Effect.Effect<void, BotsError>;
+    /** Sections in sidebar order (position, then createdAt). */
+    readonly listSections: Effect.Effect<ReadonlyArray<BotSection>, BotsError>;
+    readonly getSection: (id: BotSectionId) => Effect.Effect<Option.Option<BotSection>, BotsError>;
+    readonly insertSection: (section: BotSection) => Effect.Effect<void, BotsError>;
+    /** Replaces every column of an existing section; fails when it does not exist. */
+    readonly updateSection: (section: BotSection) => Effect.Effect<void, BotsError>;
+    /** Deletes the section; its bots fall back to no section. Deleting a missing one succeeds. */
+    readonly deleteSection: (id: BotSectionId) => Effect.Effect<void, BotsError>;
+    /**
+     * In one transaction, numbers sections and bots by their index in `arrangement` and moves
+     * each bot into its section. The caller checks that the ids match the stored rows.
+     */
+    readonly arrange: (arrangement: BotsArrangeInput) => Effect.Effect<void, BotsError>;
     /** All memories, or one bot's, oldest first. */
     readonly listMemories: (botId?: BotId) => Effect.Effect<ReadonlyArray<BotMemory>, BotsError>;
     readonly getMemory: (id: BotMemoryId) => Effect.Effect<Option.Option<BotMemory>, BotsError>;
@@ -59,10 +75,12 @@ export class BotsStore extends Context.Service<
 
 const BotRow = Schema.Struct({ ...Bot.fields, model: Schema.fromJsonString(ModelSelection) });
 const MemoryRow = Schema.Struct({ ...BotMemory.fields, enabled: Schema.BooleanFromBit });
+const SectionRow = BotSection;
 const AboutMeRow = Schema.Struct({ aboutMe: Schema.String });
 
 const decodeBots = Schema.decodeUnknownEffect(Schema.Array(BotRow));
 const decodeMemories = Schema.decodeUnknownEffect(Schema.Array(MemoryRow));
+const decodeSections = Schema.decodeUnknownEffect(Schema.Array(SectionRow));
 const decodeAboutMe = Schema.decodeUnknownEffect(Schema.Array(AboutMeRow));
 const encodeBot = Schema.encodeEffect(BotRow);
 const encodeMemory = Schema.encodeEffect(MemoryRow);
@@ -76,14 +94,18 @@ const make = Effect.gen(function* () {
     SELECT
       id,
       name,
-      emoji,
       role,
       model_json AS "model",
       home_generation AS "homeGeneration",
+      section_id AS "sectionId",
       position,
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM bots
+  `;
+  const selectSections = sql`
+    SELECT id, name, position, created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM sections
   `;
   const selectMemories = sql`
     SELECT
@@ -99,10 +121,10 @@ const make = Effect.gen(function* () {
 
   const insertBotRow = (row: typeof BotRow.Encoded, onConflict: "fail" | "skip") => sql`
     INSERT INTO bots (
-      id, name, emoji, role, model_json, home_generation, position, created_at, updated_at
+      id, name, role, model_json, home_generation, section_id, position, created_at, updated_at
     )
     VALUES (
-      ${row.id}, ${row.name}, ${row.emoji}, ${row.role}, ${row.model}, ${row.homeGeneration},
+      ${row.id}, ${row.name}, ${row.role}, ${row.model}, ${row.homeGeneration}, ${row.sectionId},
       ${row.position}, ${row.createdAt}, ${row.updatedAt}
     )
     ${onConflict === "skip" ? sql`ON CONFLICT DO NOTHING` : sql``}
@@ -149,10 +171,10 @@ const make = Effect.gen(function* () {
             UPDATE bots
             SET
               name = ${row.name},
-              emoji = ${row.emoji},
               role = ${row.role},
               model_json = ${row.model},
               home_generation = ${row.homeGeneration},
+              section_id = ${row.sectionId},
               position = ${row.position},
               created_at = ${row.createdAt},
               updated_at = ${row.updatedAt}
@@ -172,6 +194,67 @@ const make = Effect.gen(function* () {
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete bot ${id}`)),
       ),
+    listSections: sql`${selectSections} ORDER BY position, created_at, id`.pipe(
+      Effect.flatMap(decodeSections),
+      Effect.mapError(failWith("Could not read bot sections from bots.sqlite")),
+    ),
+    getSection: (id) =>
+      sql`${selectSections} WHERE id = ${id}`.pipe(
+        Effect.flatMap(decodeSections),
+        Effect.map((rows) => Option.fromNullishOr(rows[0])),
+        Effect.mapError(failWith(`Could not read section ${id} from bots.sqlite`)),
+      ),
+    insertSection: (section) =>
+      sql`
+        INSERT INTO sections (id, name, position, created_at, updated_at)
+        VALUES (
+          ${section.id}, ${section.name}, ${section.position}, ${section.createdAt},
+          ${section.updatedAt}
+        )
+      `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not insert section ${section.id}`))),
+    updateSection: (section) =>
+      sql`
+        UPDATE sections
+        SET
+          name = ${section.name},
+          position = ${section.position},
+          created_at = ${section.createdAt},
+          updated_at = ${section.updatedAt}
+        WHERE id = ${section.id}
+        RETURNING id
+      `.pipe(
+        Effect.mapError(failWith(`Could not update section ${section.id}`)),
+        Effect.flatMap((rows) =>
+          rows.length === 0
+            ? Effect.fail(new BotsError({ message: `Section ${section.id} does not exist` }))
+            : Effect.void,
+        ),
+      ),
+    deleteSection: (id) =>
+      sql`DELETE FROM sections WHERE id = ${id}`.pipe(
+        Effect.asVoid,
+        Effect.mapError(failWith(`Could not delete section ${id}`)),
+      ),
+    arrange: (arrangement) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* Effect.forEach(
+              arrangement.sectionIds,
+              (id, index) => sql`UPDATE sections SET position = ${index} WHERE id = ${id}`,
+              { discard: true },
+            );
+            yield* Effect.forEach(
+              arrangement.bots,
+              (bot, index) => sql`
+                UPDATE bots SET position = ${index}, section_id = ${bot.sectionId}
+                WHERE id = ${bot.botId}
+              `,
+              { discard: true },
+            );
+          }),
+        )
+        .pipe(Effect.mapError(failWith("Could not rearrange the bots; nothing changed"))),
     listMemories,
     getMemory: (id) =>
       sql`${selectMemories} WHERE id = ${id}`.pipe(

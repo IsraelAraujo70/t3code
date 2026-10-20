@@ -9,7 +9,9 @@
  *   main thread, so a crash between the two writes heals on the next start.
  * - Reset raises the generation, archives the previous thread, and launches the next one.
  *   Delete archives the main thread, then removes the row and its memories.
- * - Renaming a bot retitles its main thread to `<emoji> <name>`.
+ * - A bot's main thread is titled with the bot's name; startup and renames retitle it.
+ * - `arrange` names exactly the stored sections and bots, so a stale client fails instead of
+ *   dropping a bot or a section from the sidebar.
  * - `directory` publishes only after a write commits.
  */
 import * as Context from "effect/Context";
@@ -24,6 +26,7 @@ import * as Stream from "effect/Stream";
 import {
   BotId,
   BotMemoryId,
+  BotSectionId,
   BotsError,
   botThreadId,
   CommandId,
@@ -37,6 +40,11 @@ import {
   type BotMemorySource,
   type BotMemoryUpdateInput,
   type BotRef,
+  type BotSection,
+  type BotSectionCreateInput,
+  type BotSectionRef,
+  type BotSectionRenameInput,
+  type BotsArrangeInput,
   type BotsImportInput,
   type BotsImportResult,
   type BotsOwnerUpdateInput,
@@ -75,6 +83,12 @@ export class BotsService extends Context.Service<
     ) => Effect.Effect<BotsOwnerUpdateInput, BotsError>;
     /** Plans an import from friend's database; with `apply`, commits it and launches threads. */
     readonly importFriend: (input: BotsImportInput) => Effect.Effect<BotsImportResult, BotsError>;
+    readonly createSection: (input: BotSectionCreateInput) => Effect.Effect<BotSection, BotsError>;
+    readonly renameSection: (input: BotSectionRenameInput) => Effect.Effect<BotSection, BotsError>;
+    /** Its bots go back to the default list. */
+    readonly deleteSection: (input: BotSectionRef) => Effect.Effect<BotSectionRef, BotsError>;
+    /** Reorders sections and bots and moves bots between sections, all at once. */
+    readonly arrange: (input: BotsArrangeInput) => Effect.Effect<BotsArrangeInput, BotsError>;
     /** The bot a thread belongs to, from its id; none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
   }
@@ -88,7 +102,16 @@ const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 const botsError = (message: string) => (cause: unknown) => new BotsError({ message, cause });
 
-const threadTitle = (bot: Pick<Bot, "emoji" | "name">) => `${bot.emoji} ${bot.name}`;
+const threadTitle = (bot: Pick<Bot, "name">) => bot.name;
+
+const nextPosition = (rows: ReadonlyArray<{ readonly position: number }>) =>
+  rows.reduce((max, row) => Math.max(max, row.position), -1) + 1;
+
+/** The ids of `expected` and `given` are the same set, each listed once. */
+const sameIds = (expected: ReadonlyArray<string>, given: ReadonlyArray<string>) =>
+  expected.length === given.length &&
+  new Set(given).size === given.length &&
+  given.every((id) => expected.includes(id));
 
 const make = Effect.gen(function* () {
   const store = yield* BotsStore;
@@ -165,15 +188,17 @@ const make = Effect.gen(function* () {
       });
     }).pipe(Effect.mapError(botsError(`Could not archive the conversation of bot ${botId}.`)));
 
+  /** A thread already carrying the title is left alone, so retries and restarts are no-ops. */
   const retitleThread = (bot: Bot) =>
     Effect.gen(function* () {
       const threadId = botThreadId(bot.id, bot.homeGeneration);
       const shell = yield* threads.getThreadShell(threadId);
-      if (shell === null || shell.deletedAt !== null) return;
+      if (shell === null || shell.deletedAt !== null || shell.title === threadTitle(bot)) return;
       yield* threads.dispatch({
         type: "thread.metadata.update",
-        // One command per committed rename; renaming back later is a new command.
-        commandId: CommandId.make(`bots:retitle:${bot.id}:${bot.homeGeneration}:${bot.updatedAt}`),
+        commandId: CommandId.make(
+          `bots:retitle:${bot.id}:${bot.homeGeneration}:${yield* randomHex}`,
+        ),
         threadId,
         title: threadTitle(bot),
       });
@@ -182,6 +207,7 @@ const make = Effect.gen(function* () {
     );
 
   const readDirectory: Effect.Effect<BotDirectory, BotsError> = Effect.gen(function* () {
+    const sections = yield* store.listSections;
     const bots = yield* store.listBots;
     const memories = yield* store.listMemories();
     const aboutMe = yield* store.getAboutMe;
@@ -192,6 +218,7 @@ const make = Effect.gen(function* () {
       else list.push(memory);
     }
     return {
+      sections,
       bots: bots.map((bot) => ({
         ...bot,
         homeThreadId: botThreadId(bot.id, bot.homeGeneration),
@@ -230,11 +257,11 @@ const make = Effect.gen(function* () {
       const bot: Bot = {
         id: BotId.make(`b_${yield* randomHex}`),
         name: input.name,
-        emoji: input.emoji,
         role: input.role,
         model: input.model,
         homeGeneration: 1,
-        position: bots.reduce((max, existing) => Math.max(max, existing.position), -1) + 1,
+        sectionId: null,
+        position: nextPosition(bots),
         createdAt: now,
         updatedAt: now,
       };
@@ -250,16 +277,14 @@ const make = Effect.gen(function* () {
       const bot: Bot = {
         ...current,
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.emoji !== undefined ? { emoji: input.emoji } : {}),
         ...(input.role !== undefined ? { role: input.role } : {}),
         // The live thread keeps its model; the next conversation generation starts with this one.
         ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.position !== undefined ? { position: input.position } : {}),
         updatedAt: yield* nowIso,
       };
       yield* store.updateBot(bot);
       yield* publish;
-      if (bot.name !== current.name || bot.emoji !== current.emoji) yield* retitleThread(bot);
+      if (bot.name !== current.name) yield* retitleThread(bot);
       return bot;
     });
 
@@ -352,7 +377,7 @@ const make = Effect.gen(function* () {
       });
       if (!input.apply) return result;
       // Imported bots go after the ones already here, keeping friend's order among themselves.
-      const firstPosition = existing.reduce((max, bot) => Math.max(max, bot.position), -1) + 1;
+      const firstPosition = nextPosition(existing);
       const bots = batch.bots.map((bot, index) => ({ ...bot, position: firstPosition + index }));
       yield* store.importBatch({ ...batch, bots });
       yield* publish;
@@ -374,6 +399,67 @@ const make = Effect.gen(function* () {
       } satisfies BotsImportResult;
     });
 
+  const requireSection = (sectionId: BotSectionId) =>
+    store.getSection(sectionId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(new BotsError({ message: `Section ${sectionId} does not exist.` })),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+
+  const createSection = (input: BotSectionCreateInput) =>
+    Effect.gen(function* () {
+      const sections = yield* store.listSections;
+      const now = yield* nowIso;
+      const section: BotSection = {
+        id: BotSectionId.make(`s_${yield* randomHex}`),
+        name: input.name,
+        position: nextPosition(sections),
+        createdAt: now,
+        updatedAt: now,
+      };
+      yield* store.insertSection(section);
+      yield* publish;
+      return section;
+    });
+
+  const renameSection = (input: BotSectionRenameInput) =>
+    Effect.gen(function* () {
+      const current = yield* requireSection(input.sectionId);
+      const section: BotSection = { ...current, name: input.name, updatedAt: yield* nowIso };
+      yield* store.updateSection(section);
+      yield* publish;
+      return section;
+    });
+
+  const deleteSection = (input: BotSectionRef) =>
+    store.deleteSection(input.sectionId).pipe(Effect.andThen(publish), Effect.as(input));
+
+  const arrange = (input: BotsArrangeInput) =>
+    Effect.gen(function* () {
+      const sections = yield* store.listSections;
+      const bots = yield* store.listBots;
+      const sectionIds = sections.map((section) => section.id);
+      if (
+        !sameIds(sectionIds, input.sectionIds) ||
+        !sameIds(
+          bots.map((bot) => bot.id),
+          input.bots.map((bot) => bot.botId),
+        ) ||
+        input.bots.some((bot) => bot.sectionId !== null && !sectionIds.includes(bot.sectionId))
+      ) {
+        return yield* new BotsError({
+          message: "The bots changed while you were arranging them. Try again.",
+        });
+      }
+      yield* store.arrange(input);
+      yield* publish;
+      return input;
+    });
+
   const botForThread = (threadId: ThreadId) => {
     const parsed = parseBotThreadId(threadId);
     return parsed === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(parsed.botId);
@@ -386,6 +472,7 @@ const make = Effect.gen(function* () {
         bots,
         (bot) =>
           launchMainThread(bot).pipe(
+            Effect.andThen(retitleThread(bot)),
             Effect.catch((error) =>
               Effect.logWarning("Could not reconcile a bot's conversation", {
                 botId: bot.id,
@@ -412,6 +499,10 @@ const make = Effect.gen(function* () {
     memoriesOf: (botId) => store.listMemories(botId),
     updateOwner,
     importFriend,
+    createSection,
+    renameSection,
+    deleteSection,
+    arrange,
     botForThread,
   });
 });

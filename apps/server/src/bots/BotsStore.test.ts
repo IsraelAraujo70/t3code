@@ -14,10 +14,10 @@ import { BotsStore, layerMemory } from "./BotsStore.ts";
 const makeBot = (id: string, overrides: Partial<Bot> = {}): Bot => ({
   id: BotId.make(id),
   name: `Bot ${id}`,
-  emoji: "🤖",
   role: "Helps out.",
   model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
   homeGeneration: 1,
+  sectionId: null,
   position: 0,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",

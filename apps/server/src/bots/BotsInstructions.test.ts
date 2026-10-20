@@ -23,10 +23,10 @@ import { BotsStore, layerMemory as storeLayerMemory } from "./BotsStore.ts";
 const bot: Bot = {
   id: BotId.make(`b_${"a".repeat(32)}`),
   name: "Al",
-  emoji: "🤖",
   role: "Reviews pull requests.",
   model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
   homeGeneration: 1,
+  sectionId: null,
   position: 0,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -57,7 +57,7 @@ describe("buildBotInstructions", () => {
     );
     assert.strictEqual(
       full.sections[0]!.text,
-      "You are 🤖 Al, one of the user's bots in T3 Code. This thread is your ongoing conversation with the user.\n\nReviews pull requests.",
+      "You are Al, one of the user's bots in T3 Code. This thread is your ongoing conversation with the user.\n\nReviews pull requests.",
     );
     assert.strictEqual(full.sections[1]!.text, "I build T3.");
     assert.strictEqual(full.sections[2]!.text, "- [mem_1] Likes tea\n- [mem_2] Uses vim");
@@ -110,7 +110,7 @@ describe("buildBotInstructions", () => {
       botSections.map((section) => section.key),
       ["bot-1", "bot-2", "bot-3", "bot-4"],
     );
-    assert.match(botSections[0]!.text, /^You are 🤖 Al/);
+    assert.match(botSections[0]!.text, /^You are Al/);
     assert.strictEqual(
       botSections
         .slice(1)
@@ -145,14 +145,13 @@ describe("buildBotInstructions", () => {
       ...bot,
       id: BotId.make(`b_${"b".repeat(32)}`),
       name: "Fin",
-      emoji: "💼",
       role: "\nTracks spending and bills.\nNever pays anything.",
       homeGeneration: 3,
     };
     const { sections } = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [peer] });
     const others = sections.find((section) => section.key === "other-bots");
     assert.isDefined(others);
-    assert.include(others!.text, `- 💼 Fin, thread bot:${peer.id}:3: Tracks spending and bills.\n`);
+    assert.include(others!.text, `- Fin, thread bot:${peer.id}:3: Tracks spending and bills.\n`);
     assert.notInclude(others!.text, "Never pays anything.");
   });
 });

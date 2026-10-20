@@ -9,6 +9,7 @@ import { SettingsRow, SettingsSection } from "../components/settings/settingsLay
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { BotAvatar } from "./BotAvatar";
 import { commandFailureMessage } from "./botsSettingsShared";
 
 const ABOUT_ME_PLAN: Record<BotsImportResult["aboutMe"], string> = {
@@ -123,7 +124,7 @@ function ImportResultRows({ result }: { readonly result: BotsImportResult }) {
             key={bot.sourceId}
             title={
               <span className="flex items-center gap-2">
-                <span aria-hidden>{bot.emoji}</span>
+                <BotAvatar botId={bot.sourceId} size={20} />
                 {bot.name}
               </span>
             }

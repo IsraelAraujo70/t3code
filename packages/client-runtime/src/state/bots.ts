@@ -37,7 +37,7 @@ export function createBotsEnvironmentAtoms<R, E>(
       concurrency,
     });
   return {
-    /** Bots in sidebar order with their memories, plus the owner profile; refreshed on change. */
+    /** Sections and bots in sidebar order, memories, and the owner profile; refreshed on change. */
     directory: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:bots:directory",
       tag: BOTS_WS_METHODS.directorySubscribe,
@@ -51,5 +51,9 @@ export function createBotsEnvironmentAtoms<R, E>(
     deleteMemory: command("delete-memory", BOTS_WS_METHODS.memoryDelete),
     updateOwner: command("update-owner", BOTS_WS_METHODS.ownerUpdate),
     importFriend: command("import-friend", BOTS_WS_METHODS.import),
+    createSection: command("create-section", BOTS_WS_METHODS.sectionCreate),
+    renameSection: command("rename-section", BOTS_WS_METHODS.sectionRename),
+    deleteSection: command("delete-section", BOTS_WS_METHODS.sectionDelete),
+    arrange: command("arrange", BOTS_WS_METHODS.arrange),
   };
 }

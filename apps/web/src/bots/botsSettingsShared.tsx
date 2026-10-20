@@ -1,3 +1,4 @@
+import { cn } from "~/lib/utils";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -16,15 +17,17 @@ export function BotsField({
   label,
   hint,
   htmlFor,
+  className,
   children,
 }: {
   label: string;
   hint?: string;
   htmlFor?: string;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className={cn("space-y-1.5", className)}>
       <Label className="flex items-baseline justify-between" htmlFor={htmlFor}>
         <span>{label}</span>
         {hint ? (

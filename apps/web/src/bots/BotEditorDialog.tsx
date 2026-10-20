@@ -33,10 +33,10 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
+import { BotAvatar } from "./BotAvatar";
 import { BotsField, commandFailureMessage } from "./botsSettingsShared";
 
 interface BotDraft {
-  readonly emoji: string;
   readonly name: string;
   readonly role: string;
   /** Null until the user picks a model; the bot's own or the default model shows meanwhile. */
@@ -68,7 +68,6 @@ export function BotEditorDialog({
   const createBot = useAtomCommand(botsEnvironment.createBot, { label: "bot create" });
   const updateBot = useAtomCommand(botsEnvironment.updateBot, { label: "bot update" });
   const [draft, setDraft] = useState<BotDraft>(() => ({
-    emoji: bot?.emoji ?? "🤖",
     name: bot?.name ?? "",
     role: bot?.role ?? "",
     model: null,
@@ -95,16 +94,15 @@ export function BotEditorDialog({
   const submit = async () => {
     if (submissionPending.current || saving || !connected || botMissing) return;
     const name = draft.name.trim();
-    const emoji = draft.emoji.trim();
-    if (!name || !emoji || selection === null) {
-      setError("Add an emoji, a name, and a model.");
+    if (!name || selection === null) {
+      setError("Add a name and a model.");
       return;
     }
     // Lock before React renders, and keep a successful save locked until the dialog closes.
     submissionPending.current = true;
     setSaving(true);
     setError(null);
-    const fields = { name, emoji, role: draft.role.trim(), model: selection };
+    const fields = { name, role: draft.role.trim(), model: selection };
     const result = bot
       ? await updateBot({ environmentId, input: { botId: bot.id, ...fields } })
       : await createBot({ environmentId, input: fields });
@@ -141,18 +139,9 @@ export function BotEditorDialog({
                 This bot no longer exists.
               </p>
             ) : null}
-            <div className="grid gap-3 sm:grid-cols-[6rem_1fr]">
-              <BotsField label="Emoji" htmlFor="bot-emoji">
-                <Input
-                  id="bot-emoji"
-                  maxLength={BOT_LIMITS.emoji}
-                  value={draft.emoji}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, emoji: event.target.value }))
-                  }
-                />
-              </BotsField>
-              <BotsField label="Name" htmlFor="bot-name">
+            <div className="flex items-end gap-3">
+              {bot !== null ? <BotAvatar botId={bot.id} size={36} className="mb-0.5" /> : null}
+              <BotsField label="Name" htmlFor="bot-name" className="flex-1">
                 <Input
                   id="bot-name"
                   placeholder="e.g. Research buddy"

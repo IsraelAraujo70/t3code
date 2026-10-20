@@ -97,7 +97,6 @@ it.layer(NodeServices.layer)("readFriendDatabase", (it) => {
           {
             id: BOT_B,
             name: "Bea",
-            emoji: "🐝",
             role: "Writes",
             model: "gpt-6.1-sol",
             effort: null,
@@ -107,7 +106,6 @@ it.layer(NodeServices.layer)("readFriendDatabase", (it) => {
           {
             id: BOT_A,
             name: "Al",
-            emoji: "🤖",
             role: "Codes",
             model: "claude-opus-5-5",
             effort: "high",
@@ -173,7 +171,6 @@ const friendBot = (
 ): FriendSnapshot["bots"][number] => ({
   id,
   name: `Bot ${id.slice(0, 6)}`,
-  emoji: "🤖",
   role: "",
   model,
   effort: null,
@@ -278,7 +275,6 @@ describe("planFriendImport", () => {
       {
         sourceId: BotId.make(BOT_A),
         name: "Bot b_aaaa",
-        emoji: "🤖",
         status: "new",
         model: null,
         memories: 1,
@@ -322,7 +318,7 @@ describe("planFriendImport", () => {
         bots: [
           friendBot("bad id!", "claude-opus-5-5"),
           friendBot(BOT_A, "claude-opus-5-5", { name: "x".repeat(61) }),
-          friendBot("b_emoji", "claude-opus-5-5", { emoji: "🤖".repeat(9) }),
+          friendBot("b_role", "claude-opus-5-5", { role: "r".repeat(20_001) }),
           friendBot(BOT_B, "gpt-6.1-sol", { createdAt: "", updatedAt: "" }),
         ],
         memories: [

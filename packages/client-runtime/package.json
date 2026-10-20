@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./bot-avatar": {
+      "types": "./src/botAvatar.ts",
+      "default": "./src/botAvatar.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

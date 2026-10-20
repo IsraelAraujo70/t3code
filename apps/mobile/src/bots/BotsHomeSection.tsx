@@ -17,6 +17,7 @@ import { THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME } from "../features/threads/threa
 import { cn } from "../lib/cn";
 import { relativeTime } from "../lib/time";
 import { environmentThreadShells } from "../state/threads";
+import { BotAvatar } from "./BotAvatar";
 import { botActivityAt, botStatusFromShell, type BotStatus } from "./bots.logic";
 import { useBotDirectory } from "./state";
 
@@ -101,7 +102,7 @@ function BotRow(props: {
     <BotsSectionRow
       accessibilityLabel={status.detail === null ? bot.name : `${bot.name}, ${status.detail}`}
       accessibilityHint="Opens the bot's conversation"
-      leading={<Text className="text-xl">{bot.emoji}</Text>}
+      leading={<BotAvatar botId={bot.id} size={28} />}
       title={bot.name}
       subtitle={
         tone !== null && status.detail !== null ? (

@@ -32,7 +32,6 @@ export interface FriendSnapshot {
   readonly bots: ReadonlyArray<{
     readonly id: string;
     readonly name: string;
-    readonly emoji: string;
     readonly role: string;
     /** Friend's model id, e.g. `claude-opus-5-5` or `gpt-6.1-sol`. */
     readonly model: string;
@@ -74,7 +73,6 @@ const FriendBotRows = Schema.Array(
   Schema.Struct({
     id: Schema.String,
     name: Schema.String,
-    emoji: Schema.String,
     role: Schema.String,
     model: Schema.String,
     effort: Schema.NullOr(Schema.String),
@@ -108,7 +106,7 @@ export const readFriendDatabase = (path: string): Effect.Effect<FriendSnapshot, 
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         const bots = yield* sql`
-          SELECT id, name, emoji, role, model, effort,
+          SELECT id, name, role, model, effort,
             created_at AS "createdAt", updated_at AS "updatedAt"
           FROM bots
           ORDER BY seq
@@ -194,13 +192,12 @@ export function planFriendImport(input: FriendImportPlanInput): {
   }> = [];
   snapshot.bots.forEach((row, index) => {
     const name = boundedText(row.name, BOT_LIMITS.name);
-    const emoji = boundedText(row.emoji, BOT_LIMITS.emoji);
     if (!isBotId(row.id)) {
       warnings.push(`Skipped a bot with an invalid id (${JSON.stringify(row.id.slice(0, 80))}).`);
       return;
     }
-    if (name === null || emoji === null || row.role.length > BOT_LIMITS.role) {
-      warnings.push(`Skipped bot ${row.id}: its name, emoji, or role is empty or too long.`);
+    if (name === null || row.role.length > BOT_LIMITS.role) {
+      warnings.push(`Skipped bot ${row.id}: its name or role is empty or too long.`);
       return;
     }
     validBotIds.add(row.id);
@@ -217,15 +214,15 @@ export function planFriendImport(input: FriendImportPlanInput): {
         : {
             id: row.id,
             name,
-            emoji,
             role: row.role,
             model,
             homeGeneration: 1,
+            sectionId: null,
             position: index,
             createdAt: row.createdAt || now,
             updatedAt: row.updatedAt || now,
           };
-    bots.push({ bot, plan: { sourceId: row.id, name, emoji, status, model } });
+    bots.push({ bot, plan: { sourceId: row.id, name, status, model } });
   });
 
   const seenTexts = new Set<string>();

@@ -31,10 +31,10 @@ const bob = BotId.make("b_bob");
 const bot = (id: BotId): Bot => ({
   id,
   name: id,
-  emoji: "🤖",
   role: "",
   model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
   homeGeneration: 1,
+  sectionId: null,
   position: 0,
   createdAt: NOW,
   updatedAt: NOW,

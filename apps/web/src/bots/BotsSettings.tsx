@@ -37,6 +37,7 @@ import {
 } from "../components/ui/empty";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
 import { Textarea } from "../components/ui/textarea";
+import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
 import { BotsImportSection } from "./BotsImportSection";
@@ -207,7 +208,7 @@ function BotRow({
     <SettingsRow
       title={
         <span className="flex items-center gap-2">
-          <span aria-hidden>{bot.emoji}</span>
+          <BotAvatar botId={bot.id} size={20} />
           {bot.name}
         </span>
       }

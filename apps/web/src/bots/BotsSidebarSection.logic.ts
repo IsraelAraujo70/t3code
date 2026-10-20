@@ -1,14 +1,27 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import type { BotDirectoryEntry, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  BotDirectoryEntry,
+  BotId,
+  BotsArrangeInput,
+  BotSection,
+  BotSectionId,
+  EnvironmentId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { hasUnseenCompletion, resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 
-export type BotStatus = {
-  readonly kind: "needs-you" | "working" | "idle";
-  readonly detail: string | null;
-};
+/**
+ * Where a bot stands, as in the Threads inbox: it needs the user, it is working, or the user (or
+ * auto-settle) settled its conversation. `attention` marks a needs-you bot with something new for
+ * the user (a request, a failure, an unseen reply); the badges count only those.
+ */
+export type BotStatus =
+  | { readonly kind: "needs-you"; readonly attention: "request" | "unseen" | null }
+  | { readonly kind: "working" }
+  | { readonly kind: "settled" };
 
 /** The parts of a thread shell a bot row reads. */
 export type BotThreadShell = Pick<
@@ -24,49 +37,79 @@ export type BotThreadShell = Pick<
   | "runtime"
   | "lastVisitedAt"
   | "updatedAt"
+  | "settledOverride"
 >;
 
 export interface BotRowModel {
   readonly bot: BotDirectoryEntry;
   readonly threadRef: ScopedThreadRef;
   readonly status: BotStatus;
+  /** What the row says under the name: the request it waits on, or what it is doing. */
+  readonly preview: string | null;
   /** When the bot last did something, for the row's relative time; null before its thread loads. */
   readonly activityAt: string | null;
 }
 
-const IDLE: BotStatus = { kind: "idle", detail: null };
+const QUIET: BotStatus = { kind: "needs-you", attention: null };
 
-/**
- * Collapses the sidebar's thread classifiers into a bot's three states. Requests and failures
- * need the user, then running or background work, then a finished run the user has not opened.
- * A null shell (not loaded yet, or the conversation has not started) is idle.
- */
-export function botStatusFromShell(shell: BotThreadShell | null): BotStatus {
-  if (shell === null) return IDLE;
+/** The request the bot is waiting on, if any. */
+function pendingRequest(shell: BotThreadShell): string | null {
   switch (resolveSidebarThreadStatus(shell)) {
     case "approval":
-      return { kind: "needs-you", detail: "Needs approval" };
+      return "Needs approval";
     case "input":
-      return { kind: "needs-you", detail: "Waiting for your answer" };
+      return "Waiting for your answer";
     case "failed":
-      return { kind: "needs-you", detail: "Failed" };
+      return "Failed";
     case "limited":
-      return { kind: "needs-you", detail: "Usage limit" };
+      return "Usage limit";
+    default:
+      return null;
   }
-  if (isThreadWorking(shell)) return { kind: "working", detail: "Working" };
-  if (hasUnseenCompletion(shell)) return { kind: "needs-you", detail: "Finished" };
-  return IDLE;
 }
 
-/** How many bots are waiting on the user, for the section header and tab badges. */
+/**
+ * Requests and failures need the user before anything else; then running work; then a settled
+ * conversation; everything else waits on the user like an unsettled thread. A null shell (not
+ * loaded yet, or the conversation has not started) needs nothing.
+ */
+export function botStatusFromShell(shell: BotThreadShell | null): BotStatus {
+  if (shell === null) return QUIET;
+  if (pendingRequest(shell) !== null) return { kind: "needs-you", attention: "request" };
+  if (isThreadWorking(shell)) return { kind: "working" };
+  if (shell.settledOverride === "settled") return { kind: "settled" };
+  if (hasUnseenCompletion(shell)) return { kind: "needs-you", attention: "unseen" };
+  return QUIET;
+}
+
+/** How many bots have something new for the user, for the tab badge. */
 export function countBotsNeedingYou(statuses: ReadonlyArray<BotStatus>): number {
-  return statuses.filter((status) => status.kind === "needs-you").length;
+  return statuses.filter((status) => status.kind === "needs-you" && status.attention !== null)
+    .length;
 }
 
 /** The latest run's completion, else the thread's last update. */
 export function botActivityAt(shell: BotThreadShell | null): string | null {
   if (shell === null) return null;
   return shell.latestRun?.completedAt ?? shell.updatedAt;
+}
+
+// Thread shells carry no message bodies (the server keeps them out for speed), so the row
+// describes the bot's state instead of quoting its last message.
+function botPreview(shell: BotThreadShell | null, status: BotStatus): string | null {
+  if (shell === null) return null;
+  switch (status.kind) {
+    case "needs-you":
+      return status.attention === "request"
+        ? pendingRequest(shell)
+        : status.attention === "unseen"
+          ? "New reply"
+          : null;
+    case "working":
+      return "Working…";
+    case "settled":
+      return "Settled";
+  }
 }
 
 /**
@@ -87,11 +130,125 @@ export function resolveBotRows(
   }
   return bots.map((bot) => {
     const shell = shells.get(bot.homeThreadId) ?? null;
+    const status = botStatusFromShell(shell);
     return {
       bot,
       threadRef: scopeThreadRef(environmentId, bot.homeThreadId),
-      status: botStatusFromShell(shell),
+      status,
+      preview: botPreview(shell, status),
       activityAt: botActivityAt(shell),
     };
   });
+}
+
+const STATUS_RANK = { "needs-you": 0, working: 1, settled: 2 } as const;
+
+/** A sidebar group: a user section, or the default list (`section` null). */
+export interface BotGroup {
+  readonly section: BotSection | null;
+  readonly rows: ReadonlyArray<BotRowModel>;
+}
+
+/**
+ * The user's sections in order, then the default list of bots in no section. Inside a group,
+ * bots that need the user come first, then working ones, then settled ones; each keeps the
+ * user's order within its status. The default list is left out when it is empty and sections
+ * exist, so a fully sorted sidebar shows no empty "Bots" header.
+ */
+export function groupBotRows(
+  sections: ReadonlyArray<BotSection>,
+  rows: ReadonlyArray<BotRowModel>,
+): BotGroup[] {
+  const known = new Set<string>(sections.map((section) => section.id));
+  const byStatus = (a: BotRowModel, b: BotRowModel) =>
+    STATUS_RANK[a.status.kind] - STATUS_RANK[b.status.kind];
+  const groups: BotGroup[] = sections.map((section) => ({
+    section,
+    rows: rows.filter((row) => row.bot.sectionId === section.id).toSorted(byStatus),
+  }));
+  const rest = rows
+    .filter((row) => row.bot.sectionId === null || !known.has(row.bot.sectionId))
+    .toSorted(byStatus);
+  if (rest.length > 0 || sections.length === 0) groups.push({ section: null, rows: rest });
+  return groups;
+}
+
+/** The arrangement the directory is in now, the starting point of every move. */
+export function currentArrangement(
+  sections: ReadonlyArray<BotSection>,
+  bots: ReadonlyArray<Pick<BotDirectoryEntry, "id" | "sectionId">>,
+): BotsArrangeInput {
+  return {
+    sectionIds: sections.map((section) => section.id),
+    bots: bots.map((bot) => ({ botId: bot.id, sectionId: bot.sectionId })),
+  };
+}
+
+/**
+ * Moves `botId` into `sectionId` (null: the default list), just before `beforeBotId`, or to the
+ * end of that section when it is null or not in it. Unknown bots change nothing.
+ */
+export function moveBot(
+  arrangement: BotsArrangeInput,
+  botId: BotId,
+  sectionId: BotSectionId | null,
+  beforeBotId: BotId | null,
+): BotsArrangeInput {
+  const moving = arrangement.bots.find((bot) => bot.botId === botId);
+  if (moving === undefined || beforeBotId === botId) return arrangement;
+  const others = arrangement.bots.filter((bot) => bot.botId !== botId);
+  const before = others.findIndex(
+    (bot) => bot.botId === beforeBotId && bot.sectionId === sectionId,
+  );
+  const lastInSection = others.findLastIndex((bot) => bot.sectionId === sectionId);
+  const index = before !== -1 ? before : lastInSection !== -1 ? lastInSection + 1 : others.length;
+  return {
+    ...arrangement,
+    bots: [...others.slice(0, index), { botId, sectionId }, ...others.slice(index)],
+  };
+}
+
+/** Moves section `sectionId` into the place of `ontoId`. Unknown ids change nothing. */
+export function moveSection(
+  arrangement: BotsArrangeInput,
+  sectionId: BotSectionId,
+  ontoId: BotSectionId,
+): BotsArrangeInput {
+  const from = arrangement.sectionIds.indexOf(sectionId);
+  const to = arrangement.sectionIds.indexOf(ontoId);
+  if (from === -1 || to === -1 || from === to) return arrangement;
+  const sectionIds = arrangement.sectionIds.filter((id) => id !== sectionId);
+  sectionIds.splice(to, 0, sectionId);
+  return { ...arrangement, sectionIds };
+}
+
+/**
+ * The directory as `arrangement` orders it, for showing a move before the server confirms it.
+ * Falls back to the directory when they no longer name the same bots and sections.
+ */
+export function applyArrangement<
+  S extends BotSection,
+  B extends Pick<BotDirectoryEntry, "id" | "sectionId">,
+>(
+  sections: ReadonlyArray<S>,
+  bots: ReadonlyArray<B>,
+  arrangement: BotsArrangeInput | null,
+): { readonly sections: ReadonlyArray<S>; readonly bots: ReadonlyArray<B> } {
+  if (
+    arrangement === null ||
+    arrangement.sectionIds.length !== sections.length ||
+    arrangement.bots.length !== bots.length
+  ) {
+    return { sections, bots };
+  }
+  const sectionById = new Map(sections.map((section) => [section.id as string, section]));
+  const botById = new Map(bots.map((bot) => [bot.id as string, bot]));
+  const nextSections = arrangement.sectionIds.flatMap((id) => sectionById.get(id) ?? []);
+  const nextBots = arrangement.bots.flatMap(({ botId, sectionId }) => {
+    const bot = botById.get(botId);
+    return bot === undefined ? [] : [{ ...bot, sectionId }];
+  });
+  return nextSections.length === sections.length && nextBots.length === bots.length
+    ? { sections: nextSections, bots: nextBots }
+    : { sections, bots };
 }
