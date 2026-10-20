@@ -318,6 +318,36 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  // Fork (friend): a bot conversation keeps the title its bot gave it.
+  it.effect("never seeds a title for a bot conversation", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const send = (threadId: ThreadId) =>
+        startThreadTurn({
+          commandId: CommandId.make(`first-message:${threadId}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`message:${threadId}`),
+            role: "user",
+            text: "oi",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          titleSeed: "oi",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      yield* send(v2ThreadId);
+      yield* send(ThreadId.make("bot:b_0123:1"));
+
+      expect(commands).toHaveLength(2);
+      expect(commands[0]).toMatchObject({ threadId: v2ThreadId, titleSeed: "oi" });
+      expect(commands[1]).toMatchObject({ threadId: "bot:b_0123:1" });
+      expect(commands[1]).not.toHaveProperty("titleSeed");
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("preserves an existing worktree and branch during first-message launch", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];

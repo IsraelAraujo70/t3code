@@ -37,6 +37,16 @@ export const SEAMS: readonly Seam[] = [
     why: "bots directory is a subscription",
   },
   {
+    file: "packages/client-runtime/src/operations/commands.ts",
+    markers: 1,
+    why: "bot threads keep their title",
+  },
+  {
+    file: "packages/client-runtime/src/operations/commands.test.ts",
+    markers: 1,
+    why: "bot threads keep their title (test)",
+  },
+  {
     file: "packages/client-runtime/package.json",
     contains: '"./state/bots"',
     why: "export the bots atoms",
