@@ -150,6 +150,16 @@ export const SEAMS: readonly Seam[] = [
     why: "Computer screen route on mobile",
   },
   {
+    file: "apps/mobile/src/features/home/HomeRouteScreen.tsx",
+    markers: 2,
+    why: "bot threads kept out of the mobile home list",
+  },
+  {
+    file: "apps/mobile/src/features/home/HomeScreen.tsx",
+    markers: 4,
+    why: "Bots section above the mobile home list",
+  },
+  {
     file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/settings.bots'",
     why: "generated route for the Bots settings page",
