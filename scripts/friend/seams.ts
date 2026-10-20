@@ -145,6 +145,11 @@ export const SEAMS: readonly Seam[] = [
     why: "Bots settings nav icon",
   },
   {
+    file: "apps/mobile/src/Stack.tsx",
+    markers: 2,
+    why: "Computer screen route on mobile",
+  },
+  {
     file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/settings.bots'",
     why: "generated route for the Bots settings page",
@@ -154,6 +159,7 @@ export const SEAMS: readonly Seam[] = [
 /** Paths the fork owns outright; markers there are allowed and not counted. */
 export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/bots/",
+  "apps/mobile/src/bots/",
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
