@@ -12,7 +12,7 @@ const twoMonitors = JSON.stringify([
 ]);
 
 /** The input service over fake commands: records every command instead of running it. */
-const makeInput = (options: { readonly failing?: "hyprctl" } = {}) =>
+const makeInput = (options: { readonly failing?: (args: ReadonlyArray<string>) => boolean } = {}) =>
   Effect.gen(function* () {
     let monitorReads = 0;
     const screen = yield* ScreenCapture.make({
@@ -26,7 +26,7 @@ const makeInput = (options: { readonly failing?: "hyprctl" } = {}) =>
     const input = yield* ComputerInput.make((command, args) =>
       Effect.suspend(() => {
         commands.push([command, ...args]);
-        return command === options.failing
+        return options.failing?.([command, ...args]) === true
           ? Effect.fail(new ComputerInput.ComputerInputError({ message: `${command} failed` }))
           : Effect.void;
       }),
@@ -58,7 +58,7 @@ it.effect("a left click moves exactly, then presses and releases", () =>
     expect(
       yield* fake.replay({ type: "pointer", action: "click", x: 0.5, y: 0.5, button: "left" }),
     ).toEqual([
-      ["hyprctl", "dispatch", "movecursor", "-320", "340"],
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -320, y = 340 })"],
       ["ydotool", "click", "0xC0"],
     ]);
   }),
@@ -74,10 +74,10 @@ it.effect("a right drag presses, moves, and releases in order", () =>
         { type: "pointer", action: "up", x: 0.25, y: 0.5, button: "right" },
       ),
     ).toEqual([
-      ["hyprctl", "dispatch", "movecursor", "-1920", "-200"],
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -1920, y = -200 })"],
       ["ydotool", "click", "0x41"],
-      ["hyprctl", "dispatch", "movecursor", "-1120", "340"],
-      ["hyprctl", "dispatch", "movecursor", "-1120", "340"],
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -1120, y = 340 })"],
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -1120, y = 340 })"],
       ["ydotool", "click", "0x81"],
     ]);
     // Every event reads the cached geometry, not hyprctl.
@@ -89,7 +89,7 @@ it.effect("scrolls at the pointer, down for a positive deltaY", () =>
   Effect.gen(function* () {
     const fake = yield* makeInput();
     expect(yield* fake.replay({ type: "wheel", x: 0.5, y: 0.5, deltaX: -2, deltaY: 3 })).toEqual([
-      ["hyprctl", "dispatch", "movecursor", "-320", "340"],
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -320, y = 340 })"],
       ["ydotool", "mousemove", "--wheel", "-x", "-2", "-y", "-3"],
     ]);
   }),
@@ -122,15 +122,31 @@ it.effect("types keys with modifiers held and text as one literal argument", () 
 
 it.effect("a failed command is logged and later input still runs", () =>
   Effect.gen(function* () {
-    const fake = yield* makeInput({ failing: "hyprctl" });
+    const fake = yield* makeInput({ failing: ([command]) => command === "hyprctl" });
     expect(
       yield* fake.replay(
         { type: "pointer", action: "click", x: 0, y: 0, button: "left" },
         { type: "text", text: "still here" },
       ),
     ).toEqual([
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -1920, y = -200 })"],
       ["hyprctl", "dispatch", "movecursor", "-1920", "-200"],
       ["wtype", "--", "still here"],
+    ]);
+  }),
+);
+
+it.effect("falls back to the legacy dispatcher once, then keeps using it", () =>
+  Effect.gen(function* () {
+    // A Hyprland without a Lua config rejects Lua dispatchers.
+    const fake = yield* makeInput({ failing: (args) => args[2]?.startsWith("hl.") === true });
+    const move = { type: "pointer", action: "move", x: 0, y: 0, button: "left" } as const;
+    expect(yield* fake.replay(move)).toEqual([
+      ["hyprctl", "dispatch", "hl.dsp.cursor.move({ x = -1920, y = -200 })"],
+      ["hyprctl", "dispatch", "movecursor", "-1920", "-200"],
+    ]);
+    expect(yield* fake.replay(move)).toEqual([
+      ["hyprctl", "dispatch", "movecursor", "-1920", "-200"],
     ]);
   }),
 );

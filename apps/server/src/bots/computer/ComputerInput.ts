@@ -1,6 +1,6 @@
 /**
  * Replays a Computer viewer's pointer, wheel and keyboard input on the bots host. The cursor is
- * placed with `hyprctl dispatch movecursor` (exact, unlike ydotool's accelerated moves), buttons
+ * placed with `hyprctl dispatch` (exact, unlike ydotool's accelerated moves), buttons
  * and the wheel go through `ydotool`, and keys and text through `wtype`.
  */
 import type {
@@ -122,23 +122,37 @@ export const wtypeKeyArgs = (input: ComputerKeyInput): ReadonlyArray<string> | u
   ];
 };
 
+type MoveCursorSyntax = "lua" | "legacy";
+
+/** `hyprctl` arguments that put the cursor on a compositor pixel. */
+export const moveCursorArgs = (
+  syntax: MoveCursorSyntax,
+  point: { readonly x: number; readonly y: number },
+) =>
+  syntax === "lua"
+    ? ["dispatch", `hl.dsp.cursor.move({ x = ${point.x}, y = ${point.y} })`]
+    : ["dispatch", "movecursor", String(point.x), String(point.y)];
+
 /** Builds the input service on the capture service's geometry. */
 export const make = (runCommand: InputCommandRunner) =>
   Effect.gen(function* () {
     const screen = yield* ScreenCapture.ScreenCapture;
     const lock = yield* Semaphore.make(1);
 
+    // Hyprland 0.55+ with a Lua config only takes Lua dispatchers; older ones only the legacy
+    // `movecursor x y`. The first form that works is kept for the life of the server.
+    let dispatchSyntax: MoveCursorSyntax | undefined;
     const moveTo = (x: number, y: number) =>
       screen.geometry.pipe(
         Effect.mapError((error) => new ComputerInputError({ message: error.message })),
         Effect.flatMap((geometry) => {
           const point = screenPoint(geometry, x, y);
-          return runCommand("hyprctl", [
-            "dispatch",
-            "movecursor",
-            String(point.x),
-            String(point.y),
-          ]);
+          const run = (syntax: MoveCursorSyntax) =>
+            runCommand("hyprctl", moveCursorArgs(syntax, point)).pipe(
+              Effect.tap(() => Effect.sync(() => (dispatchSyntax = syntax))),
+            );
+          if (dispatchSyntax !== undefined) return run(dispatchSyntax);
+          return run("lua").pipe(Effect.catch(() => run("legacy")));
         }),
       );
 
