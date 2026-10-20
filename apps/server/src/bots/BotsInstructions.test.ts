@@ -65,6 +65,7 @@ describe("buildBotInstructions", () => {
     assert.include(full.sections[3]!.text, "memory_forget");
     // Code goes to its own T3 thread, and the old friend app's tools are named as gone.
     assert.include(full.sections[4]!.text, "t3_thread_launch");
+    assert.include(full.sections[4]!.text, "watch_thread");
     assert.include(full.sections[4]!.text, "mcp__friend__");
 
     const bare = buildBotInstructions({ bot, memories: [], aboutMe: "  ", peers: [] });

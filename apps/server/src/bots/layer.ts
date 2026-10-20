@@ -14,6 +14,8 @@ import { isBotsHost, NOT_BOTS_HOST_MESSAGE } from "./BotsHost.ts";
 import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
+import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
+import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 
 const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE }));
 
@@ -60,8 +62,24 @@ const layerServiceOff = Layer.succeed(
   }),
 );
 
+// Thread watches live in bots.sqlite, so only the bots host keeps them.
+const layerThreadWatchOff = Layer.succeed(
+  ThreadWatchStore.ThreadWatchStore,
+  ThreadWatchStore.ThreadWatchStore.of({
+    watch: notHost,
+    unwatch: notHost,
+    watchersOf: notHost,
+    list: notHost(),
+  }),
+);
+
 /** Everything a server that is not the bots host provides instead of bots. */
-export const layerOff = Layer.mergeAll(layerStoreOff, layerInstructionsOff, layerServiceOff);
+export const layerOff = Layer.mergeAll(
+  layerStoreOff,
+  layerInstructionsOff,
+  layerServiceOff,
+  layerThreadWatchOff,
+);
 
 /** BotsStore and BotsInstructions, for the orchestration runtime (RunExecutionService). */
 export const layerCore = Layer.unwrap(
@@ -74,7 +92,15 @@ export const layerCore = Layer.unwrap(
   ),
 );
 
-/** BotsService, above the orchestration runtime. */
+/** BotsService and thread watches (store and waking reactor), above the orchestration runtime. */
 export const layerService = Layer.unwrap(
-  isBotsHost.pipe(Effect.map((host) => (host ? BotsService.layer : layerServiceOff))),
+  isBotsHost.pipe(
+    Effect.map((host) =>
+      host
+        ? Layer.mergeAll(BotsService.layer, ThreadWatchReactor.layerStart).pipe(
+            Layer.provideMerge(ThreadWatchStore.layer),
+          )
+        : Layer.merge(layerServiceOff, layerThreadWatchOff),
+    ),
+  ),
 );

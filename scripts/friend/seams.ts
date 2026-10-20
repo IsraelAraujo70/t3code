@@ -103,11 +103,15 @@ export const SEAMS: readonly Seam[] = [
     markers: 2,
     why: "bot instructions tests",
   },
-  { file: "apps/server/src/mcp/McpHttpServer.ts", markers: 2, why: "register bots memory tools" },
+  {
+    file: "apps/server/src/mcp/McpHttpServer.ts",
+    markers: 2,
+    why: "register bots memory and thread watch tools",
+  },
   {
     file: "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
-    markers: 2,
-    why: "stub BotsService for the MCP layer",
+    markers: 3,
+    why: "stub BotsService and ThreadWatchStore for the MCP layer",
   },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
