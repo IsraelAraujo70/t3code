@@ -58,6 +58,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+// Fork (friend): bots read and write their own memories over /mcp.
+import * as BotMemoryHandlers from "../bots/mcp/handlers.ts";
+import { BotMemoryToolkit } from "../bots/mcp/tools.ts";
 
 /** Where an MCP client discovers how to sign in (RFC 9728), at this request's own origin. */
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -878,4 +881,6 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  // Fork (friend): bot memory tools; handlers refuse every caller that is not a bot thread.
+  toolkitRegistration(BotMemoryToolkit, BotMemoryHandlers.layer),
 ).pipe(Layer.provideMerge(layerMcpTransport));
