@@ -24,12 +24,14 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
 import {
+  BOT_LIMITS,
   BotId,
   BotMemoryId,
   BotSectionId,
   BotsError,
   botThreadId,
   CommandId,
+  enabledMemoryCharacters,
   parseBotThreadId,
   type Bot,
   type BotCreateInput,
@@ -70,7 +72,10 @@ export class BotsService extends Context.Service<
     readonly updateBot: (input: BotUpdateInput) => Effect.Effect<Bot, BotsError>;
     readonly deleteBot: (input: BotRef) => Effect.Effect<BotRef, BotsError>;
     readonly resetConversation: (input: BotRef) => Effect.Effect<Bot, BotsError>;
-    /** Duplicate text for the same bot fails with BotsError. */
+    /**
+     * Duplicate text for the same bot fails with BotsError, and so does a bot's own save that
+     * would take its enabled memories past BOT_LIMITS.memoryBudget.
+     */
     readonly createMemory: (
       input: BotMemoryCreateInput,
       source: BotMemorySource,
@@ -312,10 +317,27 @@ const make = Effect.gen(function* () {
       return bot;
     });
 
+  // A full memory makes the bot merge or forget instead of growing every prompt; the bot reads
+  // this message as memory_save's error, so it says how.
+  const assertWithinBudget = (botId: BotId, text: string) =>
+    store.listMemories(botId).pipe(
+      Effect.flatMap((memories) => {
+        const used = enabledMemoryCharacters(memories);
+        return used + text.length <= BOT_LIMITS.memoryBudget
+          ? Effect.void
+          : Effect.fail(
+              new BotsError({
+                message: `Your memory is full: enabled memories use ${used} of ${BOT_LIMITS.memoryBudget} characters, and this one needs ${text.length}. Merge related memories into one shorter memory and forget stale ones with memory_forget, then save again.`,
+              }),
+            );
+      }),
+    );
+
   const createMemory = (input: BotMemoryCreateInput, source: BotMemorySource) =>
     Effect.gen(function* () {
       yield* requireBot(input.botId);
       yield* assertNewMemoryText(input.botId, input.text);
+      if (source === "bot") yield* assertWithinBudget(input.botId, input.text);
       const now = yield* nowIso;
       const memory: BotMemory = {
         id: BotMemoryId.make(`mem_${yield* randomHex}`),
