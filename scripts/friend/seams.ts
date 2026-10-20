@@ -48,6 +48,36 @@ export const SEAMS: readonly Seam[] = [
     why: "bots RPC trace labels",
   },
   { file: "apps/server/src/ws.ts", markers: 3, why: "bots RPC handlers" },
+  {
+    file: "apps/server/src/orchestration-v2/RunExecutionService.ts",
+    markers: 4,
+    why: "resolve bot instructions per turn",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+    markers: 4,
+    why: "bot instructions in the system prompt",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+    markers: 3,
+    why: "bot instructions as application context",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/RunExecutionService.test.ts",
+    markers: 2,
+    why: "bot instructions tests",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts",
+    markers: 2,
+    why: "bot instructions tests",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts",
+    markers: 2,
+    why: "bot instructions tests",
+  },
   { file: "apps/server/src/mcp/McpHttpServer.ts", markers: 2, why: "register bots memory tools" },
   {
     file: "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
