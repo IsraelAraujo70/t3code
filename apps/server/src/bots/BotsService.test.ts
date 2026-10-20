@@ -44,7 +44,6 @@ const FRIEND_BOT_B = `b_${"b".repeat(32)}`;
 
 const input: BotCreateInput = {
   name: "Al",
-  emoji: "🤖",
   role: "Codes.",
   model: { instanceId: CODEX, model: "gpt-6.1-sol" },
 };
@@ -66,6 +65,7 @@ const makeOrchestration = Effect.gen(function* () {
   const launches: Array<ThreadLaunchService.ThreadLaunchInput & { resumed: boolean }> = [];
   const commands: Array<OrchestrationV2ServerCommand> = [];
   const launched = yield* Queue.unbounded<ThreadId>();
+  const retitled = yield* Queue.unbounded<ThreadId>();
 
   const launch = ThreadLaunchService.ThreadLaunchService.of({
     launch: (launchInput) =>
@@ -99,16 +99,18 @@ const makeOrchestration = Effect.gen(function* () {
         return thread === undefined
           ? null
           : ({
+              title: thread.title,
               archivedAt: thread.archived ? DateTime.nowUnsafe() : null,
               deletedAt: null,
             } as unknown as OrchestrationV2ThreadShell);
       }),
     dispatch: (command: OrchestrationV2ServerCommand) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         commands.push(command);
         if (command.type === "thread.archive") threads.get(command.threadId)!.archived = true;
         if (command.type === "thread.metadata.update" && command.title !== undefined) {
           threads.get(command.threadId)!.title = command.title;
+          yield* Queue.offer(retitled, command.threadId);
         }
         return {} as never;
       }),
@@ -131,7 +133,7 @@ const makeOrchestration = Effect.gen(function* () {
     NodeServices.layer,
   );
 
-  return { threads, launches, commands, launched, layer };
+  return { threads, launches, commands, launched, retitled, layer };
 });
 
 type Orchestration = Effect.Success<typeof makeOrchestration>;
@@ -172,7 +174,7 @@ describe("BotsService", () => {
       const launch = lastLaunch(orchestration);
       assert.strictEqual(launch.threadId, `bot:${bot.id}:1`);
       assert.strictEqual(launch.commandId, `bots:launch:${bot.id}:1`);
-      assert.strictEqual(launch.title, "🤖 Al");
+      assert.strictEqual(launch.title, "Al");
       assert.strictEqual(launch.projectId, SCRATCH);
       assert.deepStrictEqual(launch.modelSelection, input.model);
       assert.strictEqual(launch.generateTitle, false);
@@ -192,6 +194,7 @@ describe("BotsService", () => {
         ...input,
         id: BotId.make(`b_${"c".repeat(32)}`),
         homeGeneration: 1,
+        sectionId: null,
         position: 0,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
@@ -202,7 +205,7 @@ describe("BotsService", () => {
       assert.strictEqual(yield* Queue.take(orchestration.launched), botThreadId(orphan.id, 1));
       assert.strictEqual(lastLaunch(orchestration).commandId, `bots:launch:${orphan.id}:1`);
       assert.isFalse(lastLaunch(orchestration).resumed);
-      assert.strictEqual(lastLaunch(orchestration).title, "🤖 Al");
+      assert.strictEqual(lastLaunch(orchestration).title, "Al");
 
       // A second service over the same store and runtime, as after a restart.
       yield* startService;
@@ -220,8 +223,8 @@ describe("BotsService", () => {
       const bot = yield* service.createBot(input);
       const threadId = botThreadId(bot.id, 1);
 
-      yield* service.updateBot({ botId: bot.id, name: "Alfred", emoji: "🎩" });
-      assert.strictEqual(orchestration.threads.get(threadId)!.title, "🎩 Alfred");
+      yield* service.updateBot({ botId: bot.id, name: "Alfred" });
+      assert.strictEqual(orchestration.threads.get(threadId)!.title, "Alfred");
 
       const commandsBefore = orchestration.commands.length;
       const updated = yield* service.updateBot({
@@ -312,6 +315,93 @@ describe("BotsService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("startup drops the emoji an older build put in a bot's thread title", () =>
+    Effect.gen(function* () {
+      const { orchestration, startService } = yield* setup();
+      const service = yield* startService;
+      const bot = yield* service.createBot(input);
+      const threadId = botThreadId(bot.id, 1);
+      orchestration.threads.get(threadId)!.title = "🤖 Al";
+      const commandsBefore = orchestration.commands.length;
+
+      yield* startService;
+      assert.strictEqual(yield* Queue.take(orchestration.retitled), threadId);
+      assert.strictEqual(orchestration.threads.get(threadId)!.title, "Al");
+      assert.strictEqual(orchestration.commands.length, commandsBefore + 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sections: create, arrange, rename, and delete sends their bots home", () =>
+    Effect.gen(function* () {
+      const { startService } = yield* setup();
+      const service = yield* startService;
+      const al = yield* service.createBot(input);
+      const bea = yield* service.createBot({ ...input, name: "Bea" });
+      const work = yield* service.createSection({ name: "Work" });
+      const home = yield* service.createSection({ name: "Home" });
+      assert.match(work.id, /^s_[0-9a-f]{32}$/);
+      assert.strictEqual(home.position, work.position + 1);
+
+      yield* service.arrange({
+        sectionIds: [home.id, work.id],
+        bots: [
+          { botId: bea.id, sectionId: work.id },
+          { botId: al.id, sectionId: null },
+        ],
+      });
+      const arranged = yield* Stream.runHead(service.directory).pipe(Effect.map(Option.getOrThrow));
+      assert.deepStrictEqual(
+        arranged.sections.map((section) => section.name),
+        ["Home", "Work"],
+      );
+      assert.deepStrictEqual(
+        arranged.bots.map((bot) => [bot.name, bot.sectionId]),
+        [
+          ["Bea", work.id],
+          ["Al", null],
+        ],
+      );
+
+      const renamed = yield* service.renameSection({ sectionId: work.id, name: "Job" });
+      assert.strictEqual(renamed.name, "Job");
+
+      yield* service.deleteSection({ sectionId: work.id });
+      const after = yield* Stream.runHead(service.directory).pipe(Effect.map(Option.getOrThrow));
+      assert.deepStrictEqual(
+        after.sections.map((section) => section.id),
+        [home.id],
+      );
+      assert.isTrue(after.bots.every((bot) => bot.sectionId === null));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("arrange refuses a stale view that misses a bot or names a gone section", () =>
+    Effect.gen(function* () {
+      const { startService } = yield* setup();
+      const service = yield* startService;
+      const al = yield* service.createBot(input);
+      const bea = yield* service.createBot({ ...input, name: "Bea" });
+      const work = yield* service.createSection({ name: "Work" });
+
+      const missingBot = yield* service
+        .arrange({ sectionIds: [work.id], bots: [{ botId: al.id, sectionId: work.id }] })
+        .pipe(Effect.flip);
+      assert.match(missingBot.message, /changed while you were arranging/);
+
+      yield* service.deleteSection({ sectionId: work.id });
+      const goneSection = yield* service
+        .arrange({
+          sectionIds: [],
+          bots: [
+            { botId: al.id, sectionId: work.id },
+            { botId: bea.id, sectionId: null },
+          ],
+        })
+        .pipe(Effect.flip);
+      assert.match(goneSection.message, /changed while you were arranging/);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("botForThread is none for threads that are not bot conversations", () =>
     Effect.gen(function* () {
       const { startService } = yield* setup();
@@ -340,7 +430,7 @@ describe("BotsService", () => {
         Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot)),
         Effect.forkScoped,
       );
-      assert.deepStrictEqual(yield* Queue.take(snapshots), { bots: [], aboutMe: "" });
+      assert.deepStrictEqual(yield* Queue.take(snapshots), { sections: [], bots: [], aboutMe: "" });
 
       const write = yield* service.updateOwner({ aboutMe: "I build T3" }).pipe(Effect.forkScoped);
       yield* Deferred.await(entered);

@@ -1,0 +1,46 @@
+/*
+ * BotAvatar's hover animations. Each plays once, then the face holds still again: nothing
+ * repeats, so a long list of bots never keeps the GPU busy.
+ */
+@theme {
+  --animate-bot-hop: bot-avatar-hop 420ms ease-out 1;
+  --animate-bot-blink-open: bot-avatar-blink-open 420ms linear 1;
+  --animate-bot-blink-closed: bot-avatar-blink-closed 420ms linear 1;
+}
+
+@keyframes bot-avatar-hop {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  35% {
+    transform: translateY(-9%) scale(0.98, 1.04);
+  }
+  70% {
+    transform: translateY(0) scale(1.03, 0.97);
+  }
+}
+
+@keyframes bot-avatar-blink-open {
+  0%,
+  45%,
+  100% {
+    opacity: 1;
+  }
+  50%,
+  75% {
+    opacity: 0;
+  }
+}
+
+@keyframes bot-avatar-blink-closed {
+  0%,
+  45%,
+  100% {
+    opacity: 0;
+  }
+  50%,
+  75% {
+    opacity: 1;
+  }
+}

@@ -62,7 +62,7 @@ function peerLine(peer: Bot): string {
   const short =
     summary.length > MAX_PEER_SUMMARY ? `${summary.slice(0, MAX_PEER_SUMMARY - 1)}…` : summary;
   const thread = botThreadId(peer.id, peer.homeGeneration);
-  return `- ${peer.emoji} ${peer.name}, thread ${thread}${short.length > 0 ? `: ${short}` : ""}`;
+  return `- ${peer.name}, thread ${thread}${short.length > 0 ? `: ${short}` : ""}`;
 }
 
 /**
@@ -73,7 +73,7 @@ function peerLine(peer: Bot): string {
  */
 export function buildBotInstructions(input: BotInstructionInput): AppInstructions {
   const { bot, memories } = input;
-  const identity = `You are ${bot.emoji} ${bot.name}, one of the user's bots in T3 Code. This thread is your ongoing conversation with the user.`;
+  const identity = `You are ${bot.name}, one of the user's bots in T3 Code. This thread is your ongoing conversation with the user.`;
   const role = bot.role.trim();
   const aboutMe = input.aboutMe.trim();
   const sections = [

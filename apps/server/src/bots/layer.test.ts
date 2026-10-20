@@ -37,7 +37,6 @@ describe("bots host gate", () => {
       const created = yield* Effect.flip(
         service.createBot({
           name: "Ada",
-          emoji: "🦊",
           role: "",
           model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
         }),

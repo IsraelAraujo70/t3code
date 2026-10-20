@@ -1,0 +1,41 @@
+/**
+ * The bots RPCs' server group and handler layer. ws.ts serves them beside upstream's handlers
+ * instead of inside upstream's handler map: that map (~200 handlers) sits at TypeScript's
+ * instantiation budget, and ten more entries pushed `ServerWsRpcGroup.toLayer` past it.
+ */
+import { BOTS_RPCS, BOTS_WS_METHODS, RpcScopeAuthorization } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { RpcGroup } from "effect/rpc";
+
+import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
+import * as BotsService from "./BotsService.ts";
+
+/** Tags ws.ts omits from upstream's handler group; their handlers come from `layer`. */
+export const BOTS_RPC_TAGS = Object.values(BOTS_WS_METHODS);
+
+/** Same middleware order as ws.ts: instrumentation wraps authorization. */
+export const ServerBotsRpcGroup = RpcGroup.make(...BOTS_RPCS)
+  .middleware(RpcScopeAuthorization)
+  .middleware(RpcInstrumentation);
+
+export const layer = ServerBotsRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const bots = yield* BotsService.BotsService;
+    return ServerBotsRpcGroup.of({
+      [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
+      [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
+      [BOTS_WS_METHODS.botUpdate]: (input) => bots.updateBot(input),
+      [BOTS_WS_METHODS.botDelete]: (input) => bots.deleteBot(input),
+      [BOTS_WS_METHODS.botResetConversation]: (input) => bots.resetConversation(input),
+      [BOTS_WS_METHODS.memoryCreate]: (input) => bots.createMemory(input, "user"),
+      [BOTS_WS_METHODS.memoryUpdate]: (input) => bots.updateMemory(input),
+      [BOTS_WS_METHODS.memoryDelete]: (input) => bots.deleteMemory(input),
+      [BOTS_WS_METHODS.ownerUpdate]: (input) => bots.updateOwner(input),
+      [BOTS_WS_METHODS.import]: (input) => bots.importFriend(input),
+      [BOTS_WS_METHODS.sectionCreate]: (input) => bots.createSection(input),
+      [BOTS_WS_METHODS.sectionRename]: (input) => bots.renameSection(input),
+      [BOTS_WS_METHODS.sectionDelete]: (input) => bots.deleteSection(input),
+      [BOTS_WS_METHODS.arrange]: (input) => bots.arrange(input),
+    });
+  }),
+);

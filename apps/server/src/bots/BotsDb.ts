@@ -13,11 +13,13 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ServerConfig from "../config.ts";
 import Migration0001 from "./migrations/001_Bots.ts";
 import Migration0002 from "./migrations/002_ThreadWatches.ts";
+import Migration0003 from "./migrations/003_Sections.ts";
 
 const runMigrations = Migrator.make({})({
   loader: Migrator.fromRecord({
     "1_Bots": Migration0001,
     "2_ThreadWatches": Migration0002,
+    "3_Sections": Migration0003,
   }),
 });
 

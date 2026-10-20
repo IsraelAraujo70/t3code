@@ -51,6 +51,12 @@ export const SEAMS: readonly Seam[] = [
     contains: '"./state/bots"',
     why: "export the bots atoms",
   },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./bot-avatar"',
+    why: "export the bot faces",
+  },
+  { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
   {
     file: "apps/server/src/observability/RpcInstrumentation.ts",

@@ -27,9 +27,14 @@ export const BotMemoryId = Schema.String.check(Schema.isPattern(ID_PATTERN)).pip
 );
 export type BotMemoryId = typeof BotMemoryId.Type;
 
+export const BotSectionId = Schema.String.check(Schema.isPattern(ID_PATTERN)).pipe(
+  Schema.brand("BotSectionId"),
+);
+export type BotSectionId = typeof BotSectionId.Type;
+
 export const BOT_LIMITS = {
   name: 60,
-  emoji: 16,
+  sectionName: 60,
   role: 20_000,
   memory: 4_000,
   aboutMe: 20_000,
@@ -38,7 +43,7 @@ export const BOT_LIMITS = {
 const boundedText = (max: number) => TrimmedNonEmptyString.check(Schema.isMaxLength(max));
 
 export const BotName = boundedText(BOT_LIMITS.name);
-export const BotEmoji = boundedText(BOT_LIMITS.emoji);
+export const BotSectionName = boundedText(BOT_LIMITS.sectionName);
 /** A role may be empty: the bot then works from its memories and the owner profile alone. */
 export const BotRole = Schema.String.check(Schema.isMaxLength(BOT_LIMITS.role));
 export const BotMemoryText = boundedText(BOT_LIMITS.memory);
@@ -61,17 +66,29 @@ export type BotMemory = typeof BotMemory.Type;
 export const Bot = Schema.Struct({
   id: BotId,
   name: BotName,
-  emoji: BotEmoji,
   role: BotRole,
   model: ModelSelection,
   /** Current conversation generation; the main thread is `botThreadId(id, homeGeneration)`. */
   homeGeneration: PositiveInt,
-  /** Sidebar order, ascending. */
+  /** The sidebar section holding the bot; null for the default "Bots" list. */
+  sectionId: Schema.NullOr(BotSectionId),
+  /** Sidebar order within its section, ascending. */
   position: Schema.Int,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type Bot = typeof Bot.Type;
+
+/** A user-made group of bots in the sidebar. */
+export const BotSection = Schema.Struct({
+  id: BotSectionId,
+  name: BotSectionName,
+  /** Sidebar order, ascending. */
+  position: Schema.Int,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type BotSection = typeof BotSection.Type;
 
 export const BotDirectoryEntry = Schema.Struct({
   ...Bot.fields,
@@ -80,8 +97,12 @@ export const BotDirectoryEntry = Schema.Struct({
 });
 export type BotDirectoryEntry = typeof BotDirectoryEntry.Type;
 
-/** Everything clients render: bots in sidebar order with their memories, plus the owner profile. */
+/**
+ * Everything clients render: sections and bots in sidebar order, the bots with their memories,
+ * plus the owner profile.
+ */
 export const BotDirectory = Schema.Struct({
+  sections: Schema.Array(BotSection),
   bots: Schema.Array(BotDirectoryEntry),
   aboutMe: BotsAboutMe,
 });
@@ -105,7 +126,6 @@ export function parseBotThreadId(
 
 export const BotCreateInput = Schema.Struct({
   name: BotName,
-  emoji: BotEmoji,
   role: BotRole,
   model: ModelSelection,
 });
@@ -114,15 +134,36 @@ export type BotCreateInput = typeof BotCreateInput.Type;
 export const BotUpdateInput = Schema.Struct({
   botId: BotId,
   name: Schema.optionalKey(BotName),
-  emoji: Schema.optionalKey(BotEmoji),
   role: Schema.optionalKey(BotRole),
   model: Schema.optionalKey(ModelSelection),
-  position: Schema.optionalKey(Schema.Int),
 });
 export type BotUpdateInput = typeof BotUpdateInput.Type;
 
 export const BotRef = Schema.Struct({ botId: BotId });
 export type BotRef = typeof BotRef.Type;
+
+export const BotSectionCreateInput = Schema.Struct({ name: BotSectionName });
+export type BotSectionCreateInput = typeof BotSectionCreateInput.Type;
+
+export const BotSectionRenameInput = Schema.Struct({
+  sectionId: BotSectionId,
+  name: BotSectionName,
+});
+export type BotSectionRenameInput = typeof BotSectionRenameInput.Type;
+
+export const BotSectionRef = Schema.Struct({ sectionId: BotSectionId });
+export type BotSectionRef = typeof BotSectionRef.Type;
+
+/**
+ * The whole sidebar arrangement after a drag: every section in order, and every bot in order
+ * with the section holding it. It must name exactly the stored sections and bots, so a client
+ * working from a stale directory fails instead of dropping someone.
+ */
+export const BotsArrangeInput = Schema.Struct({
+  sectionIds: Schema.Array(BotSectionId),
+  bots: Schema.Array(Schema.Struct({ botId: BotId, sectionId: Schema.NullOr(BotSectionId) })),
+});
+export type BotsArrangeInput = typeof BotsArrangeInput.Type;
 
 export const BotMemoryCreateInput = Schema.Struct({
   botId: BotId,
@@ -154,7 +195,6 @@ export type BotsImportInput = typeof BotsImportInput.Type;
 export const BotsImportBotPlan = Schema.Struct({
   sourceId: BotId,
   name: Schema.String,
-  emoji: Schema.String,
   /** `exists`: a bot with this id is already here and is left untouched. */
   status: Schema.Literals(["new", "exists"]),
   model: Schema.NullOr(ModelSelection),
@@ -188,6 +228,10 @@ export const BOTS_WS_METHODS = {
   memoryDelete: "bots.memory.delete",
   ownerUpdate: "bots.owner.update",
   import: "bots.import",
+  sectionCreate: "bots.section.create",
+  sectionRename: "bots.section.rename",
+  sectionDelete: "bots.section.delete",
+  arrange: "bots.arrange",
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -244,6 +288,28 @@ export const BotsImportRpc = Rpc.make(BOTS_WS_METHODS.import, {
   error: BotsRpcError,
 });
 
+export const BotSectionCreateRpc = Rpc.make(BOTS_WS_METHODS.sectionCreate, {
+  payload: BotSectionCreateInput,
+  success: BotSection,
+  error: BotsRpcError,
+});
+export const BotSectionRenameRpc = Rpc.make(BOTS_WS_METHODS.sectionRename, {
+  payload: BotSectionRenameInput,
+  success: BotSection,
+  error: BotsRpcError,
+});
+/** Its bots go back to the default "Bots" list. */
+export const BotSectionDeleteRpc = Rpc.make(BOTS_WS_METHODS.sectionDelete, {
+  payload: BotSectionRef,
+  success: BotSectionRef,
+  error: BotsRpcError,
+});
+export const BotsArrangeRpc = Rpc.make(BOTS_WS_METHODS.arrange, {
+  payload: BotsArrangeInput,
+  success: BotsArrangeInput,
+  error: BotsRpcError,
+});
+
 /** Every bots RPC, spread into the server's WsRpcGroup. */
 export const BOTS_RPCS = [
   BotsDirectorySubscribeRpc,
@@ -256,6 +322,10 @@ export const BOTS_RPCS = [
   BotMemoryDeleteRpc,
   BotsOwnerUpdateRpc,
   BotsImportRpc,
+  BotSectionCreateRpc,
+  BotSectionRenameRpc,
+  BotSectionDeleteRpc,
+  BotsArrangeRpc,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -269,6 +339,10 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.ownerUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.import]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.sectionCreate]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.sectionRename]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.sectionDelete]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.arrange]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */
