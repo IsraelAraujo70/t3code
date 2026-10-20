@@ -84,8 +84,8 @@ const PROTOTYPE_BOTS: readonly PrototypeBot[] = [
 ];
 
 const BOT_THREAD_ID_PREFIX = "bot:";
-const BOTS_SECTION_EXPANDED_KEY = "t3code:friend:bots-section-expanded";
-const BOTS_TAB_KEY = "t3code:friend:sidebar-tab";
+const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
+const BOTS_TAB_KEY = "t3code:bots:sidebar-tab";
 
 const SidebarBotsTab = Schema.Literals(["bots", "threads"]);
 type SidebarBotsTab = typeof SidebarBotsTab.Type;
