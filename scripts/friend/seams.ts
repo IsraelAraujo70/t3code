@@ -64,6 +64,21 @@ export const SEAMS: readonly Seam[] = [
     why: "resolve bot instructions per turn",
   },
   {
+    file: "apps/web/src/components/chat/MessagesTimeline.tsx",
+    markers: 3,
+    why: "name the bot that sent a message",
+  },
+  {
+    file: "apps/mobile/src/features/threads/ThreadFeed.tsx",
+    markers: 2,
+    why: "name the bot that sent a message",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
+    markers: 2,
+    why: "mark messages a bot sends another thread",
+  },
+  {
     file: "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
     markers: 4,
     why: "bot instructions in the system prompt",

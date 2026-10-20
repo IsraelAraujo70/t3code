@@ -49,6 +49,7 @@ describe("buildBotInstructions", () => {
       bot,
       memories: [memory("mem_1", "Likes tea"), memory("mem_2", "Uses vim")],
       aboutMe: "I build T3.",
+      peers: [],
     });
     assert.deepStrictEqual(
       full.sections.map((section) => section.key),
@@ -66,7 +67,7 @@ describe("buildBotInstructions", () => {
     assert.include(full.sections[4]!.text, "t3_thread_launch");
     assert.include(full.sections[4]!.text, "mcp__friend__");
 
-    const bare = buildBotInstructions({ bot, memories: [], aboutMe: "  " });
+    const bare = buildBotInstructions({ bot, memories: [], aboutMe: "  ", peers: [] });
     assert.deepStrictEqual(
       bare.sections.map((section) => section.key),
       ["bot", "memory-tools", "work-tools"],
@@ -82,6 +83,7 @@ describe("buildBotInstructions", () => {
       bot: { ...bot, role: longRole },
       memories,
       aboutMe: "",
+      peers: [],
     });
 
     for (const section of sections) {
@@ -118,7 +120,12 @@ describe("buildBotInstructions", () => {
   });
 
   it("changes the fingerprint when a memory changes and keeps it otherwise", () => {
-    const input = { bot, memories: [memory("mem_1", "Likes tea")], aboutMe: "I build T3." };
+    const input = {
+      bot,
+      memories: [memory("mem_1", "Likes tea")],
+      aboutMe: "I build T3.",
+      peers: [],
+    };
     const first = buildBotInstructions(input);
     assert.match(first.fingerprint, /^[0-9a-f]{64}$/);
     assert.strictEqual(buildBotInstructions({ ...input }).fingerprint, first.fingerprint);
@@ -130,6 +137,22 @@ describe("buildBotInstructions", () => {
       buildBotInstructions({ ...input, aboutMe: "I build T4." }).fingerprint,
       first.fingerprint,
     );
+  });
+
+  it("lists the other bots with their current thread", () => {
+    const peer: Bot = {
+      ...bot,
+      id: BotId.make(`b_${"b".repeat(32)}`),
+      name: "Fin",
+      emoji: "💼",
+      role: "\nTracks spending and bills.\nNever pays anything.",
+      homeGeneration: 3,
+    };
+    const { sections } = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [peer] });
+    const others = sections.find((section) => section.key === "other-bots");
+    assert.isDefined(others);
+    assert.include(others!.text, `- 💼 Fin, thread bot:${peer.id}:3: Tracks spending and bills.\n`);
+    assert.notInclude(others!.text, "Never pays anything.");
   });
 });
 
@@ -149,6 +172,8 @@ describe("BotsInstructions.forThread", () => {
       assert.isDefined(result);
       const memories = result!.sections.find((section) => section.key === "memories");
       assert.strictEqual(memories!.text, "- [mem_on] Likes tea");
+      // The only bot is this one, so there is nobody else to list.
+      assert.isUndefined(result!.sections.find((section) => section.key === "other-bots"));
       assert.strictEqual(
         result!.sections.find((section) => section.key === "owner")!.text,
         "I build T3.",

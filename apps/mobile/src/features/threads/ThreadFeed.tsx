@@ -1,3 +1,5 @@
+// Fork (friend): name the bot that sent a message.
+import { useBotSender } from "../../bots/useBotSender";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -942,9 +944,11 @@ function AgentMessageAttribution(props: {
 }) {
   const navigation = useNavigation();
   const senderThreadId = props.senderThreadId;
+  // Fork (friend): a message another bot sent names that bot.
+  const botSender = useBotSender(senderThreadId);
   const label = (
     <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-      Sent by another agent
+      {botSender === null ? "Sent by another agent" : `Sent by ${botSender}`}
     </Text>
   );
   return senderThreadId ? (
