@@ -25,6 +25,14 @@ expected marker count. `check-seams` fails when a merge drops or duplicates a fo
 upstream file gains a fork edit that the list does not record. Keep each upstream edit small, and add
 behavior in fork-owned files instead.
 
+## One bots host
+
+Bots run on one machine only: the server started with `T3CODE_BOTS_HOST=1`. Every other server of
+this fork keeps bots off. It never opens `bots.sqlite`, injects no bot instructions, refuses the
+bots RPCs and memory tools, and does not advertise the `bots` environment capability. Clients read
+bots from the environment that advertises it, so a laptop connected to the host shows the host's
+bots. See [`apps/server/src/bots/BotsHost.ts`](apps/server/src/bots/BotsHost.ts).
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork

@@ -122,6 +122,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
   threadSettlement: Schema.optionalKey(Schema.Boolean),
+  // Fork (friend): this server hosts bots (only one machine does). Clients read bots from it.
+  bots: Schema.optionalKey(Schema.Boolean),
   /** Server evaluates merge and inactivity settlement without a client. */
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
