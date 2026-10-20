@@ -37,6 +37,11 @@ export const BOT_LIMITS = {
   sectionName: 60,
   role: 20_000,
   memory: 4_000,
+  /**
+   * Enabled memories ride in every turn's system prompt, so a bot may save one only while the
+   * enabled total stays within this many characters. The user's own edits are never refused.
+   */
+  memoryBudget: 8_000,
   aboutMe: 20_000,
 } as const;
 
@@ -62,6 +67,12 @@ export const BotMemory = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type BotMemory = typeof BotMemory.Type;
+
+/** Characters of enabled memory a bot carries in its prompt, measured against memoryBudget. */
+export const enabledMemoryCharacters = (
+  memories: ReadonlyArray<Pick<BotMemory, "text" | "enabled">>,
+): number =>
+  memories.reduce((total, memory) => (memory.enabled ? total + memory.text.length : total), 0);
 
 export const Bot = Schema.Struct({
   id: BotId,

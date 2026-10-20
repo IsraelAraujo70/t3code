@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  BOT_LIMITS,
   BotId,
   botThreadId,
   ProjectId,
@@ -312,6 +313,36 @@ describe("BotsService", () => {
 
       yield* service.deleteMemory({ memoryId: memory.id });
       assert.deepStrictEqual(yield* service.memoriesOf(bot.id), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a bot's save past the memory budget fails until it frees room; the user's never", () =>
+    Effect.gen(function* () {
+      const { startService } = yield* setup();
+      const service = yield* startService;
+      const bot = yield* service.createBot(input);
+      const text = (letter: string) => letter.repeat(BOT_LIMITS.memory);
+      const fill = Math.floor(BOT_LIMITS.memoryBudget / BOT_LIMITS.memory);
+      const saved = [];
+      for (let index = 0; index < fill; index += 1) {
+        saved.push(yield* service.createMemory({ botId: bot.id, text: text(`${index}`) }, "bot"));
+      }
+
+      const full = yield* service
+        .createMemory({ botId: bot.id, text: "One more fact" }, "bot")
+        .pipe(Effect.flip);
+      assert.include(full.message, "Your memory is full");
+      assert.include(full.message, "memory_forget");
+
+      // Disabled memories leave the prompt, so they free room as forgetting does.
+      yield* service.updateMemory({ memoryId: saved[0]!.id, enabled: false });
+      yield* service.createMemory({ botId: bot.id, text: "One more fact" }, "bot");
+
+      // The user and imports are never refused, even past the budget.
+      yield* service.updateMemory({ memoryId: saved[0]!.id, enabled: true });
+      yield* service.createMemory({ botId: bot.id, text: "Set by the user" }, "user");
+      yield* service.createMemory({ botId: bot.id, text: "From friend" }, "import");
+      assert.strictEqual((yield* service.memoriesOf(bot.id)).length, fill + 3);
     }).pipe(Effect.scoped),
   );
 

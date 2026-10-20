@@ -13,7 +13,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import {
+  BOT_LIMITS,
   botThreadId,
+  enabledMemoryCharacters,
   parseBotThreadId,
   type Bot,
   type BotMemory,
@@ -95,7 +97,7 @@ export function buildBotInstructions(input: BotInstructionInput): AppInstruction
     {
       key: "memory-tools",
       title: "Memory tools",
-      text: "Save durable facts about the user and your work with memory_save. When a memory is wrong or stale, remove it with memory_forget using the id in brackets. Never store secrets such as passwords, tokens, or keys.",
+      text: `Save durable facts about the user and your work with memory_save. When a memory is wrong or stale, remove it with memory_forget using the id in brackets. Never store secrets such as passwords, tokens, or keys.\n\nYour enabled memories may hold ${BOT_LIMITS.memoryBudget} characters; they now use ${enabledMemoryCharacters(memories)}. Keep each one short, and merge related memories into one instead of adding near-duplicates. When memory_save says your memory is full, merge or forget before saving again.`,
     },
     { key: "work-tools", title: "Handing off work", text: WORK_TOOLS_TEXT },
     ...(input.peers.length > 0

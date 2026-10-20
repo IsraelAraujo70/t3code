@@ -63,6 +63,8 @@ describe("buildBotInstructions", () => {
     assert.strictEqual(full.sections[2]!.text, "- [mem_1] Likes tea\n- [mem_2] Uses vim");
     assert.include(full.sections[3]!.text, "memory_save");
     assert.include(full.sections[3]!.text, "memory_forget");
+    // The bot sees how much of its memory budget it uses, here 9 + 8 characters.
+    assert.include(full.sections[3]!.text, "now use 17.");
     // Code goes to its own T3 thread, and the old friend app's tools are named as gone.
     assert.include(full.sections[4]!.text, "t3_thread_launch");
     assert.include(full.sections[4]!.text, "watch_thread");
