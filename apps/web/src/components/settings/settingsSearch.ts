@@ -328,6 +328,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
+  // Fork (friend): bots layout setting.
+  {
+    id: "sidebar-bots-layout",
+    title: "Bots in sidebar",
+    to: "/settings/general",
+    searchTerms: ["friend bots sections tabs mixed sidebar layout"],
+  },
   {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
