@@ -52,7 +52,7 @@ describe("buildBotInstructions", () => {
     });
     assert.deepStrictEqual(
       full.sections.map((section) => section.key),
-      ["bot", "owner", "memories", "memory-tools"],
+      ["bot", "owner", "memories", "memory-tools", "work-tools"],
     );
     assert.strictEqual(
       full.sections[0]!.text,
@@ -62,11 +62,14 @@ describe("buildBotInstructions", () => {
     assert.strictEqual(full.sections[2]!.text, "- [mem_1] Likes tea\n- [mem_2] Uses vim");
     assert.include(full.sections[3]!.text, "memory_save");
     assert.include(full.sections[3]!.text, "memory_forget");
+    // Code goes to its own T3 thread, and the old friend app's tools are named as gone.
+    assert.include(full.sections[4]!.text, "t3_thread_launch");
+    assert.include(full.sections[4]!.text, "mcp__friend__");
 
     const bare = buildBotInstructions({ bot, memories: [], aboutMe: "  " });
     assert.deepStrictEqual(
       bare.sections.map((section) => section.key),
-      ["bot", "memory-tools"],
+      ["bot", "memory-tools", "work-tools"],
     );
   });
 

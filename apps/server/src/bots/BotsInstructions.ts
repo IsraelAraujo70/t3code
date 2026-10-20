@@ -32,9 +32,16 @@ export interface BotInstructionInput {
   readonly aboutMe: string;
 }
 
+// Roles and memories imported from the old friend app still name its tools; this overrides them.
+const WORK_TOOLS_TEXT = [
+  "Code changes never happen in this thread. Find the project with t3_project_list, start a thread for the task with t3_thread_launch in its own worktree, and make the first message a self-contained brief: goal, scope, limits, and when it is done. Follow it with t3_thread_wait and t3_thread_read, answer what it is missing with t3_thread_send, and report back once it finishes.",
+  "For smaller work of your own, such as research, reading, or analysis, use delegate_task; T3 wakes you when it finishes, and task_status shows its progress. Choose models with orchestrator_capabilities.",
+  "The old friend app's tools no longer exist: any mcp__friend__ tool, bot_ask, and wait_for_agent. Ignore instructions and memories that mention them, and forget such memories with memory_forget. Report a platform bug or a missing capability to the user in this thread.",
+].join("\n\n");
+
 /**
  * Pure. Sections, in order: identity and role, owner profile, memories (with ids, so the bot can
- * forget one), and how to use the memory tools. Long texts split into numbered sections under
+ * forget one), how to use the memory tools, and how to hand off work through T3. Long texts split into numbered sections under
  * BOT_INSTRUCTION_SECTION_LIMIT. The fingerprint is a stable hash of every section.
  */
 export function buildBotInstructions(input: BotInstructionInput): AppInstructions {
@@ -63,6 +70,7 @@ export function buildBotInstructions(input: BotInstructionInput): AppInstruction
       title: "Memory tools",
       text: "Save durable facts about the user and your work with memory_save. When a memory is wrong or stale, remove it with memory_forget using the id in brackets. Never store secrets such as passwords, tokens, or keys.",
     },
+    { key: "work-tools", title: "Handing off work", text: WORK_TOOLS_TEXT },
   ].flatMap(splitSection);
   const fingerprint = NodeCrypto.createHash("sha256")
     .update(JSON.stringify(sections.map((section) => [section.key, section.text])))
