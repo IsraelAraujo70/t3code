@@ -2,6 +2,7 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import {
   type ThreadLinkedPullRequest,
   CommandId,
+  parseBotThreadId,
   CheckpointId,
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -745,6 +746,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                   : ({ type: "queue_after_active" } as const);
   const shouldSendTitleSeed =
     input.titleSeed !== undefined &&
+    // Fork (friend): a bot's conversation keeps the "<emoji> <name>" title BotsService sets.
+    parseBotThreadId(input.threadId) === null &&
     (serverResolvesCommandContext || projection?.messages.length === 0);
   return yield* dispatch({
     type: "message.dispatch",
