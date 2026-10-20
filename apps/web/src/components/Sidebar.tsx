@@ -5169,6 +5169,7 @@ export default function Sidebar() {
               <SidebarBotsTabs
                 value={botsTab}
                 onChange={setBotsTab}
+                threads={allThreads}
                 threadsNeedingYou={activeThreads.length}
               />
             ) : null}
@@ -5177,7 +5178,12 @@ export default function Sidebar() {
       >
         {showBotsBlock ? (
           <SidebarGroup className="shrink-0">
-            <BotsSidebarSection collapsible={botsLayout === "sections"} />
+            <BotsSidebarSection
+              collapsible={botsLayout === "sections"}
+              threads={allThreads}
+              activeThreadRef={routeThreadRef}
+              onOpenThread={navigateToThread}
+            />
             {botsLayout === "sections" ? <SidebarThreadsHeading /> : null}
           </SidebarGroup>
         ) : null}
