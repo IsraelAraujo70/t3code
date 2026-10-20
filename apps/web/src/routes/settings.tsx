@@ -154,7 +154,10 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers"}
+      singleEnvironment={
+        // Fork (friend): bot edits target one environment, never a fan-out.
+        pathname === "/settings/providers" || pathname === "/settings/bots"
+      }
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
         // even when the choice is "all", which is the absence of a key.
