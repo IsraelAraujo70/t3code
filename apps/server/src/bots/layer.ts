@@ -14,6 +14,7 @@ import { isBotsHost, NOT_BOTS_HOST_MESSAGE } from "./BotsHost.ts";
 import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
+import * as BotCompactionReactor from "./compaction/BotCompactionReactor.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 
@@ -102,14 +103,19 @@ export const layerCore = Layer.unwrap(
   ),
 );
 
-/** BotsService and thread watches (store and waking reactor), above the orchestration runtime. */
+/**
+ * BotsService, thread watches (store and waking reactor) and bot compaction, above the
+ * orchestration runtime.
+ */
 export const layerService = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? Layer.mergeAll(BotsService.layer, ThreadWatchReactor.layerStart).pipe(
-            Layer.provideMerge(ThreadWatchStore.layer),
-          )
+        ? Layer.mergeAll(
+            BotsService.layer,
+            ThreadWatchReactor.layerStart,
+            BotCompactionReactor.layerStart,
+          ).pipe(Layer.provideMerge(ThreadWatchStore.layer))
         : Layer.merge(layerServiceOff, layerThreadWatchOff),
     ),
   ),

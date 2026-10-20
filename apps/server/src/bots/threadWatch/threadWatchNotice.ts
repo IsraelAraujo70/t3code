@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { BOT_COMPACTION_MESSAGE_PREFIX } from "../compaction/botCompaction.ts";
 import type { ThreadWatch } from "./ThreadWatchStore.ts";
 
 /** What wakes a watcher: one of the watched thread's runs ended, or it waits on someone. */
@@ -62,6 +63,8 @@ export function threadWatchNotice(
     const endedAt = change.run.completedAt;
     if (outcome === undefined || endedAt === null) return null;
     if (change.run.userMessageId.startsWith(THREAD_WATCH_MESSAGE_PREFIX)) return null;
+    // Saving memory and compacting are upkeep of a bot's own conversation, not news.
+    if (change.run.userMessageId.startsWith(BOT_COMPACTION_MESSAGE_PREFIX)) return null;
     if (DateTime.formatIso(endedAt) < watch.createdAt) return null;
     return {
       key: `${prefix}:${change.run.id}:${change.run.status}`,
