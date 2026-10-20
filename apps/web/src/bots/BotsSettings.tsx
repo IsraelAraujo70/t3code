@@ -17,10 +17,10 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { botsEnvironment, useBotDirectory } from "../state/bots";
+import { botsEnvironment, useBotDirectory, useBotsEnvironmentId } from "../state/bots";
+import { useEnvironments } from "../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 import { searchableSetting } from "../components/settings/settingsSearch";
 import {
   SettingsPageContainer,
@@ -43,11 +43,13 @@ import { BotsImportSection } from "./BotsImportSection";
 import { confirmDestructive, modelLabel, reportCommandResult } from "./botsSettingsShared";
 
 /**
- * Settings → Bots. Edits the bots of the one environment the settings scope selects; the page
- * runs in single-environment scope so a write never fans out across environments.
+ * Settings → Bots. Bots live on one machine, so the page always edits the environment that hosts
+ * them (it advertises the `bots` capability), whatever the settings scope selects.
  */
 export function BotsSettings() {
-  const { environment } = useSettingsScope();
+  const hostId = useBotsEnvironmentId();
+  const { environments } = useEnvironments();
+  const environment = environments.find((entry) => entry.environmentId === hostId) ?? null;
   if (!environment) {
     return (
       <SettingsPageContainer>
@@ -56,8 +58,10 @@ export function BotsSettings() {
             <EmptyMedia variant="icon">
               <BotIcon />
             </EmptyMedia>
-            <EmptyTitle>No environments available</EmptyTitle>
-            <EmptyDescription>Connect an environment to manage bots.</EmptyDescription>
+            <EmptyTitle>Bots host not connected</EmptyTitle>
+            <EmptyDescription>
+              Bots live on one machine. Connect to it to manage them.
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       </SettingsPageContainer>

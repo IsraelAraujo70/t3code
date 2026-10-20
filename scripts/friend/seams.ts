@@ -72,8 +72,18 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/settings/settingsSearch.ts",
+    markers: 5,
+    why: "Bots in sidebar setting and the Bots settings page",
+  },
+  {
+    file: "apps/web/src/components/settings/SettingsSidebarNav.tsx",
     markers: 1,
-    why: "Bots in sidebar search entry",
+    why: "Bots settings nav icon",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/settings.bots'",
+    why: "generated route for the Bots settings page",
   },
 ];
 
