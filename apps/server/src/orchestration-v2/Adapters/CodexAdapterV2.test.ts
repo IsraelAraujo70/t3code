@@ -493,6 +493,60 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  // Fork (friend): bot instructions are trusted application context, one entry per section.
+  it.effect("sends bot instructions as application context only for bot turns", () =>
+    Effect.gen(function* () {
+      const policy = { runtimeMode: "full-access", interactionMode: "default", cwd: null } as const;
+      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+      const appInstructions = {
+        fingerprint: "fp-1",
+        sections: [
+          { key: "role", title: "Role", text: "You are Ada." },
+          { key: "memories", title: "Memories", text: "- likes tea" },
+        ],
+      };
+      const ordinary = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-bot",
+        codexInput: [{ type: "text", text: "hello" }],
+        runtimePolicy: policy,
+        modelSelection,
+      });
+      assert.isUndefined(ordinary.additionalContext);
+      const bot = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-bot",
+        codexInput: [{ type: "text", text: "hello" }],
+        runtimePolicy: policy,
+        modelSelection,
+        appInstructions,
+      });
+      assert.deepEqual(bot.additionalContext, {
+        friend_role: { kind: "application", value: "## Role\n\nYou are Ada." },
+        friend_memories: { kind: "application", value: "## Memories\n\n- likes tea" },
+      });
+      assert.isUndefined(bot.collaborationMode);
+      // Alongside T3's own context and an app's untrusted context, all are kept.
+      const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-bot",
+        codexInput: [{ type: "text", text: "hello" }],
+        runtimePolicy: policy,
+        modelSelection,
+        hasT3Mcp: true,
+        appContext: [{ key: "mcp_app_item-1", text: "2 overdue" }],
+        appInstructions,
+      });
+      assert.deepEqual(withT3.additionalContext?.["friend_role"], {
+        kind: "application",
+        value: "## Role\n\nYou are Ada.",
+      });
+      assert.equal(withT3.additionalContext?.["mcp_app_item-1"]?.kind, "untrusted");
+      assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+      assert.notInclude(
+        withT3.collaborationMode?.settings.developer_instructions ?? "",
+        "You are Ada.",
+      );
+    }),
+  );
+
   it.effect("adds default-mode developer instructions when the T3 MCP server is attached", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
@@ -3247,6 +3301,70 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: "work",
           }),
         );
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // Fork (friend): the runtime forwards a bot turn's instructions into turn/start.
+  it.effect("sends a bot turn's instructions on turn/start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "bot-thread";
+        const nativeTurnId = "bot-turn";
+        const appInstructions = {
+          fingerprint: "fp-1",
+          sections: [{ key: "role", title: "Role", text: "You are Ada." }],
+        };
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "work" }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          appInstructions,
+        });
+        assert.isDefined(params.additionalContext?.["friend_role"]);
+        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "bot-instructions",
+            entries: [
+              ...entries.slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "bot turn",
+                frame: { id: 3, method: "turn/start", params },
+              },
+              ...entries.slice(6),
+              {
+                type: "emit_inbound",
+                label: "done",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("bot-attempt"),
+            text: "work",
+          }),
+          appInstructions,
+        });
         yield* harness.firstTerminal;
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(

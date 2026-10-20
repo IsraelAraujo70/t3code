@@ -1260,6 +1260,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  // Fork (friend): a bot's role and memories, appended to the system prompt.
+  readonly appInstructions?: ProviderAdapter.AppInstructions;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1355,6 +1357,17 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
         ...launchAppendSystemPrompt,
+        // Fork (friend): bot instructions come last, in their own delimited block.
+        ...(input.appInstructions === undefined
+          ? []
+          : [
+              [
+                "# Bot instructions",
+                ...input.appInstructions.sections.map(
+                  (section) => `## ${section.title}\n\n${section.text}`,
+                ),
+              ].join("\n\n"),
+            ]),
       ].join("\n\n"),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
@@ -9042,7 +9055,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          // Fork (friend): the system prompt is fixed when the query opens, so changed bot
+          // instructions replace the query through the same path as a changed policy.
+          const queryPolicyKey =
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides) +
+            (turnInput.appInstructions === undefined
+              ? ""
+              : `|friend:${turnInput.appInstructions.fingerprint}`);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -9168,6 +9187,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            // Fork (friend): bot instructions for the system prompt.
+            ...(turnInput.appInstructions === undefined
+              ? {}
+              : { appInstructions: turnInput.appInstructions }),
           });
           const querySession = yield* queryRunner
             .open({

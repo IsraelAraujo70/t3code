@@ -56,6 +56,9 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
+// Fork (friend): bot instruction resolution tests.
+import * as BotsInstructions from "../bots/BotsInstructions.ts";
+import { BotsError } from "@t3tools/contracts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -914,6 +917,121 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
       ),
     ),
   ),
+);
+
+// Fork (friend): bot threads receive app instructions on every turn; other threads never do.
+const startTurnWithBots = (
+  bots: Layer.Layer<never> | Layer.Layer<BotsInstructions.BotsInstructions>,
+) =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const started = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2TurnInput>();
+    const threadId = ThreadId.make("bot:bot-1:1");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const attemptId = RunAttemptId.make("attempt:run-execution-bot");
+    const session = {
+      events: Stream.never,
+      startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+        Deferred.succeed(started, input),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+
+    yield* runExecution.startRootRun({
+      commandId: CommandId.make("command:run-execution-bot"),
+      appThread: { id: threadId } as OrchestrationV2AppThread,
+      providerSessionId: ProviderSessionId.make("session:run-execution-bot"),
+      session,
+      run: {
+        id: RunId.make("run:run-execution-bot"),
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+      } as OrchestrationV2Run,
+      rootNode: { id: NodeId.make("node:run-execution-bot") } as OrchestrationV2ExecutionNode,
+      checkpointScope: {
+        id: CheckpointScopeId.make("checkpoint-scope:run-execution-bot"),
+      } as OrchestrationV2CheckpointScope,
+      providerThread: {
+        id: ProviderThreadId.make("provider-thread:run-execution-bot"),
+        driver,
+      } as OrchestrationV2ProviderThread,
+      attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+      attemptId,
+      providerTurnOrdinal: 1,
+      message: {
+        messageId: MessageId.make("message:run-execution-bot"),
+        text: "Hello",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: process.cwd() },
+    });
+
+    return yield* Deferred.await(started);
+  }).pipe(
+    Effect.provide(
+      RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            bots,
+            McpAppModelContext.layerEmpty,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () => Effect.void,
+            }),
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      ),
+    ),
+  );
+
+const botInstructions = {
+  fingerprint: "fp-1",
+  sections: [{ key: "role", title: "Role", text: "You are Ada, a research assistant." }],
+};
+
+it.effect("passes a bot thread's app instructions to the provider", () =>
+  Effect.gen(function* () {
+    const resolved: Array<ThreadId> = [];
+    const input = yield* startTurnWithBots(
+      Layer.succeed(BotsInstructions.BotsInstructions, {
+        forThread: (threadId) => {
+          resolved.push(threadId);
+          return Effect.succeed(botInstructions);
+        },
+      }),
+    );
+    assert.deepEqual(input.appInstructions, botInstructions);
+    assert.deepEqual(resolved, [ThreadId.make("bot:bot-1:1")]);
+  }),
+);
+
+it.effect("omits app instructions when the resolver has none, fails, or is absent", () =>
+  Effect.gen(function* () {
+    const none = yield* startTurnWithBots(
+      Layer.succeed(BotsInstructions.BotsInstructions, {
+        forThread: () => Effect.succeed(undefined),
+      }),
+    );
+    assert.isFalse("appInstructions" in none);
+
+    const failed = yield* startTurnWithBots(
+      Layer.succeed(BotsInstructions.BotsInstructions, {
+        forThread: () => Effect.fail(new BotsError({ message: "bots.sqlite is locked" })),
+      }),
+    );
+    assert.isFalse("appInstructions" in failed);
+    assert.equal(failed.message.text, "Hello");
+
+    const absent = yield* startTurnWithBots(Layer.empty);
+    assert.isFalse("appInstructions" in absent);
+  }),
 );
 
 it.effect("fails the run when its ownership check cannot be read before calling the provider", () =>

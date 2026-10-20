@@ -845,6 +845,38 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
 
+  // Fork (friend): only bot turns carry the bot instruction block.
+  it("appends bot instructions after the runtime instructions only for bot turns", () => {
+    const base = {
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-claude-bot",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+    };
+    const appendOf = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions) =>
+      (options.systemPrompt as { readonly append?: string }).append ?? "";
+    const ordinary = appendOf(ClaudeAdapterV2.makeClaudeQueryOptions(base));
+    const bot = appendOf(
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        ...base,
+        appInstructions: {
+          fingerprint: "fp-1",
+          sections: [
+            { key: "role", title: "Role", text: "You are Ada." },
+            { key: "memories", title: "Memories", text: "- likes tea" },
+          ],
+        },
+      }),
+    );
+    assert.notInclude(ordinary, "# Bot instructions");
+    assert.isTrue(bot.startsWith(ordinary));
+    assert.equal(
+      bot.slice(ordinary.length),
+      "\n\n# Bot instructions\n\n## Role\n\nYou are Ada.\n\n## Memories\n\n- likes tea",
+    );
+  });
+
   it.effect("writes Claude Agent SDK protocol frames to the native provider log", () =>
     Effect.gen(function* () {
       const writes: Array<{
@@ -3801,6 +3833,107 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  // Fork (friend): bot instructions live in the system prompt, so a new fingerprint needs a new
+  // process while an unchanged one keeps the live query.
+  const botInstructions = (fingerprint: string, role: string) => ({
+    fingerprint,
+    sections: [{ key: "role", title: "Role", text: role }],
+  });
+  const appendOf = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined) =>
+    (options?.systemPrompt as { readonly append?: string } | undefined)?.append ?? "";
+
+  it.effect("replaces the live query only when the bot instructions change", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, appInstructions: ProviderAdapter.AppInstructions) => ({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-bot-instructions:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          }),
+          appInstructions,
+        });
+        const settle = Effect.gen(function* () {
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+        });
+
+        yield* harness.runtime.startTurn(turn(1, botInstructions("fp-1", "You are Ada.")));
+        const firstOptions = harness.getOpenedOptions();
+        assert.include(appendOf(firstOptions), "# Bot instructions\n\n## Role\n\nYou are Ada.");
+        yield* settle;
+
+        yield* harness.runtime.startTurn(turn(2, botInstructions("fp-1", "You are Ada.")));
+        assert.strictEqual(harness.getOpenedOptions(), firstOptions);
+        assert.lengthOf(harness.processQueues, 1);
+        yield* settle;
+
+        yield* harness.runtime.startTurn(turn(3, botInstructions("fp-2", "You are Grace.")));
+        assert.lengthOf(harness.processQueues, 2);
+        const replacedOptions = harness.getOpenedOptions();
+        assert.include(appendOf(replacedOptions), "You are Grace.");
+        assert.notInclude(appendOf(replacedOptions), "You are Ada.");
+        // The replacement resumes the same native conversation.
+        assert.equal(replacedOptions?.resume, WAKE_NATIVE_SESSION);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a process running background work when the bot instructions change", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, appInstructions: ProviderAdapter.AppInstructions) => ({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-bot-instructions-background:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          }),
+          appInstructions,
+        });
+
+        yield* harness.runtime.startTurn(turn(1, botInstructions("fp-1", "You are Ada.")));
+        const originalOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        const refused = yield* harness.runtime
+          .startTurn(turn(2, botInstructions("fp-2", "You are Grace.")))
+          .pipe(Effect.result);
+        assert.equal(refused._tag, "Failure");
+        if (refused._tag === "Failure") {
+          assert.instanceOf(
+            refused.failure.cause,
+            ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+          );
+        }
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect.each(["completed", "interrupted"] as const)(

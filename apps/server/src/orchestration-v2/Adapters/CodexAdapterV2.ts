@@ -729,6 +729,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    // Fork (friend): a bot's role and memories, delivered as trusted application context.
+    readonly appInstructions?: ProviderAdapter.AppInstructions;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -771,10 +773,20 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
+    // Fork (friend): one application entry per bot section, independent of T3 MCP and outside
+    // collaboration mode, whose developer_instructions model defaults can discard.
+    const botContext = Object.fromEntries(
+      (input.appInstructions?.sections ?? []).map((section) => [
+        `friend_${section.key}`,
+        { kind: "application" as const, value: `## ${section.title}\n\n${section.text}` },
+      ]),
+    );
     const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+      t3Context === undefined &&
+      Object.keys(appContext).length === 0 &&
+      Object.keys(botContext).length === 0
         ? undefined
-        : { ...t3Context, ...appContext };
+        : { ...t3Context, ...botContext, ...appContext };
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -6334,6 +6346,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              // Fork (friend): bot instructions for this turn.
+              ...(turnInput.appInstructions === undefined
+                ? {}
+                : { appInstructions: turnInput.appInstructions }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
