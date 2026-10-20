@@ -72,6 +72,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+// Fork (friend): bots read and write their own memories over /mcp.
+import * as BotMemoryHandlers from "../bots/mcp/handlers.ts";
+import { BotMemoryToolkit } from "../bots/mcp/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   HttpServerRequest.toURL(request).pipe(
@@ -1077,4 +1080,6 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  // Fork (friend): bot memory tools; handlers refuse every caller that is not a bot thread.
+  toolkitRegistration(BotMemoryToolkit, BotMemoryHandlers.layer),
 ).pipe(Layer.provideMerge(layerMcpTransport));
