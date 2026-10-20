@@ -123,6 +123,9 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+// Fork (friend): bots RPC handlers delegate to BotsService.
+import * as BotsService from "./bots/BotsService.ts";
+import { BOTS_WS_METHODS } from "@t3tools/contracts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
@@ -1240,6 +1243,8 @@ const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      // Fork (friend): bots service for the handlers below.
+      const bots = yield* BotsService.BotsService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -1833,6 +1838,17 @@ const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        // Fork (friend): bots.
+        [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
+        [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
+        [BOTS_WS_METHODS.botUpdate]: (input) => bots.updateBot(input),
+        [BOTS_WS_METHODS.botDelete]: (input) => bots.deleteBot(input),
+        [BOTS_WS_METHODS.botResetConversation]: (input) => bots.resetConversation(input),
+        [BOTS_WS_METHODS.memoryCreate]: (input) => bots.createMemory(input, "user"),
+        [BOTS_WS_METHODS.memoryUpdate]: (input) => bots.updateMemory(input),
+        [BOTS_WS_METHODS.memoryDelete]: (input) => bots.deleteMemory(input),
+        [BOTS_WS_METHODS.ownerUpdate]: (input) => bots.updateOwner(input),
+        [BOTS_WS_METHODS.import]: (input) => bots.importFriend(input),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

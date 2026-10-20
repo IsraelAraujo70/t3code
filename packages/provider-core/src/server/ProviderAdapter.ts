@@ -423,6 +423,23 @@ export interface ProviderAdapterV2TurnInput {
    * application context; others never receive any.
    */
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  // Fork (friend): standing instructions T3 owns for this thread (a bot's role, memories and
+  // owner profile), resolved per turn. Adapters deliver them at system or developer level.
+  readonly appInstructions?: AppInstructions;
+}
+
+/**
+ * Trusted, app-owned instructions for one thread. `fingerprint` changes whenever any section
+ * changes, so adapters that bake instructions into a long-lived session know when to refresh.
+ * Each section stays under 3,500 characters; adapters may deliver sections separately.
+ */
+export interface AppInstructions {
+  readonly fingerprint: string;
+  readonly sections: ReadonlyArray<{
+    readonly key: string;
+    readonly title: string;
+    readonly text: string;
+  }>;
 }
 
 export interface ProviderAdapterV2SteerInput {

@@ -7,6 +7,7 @@
  *   node scripts/friend/check-seams.ts [--cwd <checkout>]
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
@@ -38,6 +39,14 @@ function markerCounts(): Map<string, number> {
 const counts = markerCounts();
 const problems: string[] = [];
 for (const seam of SEAMS) {
+  if ("contains" in seam) {
+    const path = NodePath.join(root, seam.file);
+    const text = NodeFS.existsSync(path) ? NodeFS.readFileSync(path, "utf8") : "";
+    if (!text.includes(seam.contains)) {
+      problems.push(`${seam.file}: missing ${seam.contains} (${seam.why})`);
+    }
+    continue;
+  }
   const found = counts.get(seam.file) ?? 0;
   if (found !== seam.markers) {
     problems.push(`${seam.file}: expected ${seam.markers} marker(s), found ${found} (${seam.why})`);

@@ -157,7 +157,7 @@ import {
   SidebarBotsTabs,
   SidebarThreadsHeading,
   useSidebarBotsTab,
-} from "../friend/BotsSidebarSection";
+} from "../bots/BotsSidebarSection";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
