@@ -125,6 +125,9 @@ function useVoiceInputRuntime() {
   // Fork (friend): read on each start, so connecting a server enables dictation without a remount.
   const serverTranscriber = useServerVoiceTranscriber();
   const serverTranscriberRef = useRef(serverTranscriber);
+  // Fork (friend): Android's permission dialog pauses the activity, which AppState reports as
+  // `background` (iOS says `inactive`), so a first dictation would cancel itself.
+  const permissionPromptOpenRef = useRef(false);
   useEffect(() => {
     serverTranscriberRef.current = serverTranscriber;
   }, [serverTranscriber]);
@@ -163,8 +166,13 @@ function useVoiceInputRuntime() {
       recorder,
       getTranscriber: () => getLocalVoiceTranscriber() ?? serverTranscriberRef.current, // Fork (friend)
       requestPermission: async () => {
-        const permission = await requestRecordingPermissionsAsync();
-        return { granted: permission.granted, canAskAgain: permission.canAskAgain };
+        permissionPromptOpenRef.current = true; // Fork (friend)
+        try {
+          const permission = await requestRecordingPermissionsAsync();
+          return { granted: permission.granted, canAskAgain: permission.canAskAgain };
+        } finally {
+          permissionPromptOpenRef.current = false;
+        }
       },
       configureRecording: configureVoiceRecordingAudio,
       releaseRecording: releaseVoiceRecordingAudio,
@@ -187,7 +195,9 @@ function useVoiceInputRuntime() {
       // iOS reports `inactive` while its permission dialog is open. Only the
       // real background state cancels preparation; recorder status handles
       // calls and route interruptions during capture.
-      if (nextState === "background") controller.appMovedToBackground();
+      if (nextState === "background" && !permissionPromptOpenRef.current) {
+        controller.appMovedToBackground(); // Fork (friend): not while the permission dialog is up.
+      }
     });
     return () => subscription.remove();
   }, [controller]);

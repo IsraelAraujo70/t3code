@@ -165,8 +165,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/voice-input/VoiceInputProvider.tsx",
-    markers: 4,
-    why: "server dictation where the device cannot transcribe",
+    markers: 7,
+    why: "server dictation where the device cannot transcribe; Android permission dialog",
   },
   {
     file: "apps/web/src/components/chat/ChatComposer.tsx",
