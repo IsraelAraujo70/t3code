@@ -51,7 +51,8 @@ const clip = (text: string) => {
   return collapsed.length > MAX_BODY ? `${collapsed.slice(0, MAX_BODY - 1)}…` : collapsed;
 };
 
-const lastReply = (replies: Extract<BotPushChange, { type: "run" }>["replies"]) =>
+/** Returns the latest non-empty assistant reply without clipping its text. */
+export const lastReply = (replies: Extract<BotPushChange, { type: "run" }>["replies"]) =>
   replies
     .filter((reply) => reply.text.trim().length > 0)
     .toSorted((a, b) => DateTime.toEpochMillis(a.createdAt) - DateTime.toEpochMillis(b.createdAt))
