@@ -11,6 +11,8 @@ import {
   makeRealtimeHost,
   type RealtimeRpc,
   type RealtimeNotifications as Payloads,
+  VOICE_READER_NO_AGENT_MODEL,
+  voiceReaderThreadStart,
 } from "./CodexRealtime.ts";
 
 const fakeRpc = Effect.gen(function* () {
@@ -204,6 +206,24 @@ it.effect("accepts only a ChatGPT account", () =>
     assert.isFalse(isChatGptAccount({ type: "apiKey" }));
     assert.isFalse(isChatGptAccount(null));
     assert.isFalse(isChatGptAccount(undefined));
+  }),
+);
+
+it.effect("starts the voice's thread with no agent model and every MCP server off", () =>
+  Effect.sync(() => {
+    const start = voiceReaderThreadStart("/state/voice-reader", {
+      whatsapp: { command: "wa" },
+      "team.linear": { url: "https://linear" },
+    });
+    assert.equal(start.model, VOICE_READER_NO_AGENT_MODEL);
+    assert.deepEqual(start.config, {
+      mcp_servers: { whatsapp: { enabled: false }, "team.linear": { enabled: false } },
+      features: { apps: false, plugins: false },
+    });
+    assert.deepEqual(voiceReaderThreadStart("/state/voice-reader", undefined).config, {
+      mcp_servers: {},
+      features: { apps: false, plugins: false },
+    });
   }),
 );
 

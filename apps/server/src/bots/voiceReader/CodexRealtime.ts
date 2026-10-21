@@ -108,6 +108,35 @@ export interface RealtimeRpc {
   ) => Effect.Effect<void, never, Scope.Scope>;
 }
 
+/**
+ * Codex runs every realtime delegation as an ordinary turn on the voice's thread, with no approval
+ * and whatever tools the thread has; nothing in `thread/realtime/start` turns that off. Codex
+ * can't serve this model, so such a turn fails before any tool runs while the voice keeps working.
+ */
+export const VOICE_READER_NO_AGENT_MODEL = "t3-voice-reader-no-agent";
+
+/**
+ * @internal `thread/start` for the voice's thread: the no-agent model, and no MCP servers. Thread
+ * config deep-merges into the user's, so an empty `mcp_servers` is a no-op: each configured server
+ * (`mcp_servers` from `config/read`) is disabled by name, and apps and plugins bring their own servers.
+ */
+export const voiceReaderThreadStart = (cwd: string, mcpServers: unknown) => ({
+  cwd,
+  ephemeral: true,
+  approvalPolicy: "never" as const,
+  sandbox: "read-only" as const,
+  model: VOICE_READER_NO_AGENT_MODEL,
+  baseInstructions: "Voice reader. Never run tools or agent tasks.",
+  config: {
+    mcp_servers: Object.fromEntries(
+      Object.keys(typeof mcpServers === "object" && mcpServers !== null ? mcpServers : {}).map(
+        (name) => [name, { enabled: false }],
+      ),
+    ),
+    features: { apps: false, plugins: false },
+  },
+});
+
 /** @internal ChatGPT authentication is required by the WebRTC voice protocol. */
 export const isChatGptAccount = (account: { readonly type: string } | null | undefined): boolean =>
   account?.type === "chatgpt";
@@ -332,15 +361,11 @@ export const layer = Layer.effect(
                     "The voice reader needs Codex signed in with ChatGPT (it uses ChatGPT's realtime voice, not an API key).",
                 });
               const result = yield* client
-                .request("thread/start", {
-                  cwd,
-                  ephemeral: true,
-                  approvalPolicy: "never",
-                  sandbox: "read-only",
-                  baseInstructions: "Voice reader. Never run tools or agent tasks.",
-                  config: { mcp_servers: {} },
-                })
+                .request("config/read", { includeLayers: false, cwd })
                 .pipe(
+                  Effect.flatMap(({ config }) =>
+                    client.request("thread/start", voiceReaderThreadStart(cwd, config.mcp_servers)),
+                  ),
                   Effect.mapError(
                     (cause) =>
                       new BotsError({
