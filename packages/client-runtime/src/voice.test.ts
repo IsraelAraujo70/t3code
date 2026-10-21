@@ -8,6 +8,7 @@ import {
   voicePhase,
   voiceReadPhaseOf,
   voiceReducer,
+  VOICE_PLAYOUT_GRACE_MS,
   type VoiceInput,
   type VoicePeer,
   type VoiceState,
@@ -31,6 +32,8 @@ const run = (state: VoiceState, ...inputs: ReadonlyArray<keyof typeof channel | 
     if (parsed === null) throw new Error(`unparsed ${String(input)}`);
     return voiceReducer(next, parsed);
   }, state);
+
+const playedOut = (turn: number): VoiceInput => ({ type: "played-out", turn });
 
 const live = (mode: "conversation" | "read" = "conversation") =>
   voiceReducer(initialVoiceState(mode), { type: "connected" });
@@ -58,7 +61,7 @@ describe("voice state machine", () => {
     state = run(state, "appended", "voiceStarted");
     expect(voicePhase(state)).toBe("speaking");
     expect(voiceAudible(state)).toBe(true);
-    state = run(state, "voiceDone", { type: "bot", working: false });
+    state = run(state, "voiceDone", { type: "bot", working: false }, playedOut(1));
     expect(voicePhase(state)).toBe("listening");
     expect(voiceAudible(state)).toBe(false);
   });
@@ -66,7 +69,22 @@ describe("voice state machine", () => {
   it("lets the acknowledgement after a delegation through", () => {
     const state = run(live(), "userStarted", "delegated", "userDone", "voiceStarted");
     expect(voiceAudible(state)).toBe(true);
-    expect(voiceAudible(run(state, "voiceDone"))).toBe(false);
+    expect(voiceAudible(run(state, "voiceDone", playedOut(1)))).toBe(false);
+  });
+
+  it("keeps a heard turn audible after it ends until its last audio has played", () => {
+    const ended = run(live(), "appended", "voiceStarted", "voiceDone");
+    expect(voiceAudible(ended)).toBe(true);
+    expect(voicePhase(ended)).toBe("speaking");
+    expect(voiceAudible(run(ended, playedOut(1)))).toBe(false);
+    // The user talking, or the voice starting a turn of its own, cuts the rest off.
+    expect(voiceAudible(run(ended, "userStarted", "userDone"))).toBe(false);
+    expect(voiceAudible(run(ended, "voiceStarted"))).toBe(false);
+    // A later turn's tail outlives the earlier turn's played-out.
+    const next = run(ended, "appended", "voiceStarted", "voiceDone", playedOut(1));
+    expect(voiceAudible(next)).toBe(true);
+    // An own turn's end opens nothing.
+    expect(voiceAudible(run(live(), "voiceStarted", "voiceDone"))).toBe(false);
   });
 
   it("keeps the voice silent when it answers by itself", () => {
@@ -89,8 +107,10 @@ describe("voice state machine", () => {
   it("finishes a read when its reply turn ends, not when the voice talks by itself", () => {
     const read = live("read");
     expect(voicePhase(read)).toBe("waiting");
-    expect(run(read, "voiceStarted", "voiceDone").readDone).toBe(false);
-    expect(run(read, "appended", "voiceStarted", "voiceDone").readDone).toBe(true);
+    expect(run(read, "voiceStarted", "voiceDone", playedOut(1)).readDone).toBe(false);
+    const spoken = run(read, "appended", "voiceStarted", "voiceDone");
+    expect(spoken.readDone).toBe(false);
+    expect(run(spoken, playedOut(1)).readDone).toBe(true);
   });
 
   it("hears nothing before the peer is live", () => {
@@ -194,6 +214,11 @@ function setup() {
   return { controller, peers, sessions, openPeer, transport, onError, calls, makePeer };
 }
 
+function fakeTimers(): Disposable {
+  vi.useFakeTimers();
+  return { [Symbol.dispose]: () => vi.useRealTimers() };
+}
+
 async function flush() {
   // Each protocol stage resumes in a separate promise microtask.
   for (let i = 0; i < 12; i++) await Promise.resolve();
@@ -201,6 +226,7 @@ async function flush() {
 
 describe("voice controller", () => {
   it("connects in order, then follows the conversation and gates the voice", async () => {
+    using _timers = fakeTimers();
     const t = setup();
     const phases: Array<string | undefined> = [];
     t.controller.subscribe(() => phases.push(t.controller.getSnapshot()?.phase));
@@ -228,14 +254,11 @@ describe("voice controller", () => {
     expect(peer.setVoiceAudible).toHaveBeenLastCalledWith(true);
     peer.send("voiceDone");
     t.sessions[0]!.bot(false);
-    expect(phases).toEqual([
-      "connecting",
-      "listening",
-      "waiting",
-      "speaking",
-      "waiting",
-      "listening",
-    ]);
+    await vi.advanceTimersByTimeAsync(VOICE_PLAYOUT_GRACE_MS - 1);
+    expect(peer.setVoiceAudible).toHaveBeenLastCalledWith(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(peer.setVoiceAudible).toHaveBeenLastCalledWith(false);
+    expect(phases).toEqual(["connecting", "listening", "waiting", "speaking", "listening"]);
   });
 
   it("mutes and unmutes the microphone of a conversation", async () => {
@@ -252,33 +275,30 @@ describe("voice controller", () => {
   });
 
   it("reads with the microphone off and ends after the reply and its grace", async () => {
-    vi.useFakeTimers();
-    try {
-      const t = setup();
-      const target = read("a");
-      t.controller.toggle(target);
-      await flush();
-      t.sessions[0]!.answer();
-      await flush();
-      const peer = t.peers[0]!;
-      expect(peer.setMicrophoneEnabled).not.toHaveBeenCalledWith(true);
-      expect(
-        voiceReadPhaseOf(t.controller.getSnapshot(), { ...target, messageId: MessageId.make("a") }),
-      ).toBe("waiting");
-      peer.send("appended");
-      peer.send("voiceStarted");
-      expect(t.controller.getSnapshot()?.phase).toBe("speaking");
-      peer.send("voiceDone");
-      await vi.advanceTimersByTimeAsync(399);
-      expect(t.sessions[0]!.ended).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      expect(t.sessions[0]!.ended).toHaveBeenCalledTimes(1);
-      expect(peer.close).toHaveBeenCalled();
-      expect(t.controller.getSnapshot()).toBeNull();
-      expect(t.onError).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+    using _timers = fakeTimers();
+    const t = setup();
+    const target = read("a");
+    t.controller.toggle(target);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    const peer = t.peers[0]!;
+    expect(peer.setMicrophoneEnabled).not.toHaveBeenCalledWith(true);
+    expect(
+      voiceReadPhaseOf(t.controller.getSnapshot(), { ...target, messageId: MessageId.make("a") }),
+    ).toBe("waiting");
+    peer.send("appended");
+    peer.send("voiceStarted");
+    expect(t.controller.getSnapshot()?.phase).toBe("speaking");
+    peer.send("voiceDone");
+    await vi.advanceTimersByTimeAsync(VOICE_PLAYOUT_GRACE_MS - 1);
+    expect(t.sessions[0]!.ended).not.toHaveBeenCalled();
+    expect(peer.setVoiceAudible).toHaveBeenLastCalledWith(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(t.sessions[0]!.ended).toHaveBeenCalledTimes(1);
+    expect(peer.close).toHaveBeenCalled();
+    expect(t.controller.getSnapshot()).toBeNull();
+    expect(t.onError).not.toHaveBeenCalled();
   });
 
   it("stops a session toggled again and replaces one when another starts", async () => {

@@ -82,6 +82,13 @@ export interface VoiceState {
   /** How the voice's next turn is classified. */
   readonly expected: "ack" | "reply" | null;
   readonly voiceTurn: VoiceTurn | null;
+  /**
+   * A heard turn that ended while its last audio still plays: realtime reports the end of a turn
+   * when it has sent the audio, not when the client has played it. `turn` tells its `played-out`.
+   */
+  readonly playingOut: { readonly turn: number; readonly heard: "ack" | "reply" } | null;
+  /** Voice turns started so far. */
+  readonly voiceTurns: number;
   /** A read finished speaking its reply. */
   readonly readDone: boolean;
 }
@@ -90,7 +97,9 @@ export type VoiceInput =
   | VoiceChannelEvent
   | { readonly type: "connected" }
   | { readonly type: "bot"; readonly working: boolean }
-  | { readonly type: "muted"; readonly muted: boolean };
+  | { readonly type: "muted"; readonly muted: boolean }
+  /** The audio of voice turn `turn` has had time to play. */
+  | { readonly type: "played-out"; readonly turn: number };
 
 /** `listening` while the user may talk (or is talking), `waiting` while the agent works. */
 export type VoicePhase = "connecting" | "listening" | "waiting" | "speaking";
@@ -104,6 +113,8 @@ export function initialVoiceState(mode: VoiceSessionMode["type"]): VoiceState {
     botWorking: false,
     expected: null,
     voiceTurn: null,
+    playingOut: null,
+    voiceTurns: 0,
     readDone: false,
   };
 }
@@ -123,7 +134,12 @@ export function voiceReducer(state: VoiceState, input: VoiceInput): VoiceState {
       return { ...state, botWorking: input.working };
     case "user-turn-started":
       // Barge-in: whatever the voice was saying is cut off and stays silent until its turn ends.
-      return { ...state, userSpeaking: true, voiceTurn: state.voiceTurn === null ? null : "own" };
+      return {
+        ...state,
+        userSpeaking: true,
+        voiceTurn: state.voiceTurn === null ? null : "own",
+        playingOut: null,
+      };
     case "user-turn-done":
       return { ...state, userSpeaking: false };
     case "delegated":
@@ -131,13 +147,31 @@ export function voiceReducer(state: VoiceState, input: VoiceInput): VoiceState {
     case "context-appended":
       return { ...state, expected: "reply" };
     case "voice-turn-started":
-      return { ...state, voiceTurn: state.expected ?? "own", expected: null };
+      return {
+        ...state,
+        voiceTurn: state.expected ?? "own",
+        expected: null,
+        playingOut: null,
+        voiceTurns: state.voiceTurns + 1,
+      };
     case "voice-turn-done":
       return {
         ...state,
         voiceTurn: null,
-        readDone: state.readDone || (state.mode === "read" && state.voiceTurn === "reply"),
+        playingOut:
+          state.voiceTurn === "ack" || state.voiceTurn === "reply"
+            ? { turn: state.voiceTurns, heard: state.voiceTurn }
+            : null,
       };
+    case "played-out":
+      return state.playingOut?.turn !== input.turn
+        ? state
+        : {
+            ...state,
+            playingOut: null,
+            readDone:
+              state.readDone || (state.mode === "read" && state.playingOut.heard === "reply"),
+          };
   }
 }
 
@@ -146,7 +180,7 @@ export function voiceAudible(state: VoiceState): boolean {
   return (
     state.connection === "live" &&
     !state.userSpeaking &&
-    (state.voiceTurn === "ack" || state.voiceTurn === "reply")
+    (state.voiceTurn === "ack" || state.voiceTurn === "reply" || state.playingOut !== null)
   );
 }
 
@@ -238,12 +272,21 @@ export interface VoiceControllerOptions {
   readonly transport: VoiceTransport;
   /** A session that failed; the controller has already released it. */
   readonly onError: (message: string) => void;
-  /** Wait after a read's reply ends, so the jitter buffer's last audio still plays. */
+  /**
+   * How long a heard turn stays audible after realtime reports its end, so the audio still in the
+   * jitter buffer plays; a read ends then. Defaults to `VOICE_PLAYOUT_GRACE_MS`.
+   */
   readonly speechEndGraceMs?: number;
   readonly levelIntervalMs?: number;
 }
 
 const SILENCE: VoiceLevels = { microphone: 0, voice: 0 };
+
+/**
+ * Realtime's `turn.done` arrives only 0.7–0.8 s after the last audible frame on a local wired
+ * client (190 ms jitter buffer), and a phone on a worse link plays out later than that.
+ */
+export const VOICE_PLAYOUT_GRACE_MS = 1_500;
 
 /** Two targets match when they talk to the same thread the same way. */
 export function sameVoiceTarget(a: VoiceTarget, b: VoiceTarget): boolean {
@@ -317,8 +360,15 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       session.snapshot = { target: session.target, phase, muted: state.muted };
       emit(listeners);
     }
-    if (state.readDone && !previous.readDone)
-      session.timers.add(setTimeout(() => finish(session, null), options.speechEndGraceMs ?? 400));
+    const playingOut = state.playingOut;
+    if (playingOut !== null && playingOut !== previous.playingOut) {
+      const timer = setTimeout(() => {
+        session.timers.delete(timer);
+        apply(session, { type: "played-out", turn: playingOut.turn });
+      }, options.speechEndGraceMs ?? VOICE_PLAYOUT_GRACE_MS);
+      session.timers.add(timer);
+    }
+    if (state.readDone && !previous.readDone) finish(session, null);
   };
   const pollLevels = (session: Session, peer: VoicePeer) => {
     const timer = setTimeout(() => {
