@@ -206,8 +206,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/app.config.ts",
-    markers: 3,
-    why: "Android records audio for dictation",
+    markers: 4,
+    why: "Android records audio for dictation; the voice reader's WebRTC plugin",
   },
   {
     file: "apps/web/src/components/chat/ChatHeader.tsx",
@@ -265,6 +265,7 @@ export const SEAMS: readonly Seam[] = [
 export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/bots/",
   "apps/mobile/src/bots/",
+  "apps/mobile/plugins/withFriendVoiceReaderWebrtc",
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
