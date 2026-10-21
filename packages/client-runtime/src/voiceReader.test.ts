@@ -1,6 +1,17 @@
-import { VoiceReaderUtteranceId, type VoiceReaderState } from "@t3tools/contracts";
-import { expect, it, vi } from "vite-plus/test";
-import { createVoiceReaderDriver, type VoiceReaderPeer } from "./voiceReader.ts";
+import {
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  VoiceReaderUtteranceId,
+  type VoiceReaderAnswer,
+} from "@t3tools/contracts";
+import { expect, it, vi, type Mock } from "vite-plus/test";
+import {
+  createVoiceReaderPlayer,
+  voiceReaderPhaseOf,
+  type VoiceReaderPeer,
+  type VoiceReaderTarget,
+} from "./voiceReader.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -12,23 +23,27 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function snapshot(
-  id: string,
-  phase: "offer" | "connecting" | "speaking" = "offer",
-): VoiceReaderState {
-  return {
-    current: { id: VoiceReaderUtteranceId.make(id), phase, transcript: "" },
-    queued: 0,
-    lastError: null,
-  };
-}
+const target = (messageId: string): VoiceReaderTarget => ({
+  environmentId: EnvironmentId.make("env"),
+  threadId: ThreadId.make("thread"),
+  messageId: MessageId.make(messageId),
+});
+
+type TestPeer = VoiceReaderPeer & { readonly close: Mock<() => void> };
 
 function setup() {
   const calls: string[] = [];
-  const peers: ReturnType<typeof makePeer>[] = [];
-  function makePeer() {
+  const peers: Array<{ peer: TestPeer; end: () => void }> = [];
+  const reads: Array<{
+    messageId: string;
+    answer: (answer?: Partial<VoiceReaderAnswer>) => void;
+    end: (error: string | null) => void;
+    ended: ReturnType<typeof vi.fn>;
+  }> = [];
+  const openPeer = vi.fn<() => Promise<VoiceReaderPeer>>(async () => {
+    calls.push("openPeer");
     let end = () => {};
-    const peer = {
+    const peer: TestPeer = {
       createOffer: vi.fn(async () => {
         calls.push("createOffer");
         return "offer-sdp";
@@ -39,31 +54,44 @@ function setup() {
       onSpeechEnd: (listener: () => void) => {
         end = listener;
       },
-      close: vi.fn(),
-    } satisfies VoiceReaderPeer;
-    return { peer, end: () => end() };
-  }
-  const openPeer = vi.fn(async () => {
-    calls.push("openPeer");
-    const result = makePeer();
-    peers.push(result);
-    return result.peer;
+      close: vi.fn<() => void>(),
+    };
+    peers.push({ peer, end: () => end() });
+    return peer;
   });
   const transport = {
-    offer: vi.fn(async ({ sdp }: { sdp: string }) => {
-      calls.push(`offer:${sdp}`);
-      return { sdp: "answer-sdp" };
-    }),
-    speak: vi.fn(async () => {
-      calls.push("speak");
-    }),
-    stop: vi.fn(async () => {
-      calls.push("stop");
+    read: vi.fn(
+      (
+        readTarget: VoiceReaderTarget,
+        sdp: string,
+        handlers: {
+          onAnswer: (answer: VoiceReaderAnswer) => void;
+          onEnd: (error: string | null) => void;
+        },
+      ) => {
+        calls.push(`read:${readTarget.messageId}:${sdp}`);
+        const ended = vi.fn();
+        reads.push({
+          messageId: readTarget.messageId,
+          answer: (answer) =>
+            handlers.onAnswer({
+              utteranceId: VoiceReaderUtteranceId.make(`u-${readTarget.messageId}`),
+              sdp: "answer-sdp",
+              ...answer,
+            }),
+          end: handlers.onEnd,
+          ended,
+        });
+        return ended;
+      },
+    ),
+    speak: vi.fn(async (_environmentId: string, ref: { utteranceId: string }) => {
+      calls.push(`speak:${ref.utteranceId}`);
     }),
   };
   const onError = vi.fn();
-  const driver = createVoiceReaderDriver({ openPeer, transport, onError });
-  return { driver, peers, openPeer, transport, onError, calls };
+  const player = createVoiceReaderPlayer({ openPeer, transport, onError });
+  return { player, peers, reads, openPeer, transport, onError, calls };
 }
 
 async function flush() {
@@ -71,140 +99,159 @@ async function flush() {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
-it("signals in order and stops once after the speech-end grace", async () => {
+it("reads the message in order and ends after the speech-end grace", async () => {
   vi.useFakeTimers();
   try {
     const t = setup();
-    t.driver.update(snapshot("one"));
+    const phases: Array<string | null> = [];
+    t.player.subscribe(() => phases.push(voiceReaderPhaseOf(t.player.getSnapshot(), target("a"))));
+    t.player.toggle(target("a"));
+    await flush();
+    t.reads[0]!.answer();
     await flush();
     expect(t.calls).toEqual([
       "openPeer",
       "createOffer",
-      "offer:offer-sdp",
+      "read:a:offer-sdp",
       "accept:answer-sdp",
-      "speak",
+      "speak:u-a",
     ]);
+    expect(phases).toEqual(["connecting", "speaking"]);
     t.peers[0]!.end();
     t.peers[0]!.end();
     await vi.advanceTimersByTimeAsync(399);
-    expect(t.transport.stop).not.toHaveBeenCalled();
+    expect(t.reads[0]!.ended).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(t.transport.stop).toHaveBeenCalledTimes(1);
+    expect(t.reads[0]!.ended).toHaveBeenCalledTimes(1);
     expect(t.peers[0]!.peer.close).toHaveBeenCalled();
+    expect(t.player.getSnapshot()).toBeNull();
+    expect(t.onError).not.toHaveBeenCalled();
   } finally {
     vi.useRealTimers();
   }
 });
 
-it("abandons an old offer while starting the next utterance", async () => {
+it("stops the message being read when it is toggled again", async () => {
+  const t = setup();
+  t.player.toggle(target("a"));
+  await flush();
+  t.reads[0]!.answer();
+  await flush();
+  t.player.toggle(target("a"));
+  expect(t.player.getSnapshot()).toBeNull();
+  expect(t.reads[0]!.ended).toHaveBeenCalledTimes(1);
+  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
+  t.reads[0]!.end(null);
+  expect(t.onError).not.toHaveBeenCalled();
+  expect(t.openPeer).toHaveBeenCalledTimes(1);
+});
+
+it("stops the current message when another one starts", async () => {
+  const t = setup();
+  t.player.toggle(target("a"));
+  await flush();
+  t.reads[0]!.answer();
+  await flush();
+  t.player.toggle(target("b"));
+  expect(t.reads[0]!.ended).toHaveBeenCalledTimes(1);
+  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
+  expect(voiceReaderPhaseOf(t.player.getSnapshot(), target("a"))).toBeNull();
+  expect(voiceReaderPhaseOf(t.player.getSnapshot(), target("b"))).toBe("connecting");
+  await flush();
+  t.reads[1]!.answer();
+  await flush();
+  expect(voiceReaderPhaseOf(t.player.getSnapshot(), target("b"))).toBe("speaking");
+  expect(t.transport.speak).toHaveBeenCalledTimes(2);
+});
+
+it("abandons a replaced message's late offer", async () => {
   const t = setup();
   const offer = deferred<string>();
-  t.driver.update(snapshot("one"));
-  t.peers[0]!.peer.createOffer.mockReturnValueOnce(offer.promise);
+  const opening = deferred<void>();
+  t.openPeer.mockImplementationOnce(async () => {
+    await opening.promise;
+    const peer: TestPeer = {
+      createOffer: vi.fn(() => offer.promise),
+      accept: vi.fn(async () => {}),
+      onSpeechEnd: vi.fn(),
+      close: vi.fn<() => void>(),
+    };
+    t.peers.push({ peer, end: () => {} });
+    return peer;
+  });
+  t.player.toggle(target("a"));
+  opening.resolve();
   await flush();
-  t.driver.update(snapshot("two"));
-  await flush();
+  t.player.toggle(target("b"));
   offer.resolve("stale-sdp");
   await flush();
   expect(t.peers[0]!.peer.close).toHaveBeenCalled();
-  expect(t.transport.stop).not.toHaveBeenCalled();
-  expect(t.transport.offer).toHaveBeenCalledTimes(1);
-  expect(t.transport.offer).toHaveBeenCalledWith({ utteranceId: "two", sdp: "offer-sdp" });
+  expect(t.transport.read).toHaveBeenCalledTimes(1);
+  expect(t.transport.read.mock.calls[0]![0].messageId).toBe("b");
 });
 
-it("reports a failed offer once and stops the utterance", async () => {
+it("closes a peer that finishes opening after the reading stopped", async () => {
   const t = setup();
-  t.transport.offer.mockRejectedValueOnce(new Error("offer failed"));
-  t.driver.update(snapshot("one"));
-  await flush();
-  t.driver.update(snapshot("one"));
-  t.driver.stopCurrent();
-  expect(t.onError).toHaveBeenCalledExactlyOnceWith("offer failed");
-  expect(t.transport.stop).toHaveBeenCalledTimes(1);
-  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
-});
-
-it("stops speaking immediately and ignores a later speech end", async () => {
-  const t = setup();
-  t.driver.update(snapshot("one"));
-  await flush();
-  t.driver.stopCurrent();
-  t.driver.stopCurrent();
-  t.peers[0]!.end();
-  await flush();
-  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
-  expect(t.transport.stop).toHaveBeenCalledTimes(1);
-});
-
-it("disposes an in-flight accept without further transport calls", async () => {
-  const t = setup();
-  const accept = deferred<void>();
-  t.driver.update(snapshot("one"));
-  t.peers[0]!.peer.accept.mockReturnValueOnce(accept.promise);
-  await flush();
-  t.driver.dispose();
-  t.driver.update(snapshot("two"));
-  t.driver.stopCurrent();
-  t.peers[0]!.end();
-  accept.resolve();
-  await flush();
-  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
-  expect(t.openPeer).toHaveBeenCalledTimes(1);
-  expect(t.transport.speak).not.toHaveBeenCalled();
-  expect(t.transport.stop).not.toHaveBeenCalled();
-});
-
-it("opens one peer for repeated offer snapshots", async () => {
-  const t = setup();
-  t.driver.update(snapshot("one"));
-  t.driver.update(snapshot("one"));
-  await flush();
-  t.driver.update(snapshot("one"));
-  expect(t.openPeer).toHaveBeenCalledTimes(1);
-});
-
-it("ignores an unknown speaking utterance", () => {
-  const t = setup();
-  t.driver.update(snapshot("one", "speaking"));
-  expect(t.openPeer).not.toHaveBeenCalled();
-});
-
-it("closes a peer that finishes opening after disposal", async () => {
   const opening = deferred<VoiceReaderPeer>();
-  const peer: VoiceReaderPeer = {
+  const peer = {
     createOffer: vi.fn(async () => "unused"),
     accept: vi.fn(async () => {}),
     onSpeechEnd: vi.fn(),
     close: vi.fn(),
   };
-  const transport = {
-    offer: vi.fn(async () => ({ sdp: "unused" })),
-    speak: vi.fn(async () => {}),
-    stop: vi.fn(async () => {}),
-  };
-  const driver = createVoiceReaderDriver({
-    openPeer: () => opening.promise,
-    transport,
-    onError: vi.fn(),
-  });
-  driver.update(snapshot("one"));
-  driver.dispose();
+  t.openPeer.mockReturnValueOnce(opening.promise);
+  t.player.toggle(target("a"));
+  t.player.stop();
   opening.resolve(peer);
   await flush();
   expect(peer.close).toHaveBeenCalledTimes(1);
   expect(peer.createOffer).not.toHaveBeenCalled();
-  expect(transport.stop).not.toHaveBeenCalled();
+  expect(t.transport.read).not.toHaveBeenCalled();
 });
 
-it("swallows stop failure and uses a generic message for non-Error failures", async () => {
+it("reports a refused microphone and a server failure before the answer", async () => {
   const t = setup();
-  t.transport.offer.mockRejectedValueOnce("failed");
-  t.transport.stop.mockRejectedValueOnce(new Error("stop failed"));
-  t.driver.update(snapshot("one"));
+  t.openPeer.mockRejectedValueOnce(new Error("Permission denied"));
+  t.player.toggle(target("a"));
   await flush();
-  t.driver.update({ current: null, queued: 0, lastError: null });
-  t.driver.update(snapshot("one"));
-  expect(t.onError).toHaveBeenCalledExactlyOnceWith("The voice reader failed.");
-  expect(t.transport.stop).toHaveBeenCalledTimes(1);
-  expect(t.openPeer).toHaveBeenCalledTimes(1);
+  expect(t.onError).toHaveBeenCalledExactlyOnceWith("Permission denied");
+  expect(t.player.getSnapshot()).toBeNull();
+  t.player.toggle(target("b"));
+  await flush();
+  t.reads[0]!.end("Only agent replies can be read aloud.");
+  await flush();
+  expect(t.onError).toHaveBeenLastCalledWith("Only agent replies can be read aloud.");
+  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
+  expect(t.reads[0]!.ended).toHaveBeenCalledTimes(1);
+  expect(t.player.getSnapshot()).toBeNull();
+});
+
+it("ends quietly when the server ends the speech and reports a failure while speaking", async () => {
+  const t = setup();
+  t.player.toggle(target("a"));
+  await flush();
+  t.reads[0]!.answer();
+  await flush();
+  t.reads[0]!.end(null);
+  expect(t.player.getSnapshot()).toBeNull();
+  expect(t.peers[0]!.peer.close).toHaveBeenCalled();
+  t.player.toggle(target("b"));
+  await flush();
+  t.reads[1]!.answer();
+  await flush();
+  t.reads[1]!.end("Voice failed");
+  expect(t.onError).toHaveBeenCalledExactlyOnceWith("Voice failed");
+  expect(t.player.getSnapshot()).toBeNull();
+});
+
+it("reports a failed speak and ends the read", async () => {
+  const t = setup();
+  t.transport.speak.mockRejectedValueOnce(new Error("not waiting"));
+  t.player.toggle(target("a"));
+  await flush();
+  t.reads[0]!.answer();
+  await flush();
+  expect(t.onError).toHaveBeenCalledExactlyOnceWith("not waiting");
+  expect(t.reads[0]!.ended).toHaveBeenCalledTimes(1);
+  expect(t.player.getSnapshot()).toBeNull();
 });

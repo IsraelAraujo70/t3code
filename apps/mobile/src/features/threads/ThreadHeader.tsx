@@ -1,6 +1,3 @@
-// Fork (friend): Thread headers expose the Android voice reader.
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useVoiceReaderAction } from "../../bots/useVoiceReaderAction";
 import { useMemo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -13,9 +10,6 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
-    // Fork (friend): Reader preferences belong to the exact environment and thread.
-    readonly environmentId?: EnvironmentId;
-    readonly threadId?: ThreadId;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -30,8 +24,6 @@ export function ThreadHeader(
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
-  // Fork (friend): The hook owns reader setup and cleanup across navigation.
-  const voiceReaderActions = useVoiceReaderAction(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -69,13 +61,8 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
-    // Fork (friend): A reader that is on leads the bar; behind the overflow menu nothing showed it
-    // was listening, and choosing the item again to check turned it off.
-    if (voiceReaderActions[0]?.selected) actions.unshift(...voiceReaderActions);
-    else actions.push(...voiceReaderActions);
     return actions;
   }, [
-    voiceReaderActions,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,

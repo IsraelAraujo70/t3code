@@ -74,7 +74,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "packages/client-runtime/src/rpc/client.ts",
     markers: 2,
-    why: "bots directory is a subscription; the voice reader is a stream command",
+    why: "bots directory is a subscription; a voice reader read is a stream command",
   },
   {
     file: "packages/client-runtime/src/operations/commands.ts",
@@ -99,7 +99,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "packages/client-runtime/package.json",
     contains: '"./voice-reader"',
-    why: "export the voice reader driver",
+    why: "export the voice reader player",
   },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
@@ -116,13 +116,13 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.tsx",
-    markers: 3,
-    why: "name the bot that sent a message",
+    markers: 4,
+    why: "name the bot that sent a message; read a reply aloud",
   },
   {
     file: "apps/mobile/src/features/threads/ThreadFeed.tsx",
-    markers: 2,
-    why: "name the bot that sent a message",
+    markers: 3,
+    why: "name the bot that sent a message; read a reply aloud",
   },
   {
     file: "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
@@ -210,29 +210,9 @@ export const SEAMS: readonly Seam[] = [
     why: "Android records audio for dictation; the voice reader's WebRTC plugin",
   },
   {
-    file: "apps/mobile/src/features/threads/ThreadHeader.tsx",
-    markers: 4,
-    why: "voice reader action in the Android thread header",
-  },
-  {
-    file: "apps/mobile/src/features/threads/ThreadRouteScreen.tsx",
-    markers: 1,
-    why: "pass the thread to the voice reader action",
-  },
-  {
-    file: "apps/mobile/src/features/threads/useThreadHeaderOptions.test.tsx",
-    markers: 1,
-    why: "header tests stub the voice reader",
-  },
-  {
     file: "apps/mobile/src/components/ui/AppSymbol.tsx",
     markers: 2,
-    why: "speaker and waveform glyphs for the voice reader",
-  },
-  {
-    file: "apps/web/src/components/chat/ChatHeader.tsx",
-    markers: 2,
-    why: "voice reader button in the thread header",
+    why: "speaker glyph for the voice reader",
   },
   {
     file: "apps/web/src/components/chat/ChatComposer.tsx",

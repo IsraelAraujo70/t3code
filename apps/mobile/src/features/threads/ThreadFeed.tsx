@@ -1,5 +1,6 @@
-// Fork (friend): name the bot that sent a message.
+// Fork (friend): name the bot that sent a message; read a reply aloud.
 import { useBotSender } from "../../bots/useBotSender";
+import { VoiceReaderMessageButton } from "../../bots/VoiceReaderMessageButton";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -1434,6 +1435,13 @@ function renderFeedEntry(
                 sourceTitle={props.threadTitle}
               />
             ) : null}
+            {/* Fork (friend): the reply lives in its source thread, which a fork's feed may differ from. */}
+            <VoiceReaderMessageButton
+              environmentId={props.environmentId}
+              threadId={message.projectedItem?.sourceThreadId ?? props.threadId}
+              messageId={message.id}
+              iconColor={iconSubtleColor}
+            />
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {timestampLabel}
             </Text>

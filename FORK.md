@@ -45,18 +45,18 @@ attachment, and the server transcribes it with `T3CODE_DICTATION_MODEL` (default
 
 ## Voice reader
 
-Every server of the fork advertises `voiceReader`. A thread's header then offers "Ler respostas" (web,
-desktop, Android). While it is on, the server speaks a short pt-BR summary of each completed run's
-final reply through Codex realtime, using the `codex` provider instance's ChatGPT login. It never
-reads replies that finished before it was turned on, so turning it on is silent until the next run
-completes. API keys
-are not involved: the WebSocket/PCM transport would need one, so the reader uses only WebRTC. The
-client owns the peer and sends a muted microphone track, which realtime needs before it talks. The
-server only signals and feeds the text. It runs a dedicated `codex app-server` per subscription and
-one realtime session per reply, closed when the speech ends, so nothing stays open while idle. The
-protocol is experimental in Codex. See
+Every server of the fork advertises `voiceReader`. Each assistant reply then gets a listen button in
+its action row, next to copy and fork (web, desktop, Android). Pressing it speaks a short pt-BR
+summary of that reply through Codex realtime, using the `codex` provider instance's ChatGPT login;
+pressing it again stops it, and starting another reply stops the one playing. The client sends only
+the thread and message ids: the server loads the text and refuses anything but an assistant message
+of that thread. API keys are not involved: the WebSocket/PCM transport would need one, so the
+reader uses only WebRTC. The client owns the peer and sends a muted microphone track, which
+realtime needs before it talks; it takes the microphone on the press and releases it when the reply
+ends. Each press runs its own `codex app-server` and realtime session, closed when the speech ends,
+so nothing stays open while idle. The protocol is experimental in Codex. See
 [`apps/server/src/bots/voiceReader/`](apps/server/src/bots/voiceReader/) and
-`VoiceReaderSubscribeRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts).
+`VoiceReaderReadRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts).
 On Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
 
 ## State and rollback

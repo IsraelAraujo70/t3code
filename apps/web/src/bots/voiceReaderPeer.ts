@@ -1,25 +1,26 @@
 import type { VoiceReaderPeer } from "@t3tools/client-runtime/voice-reader";
 
 /** Realtime requires a sending track; disabling it keeps the user's microphone muted. */
-export async function acquireVoiceReaderMicrophone(): Promise<MediaStream> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+async function acquireMicrophone(): Promise<MediaStream> {
+  const stream = await navigator.mediaDevices
+    .getUserMedia({ audio: true })
+    .catch((error: unknown) => {
+      throw new Error(
+        `Couldn't use the microphone: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   for (const track of stream.getTracks()) track.enabled = false;
   return stream;
 }
 
-/** Releases the microphone shared by the reader's utterances. */
-export function releaseVoiceReaderMicrophone(stream: MediaStream): void {
-  for (const track of stream.getTracks()) track.stop();
-}
-
-/** Creates one utterance's DOM peer without taking ownership of the shared microphone. */
-export function openBrowserVoiceReaderPeer({
-  microphone,
-  audio,
-}: {
-  readonly microphone: MediaStream;
-  readonly audio: HTMLAudioElement;
-}): VoiceReaderPeer {
+/**
+ * One utterance's DOM peer. It holds the microphone (the permission prompt appears on first use)
+ * and its own audio element only until `close`.
+ */
+export async function openBrowserVoiceReaderPeer(): Promise<VoiceReaderPeer> {
+  const microphone = await acquireMicrophone();
+  const audio = new Audio();
+  audio.autoplay = true;
   const pc = new RTCPeerConnection();
   for (const track of microphone.getTracks()) {
     track.enabled = false;
@@ -117,6 +118,8 @@ export function openBrowserVoiceReaderPeer({
       for (const cancel of pendingWaits) cancel();
       channel.close();
       pc.close();
+      for (const track of microphone.getTracks()) track.stop();
+      audio.pause();
       audio.srcObject = null;
     },
   };

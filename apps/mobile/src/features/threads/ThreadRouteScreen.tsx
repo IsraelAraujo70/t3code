@@ -986,10 +986,7 @@ function ThreadRouteContent(
   return (
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
-      {/* Fork (friend): Reader controls target the displayed thread on its own server. */}
       <ThreadHeader
-        environmentId={selectedThread.environmentId}
-        threadId={selectedThread.id}
         title={selectedThread.title}
         subtitle={headerSubtitle}
         headerColor={headerColor}

@@ -45,10 +45,8 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.dictationTranscribe]: (input) => dictation.transcribe(input),
       [BOTS_WS_METHODS.pushDeviceRegister]: (input) => bots.registerPushDevice(input),
       [BOTS_WS_METHODS.pushDeviceUnregister]: (input) => bots.unregisterPushDevice(input),
-      [BOTS_WS_METHODS.voiceReaderSubscribe]: (input) => voiceReader.subscribe(input),
-      [BOTS_WS_METHODS.voiceReaderOffer]: (input) => voiceReader.offer(input),
+      [BOTS_WS_METHODS.voiceReaderRead]: (input) => voiceReader.read(input),
       [BOTS_WS_METHODS.voiceReaderSpeak]: (input) => voiceReader.speak(input),
-      [BOTS_WS_METHODS.voiceReaderStop]: (input) => voiceReader.stop(input),
     });
   }),
 );

@@ -1,76 +1,54 @@
 /**
- * The voice reader: speaks each completed run's final assistant reply of a subscribed thread
- * through Codex realtime. See `VoiceReaderSubscribeRpc` in the contracts for the protocol.
- * One app-server per subscription, one realtime session per reply.
+ * The voice reader: speaks one assistant message aloud through Codex realtime when a client asks.
+ * See `VoiceReaderReadRpc` in the contracts for the protocol. One app-server and one realtime
+ * session per read, both closed when the read's stream ends.
  */
 import {
   BotsError,
+  type MessageId,
   type ThreadId,
   VoiceReaderUtteranceId,
-  type OrchestrationV2Run,
-  type OrchestrationV2ConversationMessage,
   type VoiceReaderAnswer,
-  type VoiceReaderOfferInput,
-  type VoiceReaderState,
-  type VoiceReaderSubscribeInput,
+  type VoiceReaderReadInput,
   type VoiceReaderUtteranceRef,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
-import * as Exit from "effect/Exit";
-import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
-import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 
 import * as CodexRealtime from "./CodexRealtime.ts";
-import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import { BOT_COMPACTION_MESSAGE_PREFIX } from "../compaction/botCompaction.ts";
-import { lastReply } from "../push/botPushNotice.ts";
 
-/** One reply to speak: the final assistant text of a run that completed. */
-export interface VoiceReaderReply {
-  readonly runId: string;
-  readonly text: string;
-}
-
-/** Replies of runs that complete from now on; never replays older runs. */
-export class VoiceReaderReplies extends Context.Service<
-  VoiceReaderReplies,
+/** The text the reader may speak: assistant messages, looked up by the server. */
+export class VoiceReaderMessages extends Context.Service<
+  VoiceReaderMessages,
   {
-    readonly completed: (threadId: ThreadId) => Stream.Stream<VoiceReaderReply>;
+    /** The message's text. Fails unless it is an assistant message of `threadId` with text. */
+    readonly text: (threadId: ThreadId, messageId: MessageId) => Effect.Effect<string, BotsError>;
   }
->()("t3/bots/voiceReader/VoiceReader/VoiceReaderReplies") {}
+>()("t3/bots/voiceReader/VoiceReader/VoiceReaderMessages") {}
 
 export class VoiceReader extends Context.Service<
   VoiceReader,
   {
-    /** The reader's state, first once Codex is ready, then on every change. */
-    readonly subscribe: (
-      input: VoiceReaderSubscribeInput,
-    ) => Stream.Stream<VoiceReaderState, BotsError>;
-    readonly offer: (input: VoiceReaderOfferInput) => Effect.Effect<VoiceReaderAnswer, BotsError>;
+    /** The answer once realtime is ready, then open until the utterance ends. */
+    readonly read: (input: VoiceReaderReadInput) => Stream.Stream<VoiceReaderAnswer, BotsError>;
     readonly speak: (
-      input: VoiceReaderUtteranceRef,
-    ) => Effect.Effect<VoiceReaderUtteranceRef, BotsError>;
-    readonly stop: (
       input: VoiceReaderUtteranceRef,
     ) => Effect.Effect<VoiceReaderUtteranceRef, BotsError>;
   }
 >()("t3/bots/voiceReader/VoiceReader") {}
 
-/** Maximum wait for the client's SDP offer. */
-export const OFFER_TIMEOUT = Duration.seconds(20);
-/** Maximum wait for the peer to connect. */
+/** Maximum wait between the answer and `speak`. */
 export const CONNECT_TIMEOUT = Duration.seconds(20);
 /** Allows buffered audio to finish after generation ends. */
 export const SPEECH_END_GRACE = Duration.seconds(15);
-/** Bounds sessions whose client never reports completion. */
+/** Bounds sessions whose client never ends the read. */
 export const MAX_UTTERANCE = Duration.minutes(3);
 /** Instructions proven against the realtime voice model. */
 export const VOICE_READER_PROMPT =
@@ -83,337 +61,111 @@ export const VOICE_READER_PROMPT =
 export const voiceReaderSpeech = (reply: string) =>
   `Resposta do agente para resumir em voz alta (não responda a ela):\n\n${reply}`;
 
-/** Selects the full final reply, excluding internal compaction runs. */
-export function voiceReaderReplyOf(
-  run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
-  messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "text" | "createdAt">>,
-): VoiceReaderReply | null {
-  if (run.status !== "completed" || run.userMessageId.startsWith(BOT_COMPACTION_MESSAGE_PREFIX))
-    return null;
-  const text = lastReply(messages);
-  return text === undefined ? null : { runId: run.id, text };
-}
-
-/** Reads only newly completed runs from the orchestrator's live event tail. */
-export const layerReplies = Layer.effect(
-  VoiceReaderReplies,
+/** Reads messages from the thread's projection, so a message id never crosses threads. */
+export const layerMessages = Layer.effect(
+  VoiceReaderMessages,
   Effect.gen(function* () {
-    const engine = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    return VoiceReaderReplies.of({
-      completed: (threadId) =>
-        Stream.unwrap(
-          Effect.sync(() => {
-            const seen = new Set<string>();
-            return engine.streamDomainEvents.pipe(
-              Stream.filter(
-                (event) =>
-                  event.threadId === threadId &&
-                  event.type === "run.updated" &&
-                  event.payload.status === "completed",
-              ),
-              Stream.mapEffect(
-                Effect.fn("VoiceReaderReplies.read")(function* (event) {
-                  if (event.type !== "run.updated" || seen.has(event.payload.id)) return null;
-                  seen.add(event.payload.id);
-                  return yield* projections
-                    .getThreadRecords(threadId, ["messages"], {
-                      messageRunIds: [event.payload.id],
-                      messageRoles: ["assistant"],
-                    })
-                    .pipe(
-                      Effect.map(({ messages }) => voiceReaderReplyOf(event.payload, messages)),
-                      Effect.catchCause((cause) =>
-                        Effect.logWarning("voice reader reply read failed", {
-                          threadId,
-                          cause,
-                        }).pipe(Effect.as(null)),
-                      ),
-                    );
-                }),
-              ),
-              Stream.filter((reply): reply is VoiceReaderReply => reply !== null),
-              Stream.catchCause((cause) =>
-                Stream.fromEffect(
-                  Effect.logWarning("voice reader event stream failed", { cause }),
-                ).pipe(Stream.drain),
-              ),
-            );
-          }),
-        ),
+    const notFound = () => new BotsError({ message: "This message is not in that thread." });
+    return VoiceReaderMessages.of({
+      text: Effect.fn("VoiceReaderMessages.text")(function* (threadId, messageId) {
+        const { messages } = yield* projections
+          .getThreadRecords(threadId, ["messages"], { messageIds: [messageId] })
+          .pipe(
+            Effect.mapError((cause) =>
+              cause._tag === "ProjectionStoreThreadNotFoundError"
+                ? notFound()
+                : new BotsError({ message: "Couldn't load the message to read.", cause }),
+            ),
+          );
+        const message = messages.find(
+          (candidate) => candidate.id === messageId && candidate.threadId === threadId,
+        );
+        if (message === undefined) return yield* notFound();
+        if (message.role !== "assistant")
+          return yield* new BotsError({ message: "Only agent replies can be read aloud." });
+        if (message.text.trim() === "")
+          return yield* new BotsError({ message: "This reply has no text to read." });
+        return message.text;
+      }),
     });
   }),
 ).pipe(Layer.provide(ProjectionStore.layer));
 
-/** Builds independently scoped readers sharing only the utterance lookup table. */
+/** Reads share only the lookup from utterance id to its `speak`. */
 export const layer = Layer.effect(
   VoiceReader,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const codex = yield* CodexRealtime.CodexRealtime;
-    const replies = yield* VoiceReaderReplies;
-    type Reader = {
-      offer: VoiceReader["Service"]["offer"];
-      speak: VoiceReader["Service"]["speak"];
-      stop: VoiceReader["Service"]["stop"];
-    };
-    const readers = new Map<VoiceReaderUtteranceId, Reader>();
-    const invalidOffer = () =>
-      new BotsError({ message: "This utterance is not waiting for an offer." });
+    const messages = yield* VoiceReaderMessages;
+    const speakers = new Map<VoiceReaderUtteranceId, Effect.Effect<void, BotsError>>();
     return VoiceReader.of({
-      subscribe: ({ threadId }) =>
+      read: ({ threadId, messageId, sdp }) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const scope = yield* Effect.scope;
+            const text = yield* messages.text(threadId, messageId);
             const host = yield* codex.open;
-            const lock = yield* Semaphore.make(1);
-            const state = yield* SubscriptionRef.make<VoiceReaderState>({
-              current: null,
-              queued: 0,
-              lastError: null,
+            const session = yield* host.startSession({
+              offerSdp: sdp,
+              prompt: VOICE_READER_PROMPT,
             });
-            const queue: VoiceReaderReply[] = [];
-            let active: {
-              id: VoiceReaderUtteranceId;
-              reply: VoiceReaderReply;
-              starting: boolean;
-              speaking: boolean;
-              session: CodexRealtime.RealtimeSession | null;
-              scope: Scope.Closeable | null;
-            } | null = null;
-            let disposed = false;
-            /**
-             * Finishes `id` after `duration` unless it moved past `phase` (null: in any phase).
-             * A timer for an utterance that already finished does nothing (see finishLocked).
-             */
-            const timer: (
-              id: VoiceReaderUtteranceId,
-              duration: Duration.Duration,
-              phase: "offer" | "connecting" | null,
-              error: string | null,
-            ) => Effect.Effect<void> = Effect.fn("VoiceReader.timer")(function* (
-              id: VoiceReaderUtteranceId,
-              duration: Duration.Duration,
-              phase: "offer" | "connecting" | null,
-              error: string | null,
-            ) {
-              yield* Effect.forkIn(
-                Effect.sleep(duration).pipe(
-                  Effect.andThen(() =>
-                    lock.withPermits(1)(
-                      Effect.gen(function* () {
-                        const current = (yield* SubscriptionRef.get(state)).current?.phase;
-                        if (phase !== null && current !== phase) return;
-                        // An offer being answered is past waiting even before its phase changes.
-                        if (phase === "offer" && active?.starting) return;
-                        yield* finishLocked(id, error);
-                      }),
-                    ),
-                  ),
-                ),
-                scope,
-              );
-            });
-            const advance: () => Effect.Effect<void> = Effect.fn("VoiceReader.advance")(
-              function* () {
-                if (active !== null || disposed) return;
-                const reply = queue.shift();
-                if (reply === undefined) return;
-                const id = VoiceReaderUtteranceId.make(
-                  yield* crypto.randomUUIDv4().pipe(Effect.orDie),
-                );
-                active = {
-                  id,
-                  reply,
-                  starting: false,
-                  speaking: false,
-                  session: null,
-                  scope: null,
-                };
-                readers.set(id, reader);
-                yield* timer(
-                  id,
-                  OFFER_TIMEOUT,
-                  "offer",
-                  "The client did not answer the voice reader in time.",
-                );
-                yield* SubscriptionRef.update(state, (s) => ({
-                  ...s,
-                  current: { id, phase: "offer" as const, transcript: "" },
-                  queued: queue.length,
-                }));
-              },
+            const id = VoiceReaderUtteranceId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+            const done = yield* Deferred.make<void, BotsError>();
+            const end = (error: string | null) =>
+              error === null
+                ? Deferred.succeed(done, undefined)
+                : Deferred.fail(done, new BotsError({ message: error }));
+            const endAfter = (duration: Duration.Duration, ending: Effect.Effect<unknown>) =>
+              Effect.forkIn(Effect.sleep(duration).pipe(Effect.andThen(ending)), scope);
+            let speaking = false;
+            yield* Effect.forkIn(
+              Stream.runForEach(session.events, (event) => {
+                if (event.type === "transcript") return Effect.void;
+                if (event.type === "transcript-done") return endAfter(SPEECH_END_GRACE, end(null));
+                return end(event.type === "error" ? event.message : null);
+              }),
+              scope,
             );
-            const finishLocked: (
-              id: VoiceReaderUtteranceId,
-              error: string | null,
-            ) => Effect.Effect<void> = Effect.fn("VoiceReader.finishLocked")(function* (
-              id: VoiceReaderUtteranceId,
-              error: string | null,
-            ) {
-              if (active?.id !== id) return;
-              const previous = active;
-              active = null;
-              readers.delete(id);
-              if (previous.scope !== null) yield* Scope.close(previous.scope, Exit.void);
-              yield* SubscriptionRef.update(state, (s) => ({
-                ...s,
-                current: null,
-                lastError: error ?? (previous.speaking ? null : s.lastError),
-              }));
-              yield* advance();
-            });
-            const finish = Effect.fn("VoiceReader.finish")(
-              (id: VoiceReaderUtteranceId, error: string | null) =>
-                lock.withPermits(1)(finishLocked(id, error)),
+            yield* endAfter(
+              CONNECT_TIMEOUT,
+              Effect.suspend(() =>
+                speaking ? Effect.void : end("The voice connection did not come up."),
+              ),
             );
-            const reader: Reader = {
-              offer: Effect.fn("VoiceReader.offer")(function* (input) {
-                const sessionScope = yield* lock.withPermits(1)(
-                  Effect.gen(function* () {
-                    if (
-                      active?.id !== input.utteranceId ||
-                      active.starting ||
-                      (yield* SubscriptionRef.get(state)).current?.phase !== "offer"
-                    )
-                      return yield* Effect.fail(invalidOffer());
-                    active.starting = true;
-                    const child = yield* Scope.fork(scope);
-                    active.scope = child;
-                    return child;
-                  }),
-                );
-                const session = yield* host
-                  .startSession({ offerSdp: input.sdp, prompt: VOICE_READER_PROMPT })
-                  .pipe(
-                    Scope.provide(sessionScope),
-                    Effect.tapError((error) => finish(input.utteranceId, error.message)),
+            speakers.set(
+              id,
+              Effect.suspend(() => {
+                if (speaking)
+                  return Effect.fail(
+                    new BotsError({ message: "This utterance is already speaking." }),
                   );
-                return yield* lock.withPermits(1)(
-                  Effect.gen(function* () {
-                    if (active?.id !== input.utteranceId) {
-                      yield* Scope.close(sessionScope, Exit.void);
-                      return yield* Effect.fail(
-                        new BotsError({ message: "This utterance was stopped." }),
-                      );
-                    }
-                    active.session = session;
-                    yield* timer(
-                      input.utteranceId,
-                      CONNECT_TIMEOUT,
-                      "connecting",
-                      "The voice connection did not come up.",
-                    );
-                    yield* SubscriptionRef.update(state, (s) => ({
-                      ...s,
-                      current: s.current && { ...s.current, phase: "connecting" as const },
-                    }));
-                    yield* Effect.forkIn(
-                      Stream.runForEach(session.events, (event) => {
-                        if (event.type === "transcript")
-                          return lock.withPermits(1)(
-                            SubscriptionRef.update(state, (s) =>
-                              s.current?.id === input.utteranceId
-                                ? {
-                                    ...s,
-                                    current: {
-                                      ...s.current,
-                                      transcript: s.current.transcript + event.delta,
-                                    },
-                                  }
-                                : s,
-                            ),
-                          );
-                        if (event.type === "transcript-done")
-                          return timer(input.utteranceId, SPEECH_END_GRACE, null, null);
-                        // Closing a session must not await the event consumer that requested its close.
-                        return Effect.forkIn(
-                          finish(input.utteranceId, event.type === "error" ? event.message : null),
-                          scope,
-                        ).pipe(Effect.asVoid);
-                      }),
-                      sessionScope,
-                    );
-                    return { sdp: session.answerSdp };
-                  }),
+                speaking = true;
+                return session.appendSpeech(voiceReaderSpeech(text)).pipe(
+                  Effect.tapError((error) => end(error.message)),
+                  Effect.andThen(endAfter(MAX_UTTERANCE, end(null))),
+                  Effect.asVoid,
                 );
               }),
-              speak: Effect.fn("VoiceReader.speak")((input) =>
-                lock.withPermits(1)(
-                  Effect.gen(function* () {
-                    if (
-                      active?.id !== input.utteranceId ||
-                      active.session === null ||
-                      (yield* SubscriptionRef.get(state)).current?.phase !== "connecting"
-                    )
-                      return yield* Effect.fail(
-                        new BotsError({ message: "This utterance is not waiting to speak." }),
-                      );
-                    const result = yield* Effect.result(
-                      active.session.appendSpeech(voiceReaderSpeech(active.reply.text)),
-                    );
-                    if (result._tag === "Failure") {
-                      yield* finishLocked(input.utteranceId, result.failure.message);
-                      return yield* Effect.fail(result.failure);
-                    }
-                    active.speaking = true;
-                    yield* timer(input.utteranceId, MAX_UTTERANCE, null, null);
-                    yield* SubscriptionRef.update(state, (s) => ({
-                      ...s,
-                      current: s.current && { ...s.current, phase: "speaking" as const },
-                    }));
-                    return input;
-                  }),
-                ),
-              ),
-              stop: Effect.fn("VoiceReader.stop")(function* (input) {
-                yield* finish(input.utteranceId, null);
-                return input;
-              }),
-            };
-            yield* Effect.addFinalizer(() =>
-              lock.withPermits(1)(
-                Effect.gen(function* () {
-                  disposed = true;
-                  if (active !== null) yield* finishLocked(active.id, null);
-                }),
-              ),
             );
-            let listening = false;
-            return SubscriptionRef.changes(state).pipe(
-              Stream.tap(() => {
-                if (listening) return Effect.void;
-                listening = true;
-                return Effect.forkIn(
-                  Stream.runForEach(replies.completed(threadId), (reply) =>
-                    lock.withPermits(1)(
-                      Effect.gen(function* () {
-                        queue.push(reply);
-                        yield* SubscriptionRef.update(state, (s) => ({
-                          ...s,
-                          queued: queue.length,
-                        }));
-                        yield* advance();
-                      }),
-                    ),
-                  ),
-                  scope,
-                );
-              }),
+            yield* Effect.addFinalizer(() => Effect.sync(() => speakers.delete(id)));
+            return Stream.make({ utteranceId: id, sdp: session.answerSdp }).pipe(
+              Stream.concat(Stream.fromEffect(Deferred.await(done)).pipe(Stream.drain)),
             );
           }),
         ),
-      offer: (input) => readers.get(input.utteranceId)?.offer(input) ?? Effect.fail(invalidOffer()),
       speak: (input) =>
-        readers.get(input.utteranceId)?.speak(input) ??
-        Effect.fail(new BotsError({ message: "This utterance is not waiting to speak." })),
-      stop: (input) => readers.get(input.utteranceId)?.stop(input) ?? Effect.succeed(input),
+        (
+          speakers.get(input.utteranceId) ??
+          Effect.fail(new BotsError({ message: "This utterance is not waiting to speak." }))
+        ).pipe(Effect.as(input)),
     });
   }),
 ).pipe(Layer.provide(NodeCrypto.layer));
 
-/** Production reply and realtime adapters for the voice reader. */
+/** Production message and realtime adapters for the voice reader. */
 export const layerLive = layer.pipe(
-  Layer.provide(layerReplies),
+  Layer.provide(layerMessages),
   Layer.provide(CodexRealtime.layer),
 );

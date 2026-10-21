@@ -2,7 +2,9 @@ import {
   AuthOrchestrationOperateScope,
   BOTS_WS_METHODS,
   EnvironmentId,
+  MessageId,
   ThreadId,
+  VoiceReaderUtteranceId,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -17,7 +19,7 @@ import { vi } from "vite-plus/test";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import { createBotsEnvironmentAtoms } from "./bots.ts";
+import { createBotsEnvironmentAtoms, createVoiceReaderTransport } from "./bots.ts";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -26,7 +28,7 @@ const sessions = Atom.family((_id: EnvironmentId) =>
   Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
 );
 const env = EnvironmentId.make("env-1");
-const state = { phase: "idle" };
+const answer = { utteranceId: VoiceReaderUtteranceId.make("utterance"), sdp: "answer-sdp" };
 const session = (operate: boolean): AuthSessionState => ({
   authenticated: true,
   auth: {
@@ -39,17 +41,18 @@ const session = (operate: boolean): AuthSessionState => ({
   permissions: operate ? [AuthOrchestrationOperateScope] : [],
 });
 
-const subscribe = Effect.fn(function* (operate: boolean) {
-  let subscribed = 0;
+/** Reads one message through the transport; the fake server answers and ends the utterance. */
+const read = Effect.fn(function* (operate: boolean) {
+  const reads: unknown[] = [];
   const rpcSession = {
     client: {
-      [BOTS_WS_METHODS.voiceReaderSubscribe]: () =>
+      [BOTS_WS_METHODS.voiceReaderRead]: (input: unknown) =>
         Stream.fromEffect(
           Effect.sync(() => {
-            subscribed++;
-            return state;
+            reads.push(input);
+            return answer;
           }),
-        ).pipe(Stream.concat(Stream.never)),
+        ),
     },
   } as unknown as RpcSession;
   const supervisor = {
@@ -65,24 +68,38 @@ const subscribe = Effect.fn(function* (operate: boolean) {
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   registry.set(sessions(env), AsyncResult.success(session(operate)));
-  const voiceReader = createBotsEnvironmentAtoms(runtime).voiceReader({
-    environmentId: env,
-    input: { threadId: ThreadId.make("thread-1") },
-  });
-  yield* AtomRegistry.mount(registry, voiceReader);
-  const result = yield* AtomRegistry.getResult(registry, voiceReader, {
-    suspendOnWaiting: false,
-  }).pipe(Effect.result);
-  return { result, subscribed };
+  const transport = createVoiceReaderTransport(registry, createBotsEnvironmentAtoms(runtime));
+  const events: unknown[] = [];
+  yield* Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        transport.read(
+          {
+            environmentId: env,
+            threadId: ThreadId.make("thread-1"),
+            messageId: MessageId.make("message-1"),
+          },
+          "offer-sdp",
+          {
+            onAnswer: (value) => events.push(value),
+            onEnd: (error) => {
+              events.push({ end: error });
+              resolve();
+            },
+          },
+        );
+      }),
+  );
+  return { events, reads };
 });
 
 describe("voiceReader", () => {
-  it.effect("subscribes when the session grants orchestration:operate", () =>
+  it.effect("reads the message when the session grants orchestration:operate", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { result, subscribed } = yield* subscribe(true);
-        expect(result).toMatchObject({ _tag: "Success", success: state });
-        expect(subscribed).toBe(1);
+        const { events, reads } = yield* read(true);
+        expect(reads).toEqual([{ threadId: "thread-1", messageId: "message-1", sdp: "offer-sdp" }]);
+        expect(events).toEqual([answer, { end: null }]);
       }),
     ),
   );
@@ -90,12 +107,11 @@ describe("voiceReader", () => {
   it.effect("is denied before reaching the server without orchestration:operate", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { result, subscribed } = yield* subscribe(false);
-        expect(result).toMatchObject({
-          _tag: "Failure",
-          failure: { _tag: "EnvironmentAuthorizationError" },
-        });
-        expect(subscribed).toBe(0);
+        const { events, reads } = yield* read(false);
+        expect(reads).toEqual([]);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ end: expect.any(String) });
+        expect(events[0]).not.toEqual({ end: null });
       }),
     ),
   );

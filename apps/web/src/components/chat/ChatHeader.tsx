@@ -37,9 +37,6 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
 
-// Fork (friend): thread voice reader control.
-import { VoiceReaderButton } from "../../bots/VoiceReaderButton";
-
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
@@ -401,8 +398,6 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {/* Fork (friend): available on every thread with a capable server. */}
-      <VoiceReaderButton environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
     </div>
   );
 });

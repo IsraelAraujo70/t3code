@@ -7,7 +7,7 @@ import {
 } from "react-native-webrtc";
 
 /** Realtime requires a sending track; disabling it keeps the user's microphone muted. */
-export async function acquireVoiceReaderMicrophone(): Promise<MediaStream> {
+async function acquireMicrophone(): Promise<MediaStream> {
   // getUserMedia requests RECORD_AUDIO itself, including Android's runtime prompt.
   const stream = await mediaDevices
     .getUserMedia({ audio: true, video: false })
@@ -25,18 +25,12 @@ export async function acquireVoiceReaderMicrophone(): Promise<MediaStream> {
   return stream;
 }
 
-/** Releases the microphone shared by the reader's utterances. */
-export function releaseVoiceReaderMicrophone(stream: MediaStream): void {
-  for (const track of stream.getTracks()) track.stop();
-  stream.release();
-}
-
-/** Creates one utterance's native peer without taking ownership of the shared microphone. */
-export function openNativeVoiceReaderPeer({
-  microphone,
-}: {
-  readonly microphone: MediaStream;
-}): VoiceReaderPeer {
+/**
+ * One utterance's native peer. It holds the microphone (Android asks for it on first use) only
+ * until `close`.
+ */
+export async function openNativeVoiceReaderPeer(): Promise<VoiceReaderPeer> {
+  const microphone = await acquireMicrophone();
   const pc = new RTCPeerConnection();
   for (const track of microphone.getTracks()) {
     track.enabled = false;
@@ -135,6 +129,8 @@ export function openNativeVoiceReaderPeer({
       for (const cancel of pendingWaits) cancel();
       channel.close();
       pc.close();
+      for (const track of microphone.getTracks()) track.stop();
+      microphone.release();
     },
   };
 }

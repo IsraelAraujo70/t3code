@@ -38,8 +38,9 @@ import {
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
-// Fork (friend): name the bot that sent a message.
+// Fork (friend): name the bot that sent a message; read a reply aloud.
 import { useBotSender } from "../../bots/useBotSender";
+import { VoiceReaderMessageButton } from "../../bots/VoiceReaderMessageButton";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -2821,6 +2822,14 @@ function AssistantMessageMeta({
       />
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
+      ) : null}
+      {/* Fork (friend): the reply lives in its source thread, which a fork's timeline may differ from. */}
+      {message.role === "assistant" && !message.streaming ? (
+        <VoiceReaderMessageButton
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadId={projectedItem?.sourceThreadId ?? ctx.threadRef?.threadId}
+          messageId={message.id}
+        />
       ) : null}
       {!message.streaming && (
         <Tooltip>
