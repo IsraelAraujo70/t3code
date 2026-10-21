@@ -47,31 +47,32 @@ const make = Effect.gen(function* () {
   };
 
   /** The projection reads a change needs; null skips the reads when it cannot push. */
-  const changeOf = (event: OrchestrationV2DomainEvent) =>
-    Effect.gen(function* () {
-      if (event.type === "run.updated") {
-        const run = event.payload;
-        if (run.status !== "completed") return null;
-        const trigger = yield* projections.getRunMessage(event.threadId, run.id);
-        const { messages } = yield* projections.getThreadRecords(event.threadId, ["messages"], {
-          messageRunIds: [run.id],
-          messageRoles: ["assistant"],
-        });
-        return { type: "run", run, trigger, replies: messages } satisfies BotPushChange;
-      }
-      if (event.type !== "runtime-request.updated") return null;
-      if (event.payload.status !== "pending") return null;
-      // Read the stored request: the event may be older than an answer already recorded.
-      const stored = yield* projections.getRuntimeResponseContext(event.threadId, event.payload.id);
-      return {
-        type: "request",
-        request: stored.request ?? event.payload,
-        item: stored.item,
-      } satisfies BotPushChange;
-    });
+  const changeOf = Effect.fn("BotPushReactor.changeOf")(function* (
+    event: OrchestrationV2DomainEvent,
+  ) {
+    if (event.type === "run.updated") {
+      const run = event.payload;
+      if (run.status !== "completed") return null;
+      const trigger = yield* projections.getRunMessage(event.threadId, run.id);
+      const { messages } = yield* projections.getThreadRecords(event.threadId, ["messages"], {
+        messageRunIds: [run.id],
+        messageRoles: ["assistant"],
+      });
+      return { type: "run", run, trigger, replies: messages } satisfies BotPushChange;
+    }
+    if (event.type !== "runtime-request.updated") return null;
+    if (event.payload.status !== "pending") return null;
+    // Read the stored request: the event may be older than an answer already recorded.
+    const stored = yield* projections.getRuntimeResponseContext(event.threadId, event.payload.id);
+    return {
+      type: "request",
+      request: stored.request ?? event.payload,
+      item: stored.item,
+    } satisfies BotPushChange;
+  });
 
-  const handle: BotPushReactor["Service"]["handle"] = (event) =>
-    Effect.gen(function* () {
+  const handle: BotPushReactor["Service"]["handle"] = Effect.fn("BotPushReactor.handle")(
+    function* (event) {
       const parsed = parseBotThreadId(event.threadId);
       if (parsed === null) return;
       const change = yield* changeOf(event);
@@ -86,11 +87,17 @@ const make = Effect.gen(function* () {
         sentAt: yield* Clock.currentTimeMillis,
       });
       yield* Effect.forkIn(delivery.deliver(data), scope);
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("handling a bot push event failed", { threadId: event.threadId, cause }),
+    },
+    (effect, event) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("handling a bot push event failed", {
+            threadId: event.threadId,
+            cause,
+          }),
+        ),
       ),
-    );
+  );
 
   const start: BotPushReactor["Service"]["start"] = () =>
     delivery.enabled

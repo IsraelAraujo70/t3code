@@ -108,14 +108,15 @@ export class BotPushDelivery extends Context.Service<
 
 const disabled = BotPushDelivery.of({ enabled: false, deliver: () => Effect.void });
 
-const readServiceAccount = (path: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const text = yield* fileSystem.readFileString(path);
-    const account = yield* decodeServiceAccount(text);
-    const privateKey = yield* Effect.try(() => NodeCrypto.createPrivateKey(account.private_key));
-    return { ...account, tokenUri: account.token_uri ?? DEFAULT_TOKEN_URI, privateKey };
-  });
+const readServiceAccount = Effect.fn("BotPushDelivery.readServiceAccount")(function* (
+  path: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const text = yield* fileSystem.readFileString(path);
+  const account = yield* decodeServiceAccount(text);
+  const privateKey = yield* Effect.try(() => NodeCrypto.createPrivateKey(account.private_key));
+  return { ...account, tokenUri: account.token_uri ?? DEFAULT_TOKEN_URI, privateKey };
+});
 
 const make = Effect.gen(function* () {
   const path = yield* Config.String(FCM_SERVICE_ACCOUNT_ENV).pipe(
@@ -159,29 +160,28 @@ const make = Effect.gen(function* () {
     return `${unsigned}.${signature}`;
   };
 
-  const fetchAccessToken = (nowMs: number) =>
-    Effect.gen(function* () {
-      const response = yield* httpClient
-        .execute(
-          HttpClientRequest.post(account.tokenUri).pipe(
-            HttpClientRequest.bodyUrlParams({
-              grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-              assertion: signAssertion(nowMs),
-            }),
-          ),
-        )
-        .pipe(
-          Effect.timeout("15 seconds"),
-          Effect.mapError((cause) => new FcmRequestError({ stage: "token", cause })),
-        );
-      if (response.status < 200 || response.status >= 300) {
-        return yield* new FcmRequestError({ stage: "token", status: response.status });
-      }
-      const body = yield* HttpClientResponse.schemaBodyJson(TokenResponse)(response).pipe(
+  const fetchAccessToken = Effect.fn("BotPushDelivery.fetchAccessToken")(function* (nowMs: number) {
+    const response = yield* httpClient
+      .execute(
+        HttpClientRequest.post(account.tokenUri).pipe(
+          HttpClientRequest.bodyUrlParams({
+            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            assertion: signAssertion(nowMs),
+          }),
+        ),
+      )
+      .pipe(
+        Effect.timeout("15 seconds"),
         Effect.mapError((cause) => new FcmRequestError({ stage: "token", cause })),
       );
-      return { token: body.access_token, expiresAt: nowMs + body.expires_in * 1000 };
-    });
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new FcmRequestError({ stage: "token", status: response.status });
+    }
+    const body = yield* HttpClientResponse.schemaBodyJson(TokenResponse)(response).pipe(
+      Effect.mapError((cause) => new FcmRequestError({ stage: "token", cause })),
+    );
+    return { token: body.access_token, expiresAt: nowMs + body.expires_in * 1000 };
+  });
 
   const currentAccessToken = SynchronizedRef.modifyEffect(accessToken, (cached) =>
     Effect.gen(function* () {
@@ -194,8 +194,8 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  const sendTo = (device: BotPushDevice, data: BotPushData) =>
-    Effect.gen(function* () {
+  const sendTo = Effect.fn("BotPushDelivery.sendTo")(
+    function* (device: BotPushDevice, data: BotPushData) {
       const token = yield* currentAccessToken;
       const response = yield* HttpClientRequest.post(sendUrl).pipe(
         HttpClientRequest.bearerToken(token),
@@ -221,12 +221,15 @@ const make = Effect.gen(function* () {
       // A revoked or rejected access token is fetched again on the next push.
       if (response.status === 401) yield* SynchronizedRef.set(accessToken, Option.none());
       return yield* new FcmRequestError({ stage: "send", status: response.status });
-    }).pipe(
-      sends.withPermits(1),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not send a bot push", { label: device.label, cause }),
+    },
+    (effect, device) =>
+      effect.pipe(
+        sends.withPermits(1),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not send a bot push", { label: device.label, cause }),
+        ),
       ),
-    );
+  );
 
   const deliver: BotPushDelivery["Service"]["deliver"] = (data) =>
     store.listPushDevices.pipe(

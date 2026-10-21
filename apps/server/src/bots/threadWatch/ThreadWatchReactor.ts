@@ -104,8 +104,8 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const handle: ThreadWatchReactor["Service"]["handle"] = (event) =>
-    Effect.gen(function* () {
+  const handle: ThreadWatchReactor["Service"]["handle"] = Effect.fn("ThreadWatchReactor.handle")(
+    function* (event) {
       if (event.type === "run.updated") {
         yield* notify(event.threadId, { type: "run", run: event.payload });
         return;
@@ -114,14 +114,17 @@ const make = Effect.gen(function* () {
       // Read the stored request: the event may be older than an answer already recorded.
       const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
       yield* notify(event.threadId, { type: "request", request: request ?? event.payload });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("handling a watched thread event failed", {
-          threadId: event.threadId,
-          cause,
-        }),
+    },
+    (effect, event) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("handling a watched thread event failed", {
+            threadId: event.threadId,
+            cause,
+          }),
+        ),
       ),
-    );
+  );
 
   /** Changes that landed while the server was down; replays are no-ops by command id. */
   const catchUp = Effect.gen(function* () {

@@ -127,95 +127,101 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
 
-  const complete = (key: Redacted.Redacted, body: unknown, timeout: "120 seconds" | "30 seconds") =>
-    Effect.gen(function* () {
-      const response = yield* HttpClientRequest.post(ENDPOINT).pipe(
-        HttpClientRequest.bearerToken(Redacted.value(key)),
-        HttpClientRequest.bodyJson(body),
-        Effect.flatMap((request) => httpClient.execute(request)),
-        Effect.timeout(timeout),
-        Effect.mapError((cause) => failure("Could not reach the transcription service.", cause)),
-      );
-      const decoded = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response).pipe(
-        Effect.orElseSucceed(() => null),
-      );
-      if (response.status < 200 || response.status >= 300 || decoded === null || decoded.error) {
-        const detail = decoded?.error?.message ?? `HTTP ${response.status}`;
-        return yield* failure(`The transcription service failed: ${detail}`);
-      }
-      const content = decoded.choices?.[0]?.message?.content;
-      const text =
-        typeof content === "string"
-          ? content
-          : (content ?? []).map((part) => part.text ?? "").join("");
-      return text.trim();
-    });
+  const complete = Effect.fn("Dictation.complete")(function* (
+    key: Redacted.Redacted,
+    body: unknown,
+    timeout: "120 seconds" | "30 seconds",
+  ) {
+    const response = yield* HttpClientRequest.post(ENDPOINT).pipe(
+      HttpClientRequest.bearerToken(Redacted.value(key)),
+      HttpClientRequest.bodyJson(body),
+      Effect.flatMap((request) => httpClient.execute(request)),
+      Effect.timeout(timeout),
+      Effect.mapError((cause) => failure("Could not reach the transcription service.", cause)),
+    );
+    const decoded = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (response.status < 200 || response.status >= 300 || decoded === null || decoded.error) {
+      const detail = decoded?.error?.message ?? `HTTP ${response.status}`;
+      return yield* failure(`The transcription service failed: ${detail}`);
+    }
+    const content = decoded.choices?.[0]?.message?.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : (content ?? []).map((part) => part.text ?? "").join("");
+    return text.trim();
+  });
 
-  const transcribeRecording = (path: string, extension: string, key: Redacted.Redacted) =>
-    Effect.gen(function* () {
-      const format = AUDIO_FORMATS[extension];
-      if (format === undefined) {
-        return yield* failure(
-          "Unsupported recording format. Use WebM, Ogg, M4A, AAC, WAV, MP3 or FLAC.",
-        );
-      }
-      const info = yield* fileSystem
-        .stat(path)
-        .pipe(Effect.mapError((cause) => failure("The recording was not found.", cause)));
-      if (Number(info.size) > MAX_DICTATION_BYTES) {
-        return yield* failure("The recording is larger than 20 MB.");
-      }
-      const audio = yield* fileSystem
-        .readFile(path)
-        .pipe(Effect.mapError((cause) => failure("Could not read the recording.", cause)));
+  const transcribeRecording = Effect.fn("Dictation.transcribeRecording")(function* (
+    path: string,
+    extension: string,
+    key: Redacted.Redacted,
+  ) {
+    const format = AUDIO_FORMATS[extension];
+    if (format === undefined) {
+      return yield* failure(
+        "Unsupported recording format. Use WebM, Ogg, M4A, AAC, WAV, MP3 or FLAC.",
+      );
+    }
+    const info = yield* fileSystem
+      .stat(path)
+      .pipe(Effect.mapError((cause) => failure("The recording was not found.", cause)));
+    if (Number(info.size) > MAX_DICTATION_BYTES) {
+      return yield* failure("The recording is larger than 20 MB.");
+    }
+    const audio = yield* fileSystem
+      .readFile(path)
+      .pipe(Effect.mapError((cause) => failure("Could not read the recording.", cause)));
 
-      const raw = yield* complete(
-        key,
-        {
-          model: yield* readModel(DICTATION_MODEL_ENV, DEFAULT_DICTATION_MODEL),
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: TRANSCRIBE_INSTRUCTION },
-                {
-                  type: "input_audio",
-                  input_audio: { data: Buffer.from(audio).toString("base64"), format },
-                },
-              ],
-            },
-          ],
-        },
-        "120 seconds",
-      );
-      if (raw.length === 0) return { text: "" };
+    const raw = yield* complete(
+      key,
+      {
+        model: yield* readModel(DICTATION_MODEL_ENV, DEFAULT_DICTATION_MODEL),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: TRANSCRIBE_INSTRUCTION },
+              {
+                type: "input_audio",
+                input_audio: { data: Buffer.from(audio).toString("base64"), format },
+              },
+            ],
+          },
+        ],
+      },
+      "120 seconds",
+    );
+    if (raw.length === 0) return { text: "" };
 
-      const polishModel = yield* readModel(
-        DICTATION_POLISH_MODEL_ENV,
-        DEFAULT_DICTATION_POLISH_MODEL,
-      );
-      if (polishModel === DICTATION_POLISH_OFF) return { text: raw };
-      // A failed cleanup still leaves a usable transcript.
-      const polished = yield* complete(
-        key,
-        {
-          model: polishModel,
-          messages: [
-            { role: "system", content: POLISH_INSTRUCTION },
-            { role: "user", content: raw },
-          ],
-        },
-        "30 seconds",
-      ).pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning("Dictation cleanup failed; keeping the raw transcript.", {
-            message: error.message,
-          }),
-        ),
-        Effect.orElseSucceed(() => ""),
-      );
-      return { text: polished.length > 0 ? polished : raw };
-    });
+    const polishModel = yield* readModel(
+      DICTATION_POLISH_MODEL_ENV,
+      DEFAULT_DICTATION_POLISH_MODEL,
+    );
+    if (polishModel === DICTATION_POLISH_OFF) return { text: raw };
+    // A failed cleanup still leaves a usable transcript.
+    const polished = yield* complete(
+      key,
+      {
+        model: polishModel,
+        messages: [
+          { role: "system", content: POLISH_INSTRUCTION },
+          { role: "user", content: raw },
+        ],
+      },
+      "30 seconds",
+    ).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Dictation cleanup failed; keeping the raw transcript.", {
+          message: error.message,
+        }),
+      ),
+      Effect.orElseSucceed(() => ""),
+    );
+    return { text: polished.length > 0 ? polished : raw };
+  });
 
   const transcribe = Effect.fn("Dictation.transcribe")(function* (input: DictationTranscribeInput) {
     // Only a fresh upload: a thread's attachment must never be read here, let alone deleted.
