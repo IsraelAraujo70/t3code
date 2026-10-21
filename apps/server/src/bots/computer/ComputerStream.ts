@@ -71,130 +71,128 @@ export const viewerReplay = (
  * when `replay` is undefined; acks and input never wait for each other. A capture failure is sent
  * as `ComputerStreamError`, then this returns so the caller closes the socket.
  */
-export const serveViewer = <E>(
+export const serveViewer = Effect.fn("ComputerStream.serveViewer")(function* <E>(
   viewer: ScreenCapture.ScreenViewer,
   send: (data: Uint8Array | string) => Effect.Effect<void, E>,
   pull: Effect.Effect<ReadonlyArray<Uint8Array | string>, E>,
   replay: ((input: ComputerStreamInput) => Effect.Effect<void>) | undefined,
-) =>
-  Effect.gen(function* () {
-    yield* send(encodeServerMessage({ type: "access", canControl: replay !== undefined }));
-    const inputs = yield* Queue.dropping<ComputerStreamInput>(MAX_PENDING_INPUTS);
-    if (replay !== undefined) {
-      // Buttons this viewer pressed and has not released, with where the pointer last was.
-      const held = new Map<ComputerPointerButton, { readonly x: number; readonly y: number }>();
-      const track = (input: ComputerStreamInput) => {
-        if (input.type !== "pointer") return;
-        if (input.action === "down") held.set(input.button, input);
-        else if (input.action === "up" || input.action === "click") held.delete(input.button);
-        else for (const button of held.keys()) held.set(button, input);
-      };
-      // Registered before the replay fiber, so it runs after that fiber stops: a viewer that
-      // leaves mid-drag must not leave a button pressed on the host.
-      yield* Effect.addFinalizer(() =>
-        Effect.forEach(
-          [...held],
-          ([button, { x, y }]) => replay({ type: "pointer", action: "up", x, y, button }),
-          { discard: true },
+) {
+  yield* send(encodeServerMessage({ type: "access", canControl: replay !== undefined }));
+  const inputs = yield* Queue.dropping<ComputerStreamInput>(MAX_PENDING_INPUTS);
+  if (replay !== undefined) {
+    // Buttons this viewer pressed and has not released, with where the pointer last was.
+    const held = new Map<ComputerPointerButton, { readonly x: number; readonly y: number }>();
+    const track = (input: ComputerStreamInput) => {
+      if (input.type !== "pointer") return;
+      if (input.action === "down") held.set(input.button, input);
+      else if (input.action === "up" || input.action === "click") held.delete(input.button);
+      else for (const button of held.keys()) held.set(button, input);
+    };
+    // Registered before the replay fiber, so it runs after that fiber stops: a viewer that
+    // leaves mid-drag must not leave a button pressed on the host.
+    yield* Effect.addFinalizer(() =>
+      Effect.forEach(
+        [...held],
+        ([button, { x, y }]) => replay({ type: "pointer", action: "up", x, y, button }),
+        { discard: true },
+      ),
+    );
+    yield* Effect.forkScoped(
+      Effect.forever(
+        Queue.take(inputs).pipe(
+          Effect.tap((input) => Effect.sync(() => track(input))),
+          Effect.flatMap((input) => replay(input)),
         ),
-      );
-      yield* Effect.forkScoped(
-        Effect.forever(
-          Queue.take(inputs).pipe(
-            Effect.tap((input) => Effect.sync(() => track(input))),
-            Effect.flatMap((input) => replay(input)),
-          ),
-        ),
-      );
-    }
-    let awaitingAck: Deferred.Deferred<void> | undefined;
-    let sentInfo: ScreenCapture.ScreenFrame["info"] | undefined;
-    const sendFrames = Effect.gen(function* () {
-      while (true) {
-        const frame = yield* viewer.next;
-        if (frame.info !== sentInfo) {
-          sentInfo = frame.info;
-          yield* send(encodeServerMessage(frame.info));
-        }
-        const acked = yield* Deferred.make<void>();
-        awaitingAck = acked;
-        yield* send(frame.jpeg);
-        yield* Deferred.await(acked);
+      ),
+    );
+  }
+  let awaitingAck: Deferred.Deferred<void> | undefined;
+  let sentInfo: ScreenCapture.ScreenFrame["info"] | undefined;
+  const sendFrames = Effect.gen(function* () {
+    while (true) {
+      const frame = yield* viewer.next;
+      if (frame.info !== sentInfo) {
+        sentInfo = frame.info;
+        yield* send(encodeServerMessage(frame.info));
       }
-    }).pipe(
-      Effect.catchIf(isCaptureError, (error) =>
-        send(encodeServerMessage({ type: "error", message: error.message })),
+      const acked = yield* Deferred.make<void>();
+      awaitingAck = acked;
+      yield* send(frame.jpeg);
+      yield* Deferred.await(acked);
+    }
+  }).pipe(
+    Effect.catchIf(isCaptureError, (error) =>
+      send(encodeServerMessage({ type: "error", message: error.message })),
+    ),
+  );
+  const receive = Effect.forever(
+    pull.pipe(
+      Effect.flatMap((chunks) =>
+        Effect.sync(() => {
+          let acked = false;
+          for (const chunk of chunks) {
+            const message = decodeClientMessage(
+              typeof chunk === "string" ? chunk : textDecoder.decode(chunk),
+            );
+            if (Option.isNone(message)) continue;
+            if (message.value.type === "ack") acked = true;
+            else if (replay !== undefined) Queue.offerUnsafe(inputs, message.value);
+          }
+          // A batch acks at most the one frame out.
+          if (awaitingAck === undefined || !acked) return;
+          // Clear first: completing the ack can run the sender, which sets the next one.
+          const pending = awaitingAck;
+          awaitingAck = undefined;
+          Deferred.doneUnsafe(pending, Exit.void);
+        }),
       ),
-    );
-    const receive = Effect.forever(
-      pull.pipe(
-        Effect.flatMap((chunks) =>
-          Effect.sync(() => {
-            let acked = false;
-            for (const chunk of chunks) {
-              const message = decodeClientMessage(
-                typeof chunk === "string" ? chunk : textDecoder.decode(chunk),
-              );
-              if (Option.isNone(message)) continue;
-              if (message.value.type === "ack") acked = true;
-              else if (replay !== undefined) Queue.offerUnsafe(inputs, message.value);
-            }
-            // A batch acks at most the one frame out.
-            if (awaitingAck === undefined || !acked) return;
-            // Clear first: completing the ack can run the sender, which sets the next one.
-            const pending = awaitingAck;
-            awaitingAck = undefined;
-            Deferred.doneUnsafe(pending, Exit.void);
-          }),
-        ),
-      ),
-    );
-    yield* Effect.raceFirst(sendFrames, receive);
-  }).pipe(Effect.scoped);
+    ),
+  );
+  yield* Effect.raceFirst(sendFrames, receive);
+}, Effect.scoped);
 
-const makeHandler = (
+const makeHandler = Effect.fn("ComputerStream.makeHandler")(function* (
   screen: ScreenCapture.ScreenCapture["Service"],
   input: ComputerInput.ComputerInput["Service"],
   enabled: boolean,
-) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    if (!enabled || request.headers.upgrade?.toLowerCase() !== "websocket") {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
-    const session = yield* authenticateMediaRequest(AuthTerminalReadScope);
-    const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
-    const options = viewerOptions(url.value.searchParams);
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        const incoming = NodeHttpServerRequest.toIncomingMessage(request);
-        // JPEGs are already compressed. Disabling deflate also keeps all
-        // pending writes in the socket buffer we bound below, not a zlib queue.
-        delete incoming.headers["sec-websocket-extensions"];
-        const transport = incoming.socket;
-        const socket = yield* request.upgrade;
-        const reader = yield* socket.reader;
-        const writer = yield* socket.writer;
-        const viewer = yield* screen.attach(options);
-        const send = (data: Uint8Array | string) =>
-          Effect.suspend(() => {
-            const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
-            // A viewer that stops reading is dropped, never buffered without bound.
-            if (transport.writableLength + bytes + 14 > MAX_SOCKET_BUFFER_BYTES) {
-              return Effect.sync(() => transport.destroy()).pipe(Effect.andThen(Effect.interrupt));
-            }
-            return writer.write(data);
-          });
-        yield* serveViewer(viewer, send, reader.pull, viewerReplay(session.scopes, input));
-        yield* writer.write(new Socket.CloseEvent(1011, "screen capture failed"));
-        return HttpServerResponse.empty();
-      }),
-    ).pipe(
-      // A dropped socket is a normal end of watching.
-      Effect.orElseSucceed(() => HttpServerResponse.empty()),
-    );
-  });
+) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (!enabled || request.headers.upgrade?.toLowerCase() !== "websocket") {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+  const session = yield* authenticateMediaRequest(AuthTerminalReadScope);
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const options = viewerOptions(url.value.searchParams);
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const incoming = NodeHttpServerRequest.toIncomingMessage(request);
+      // JPEGs are already compressed. Disabling deflate also keeps all
+      // pending writes in the socket buffer we bound below, not a zlib queue.
+      delete incoming.headers["sec-websocket-extensions"];
+      const transport = incoming.socket;
+      const socket = yield* request.upgrade;
+      const reader = yield* socket.reader;
+      const writer = yield* socket.writer;
+      const viewer = yield* screen.attach(options);
+      const send = (data: Uint8Array | string) =>
+        Effect.suspend(() => {
+          const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+          // A viewer that stops reading is dropped, never buffered without bound.
+          if (transport.writableLength + bytes + 14 > MAX_SOCKET_BUFFER_BYTES) {
+            return Effect.sync(() => transport.destroy()).pipe(Effect.andThen(Effect.interrupt));
+          }
+          return writer.write(data);
+        });
+      yield* serveViewer(viewer, send, reader.pull, viewerReplay(session.scopes, input));
+      yield* writer.write(new Socket.CloseEvent(1011, "screen capture failed"));
+      return HttpServerResponse.empty();
+    }),
+  ).pipe(
+    // A dropped socket is a normal end of watching.
+    Effect.orElseSucceed(() => HttpServerResponse.empty()),
+  );
+});
 
 /** The route without its capture and input services, so tests can supply fake commands. */
 export const routes = HttpRouter.use((router) =>

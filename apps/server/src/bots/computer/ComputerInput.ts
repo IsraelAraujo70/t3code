@@ -134,80 +134,79 @@ export const moveCursorArgs = (
     : ["dispatch", "movecursor", String(point.x), String(point.y)];
 
 /** Builds the input service on the capture service's geometry. */
-export const make = (runCommand: InputCommandRunner) =>
-  Effect.gen(function* () {
-    const screen = yield* ScreenCapture.ScreenCapture;
-    const lock = yield* Semaphore.make(1);
+export const make = Effect.fn("ComputerInput.make")(function* (runCommand: InputCommandRunner) {
+  const screen = yield* ScreenCapture.ScreenCapture;
+  const lock = yield* Semaphore.make(1);
 
-    // Hyprland 0.55+ with a Lua config only takes Lua dispatchers; older ones only the legacy
-    // `movecursor x y`. The first form that works is kept for the life of the server.
-    let dispatchSyntax: MoveCursorSyntax | undefined;
-    const moveTo = (x: number, y: number) =>
-      screen.geometry.pipe(
-        Effect.mapError((error) => new ComputerInputError({ message: error.message })),
-        Effect.flatMap((geometry) => {
-          const point = screenPoint(geometry, x, y);
-          const run = (syntax: MoveCursorSyntax) =>
-            runCommand("hyprctl", moveCursorArgs(syntax, point)).pipe(
-              Effect.tap(() => Effect.sync(() => (dispatchSyntax = syntax))),
-            );
-          if (dispatchSyntax !== undefined) return run(dispatchSyntax);
-          return run("lua").pipe(Effect.catch(() => run("legacy")));
-        }),
-      );
-
-    const replayOne = (input: ComputerStreamInput) => {
-      switch (input.type) {
-        case "pointer":
-          return moveTo(input.x, input.y).pipe(
-            Effect.andThen(
-              input.action === "move"
-                ? Effect.void
-                : runCommand("ydotool", ["click", clickCode(input.button, input.action)]),
-            ),
+  // Hyprland 0.55+ with a Lua config only takes Lua dispatchers; older ones only the legacy
+  // `movecursor x y`. The first form that works is kept for the life of the server.
+  let dispatchSyntax: MoveCursorSyntax | undefined;
+  const moveTo = (x: number, y: number) =>
+    screen.geometry.pipe(
+      Effect.mapError((error) => new ComputerInputError({ message: error.message })),
+      Effect.flatMap((geometry) => {
+        const point = screenPoint(geometry, x, y);
+        const run = (syntax: MoveCursorSyntax) =>
+          runCommand("hyprctl", moveCursorArgs(syntax, point)).pipe(
+            Effect.tap(() => Effect.sync(() => (dispatchSyntax = syntax))),
           );
-        case "wheel":
-          return moveTo(input.x, input.y).pipe(
-            Effect.andThen(
-              input.deltaX === 0 && input.deltaY === 0
-                ? Effect.void
-                : // A positive wheel value scrolls up on Linux; the contract's positive deltaY scrolls down.
-                  runCommand("ydotool", [
-                    "mousemove",
-                    "--wheel",
-                    "-x",
-                    String(input.deltaX),
-                    "-y",
-                    String(-input.deltaY),
-                  ]),
-            ),
-          );
-        case "key": {
-          const args = wtypeKeyArgs(input);
-          return args === undefined
-            ? Effect.logDebug("computer input ignored an unknown key", { key: input.key })
-            : runCommand("wtype", args);
-        }
-        case "text":
-          // One argument, not stdin: wtype's stdin mode corrupts Hyprland's keymap refresh.
-          return runCommand("wtype", ["--", input.text]);
-      }
-    };
+        if (dispatchSyntax !== undefined) return run(dispatchSyntax);
+        return run("lua").pipe(Effect.catch(() => run("legacy")));
+      }),
+    );
 
-    return ComputerInput.of({
-      replay: (input) =>
-        lock
-          .withPermits(1)(replayOne(input))
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("computer input failed", {
-                input: input.type,
-                error: error.message,
-              }),
-            ),
+  const replayOne = (input: ComputerStreamInput) => {
+    switch (input.type) {
+      case "pointer":
+        return moveTo(input.x, input.y).pipe(
+          Effect.andThen(
+            input.action === "move"
+              ? Effect.void
+              : runCommand("ydotool", ["click", clickCode(input.button, input.action)]),
           ),
-    });
+        );
+      case "wheel":
+        return moveTo(input.x, input.y).pipe(
+          Effect.andThen(
+            input.deltaX === 0 && input.deltaY === 0
+              ? Effect.void
+              : // A positive wheel value scrolls up on Linux; the contract's positive deltaY scrolls down.
+                runCommand("ydotool", [
+                  "mousemove",
+                  "--wheel",
+                  "-x",
+                  String(input.deltaX),
+                  "-y",
+                  String(-input.deltaY),
+                ]),
+          ),
+        );
+      case "key": {
+        const args = wtypeKeyArgs(input);
+        return args === undefined
+          ? Effect.logDebug("computer input ignored an unknown key", { key: input.key })
+          : runCommand("wtype", args);
+      }
+      case "text":
+        // One argument, not stdin: wtype's stdin mode corrupts Hyprland's keymap refresh.
+        return runCommand("wtype", ["--", input.text]);
+    }
+  };
+
+  return ComputerInput.of({
+    replay: (input) =>
+      lock
+        .withPermits(1)(replayOne(input))
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("computer input failed", {
+              input: input.type,
+              error: error.message,
+            }),
+          ),
+        ),
   });
+});
 
 /** The real commands. The session environment is refreshed after a failure. */
 export const desktopRunner = (): InputCommandRunner => {

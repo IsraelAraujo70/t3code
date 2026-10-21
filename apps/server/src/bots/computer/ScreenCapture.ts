@@ -238,105 +238,104 @@ const sameInfo = (a: ComputerStreamInfo, b: ComputerStreamInfo) =>
   a.screenHeight === b.screenHeight;
 
 /** Builds the capture service; the shared loop runs in the calling scope. */
-export const make = (commands: ScreenCommands) =>
-  Effect.gen(function* () {
-    const serviceScope = yield* Effect.scope;
-    const lock = yield* Semaphore.make(1);
-    type Viewer = ScreenViewerOptions & {
-      readonly frames: Queue.Queue<ScreenFrame, ScreenCaptureError>;
+export const make = Effect.fn("ScreenCapture.make")(function* (commands: ScreenCommands) {
+  const serviceScope = yield* Effect.scope;
+  const lock = yield* Semaphore.make(1);
+  type Viewer = ScreenViewerOptions & {
+    readonly frames: Queue.Queue<ScreenFrame, ScreenCaptureError>;
+  };
+  const viewers = new Set<Viewer>();
+  let loop: Fiber.Fiber<void> | undefined;
+  let cached: { geometry: ScreenGeometry; expiresAt: number } | undefined;
+  let info: ComputerStreamInfo | undefined;
+
+  const geometry = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    if (cached !== undefined && now < cached.expiresAt) return cached.geometry;
+    const fresh = yield* commands.monitors.pipe(Effect.flatMap(parseGeometry));
+    cached = { geometry: fresh, expiresAt: now + GEOMETRY_TTL_MS };
+    return fresh;
+  });
+
+  const tick = Effect.gen(function* () {
+    const started = yield* Clock.currentTimeMillis;
+    const screen = yield* geometry;
+    // Viewers share one capture, made for the most demanding of them.
+    let maxWidth = 0;
+    let quality = 0;
+    for (const viewer of viewers) {
+      maxWidth = Math.max(maxWidth, viewer.maxWidth);
+      quality = Math.max(quality, viewer.quality);
+    }
+    const scale = captureScale(screen, maxWidth);
+    const jpeg = yield* commands.grim([
+      "-t",
+      "jpeg",
+      "-q",
+      String(quality),
+      "-s",
+      String(scale),
+      "-",
+    ]);
+    const next: ComputerStreamInfo = {
+      type: "info",
+      width: Math.round(screen.width * scale),
+      height: Math.round(screen.height * scale),
+      screenWidth: screen.width,
+      screenHeight: screen.height,
     };
-    const viewers = new Set<Viewer>();
-    let loop: Fiber.Fiber<void> | undefined;
-    let cached: { geometry: ScreenGeometry; expiresAt: number } | undefined;
-    let info: ComputerStreamInfo | undefined;
+    // Viewers resend info only when this object changes.
+    info = info !== undefined && sameInfo(info, next) ? info : next;
+    const frame: ScreenFrame = { info, jpeg };
+    for (const viewer of viewers) Queue.offerUnsafe(viewer.frames, frame);
+    const elapsed = (yield* Clock.currentTimeMillis) - started;
+    yield* Effect.sleep(Math.max(0, FRAME_INTERVAL_MS - elapsed));
+  });
 
-    const geometry = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      if (cached !== undefined && now < cached.expiresAt) return cached.geometry;
-      const fresh = yield* commands.monitors.pipe(Effect.flatMap(parseGeometry));
-      cached = { geometry: fresh, expiresAt: now + GEOMETRY_TTL_MS };
-      return fresh;
-    });
+  const runLoop = Effect.forever(tick).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        // Everyone watching sees the failure; the next viewer starts a fresh loop. Reset first:
+        // a failed viewer may resume, and attach again, before this handler returns.
+        const failed = [...viewers];
+        viewers.clear();
+        loop = undefined;
+        cached = undefined;
+        for (const viewer of failed) Queue.failCauseUnsafe(viewer.frames, Cause.fail(error));
+      }),
+    ),
+  );
 
-    const tick = Effect.gen(function* () {
-      const started = yield* Clock.currentTimeMillis;
-      const screen = yield* geometry;
-      // Viewers share one capture, made for the most demanding of them.
-      let maxWidth = 0;
-      let quality = 0;
-      for (const viewer of viewers) {
-        maxWidth = Math.max(maxWidth, viewer.maxWidth);
-        quality = Math.max(quality, viewer.quality);
-      }
-      const scale = captureScale(screen, maxWidth);
-      const jpeg = yield* commands.grim([
-        "-t",
-        "jpeg",
-        "-q",
-        String(quality),
-        "-s",
-        String(scale),
-        "-",
-      ]);
-      const next: ComputerStreamInfo = {
-        type: "info",
-        width: Math.round(screen.width * scale),
-        height: Math.round(screen.height * scale),
-        screenWidth: screen.width,
-        screenHeight: screen.height,
-      };
-      // Viewers resend info only when this object changes.
-      info = info !== undefined && sameInfo(info, next) ? info : next;
-      const frame: ScreenFrame = { info, jpeg };
-      for (const viewer of viewers) Queue.offerUnsafe(viewer.frames, frame);
-      const elapsed = (yield* Clock.currentTimeMillis) - started;
-      yield* Effect.sleep(Math.max(0, FRAME_INTERVAL_MS - elapsed));
-    });
-
-    const runLoop = Effect.forever(tick).pipe(
-      Effect.catch((error) =>
-        Effect.sync(() => {
-          // Everyone watching sees the failure; the next viewer starts a fresh loop. Reset first:
-          // a failed viewer may resume, and attach again, before this handler returns.
-          const failed = [...viewers];
-          viewers.clear();
-          loop = undefined;
-          cached = undefined;
-          for (const viewer of failed) Queue.failCauseUnsafe(viewer.frames, Cause.fail(error));
-        }),
-      ),
+  const detach = (viewer: Viewer) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        viewers.delete(viewer);
+        if (viewers.size > 0 || loop === undefined) return;
+        const stopping = loop;
+        loop = undefined;
+        yield* Fiber.interrupt(stopping);
+      }),
     );
 
-    const detach = (viewer: Viewer) =>
-      lock.withPermits(1)(
-        Effect.gen(function* () {
-          viewers.delete(viewer);
-          if (viewers.size > 0 || loop === undefined) return;
-          const stopping = loop;
-          loop = undefined;
-          yield* Fiber.interrupt(stopping);
-        }),
-      );
-
-    return ScreenCapture.of({
-      attach: (options) =>
-        Effect.acquireRelease(
-          lock.withPermits(1)(
-            Effect.gen(function* () {
-              const viewer: Viewer = {
-                ...options,
-                frames: yield* Queue.sliding<ScreenFrame, ScreenCaptureError>(1),
-              };
-              viewers.add(viewer);
-              loop ??= yield* Effect.forkIn(runLoop, serviceScope);
-              return viewer;
-            }),
-          ),
-          detach,
-        ).pipe(Effect.map((viewer) => ({ next: Queue.take(viewer.frames) }))),
-      geometry,
-    });
+  return ScreenCapture.of({
+    attach: (options) =>
+      Effect.acquireRelease(
+        lock.withPermits(1)(
+          Effect.gen(function* () {
+            const viewer: Viewer = {
+              ...options,
+              frames: yield* Queue.sliding<ScreenFrame, ScreenCaptureError>(1),
+            };
+            viewers.add(viewer);
+            loop ??= yield* Effect.forkIn(runLoop, serviceScope);
+            return viewer;
+          }),
+        ),
+        detach,
+      ).pipe(Effect.map((viewer) => ({ next: Queue.take(viewer.frames) }))),
+    geometry,
   });
+});
 
 export const layer = Layer.effect(
   ScreenCapture,

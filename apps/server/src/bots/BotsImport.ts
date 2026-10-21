@@ -100,8 +100,8 @@ const FriendSettingRows = Schema.Array(Schema.Struct({ value: Schema.String }));
  * when the file or its tables are missing. Columns are listed explicitly so `mcp_servers` is
  * never read.
  */
-export const readFriendDatabase = (path: string): Effect.Effect<FriendSnapshot, BotsError> =>
-  Effect.gen(function* () {
+export const readFriendDatabase = Effect.fn("BotsImport.readFriendDatabase")(
+  function* (_path: string) {
     const sql = yield* SqlClient.SqlClient;
     return yield* sql.withTransaction(
       Effect.gen(function* () {
@@ -127,15 +127,18 @@ export const readFriendDatabase = (path: string): Effect.Effect<FriendSnapshot, 
         } satisfies FriendSnapshot;
       }),
     );
-  }).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: path, readonly: true })),
-    // Schema errors carry the rejected row, so only SQL causes are kept.
-    Effect.mapError((cause) =>
-      cause._tag === "SqlError"
-        ? new BotsError({ message: `Could not read friend's database at ${path}`, cause })
-        : new BotsError({ message: `Friend's database at ${path} has unexpected rows` }),
+  },
+  (effect, path) =>
+    effect.pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: path, readonly: true })),
+      // Schema errors carry the rejected row, so only SQL causes are kept.
+      Effect.mapError((cause) =>
+        cause._tag === "SqlError"
+          ? new BotsError({ message: `Could not read friend's database at ${path}`, cause })
+          : new BotsError({ message: `Friend's database at ${path} has unexpected rows` }),
+      ),
     ),
-  );
+);
 
 const isBotId = Schema.is(BotId);
 const isBotMemoryId = Schema.is(BotMemoryId);

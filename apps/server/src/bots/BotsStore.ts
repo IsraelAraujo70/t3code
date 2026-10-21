@@ -336,8 +336,8 @@ const make = Effect.gen(function* () {
         INSERT INTO owner_profile (id, about_me) VALUES (1, ${text})
         ON CONFLICT (id) DO UPDATE SET about_me = excluded.about_me
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the owner profile"))),
-    importBatch: (batch) =>
-      Effect.gen(function* () {
+    importBatch: Effect.fn("BotsStore.importBatch")(
+      function* (batch: BotsImportBatch) {
         const botRows = yield* Effect.forEach(batch.bots, (bot) => encodeBot(bot));
         const memoryRows = yield* Effect.forEach(batch.memories, (memory) => encodeMemory(memory));
         // ON CONFLICT DO NOTHING skips ids (and same-bot texts) already stored, while CHECK and
@@ -357,7 +357,9 @@ const make = Effect.gen(function* () {
             }
           }),
         );
-      }).pipe(Effect.mapError(failWith("Could not import bots; nothing was written"))),
+      },
+      Effect.mapError(failWith("Could not import bots; nothing was written")),
+    ),
     upsertPushDevice: (device) =>
       sql`
         INSERT INTO bot_push_devices (token, label, created_at, updated_at)

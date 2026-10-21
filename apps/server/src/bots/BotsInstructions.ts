@@ -172,22 +172,21 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore> = Layer.effe
   Effect.gen(function* () {
     const store = yield* BotsStore;
     return BotsInstructions.of({
-      forThread: (threadId) =>
-        Effect.gen(function* () {
-          const parsed = parseBotThreadId(threadId);
-          if (parsed === null) return undefined;
-          const bot = yield* store.getBot(parsed.botId);
-          if (Option.isNone(bot)) return undefined;
-          const memories = yield* store.listMemories(parsed.botId);
-          const aboutMe = yield* store.getAboutMe;
-          const bots = yield* store.listBots;
-          return buildBotInstructions({
-            bot: bot.value,
-            memories: memories.filter((memory) => memory.enabled),
-            aboutMe,
-            peers: bots.filter((peer) => peer.id !== parsed.botId),
-          });
-        }),
+      forThread: Effect.fn("BotsInstructions.forThread")(function* (threadId: ThreadId) {
+        const parsed = parseBotThreadId(threadId);
+        if (parsed === null) return undefined;
+        const bot = yield* store.getBot(parsed.botId);
+        if (Option.isNone(bot)) return undefined;
+        const memories = yield* store.listMemories(parsed.botId);
+        const aboutMe = yield* store.getAboutMe;
+        const bots = yield* store.listBots;
+        return buildBotInstructions({
+          bot: bot.value,
+          memories: memories.filter((memory) => memory.enabled),
+          aboutMe,
+          peers: bots.filter((peer) => peer.id !== parsed.botId),
+        });
+      }),
     });
   }),
 );
