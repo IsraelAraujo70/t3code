@@ -24,7 +24,11 @@ const fakeRpc = Effect.gen(function* () {
       Effect.gen(function* () {
         calls.push({ method, params });
         yield* Queue.offer(requests, method);
-        return yield* responses.get(method) ?? Effect.void;
+        const response = responses.get(method);
+        if (response) return yield* response;
+        // Like Codex: a requested stop is followed by `closed`.
+        if (method === "thread/realtime/stop")
+          yield* emit("thread/realtime/closed", { threadId: "thread", reason: "requested" });
       }),
     onNotification: (registered) =>
       Effect.sync(() => {
@@ -205,9 +209,46 @@ it.effect("bounds a stalled stop request at five seconds", () =>
     const session = yield* Fiber.join(pending);
     const stopping = yield* session.stop.pipe(Effect.forkChild);
     yield* Queue.take(fake.requests);
-    yield* TestClock.adjust("5 seconds");
+    // Five for the stop request, then three waiting for a `closed` that never comes.
+    yield* TestClock.adjust("8 seconds");
     yield* Fiber.join(stopping);
     yield* session.stop;
     assert.equal(fake.calls.filter((call) => call.method === "thread/realtime/stop").length, 1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps a late closed of a stopped session away from the next session", () =>
+  Effect.gen(function* () {
+    const fake = yield* fakeRpc;
+    fake.responses.set("thread/realtime/stop", Effect.void);
+    const host = yield* makeRealtimeHost(fake.rpc, "thread");
+    const firstPending = yield* host.startSession(input).pipe(Effect.forkChild);
+    yield* Queue.take(fake.requests);
+    yield* fake.emit("thread/realtime/sdp", { threadId: "thread", sdp: "first" });
+    const first = yield* Fiber.join(firstPending);
+    const stopping = yield* first.stop.pipe(Effect.forkChild);
+    yield* Queue.take(fake.requests);
+    yield* TestClock.adjust("1 second");
+    // Still routed to the first session: its `closed` has not arrived yet.
+    assert.isUndefined(stopping.pollUnsafe());
+    yield* fake.emit("thread/realtime/closed", { threadId: "thread", reason: "requested" });
+    yield* Fiber.join(stopping);
+
+    const secondPending = yield* host.startSession(input).pipe(Effect.forkChild);
+    yield* Queue.take(fake.requests);
+    yield* fake.emit("thread/realtime/sdp", { threadId: "thread", sdp: "second" });
+    const second = yield* Fiber.join(secondPending);
+    yield* fake.emit("thread/realtime/transcript/delta", {
+      threadId: "thread",
+      role: "assistant",
+      delta: "olá",
+    });
+    yield* fake.emit("thread/realtime/closed", { threadId: "thread", reason: "requested" });
+    const events = yield* Stream.runCollect(second.events);
+    assert.equal(second.answerSdp, "second");
+    assert.deepEqual(events, [
+      { type: "transcript", delta: "olá" },
+      { type: "closed", reason: "requested" },
+    ]);
   }).pipe(Effect.scoped),
 );

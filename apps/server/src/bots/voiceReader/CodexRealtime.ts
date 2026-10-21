@@ -79,6 +79,12 @@ export type RealtimeNotifications = {
   "thread/realtime/closed": { threadId: string; reason?: string | null };
 };
 
+interface ActiveSession {
+  readonly answer: Deferred.Deferred<string, BotsError>;
+  readonly events: Queue.Queue<RealtimeEvent>;
+  readonly closed: Deferred.Deferred<void>;
+}
+
 type NotificationHandlers = {
   [M in keyof RealtimeNotifications]: (payload: RealtimeNotifications[M]) => Effect.Effect<void>;
 };
@@ -100,17 +106,11 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
   rpc: RealtimeRpc,
   threadId: string,
 ) {
-  const active = yield* Ref.make<{
-    readonly answer: Deferred.Deferred<string, BotsError>;
-    readonly events: Queue.Queue<RealtimeEvent>;
-  } | null>(null);
+  const active = yield* Ref.make<ActiveSession | null>(null);
   const receive =
     <M extends keyof RealtimeNotifications>(
       handler: (
-        session: {
-          readonly answer: Deferred.Deferred<string, BotsError>;
-          readonly events: Queue.Queue<RealtimeEvent>;
-        },
+        session: ActiveSession,
         payload: RealtimeNotifications[M],
       ) => Effect.Effect<unknown>,
     ) =>
@@ -151,6 +151,7 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
           new BotsError({ message: "Codex realtime closed before answering." }),
         );
         yield* Queue.offer(session.events, { type: "closed", reason: payload.reason ?? null });
+        yield* Deferred.succeed(session.closed, undefined);
       }),
     ),
   });
@@ -159,9 +160,10 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
       readonly offerSdp: string;
       readonly prompt: string;
     }) {
-      const session = {
+      const session: ActiveSession = {
         answer: yield* Deferred.make<string, BotsError>(),
         events: yield* Queue.unbounded<RealtimeEvent>(),
+        closed: yield* Deferred.make<void>(),
       };
       const stopped = yield* Ref.make(false);
       const stop = Effect.gen(function* () {
@@ -169,6 +171,9 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
         yield* rpc
           .request("thread/realtime/stop", { threadId })
           .pipe(Effect.timeoutOption("5 seconds"), Effect.ignore);
+        // Notifications carry only the thread id: keep routing to this session until its
+        // `closed` arrives, so a late one never lands on the next session of the thread.
+        yield* Deferred.await(session.closed).pipe(Effect.timeoutOption("3 seconds"));
         yield* Ref.update(active, (current) => (current === session ? null : current));
       }).pipe(Effect.uninterruptible);
       yield* Effect.acquireRelease(Ref.set(active, session), () => stop);
@@ -238,7 +243,7 @@ export const layer = Layer.effect(
     const hostEnvironment = yield* HostProcess.Environment;
     const home = yield* HostProcess.HomeDirectory;
     return {
-      open: Effect.fn("CodexRealtime.open")(function* () {
+      open: Effect.gen(function* () {
         const instance = deriveProviderInstanceConfigMap(
           yield* settings.getSettings.pipe(
             Effect.mapError(
@@ -352,7 +357,7 @@ export const layer = Layer.effect(
           },
           threadId,
         );
-      })(),
+      }).pipe(Effect.withSpan("CodexRealtime.open")),
     };
   }),
 );
