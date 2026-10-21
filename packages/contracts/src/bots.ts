@@ -248,6 +248,8 @@ export const BOTS_WS_METHODS = {
   sectionDelete: "bots.section.delete",
   arrange: "bots.arrange",
   dictationTranscribe: "bots.dictation.transcribe",
+  pushDeviceRegister: "bots.pushDevice.register",
+  pushDeviceUnregister: "bots.pushDevice.unregister",
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -349,6 +351,34 @@ export const DictationTranscribeRpc = Rpc.make(BOTS_WS_METHODS.dictationTranscri
   error: BotsRpcError,
 });
 
+/**
+ * Bot push: an Android device registers its FCM token with the bots host, which then sends a data
+ * push when a bot replies or waits on the user. Registering is an upsert, so the app repeats it on
+ * every connect and token rotation. The host drops a token FCM reports as unregistered.
+ */
+export const BotPushDeviceRef = Schema.Struct({
+  token: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export type BotPushDeviceRef = typeof BotPushDeviceRef.Type;
+
+export const BotPushDeviceRegisterInput = Schema.Struct({
+  ...BotPushDeviceRef.fields,
+  /** Shown only in server logs, to tell devices apart. */
+  label: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+export type BotPushDeviceRegisterInput = typeof BotPushDeviceRegisterInput.Type;
+
+export const BotPushDeviceRegisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceRegister, {
+  payload: BotPushDeviceRegisterInput,
+  success: BotPushDeviceRef,
+  error: BotsRpcError,
+});
+export const BotPushDeviceUnregisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceUnregister, {
+  payload: BotPushDeviceRef,
+  success: BotPushDeviceRef,
+  error: BotsRpcError,
+});
+
 /** Every bots RPC, spread into the server's WsRpcGroup. */
 export const BOTS_RPCS = [
   BotsDirectorySubscribeRpc,
@@ -366,6 +396,8 @@ export const BOTS_RPCS = [
   BotSectionDeleteRpc,
   BotsArrangeRpc,
   DictationTranscribeRpc,
+  BotPushDeviceRegisterRpc,
+  BotPushDeviceUnregisterRpc,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -385,6 +417,8 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.arrange]: AuthOrchestrationOperateScope,
   // Transcribing reads an upload the same session made and spends the server's key.
   [BOTS_WS_METHODS.dictationTranscribe]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.pushDeviceRegister]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.pushDeviceUnregister]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */

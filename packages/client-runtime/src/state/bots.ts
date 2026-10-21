@@ -73,6 +73,8 @@ export function createBotsEnvironmentAtoms<R, E>(
     renameSection: command("rename-section", BOTS_WS_METHODS.sectionRename),
     deleteSection: command("delete-section", BOTS_WS_METHODS.sectionDelete),
     arrange: command("arrange", BOTS_WS_METHODS.arrange),
+    registerPushDevice: command("register-push-device", BOTS_WS_METHODS.pushDeviceRegister),
+    unregisterPushDevice: command("unregister-push-device", BOTS_WS_METHODS.pushDeviceUnregister),
     // Not queued behind the bot mutations: a dictation is slow and independent of them.
     transcribeDictation: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:bots:transcribe-dictation",
