@@ -170,7 +170,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/app.config.ts",
-    markers: 1,
+    markers: 2,
     why: "Android records audio for dictation",
   },
   {
