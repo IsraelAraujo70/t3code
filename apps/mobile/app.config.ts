@@ -395,7 +395,14 @@ const config: ExpoConfig = {
         recordAudioAndroid: true,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        // Fork (friend): `false` strips RECORD_AUDIO on Android; same text as expo-audio's on iOS.
+        microphonePermission: "Allow T3 Code to use your microphone for voice input.",
+      },
+    ],
     [
       "expo-splash-screen",
       {
