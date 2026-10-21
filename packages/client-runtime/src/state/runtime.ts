@@ -711,9 +711,17 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
-      .atom(
+      .atom((get) =>
         Stream.suspend(() =>
-          followStreamInEnvironment(target.environmentId, options.subscribe(target.input)),
+          followStreamInEnvironment(
+            target.environmentId,
+            options.subscribe(target.input).pipe(
+              Stream.provideService(RpcPermissionGuard, {
+                authorize: (id, method, payload) =>
+                  createCommandPermissions(runtime, method).authorize(get.registry, id, payload),
+              }),
+            ),
+          ),
         ).pipe(options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream),
       )
       .pipe(
