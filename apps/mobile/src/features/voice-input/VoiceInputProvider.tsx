@@ -30,6 +30,8 @@ import {
   rememberMicrophones,
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+// Fork (friend): server dictation where the device cannot transcribe.
+import { useServerVoiceTranscriber } from "../../bots/dictation";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
@@ -120,6 +122,12 @@ function useVoiceInputRuntime() {
   const elapsedSecondsRef = useRef(0);
   const audioLevelsRef = useRef(Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0));
   const audioLevels = useSharedValue(audioLevelsRef.current);
+  // Fork (friend): read on each start, so connecting a server enables dictation without a remount.
+  const serverTranscriber = useServerVoiceTranscriber();
+  const serverTranscriberRef = useRef(serverTranscriber);
+  useEffect(() => {
+    serverTranscriberRef.current = serverTranscriber;
+  }, [serverTranscriber]);
   const sessionRef = useRef<VoiceInputSession | null>(null);
   const recorderRef = useRef<LazyVoiceRecorder<RecorderState> | null>(null);
 
@@ -153,7 +161,7 @@ function useVoiceInputRuntime() {
     recorderRef.current = recorder;
     sessionRef.current = new VoiceInputSession({
       recorder,
-      getTranscriber: getLocalVoiceTranscriber,
+      getTranscriber: () => getLocalVoiceTranscriber() ?? serverTranscriberRef.current, // Fork (friend)
       requestPermission: async () => {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };
@@ -249,7 +257,10 @@ function useVoiceInputRuntime() {
   const cancel = useCallback(() => controller.cancel(), [controller]);
 
   return {
-    isAvailable: getLocalVoiceTranscriber() !== null || getNativeShowcaseScene() !== null,
+    isAvailable:
+      getLocalVoiceTranscriber() !== null ||
+      serverTranscriber !== null || // Fork (friend)
+      getNativeShowcaseScene() !== null,
     state,
     audioLevels,
     elapsedSeconds,

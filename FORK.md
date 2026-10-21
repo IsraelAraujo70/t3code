@@ -33,6 +33,16 @@ bots RPCs and memory tools, and does not advertise the `bots` environment capabi
 bots from the environment that advertises it, so a laptop connected to the host shows the host's
 bots. See [`apps/server/src/bots/BotsHost.ts`](apps/server/src/bots/BotsHost.ts).
 
+## Dictation
+
+A server started with `OPENROUTER_API_KEY` advertises the `dictation` capability, whether or not it
+hosts bots. Web and desktop then show a microphone button in the composer; mobile uses it where the
+device has no on-device transcription (Android, iOS before 26). The recording goes up as a pending
+attachment, and the server transcribes it with `T3CODE_DICTATION_MODEL` (default
+`google/gemini-3.8-flash`), cleans it up with `T3CODE_DICTATION_POLISH_MODEL` (default
+`anthropic/claude-haiku-5.5`, `off` skips this step), and deletes it. See
+[`apps/server/src/bots/dictation/Dictation.ts`](apps/server/src/bots/dictation/Dictation.ts).
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork

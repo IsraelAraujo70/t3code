@@ -20,6 +20,17 @@ export function useBotsEnvironmentId(): EnvironmentId | null {
 }
 
 /**
+ * The connected environment that transcribes dictation (its server advertises `dictation`), or
+ * null. Voice input is app-wide on the phone, so any such server will do.
+ */
+export function useDictationEnvironmentId(): EnvironmentId | null {
+  for (const [environmentId, config] of useServerConfigs()) {
+    if (config.environment.capabilities.dictation === true) return environmentId;
+  }
+  return null;
+}
+
+/**
  * The live bot directory of one environment. `directory` is null until the first snapshot
  * arrives or while the environment is unavailable; an empty directory is a loaded, empty list.
  */

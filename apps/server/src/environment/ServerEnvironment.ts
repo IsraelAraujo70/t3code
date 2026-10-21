@@ -23,8 +23,9 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
-// Fork (friend): advertise the bots capability only on the bots host.
+// Fork (friend): advertise bots only on the bots host, dictation only with a transcription key.
 import { isBotsHost } from "../bots/BotsHost.ts";
+import { isDictationConfigured } from "../bots/dictation/Dictation.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -208,6 +209,7 @@ export const make = Effect.gen(function* () {
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
 
   const botsHost = yield* isBotsHost; // Fork (friend)
+  const dictation = yield* isDictationConfigured; // Fork (friend)
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
     label,
@@ -230,6 +232,7 @@ export const make = Effect.gen(function* () {
       requiredWorktreeBootstrap: true,
       threadSettlement: true,
       ...(botsHost ? { bots: true } : {}), // Fork (friend)
+      ...(dictation ? { dictation: true } : {}), // Fork (friend)
       threadAutoSettlement: true,
       storageCleanup: true,
       storageCleanupRun: true,
