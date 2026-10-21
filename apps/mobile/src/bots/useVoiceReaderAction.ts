@@ -162,10 +162,10 @@ export function useVoiceReaderAction({
     {
       icon: speaking ? "waveform" : "speaker.wave.2",
       accessibilityLabel: !enabled
-        ? "Ler respostas"
+        ? "Ler respostas em voz alta"
         : data === null
           ? "Conectando ao Codex…"
-          : "Lendo respostas — toque para desligar",
+          : "Parar de ler respostas",
       selected: enabled,
       loading: enabled && data === null,
       onPress: () => {

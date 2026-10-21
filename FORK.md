@@ -47,7 +47,9 @@ attachment, and the server transcribes it with `T3CODE_DICTATION_MODEL` (default
 
 Every server of the fork advertises `voiceReader`. A thread's header then offers "Ler respostas" (web,
 desktop, Android). While it is on, the server speaks a short pt-BR summary of each completed run's
-final reply through Codex realtime, using the `codex` provider instance's ChatGPT login. API keys
+final reply through Codex realtime, using the `codex` provider instance's ChatGPT login. It never
+reads replies that finished before it was turned on, so turning it on is silent until the next run
+completes. API keys
 are not involved: the WebSocket/PCM transport would need one, so the reader uses only WebRTC. The
 client owns the peer and sends a muted microphone track, which realtime needs before it talks. The
 server only signals and feeds the text. It runs a dedicated `codex app-server` per subscription and

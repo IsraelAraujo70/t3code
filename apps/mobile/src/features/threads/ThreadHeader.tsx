@@ -69,8 +69,10 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
-    // Fork (friend): Keep reader controls alongside existing Android actions.
-    actions.push(...voiceReaderActions);
+    // Fork (friend): A reader that is on leads the bar; behind the overflow menu nothing showed it
+    // was listening, and choosing the item again to check turned it off.
+    if (voiceReaderActions[0]?.selected) actions.unshift(...voiceReaderActions);
+    else actions.push(...voiceReaderActions);
     return actions;
   }, [
     voiceReaderActions,
