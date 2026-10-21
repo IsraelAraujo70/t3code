@@ -7,9 +7,9 @@
       "types": "./src/botAvatar.ts",
       "default": "./src/botAvatar.ts"
     },
-    "./voice-reader": {
-      "types": "./src/voiceReader.ts",
-      "default": "./src/voiceReader.ts"
+    "./voice": {
+      "types": "./src/voice.ts",
+      "default": "./src/voice.ts"
     },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",

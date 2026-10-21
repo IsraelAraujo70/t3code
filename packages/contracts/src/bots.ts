@@ -256,8 +256,8 @@ export const BOTS_WS_METHODS = {
   dictationTranscribe: "bots.dictation.transcribe",
   pushDeviceRegister: "bots.pushDevice.register",
   pushDeviceUnregister: "bots.pushDevice.unregister",
-  voiceReaderRead: "bots.voiceReader.read",
-  voiceReaderSpeak: "bots.voiceReader.speak",
+  voiceSession: "bots.voice.session",
+  voiceReady: "bots.voice.ready",
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -388,55 +388,76 @@ export const BotPushDeviceUnregisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceUnr
 });
 
 /**
- * Voice reader: on request, the server speaks a short summary of one assistant message aloud
- * through a Codex realtime session (the `codex` provider instance's ChatGPT login, never an API
- * key). Any server of the fork offers it, bots host or not.
+ * Voice (friend fork): a live spoken conversation with a thread, or one assistant reply read
+ * aloud, through a Codex realtime session (the `codex` provider instance's ChatGPT login, never an
+ * API key). Any server of the fork offers it, bots host or not.
  *
- * The client owns the WebRTC peer; the server only signals and feeds the text. The client opens a
- * peer (a muted microphone track plus the `oai-events` data channel; a receive-only peer stays
- * silent) and calls `read` with the message and its SDP offer. The server loads that message's text
- * itself (an assistant message of that thread; never text from the client), starts a realtime
- * session and emits one `VoiceReaderAnswer`. Once the peer connects the client calls `speak`. The
- * stream stays open while the voice talks and completes when the speech ends; ending it early
- * (the user stops, or the data channel reports `turn.done`) closes the session. A setup failure,
- * a realtime error or a peer that never connects fails the stream with a `BotsError` whose message
- * the client shows.
+ * The voice is only a receptionist. It acknowledges, relays and reads; the thread's own agent
+ * answers. In a conversation the server posts each finished user utterance to the thread as a
+ * normal user message (queued behind a running turn), and reads aloud every assistant reply that
+ * completes while the session is open. The session holds no conversation state: hanging up loses
+ * nothing. Pending approvals and questions are never answered by voice.
+ *
+ * The client owns the WebRTC peer; the server only signals. The client opens a peer (its
+ * microphone track, silent until the session is live, plus the `oai-events` data channel) and
+ * calls `session` with the SDP offer. The server starts a realtime session and emits one `answer`;
+ * once the peer connects the client calls `ready`, and only then does the server relay or speak.
+ * The stream stays open until the client ends it (hanging up, or a read whose reply was spoken),
+ * realtime closes, or it fails with a `BotsError` whose message the client shows.
  */
-export const VoiceReaderUtteranceId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
-  Schema.brand("VoiceReaderUtteranceId"),
+export const VoiceSessionId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
+  Schema.brand("VoiceSessionId"),
 );
-export type VoiceReaderUtteranceId = typeof VoiceReaderUtteranceId.Type;
+export type VoiceSessionId = typeof VoiceSessionId.Type;
 
 /** WebRTC SDP blobs are a few KB; the cap only bounds abuse. */
-const VoiceReaderSdp = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(65_536));
+const VoiceSdp = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(65_536));
 
-export const VoiceReaderReadInput = Schema.Struct({
+export const VoiceSessionMode = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("conversation") }),
+  /** Reads one assistant message of the thread; the server loads its text, never the client. */
+  Schema.Struct({ type: Schema.Literal("read"), messageId: MessageId }),
+]);
+export type VoiceSessionMode = typeof VoiceSessionMode.Type;
+
+export const VoiceSessionInput = Schema.Struct({
   threadId: ThreadId,
-  messageId: MessageId,
-  sdp: VoiceReaderSdp,
+  mode: VoiceSessionMode,
+  sdp: VoiceSdp,
 });
-export type VoiceReaderReadInput = typeof VoiceReaderReadInput.Type;
+export type VoiceSessionInput = typeof VoiceSessionInput.Type;
 
-export const VoiceReaderAnswer = Schema.Struct({
-  utteranceId: VoiceReaderUtteranceId,
-  sdp: VoiceReaderSdp,
+export const VoiceSessionAnswer = Schema.Struct({
+  type: Schema.Literal("answer"),
+  sessionId: VoiceSessionId,
+  sdp: VoiceSdp,
 });
-export type VoiceReaderAnswer = typeof VoiceReaderAnswer.Type;
+export type VoiceSessionAnswer = typeof VoiceSessionAnswer.Type;
 
-export const VoiceReaderUtteranceRef = Schema.Struct({ utteranceId: VoiceReaderUtteranceId });
-export type VoiceReaderUtteranceRef = typeof VoiceReaderUtteranceRef.Type;
+export const VoiceSessionEvent = Schema.Union([
+  /** First, exactly once. */
+  VoiceSessionAnswer,
+  /**
+   * Conversations only, on every change: whether the thread's agent has work (a run, a queued
+   * message, or an utterance being relayed).
+   */
+  Schema.Struct({ type: Schema.Literal("bot"), working: Schema.Boolean }),
+]);
+export type VoiceSessionEvent = typeof VoiceSessionEvent.Type;
 
-/** Emits the answer once, then lives as long as the utterance. */
-export const VoiceReaderReadRpc = Rpc.make(BOTS_WS_METHODS.voiceReaderRead, {
-  payload: VoiceReaderReadInput,
-  success: VoiceReaderAnswer,
+export const VoiceSessionRef = Schema.Struct({ sessionId: VoiceSessionId });
+export type VoiceSessionRef = typeof VoiceSessionRef.Type;
+
+export const VoiceSessionRpc = Rpc.make(BOTS_WS_METHODS.voiceSession, {
+  payload: VoiceSessionInput,
+  success: VoiceSessionEvent,
   error: BotsRpcError,
   stream: true,
 });
-/** The peer connected: speak the message. Fails unless the utterance is open and not yet speaking. */
-export const VoiceReaderSpeakRpc = Rpc.make(BOTS_WS_METHODS.voiceReaderSpeak, {
-  payload: VoiceReaderUtteranceRef,
-  success: VoiceReaderUtteranceRef,
+/** The peer connected. Fails unless the session is open and not yet ready. */
+export const VoiceReadyRpc = Rpc.make(BOTS_WS_METHODS.voiceReady, {
+  payload: VoiceSessionRef,
+  success: VoiceSessionRef,
   error: BotsRpcError,
 });
 
@@ -459,8 +480,8 @@ export const BOTS_RPCS = [
   DictationTranscribeRpc,
   BotPushDeviceRegisterRpc,
   BotPushDeviceUnregisterRpc,
-  VoiceReaderReadRpc,
-  VoiceReaderSpeakRpc,
+  VoiceSessionRpc,
+  VoiceReadyRpc,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -482,9 +503,9 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.dictationTranscribe]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.pushDeviceRegister]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.pushDeviceUnregister]: AuthOrchestrationOperateScope,
-  // The voice reader spends the server's ChatGPT realtime allowance.
-  [BOTS_WS_METHODS.voiceReaderRead]: AuthOrchestrationOperateScope,
-  [BOTS_WS_METHODS.voiceReaderSpeak]: AuthOrchestrationOperateScope,
+  // Voice spends the server's ChatGPT realtime allowance and posts to threads.
+  [BOTS_WS_METHODS.voiceSession]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.voiceReady]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */

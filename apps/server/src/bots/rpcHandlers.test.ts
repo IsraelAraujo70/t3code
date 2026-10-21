@@ -15,7 +15,7 @@ import { rpcInstrumentationLayer } from "../observability/RpcInstrumentation.ts"
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
 import * as BotsRpc from "./rpcHandlers.ts";
-import * as VoiceReader from "./voiceReader/VoiceReader.ts";
+import * as VoiceSession from "./voice/VoiceSession.ts";
 
 const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<string>) =>
   RpcTest.makeClient(BotsRpc.ServerBotsRpcGroup).pipe(
@@ -42,7 +42,7 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
             }),
           ),
           Layer.provide(Layer.mock(Dictation.Dictation)({})),
-          Layer.provide(Layer.mock(VoiceReader.VoiceReader)({})),
+          Layer.provide(Layer.mock(VoiceSession.VoiceSessions)({})),
         ),
         RpcAuthorization.layer(scopes),
         rpcInstrumentationLayer,

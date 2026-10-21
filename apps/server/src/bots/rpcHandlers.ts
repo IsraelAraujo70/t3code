@@ -11,7 +11,7 @@ import { RpcGroup } from "effect/rpc";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
-import * as VoiceReader from "./voiceReader/VoiceReader.ts";
+import * as VoiceSession from "./voice/VoiceSession.ts";
 
 /** Tags ws.ts omits from upstream's handler group; their handlers come from `layer`. */
 export const BOTS_RPC_TAGS = Object.values(BOTS_WS_METHODS);
@@ -21,12 +21,12 @@ export const ServerBotsRpcGroup = RpcGroup.make(...BOTS_RPCS)
   .middleware(RpcScopeAuthorization)
   .middleware(RpcInstrumentation);
 
-/** The handlers, with Dictation and VoiceReader left to the caller (tests mock them). */
+/** The handlers, with Dictation and VoiceSessions left to the caller (tests mock them). */
 export const layerHandlers = ServerBotsRpcGroup.toLayer(
   Effect.gen(function* () {
     const bots = yield* BotsService.BotsService;
     const dictation = yield* Dictation.Dictation;
-    const voiceReader = yield* VoiceReader.VoiceReader;
+    const voice = yield* VoiceSession.VoiceSessions;
     return ServerBotsRpcGroup.of({
       [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
@@ -45,13 +45,13 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.dictationTranscribe]: (input) => dictation.transcribe(input),
       [BOTS_WS_METHODS.pushDeviceRegister]: (input) => bots.registerPushDevice(input),
       [BOTS_WS_METHODS.pushDeviceUnregister]: (input) => bots.unregisterPushDevice(input),
-      [BOTS_WS_METHODS.voiceReaderRead]: (input) => voiceReader.read(input),
-      [BOTS_WS_METHODS.voiceReaderSpeak]: (input) => voiceReader.speak(input),
+      [BOTS_WS_METHODS.voiceSession]: (input) => voice.session(input),
+      [BOTS_WS_METHODS.voiceReady]: (input) => voice.ready(input),
     });
   }),
 );
 
 export const layer = layerHandlers.pipe(
   Layer.provide(Dictation.layer),
-  Layer.provide(VoiceReader.layerLive),
+  Layer.provide(VoiceSession.layerLive),
 );

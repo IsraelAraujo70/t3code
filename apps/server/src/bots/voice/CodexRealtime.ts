@@ -28,8 +28,10 @@ import * as ServerConfig from "../../config.ts";
 
 /** What one realtime session reports, in order. The stream ends after `closed`. */
 export type RealtimeEvent =
-  /** The voice's own words (assistant role); user-role transcripts are dropped. */
+  /** The voice's own words (assistant role). */
   | { readonly type: "transcript"; readonly delta: string }
+  /** One finished user utterance, transcribed. */
+  | { readonly type: "user-transcript"; readonly text: string }
   /** The voice finished generating a response; its audio may still be playing on the client. */
   | { readonly type: "transcript-done" }
   | { readonly type: "error"; readonly message: string }
@@ -64,6 +66,8 @@ export interface RealtimeHost {
     readonly prompt: string;
     /** A voice this Codex does not offer for v3 is left out, so Codex uses its default. */
     readonly voice: string;
+    /** The voice says a short acknowledgement when it delegates the user's turn. */
+    readonly delegationAckFiller: boolean;
   }) => Effect.Effect<RealtimeSession, BotsError, Scope.Scope>;
 }
 
@@ -77,7 +81,7 @@ export class CodexRealtime extends Context.Service<
      */
     readonly open: Effect.Effect<RealtimeHost, BotsError, Scope.Scope>;
   }
->()("t3/bots/voiceReader/CodexRealtime") {}
+>()("t3/bots/voice/CodexRealtime") {}
 
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 
@@ -179,7 +183,9 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
       (session, payload) =>
         payload.role === "assistant"
           ? Queue.offer(session.events, { type: "transcript-done" })
-          : Effect.void,
+          : payload.role === "user" && payload.text.trim() !== ""
+            ? Queue.offer(session.events, { type: "user-transcript", text: payload.text.trim() })
+            : Effect.void,
     ),
     "thread/realtime/error": receive<"thread/realtime/error">((session, payload) =>
       Effect.gen(function* () {
@@ -206,6 +212,7 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
       readonly offerSdp: string;
       readonly prompt: string;
       readonly voice: string;
+      readonly delegationAckFiller: boolean;
     }) {
       const session: ActiveSession = {
         answer: yield* Deferred.make<string, BotsError>(),
@@ -240,7 +247,7 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
             includeStartupContext: false,
             clientManagedHandoffs: true,
             flushTranscriptTailOnSessionEnd: false,
-            delegationAckFiller: false,
+            delegationAckFiller: input.delegationAckFiller,
             prompt: input.prompt,
             ...(voice === undefined ? {} : { voice }),
             transport: { type: "webrtc", sdp: input.offerSdp },

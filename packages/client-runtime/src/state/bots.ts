@@ -1,6 +1,6 @@
 import {
   BOTS_WS_METHODS,
-  type VoiceReaderReadInput,
+  type VoiceSessionInput,
   type DictationTranscribeInput,
   type DictationTranscribeResult,
   type EnvironmentId,
@@ -15,7 +15,7 @@ import {
   throwIfVoiceTranscriptionAborted,
   type VoiceTranscriber,
 } from "../voice-input/transcription.ts";
-import type { VoiceReaderTransport } from "../voiceReader.ts";
+import type { VoiceTransport } from "../voice.ts";
 import {
   deletePendingAttachmentUpload,
   runAttachmentUploadCycle,
@@ -47,7 +47,7 @@ export function createBotsEnvironmentAtoms<R, E>(
   const command = <
     Tag extends (typeof BOTS_WS_METHODS)[Exclude<
       keyof typeof BOTS_WS_METHODS,
-      "directorySubscribe" | "dictationTranscribe" | "voiceReaderRead" | "voiceReaderSpeak"
+      "directorySubscribe" | "dictationTranscribe" | "voiceSession" | "voiceReady"
     >],
   >(
     label: string,
@@ -86,53 +86,57 @@ export function createBotsEnvironmentAtoms<R, E>(
       tag: BOTS_WS_METHODS.dictationTranscribe,
     }),
     /**
-     * One voice reader utterance. Mounting it sends the read (the server starts Codex); unmounting
-     * ends the stream at once and the server closes the session. Never replayed on reconnect.
+     * One voice session. Mounting it opens the session (the server starts Codex); unmounting ends
+     * the stream at once and the server closes the session. Never replayed on reconnect. The atom
+     * holds the latest event only: the server sends `bot` events after `ready`, so they never
+     * replace the answer before the client reads it.
      */
-    voiceReader: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:bots:voice-reader",
-      subscribe: (input: VoiceReaderReadInput) =>
-        runStreamGuarded(BOTS_WS_METHODS.voiceReaderRead, input),
+    voiceSession: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:bots:voice-session",
+      subscribe: (input: VoiceSessionInput) =>
+        runStreamGuarded(BOTS_WS_METHODS.voiceSession, input),
       idleTtlMs: 0,
       // The key carries the SDP offer.
       sensitiveInput: true,
     }),
     // Independent of the bot mutations.
-    voiceReaderSpeak: createEnvironmentRpcCommand(runtime, {
-      label: "environment-command:bots:voice-reader-speak",
-      tag: BOTS_WS_METHODS.voiceReaderSpeak,
+    voiceReady: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:voice-ready",
+      tag: BOTS_WS_METHODS.voiceReady,
     }),
   };
 }
 
-/** The voice reader's signaling over one client's bots atoms. */
-export function createVoiceReaderTransport(
+/** Voice signaling over one client's bots atoms. */
+export function createVoiceTransport(
   registry: AtomRegistry.AtomRegistry,
-  bots: Pick<ReturnType<typeof createBotsEnvironmentAtoms>, "voiceReader" | "voiceReaderSpeak">,
-): VoiceReaderTransport {
+  bots: Pick<ReturnType<typeof createBotsEnvironmentAtoms>, "voiceSession" | "voiceReady">,
+): VoiceTransport {
   return {
-    read: (target, sdp, { onAnswer, onEnd }) => {
-      const atom = bots.voiceReader({
+    session: (target, sdp, { onAnswer, onBot, onEnd }) => {
+      const atom = bots.voiceSession({
         environmentId: target.environmentId,
-        input: { threadId: target.threadId, messageId: target.messageId, sdp },
+        input: { threadId: target.threadId, mode: target.mode, sdp },
       });
-      let answered = false;
       let ended = false;
+      let lastEvent: unknown = null;
       const unsubscribe = registry.subscribe(
         atom,
         (result) => {
           if (ended) return;
           if (AsyncResult.isSuccess(result)) {
-            if (!answered) {
-              answered = true;
-              onAnswer(result.value);
+            const event = result.value;
+            if (event !== lastEvent) {
+              lastEvent = event;
+              if (event.type === "answer") onAnswer(event);
+              else onBot(event.working);
             }
             if (result.waiting) return;
             ended = true;
             onEnd(null);
           } else if (AsyncResult.isFailure(result)) {
             ended = true;
-            onEnd(failureMessage(Cause.squash(result.cause)) ?? "The voice reader failed.");
+            onEnd(failureMessage(Cause.squash(result.cause)) ?? "The voice session failed.");
           }
         },
         { immediate: true },
@@ -142,14 +146,14 @@ export function createVoiceReaderTransport(
         unsubscribe();
       };
     },
-    speak: async (environmentId, input) => {
-      const result = await runAtomCommand(registry, bots.voiceReaderSpeak, {
+    ready: async (environmentId, sessionId) => {
+      const result = await runAtomCommand(registry, bots.voiceReady, {
         environmentId,
-        input,
+        input: { sessionId },
       });
       if (result._tag === "Failure")
         throw new Error(
-          failureMessage(squashAtomCommandFailure(result)) ?? "The voice reader failed.",
+          failureMessage(squashAtomCommandFailure(result)) ?? "The voice session failed.",
         );
     },
   };

@@ -92,8 +92,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   bots: Schema.optionalKey(Schema.Boolean),
   // Fork (friend): this server transcribes dictation (it holds a transcription key).
   dictation: Schema.optionalKey(Schema.Boolean),
-  // Fork (friend): this server speaks thread replies aloud (the voice reader, through Codex).
-  voiceReader: Schema.optionalKey(Schema.Boolean),
+  // Fork (friend): this server offers voice sessions (`bots.voice.session`, through Codex).
+  voice: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   storageCleanupRun: Schema.optionalKey(Schema.Boolean),
