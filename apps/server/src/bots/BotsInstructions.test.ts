@@ -28,6 +28,7 @@ const bot: Bot = {
   homeGeneration: 1,
   sectionId: null,
   position: 0,
+  canManageBots: false,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -63,6 +64,8 @@ describe("buildBotInstructions", () => {
     assert.strictEqual(full.sections[2]!.text, "- [mem_1] Likes tea\n- [mem_2] Uses vim");
     assert.include(full.sections[3]!.text, "memory_save");
     assert.include(full.sections[3]!.text, "memory_forget");
+    // The bot sees how much of its memory budget it uses, here 9 + 8 characters.
+    assert.include(full.sections[3]!.text, "now use 17.");
     // Code goes to its own T3 thread, and the old friend app's tools are named as gone.
     assert.include(full.sections[4]!.text, "t3_thread_launch");
     assert.include(full.sections[4]!.text, "watch_thread");
@@ -73,6 +76,20 @@ describe("buildBotInstructions", () => {
       bare.sections.map((section) => section.key),
       ["bot", "memory-tools", "work-tools"],
     );
+  });
+
+  it("tells only a bot the user allowed to manage bots about the management tools", () => {
+    const manager = buildBotInstructions({
+      bot: { ...bot, canManageBots: true },
+      memories: [],
+      aboutMe: "",
+      peers: [],
+    });
+    assert.deepStrictEqual(
+      manager.sections.map((section) => section.key),
+      ["bot", "memory-tools", "work-tools", "manage-bots"],
+    );
+    assert.include(manager.sections[3]!.text, "bot_create");
   });
 
   it("splits a long section on line boundaries and hard-splits a single long line", () => {

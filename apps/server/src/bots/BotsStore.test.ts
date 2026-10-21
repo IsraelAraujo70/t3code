@@ -19,6 +19,7 @@ const makeBot = (id: string, overrides: Partial<Bot> = {}): Bot => ({
   homeGeneration: 1,
   sectionId: null,
   position: 0,
+  canManageBots: false,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   ...overrides,
@@ -74,7 +75,12 @@ it.effect("updates an existing bot and fails for a missing one", () =>
   withStore((store) =>
     Effect.gen(function* () {
       yield* store.insertBot(makeBot("b1"));
-      const updated = makeBot("b1", { name: "Renamed", homeGeneration: 2, position: 5 });
+      const updated = makeBot("b1", {
+        name: "Renamed",
+        homeGeneration: 2,
+        position: 5,
+        canManageBots: true,
+      });
       yield* store.updateBot(updated);
       assert.deepStrictEqual(yield* store.getBot(BotId.make("b1")), Option.some(updated));
 

@@ -32,6 +32,8 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { BotAvatar } from "./BotAvatar";
 import { BotsField, commandFailureMessage } from "./botsSettingsShared";
@@ -41,6 +43,7 @@ interface BotDraft {
   readonly role: string;
   /** Null until the user picks a model; the bot's own or the default model shows meanwhile. */
   readonly model: ModelSelection | null;
+  readonly canManageBots: boolean;
 }
 
 /**
@@ -71,6 +74,7 @@ export function BotEditorDialog({
     name: bot?.name ?? "",
     role: bot?.role ?? "",
     model: null,
+    canManageBots: bot?.canManageBots ?? false,
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +106,12 @@ export function BotEditorDialog({
     submissionPending.current = true;
     setSaving(true);
     setError(null);
-    const fields = { name, role: draft.role.trim(), model: selection };
+    const fields = {
+      name,
+      role: draft.role.trim(),
+      model: selection,
+      canManageBots: draft.canManageBots,
+    };
     const result = bot
       ? await updateBot({ environmentId, input: { botId: bot.id, ...fields } })
       : await createBot({ environmentId, input: fields });
@@ -200,6 +209,21 @@ export function BotEditorDialog({
                 </p>
               )}
             </BotsField>
+            <div className="flex items-center gap-3">
+              <Switch
+                id="bot-can-manage-bots"
+                checked={draft.canManageBots}
+                onCheckedChange={(checked) =>
+                  setDraft((current) => ({ ...current, canManageBots: checked }))
+                }
+              />
+              <div className="space-y-0.5">
+                <Label htmlFor="bot-can-manage-bots">Can manage bots</Label>
+                <p className="text-xs text-muted-foreground">
+                  Lets this bot create, edit, and delete your bots from its conversation.
+                </p>
+              </div>
+            </div>
             {error ? (
               <p className="text-sm text-destructive" role="alert">
                 {error}

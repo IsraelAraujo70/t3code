@@ -75,6 +75,7 @@ function bot(id: string, generation = 1, sectionId: string | null = null): BotDi
     model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
     homeGeneration: generation,
     position: 0,
+    canManageBots: false,
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z",
     homeThreadId: botThreadId(botId, generation),

@@ -87,6 +87,8 @@ describe("threadWatchNotice", () => {
   it("never wakes anyone for a run a wake started, so mutual watches cannot loop", () => {
     const woken = run({ userMessageId: MessageId.make(`${THREAD_WATCH_MESSAGE_PREFIX}x:y:run-0`) });
     assert.isNull(threadWatchNotice(watch, null, { type: "run", run: woken }));
+    const upkeep = run({ userMessageId: MessageId.make("message:bot-compaction:flush:run-0") });
+    assert.isNull(threadWatchNotice(watch, null, { type: "run", run: upkeep }));
   });
 
   it("wakes for a pending question or approval and not once it is answered", () => {

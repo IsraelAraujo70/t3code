@@ -24,12 +24,14 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
 import {
+  BOT_LIMITS,
   BotId,
   BotMemoryId,
   BotSectionId,
   BotsError,
   botThreadId,
   CommandId,
+  enabledMemoryCharacters,
   parseBotThreadId,
   type Bot,
   type BotCreateInput,
@@ -49,6 +51,7 @@ import {
   type BotsImportResult,
   type BotsOwnerUpdateInput,
   type BotUpdateInput,
+  type ModelSelection,
   type ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -70,7 +73,10 @@ export class BotsService extends Context.Service<
     readonly updateBot: (input: BotUpdateInput) => Effect.Effect<Bot, BotsError>;
     readonly deleteBot: (input: BotRef) => Effect.Effect<BotRef, BotsError>;
     readonly resetConversation: (input: BotRef) => Effect.Effect<Bot, BotsError>;
-    /** Duplicate text for the same bot fails with BotsError. */
+    /**
+     * Duplicate text for the same bot fails with BotsError, and so does a bot's own save that
+     * would take its enabled memories past BOT_LIMITS.memoryBudget.
+     */
     readonly createMemory: (
       input: BotMemoryCreateInput,
       source: BotMemorySource,
@@ -145,6 +151,21 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  // Bots also pick models through MCP; a disabled or unknown instance would only fail on the bot's
+  // first turn.
+  const requireEnabledInstance = (model: ModelSelection) =>
+    providers
+      .getInstance(model.instanceId)
+      .pipe(
+        Effect.flatMap((instance) =>
+          instance?.enabled === true
+            ? Effect.void
+            : Effect.fail(
+                new BotsError({ message: `No enabled provider instance ${model.instanceId}.` }),
+              ),
+        ),
+      );
 
   /** Idempotent: the command id is fixed per bot generation, so retries replay the receipt. */
   const launchMainThread = (bot: Bot) =>
@@ -252,6 +273,7 @@ const make = Effect.gen(function* () {
 
   const createBot = (input: BotCreateInput) =>
     Effect.gen(function* () {
+      yield* requireEnabledInstance(input.model);
       const bots = yield* store.listBots;
       const now = yield* nowIso;
       const bot: Bot = {
@@ -262,6 +284,7 @@ const make = Effect.gen(function* () {
         homeGeneration: 1,
         sectionId: null,
         position: nextPosition(bots),
+        canManageBots: input.canManageBots ?? false,
         createdAt: now,
         updatedAt: now,
       };
@@ -274,12 +297,14 @@ const make = Effect.gen(function* () {
   const updateBot = (input: BotUpdateInput) =>
     Effect.gen(function* () {
       const current = yield* requireBot(input.botId);
+      if (input.model !== undefined) yield* requireEnabledInstance(input.model);
       const bot: Bot = {
         ...current,
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.role !== undefined ? { role: input.role } : {}),
         // The live thread keeps its model; the next conversation generation starts with this one.
         ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.canManageBots !== undefined ? { canManageBots: input.canManageBots } : {}),
         updatedAt: yield* nowIso,
       };
       yield* store.updateBot(bot);
@@ -312,10 +337,27 @@ const make = Effect.gen(function* () {
       return bot;
     });
 
+  // A full memory makes the bot merge or forget instead of growing every prompt; the bot reads
+  // this message as memory_save's error, so it says how.
+  const assertWithinBudget = (botId: BotId, text: string) =>
+    store.listMemories(botId).pipe(
+      Effect.flatMap((memories) => {
+        const used = enabledMemoryCharacters(memories);
+        return used + text.length <= BOT_LIMITS.memoryBudget
+          ? Effect.void
+          : Effect.fail(
+              new BotsError({
+                message: `Your memory is full: enabled memories use ${used} of ${BOT_LIMITS.memoryBudget} characters, and this one needs ${text.length}. Merge related memories into one shorter memory and forget stale ones with memory_forget, then save again.`,
+              }),
+            );
+      }),
+    );
+
   const createMemory = (input: BotMemoryCreateInput, source: BotMemorySource) =>
     Effect.gen(function* () {
       yield* requireBot(input.botId);
       yield* assertNewMemoryText(input.botId, input.text);
+      if (source === "bot") yield* assertWithinBudget(input.botId, input.text);
       const now = yield* nowIso;
       const memory: BotMemory = {
         id: BotMemoryId.make(`mem_${yield* randomHex}`),

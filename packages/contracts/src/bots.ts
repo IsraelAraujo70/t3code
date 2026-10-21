@@ -37,6 +37,11 @@ export const BOT_LIMITS = {
   sectionName: 60,
   role: 20_000,
   memory: 4_000,
+  /**
+   * Enabled memories ride in every turn's system prompt, so a bot may save one only while the
+   * enabled total stays within this many characters. The user's own edits are never refused.
+   */
+  memoryBudget: 8_000,
   aboutMe: 20_000,
 } as const;
 
@@ -63,6 +68,12 @@ export const BotMemory = Schema.Struct({
 });
 export type BotMemory = typeof BotMemory.Type;
 
+/** Characters of enabled memory a bot carries in its prompt, measured against memoryBudget. */
+export const enabledMemoryCharacters = (
+  memories: ReadonlyArray<Pick<BotMemory, "text" | "enabled">>,
+): number =>
+  memories.reduce((total, memory) => (memory.enabled ? total + memory.text.length : total), 0);
+
 export const Bot = Schema.Struct({
   id: BotId,
   name: BotName,
@@ -74,6 +85,8 @@ export const Bot = Schema.Struct({
   sectionId: Schema.NullOr(BotSectionId),
   /** Sidebar order within its section, ascending. */
   position: Schema.Int,
+  /** The user lets this bot create, edit and delete bots through its MCP tools. */
+  canManageBots: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -128,6 +141,7 @@ export const BotCreateInput = Schema.Struct({
   name: BotName,
   role: BotRole,
   model: ModelSelection,
+  canManageBots: Schema.optionalKey(Schema.Boolean),
 });
 export type BotCreateInput = typeof BotCreateInput.Type;
 
@@ -136,6 +150,7 @@ export const BotUpdateInput = Schema.Struct({
   name: Schema.optionalKey(BotName),
   role: Schema.optionalKey(BotRole),
   model: Schema.optionalKey(ModelSelection),
+  canManageBots: Schema.optionalKey(Schema.Boolean),
 });
 export type BotUpdateInput = typeof BotUpdateInput.Type;
 
