@@ -15,11 +15,13 @@ import {
 } from "@t3tools/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Duration from "effect/Duration";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -45,6 +47,8 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
   let opens = 0;
   let stops = 0;
   let postFailure: string | null = null;
+  const delivered: string[] = [];
+  let postGate: Deferred.Deferred<void> | null = null;
   const service = yield* VoiceSession.VoiceSessions.pipe(
     Effect.provide(
       VoiceSession.layer.pipe(
@@ -60,9 +64,15 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
             post: (_thread, text) =>
               Effect.suspend(() => {
                 posted.push(text);
-                return postFailure === null
-                  ? Effect.void
-                  : Effect.fail(new BotsError({ message: postFailure }));
+                if (postFailure !== null)
+                  return Effect.fail(new BotsError({ message: postFailure }));
+                return (postGate === null ? Effect.void : Deferred.await(postGate)).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      delivered.push(text);
+                    }),
+                  ),
+                );
               }),
             activity: () =>
               Stream.suspend(() => {
@@ -134,11 +144,18 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
     failPosts: (message: string) => {
       postFailure = message;
     },
+    /** Posts after this wait for `gate`; `delivered` lists the posts that completed. */
+    holdPosts: (gate: Deferred.Deferred<void>) => {
+      postGate = gate;
+    },
+    delivered,
     subscriptions: () => subscriptions,
     opens: () => opens,
     stops: () => stops,
   };
 });
+
+const turnWindow = Duration.millis(VoiceSession.DEFAULT_TURN_SILENCE_MS);
 
 const failureMessage = (exit: Exit.Exit<void, BotsError>) =>
   Exit.isFailure(exit) && exit.cause.reasons[0]?._tag === "Fail"
@@ -297,7 +314,7 @@ describe("VoiceSessions conversation", () => {
         { type: "working", working: false },
       ]);
       yield* Queue.offer(h.realtimeEvents, { type: "user-transcript", text: "Quanto é 7 x 8?" });
-      yield* Effect.yieldNow;
+      yield* TestClock.adjust(turnWindow);
       assert.deepStrictEqual(h.posted, ["🎙️ Quanto é 7 x 8?"]);
       yield* Queue.offerAll(h.activity, [
         { type: "working", working: true },
@@ -360,8 +377,135 @@ describe("VoiceSessions conversation", () => {
       const { ref, fiber } = yield* h.open(conversation);
       yield* h.service.ready(ref);
       yield* Queue.offer(h.realtimeEvents, { type: "user-transcript", text: "Oi" });
+      yield* TestClock.adjust(turnWindow);
       assert.strictEqual(failureMessage(yield* Fiber.join(fiber)), "Couldn't send what you said.");
       assert.strictEqual(h.stops(), 1);
+    }),
+  );
+});
+
+describe("VoiceSessions conversation turns", () => {
+  /** Realtime's deltas for `text` as it is spoken, word by word. */
+  const deltas = (text: string): CodexRealtime.RealtimeEvent[] =>
+    text.split(" ").map((word) => ({ type: "user-transcript-delta", delta: ` ${word}` }));
+
+  const live = Effect.fn("test.live")(function* (env: Record<string, string> = {}) {
+    const h = yield* setup(env);
+    const session = yield* h.open(conversation);
+    yield* h.service.ready(session.ref);
+    yield* Effect.yieldNow;
+    const offer = (events: ReadonlyArray<CodexRealtime.RealtimeEvent>) =>
+      Queue.offerAll(h.realtimeEvents, events).pipe(Effect.andThen(Effect.yieldNow));
+    /** One utterance: its deltas, then its final transcript. */
+    const say = (text: string) => offer([...deltas(text), { type: "user-transcript", text }]);
+    return { ...h, ...session, offer, say };
+  });
+
+  it.effect("posts a thought spoken in pieces as one message once the user stays silent", () =>
+    Effect.gen(function* () {
+      const h = yield* live();
+      yield* h.say("Quanto é");
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* h.say("sete vezes");
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* h.say("oito?");
+      yield* TestClock.adjust(Duration.millis(VoiceSession.DEFAULT_TURN_SILENCE_MS - 1));
+      assert.deepStrictEqual(h.posted, []);
+      yield* TestClock.adjust(Duration.millis(1));
+      assert.deepStrictEqual(h.posted, ["🎙️ Quanto é sete vezes oito?"]);
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(h.posted, ["🎙️ Quanto é sete vezes oito?"]);
+    }),
+  );
+
+  it.effect("posts pieces further apart than the window as separate messages", () =>
+    Effect.gen(function* () {
+      const h = yield* live();
+      yield* h.say("Primeira.");
+      yield* TestClock.adjust(turnWindow);
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* h.say("Segunda.");
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(h.posted, ["🎙️ Primeira.", "🎙️ Segunda."]);
+    }),
+  );
+
+  it.effect("waits while the user keeps speaking", () =>
+    Effect.gen(function* () {
+      const h = yield* live();
+      for (const word of ["Me", "diz", "o", "placar."]) {
+        yield* TestClock.adjust(Duration.millis(VoiceSession.DEFAULT_TURN_SILENCE_MS - 1));
+        yield* h.offer(deltas(word));
+      }
+      assert.deepStrictEqual(h.posted, []);
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(h.posted, ["🎙️ Me diz o placar."]);
+    }),
+  );
+
+  it.effect("posts an utterance whose final transcript is late, and only once", () =>
+    Effect.gen(function* () {
+      const h = yield* live();
+      yield* h.say("Quanto é sete vezes oito,");
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* h.offer(deltas("mais dois?"));
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(h.posted, ["🎙️ Quanto é sete vezes oito, mais dois?"]);
+      yield* h.offer([{ type: "user-transcript", text: "mais dois?" }]);
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(h.posted, ["🎙️ Quanto é sete vezes oito, mais dois?"]);
+    }),
+  );
+
+  it.effect("finishes posting a turn when the user speaks again meanwhile", () =>
+    Effect.gen(function* () {
+      const h = yield* live();
+      const gate = yield* Deferred.make<void>();
+      h.holdPosts(gate);
+      yield* h.say("Oi");
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(h.posted, ["🎙️ Oi"]);
+      yield* h.offer(deltas("de novo"));
+      // Let the session hear the speech while the post is still in flight.
+      for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
+      yield* Deferred.succeed(gate, undefined);
+      for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
+      assert.deepStrictEqual(h.delivered, ["🎙️ Oi"]);
+    }),
+  );
+
+  it.effect("posts what the user said when the call ends before the window passes", () =>
+    Effect.gen(function* () {
+      const hungUp = yield* live();
+      yield* hungUp.say("Antes de");
+      yield* hungUp.offer(deltas("desligar"));
+      yield* Fiber.interrupt(hungUp.fiber);
+      assert.deepStrictEqual(hungUp.posted, ["🎙️ Antes de desligar"]);
+      yield* TestClock.adjust(turnWindow);
+      assert.deepStrictEqual(hungUp.posted, ["🎙️ Antes de desligar"]);
+
+      const dropped = yield* live();
+      yield* dropped.say("Caiu");
+      yield* dropped.offer([{ type: "closed", reason: null }]);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(dropped.fiber)));
+      assert.deepStrictEqual(dropped.posted, ["🎙️ Caiu"]);
+    }),
+  );
+
+  it.effect("reads the window from the environment, else the default", () =>
+    Effect.gen(function* () {
+      for (const [value, ms] of [
+        ["3000", 3_000],
+        ["soon", VoiceSession.DEFAULT_TURN_SILENCE_MS],
+        ["0", VoiceSession.DEFAULT_TURN_SILENCE_MS],
+      ] as const) {
+        const h = yield* live({ [VoiceSession.TURN_SILENCE_ENV]: value });
+        yield* h.say(value);
+        yield* TestClock.adjust(Duration.millis(ms - 1));
+        assert.deepStrictEqual(h.posted, []);
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.deepStrictEqual(h.posted, [`🎙️ ${value}`]);
+      }
     }),
   );
 });
@@ -413,6 +557,41 @@ describe("handoffReducer", () => {
       { type: "voice-done" },
     );
     assert.deepStrictEqual(next.appended, ["reply", "notice"]);
+  });
+
+  it("holds what the user says until the latest silence window passes, in order", () => {
+    let state = VoiceSession.idleHandoff;
+    const windows: number[] = [];
+    for (const input of [
+      { type: "user-delta", delta: " Quanto" },
+      { type: "user-delta", delta: " é" },
+      { type: "user-said", text: "Quanto é" },
+      // An utterance realtime reports only once it ends.
+      { type: "user-said", text: "sete vezes oito?" },
+    ] as const) {
+      const step = VoiceSession.handoffReducer(state, input);
+      assert.isNull(step.post);
+      if (step.listen !== null) windows.push(step.listen);
+      state = step.state;
+    }
+    // The first utterance's final transcript is not new speech.
+    assert.strictEqual(windows.length, 3);
+    // A window that later speech restarted passes without posting.
+    const stale = VoiceSession.handoffReducer(state, { type: "silence", silence: windows[1]! });
+    assert.isNull(stale.post);
+    const ended = VoiceSession.handoffReducer(state, { type: "silence", silence: windows[2]! });
+    assert.strictEqual(ended.post, "Quanto é sete vezes oito?");
+    assert.isNull(VoiceSession.handoffReducer(ended.state, { type: "hang-up" }).post);
+    assert.isFalse(VoiceSession.handoffWorking(state));
+  });
+
+  it("posts what was heard when the call ends", () => {
+    const heard = VoiceSession.handoffReducer(VoiceSession.idleHandoff, {
+      type: "user-delta",
+      delta: " Oi",
+    });
+    assert.strictEqual(VoiceSession.handoffReducer(heard.state, { type: "hang-up" }).post, "Oi");
+    assert.isNull(VoiceSession.handoffReducer(VoiceSession.idleHandoff, { type: "hang-up" }).post);
   });
 
   it("appends unspoken text once more, then gives it up; stale timeouts change nothing", () => {

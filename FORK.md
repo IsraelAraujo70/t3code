@@ -57,11 +57,13 @@ need an API key. Clients get two entry points (web, desktop, Android):
   On mobile the orb takes the chat's place. Mute and close replace the two buttons, and typing still
   works.
 
-In a conversation the realtime voice is only a receptionist. The server posts each finished
-utterance to the thread as a normal user message starting with 🎙️, queued behind a running turn,
-and reads aloud every reply that completes while the call is open. Approvals and questions are
-never answered by voice: the voice only says that one is waiting on screen. The call holds no
-conversation state, so hanging up loses nothing.
+In a conversation the realtime voice is only a receptionist. Realtime ends the user's turn at every
+short pause and its turn detection cannot be configured, so the server collects what the user says
+until they have been silent for `T3CODE_VOICE_TURN_SILENCE_MS` (default 10000) and then posts it to
+the thread as one normal user message starting with 🎙️, queued behind a running turn. Hanging up
+posts what is still waiting. The server reads aloud every reply that completes while the call is
+open. Approvals and questions are never answered by voice: the voice only says that one is waiting
+on screen.
 
 The realtime model answers simple questions by itself even when told not to. Its prompt therefore
 tells it to delegate everything, and after a delegation it only acknowledges. The client plays the

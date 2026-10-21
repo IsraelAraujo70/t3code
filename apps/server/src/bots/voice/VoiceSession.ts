@@ -1,8 +1,9 @@
 /**
  * Voice sessions: a live spoken conversation with a thread, or one assistant reply read aloud,
  * through Codex realtime. See `VoiceSessionRpc` in the contracts for the protocol. The realtime
- * voice is only a receptionist: the thread's agent answers, and the session keeps no state of its
- * own. One app-server and one realtime session per session, both closed when its stream ends.
+ * voice is only a receptionist: the thread's agent answers, and the session holds only what the user
+ * said and the agent has not received yet. One app-server and one realtime session per session, both
+ * closed when its stream ends.
  */
 import {
   BotsError,
@@ -24,6 +25,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -114,6 +116,24 @@ const readVoice: Effect.Effect<string> = Config.String(VOICE_ENV).pipe(
   Effect.orElseSucceed(() => DEFAULT_VOICE),
 );
 
+/** How long the user stays silent before what they said goes to the agent, unless overridden. */
+export const DEFAULT_TURN_SILENCE_MS = 10_000;
+/** Overrides the turn window in milliseconds, read at startup. Must be a positive integer. */
+export const TURN_SILENCE_ENV = "T3CODE_VOICE_TURN_SILENCE_MS";
+
+const readTurnSilence: Effect.Effect<Duration.Duration> = Config.Int(TURN_SILENCE_ENV).pipe(
+  Config.withDefault(DEFAULT_TURN_SILENCE_MS),
+  Effect.orElseSucceed(() => 0),
+  Effect.filterOrElse(
+    (ms) => ms > 0,
+    () =>
+      Effect.logWarning(
+        `${TURN_SILENCE_ENV} is not a positive integer; using ${DEFAULT_TURN_SILENCE_MS} ms.`,
+      ).pipe(Effect.as(DEFAULT_TURN_SILENCE_MS)),
+  ),
+  Effect.map(Duration.millis),
+);
+
 /**
  * What the reader receives for a reply. Unframed, the realtime model answers the text as if the
  * user had said it ("Perfeito, entendi"); framed as another agent's reply, it summarizes it.
@@ -137,11 +157,18 @@ export const WAITING_ON_USER_SPEECH = voiceReplySpeech(
 );
 
 /**
- * Text on its way to being spoken, and whether a conversation's agent still has work as the
- * client's `bot` event reports it. Realtime folds text appended mid-turn into the turn under way
- * (often one the client keeps silent) or ignores it, so speech is appended only while the voice is
- * quiet, appended once more if the voice does not start, then given up. The agent's work lasts
- * until its reply starts being spoken, so the orb never shows "listening" in between.
+ * Text on its way to being spoken, what the user said that the agent has not received yet, and
+ * whether a conversation's agent still has work as the client's `bot` event reports it. Realtime
+ * folds text appended mid-turn into the turn under way (often one the client keeps silent) or
+ * ignores it, so speech is appended only while the voice is quiet, appended once more if the voice
+ * does not start, then given up. The agent's work lasts until its reply starts being spoken, so the
+ * orb never shows "listening" in between.
+ *
+ * Realtime ends the user's turn at any pause and its turn detection cannot be configured, so what
+ * the user says is held until they have been silent for the turn window and then posted as one
+ * message; hanging up posts what is held. The text comes from the transcript deltas, which arrive
+ * as the user speaks: an utterance's final transcript can lag by many seconds (while the voice talks
+ * over it, until something else ends the realtime turn) and only marks where the utterance ends.
  */
 export interface Handoff {
   /** The thread has an unsettled run, or an utterance is being relayed. */
@@ -156,6 +183,12 @@ export interface Handoff {
     readonly tries: number;
   } | null;
   readonly attempts: number;
+  /** What the user said since the last post. */
+  readonly heard: string;
+  /** Deltas of an utterance whose final transcript has not arrived yet were heard. */
+  readonly transcribing: boolean;
+  /** Counts silence windows started, so a window that speech restarted is told apart. */
+  readonly silences: number;
 }
 
 export type HandoffInput =
@@ -163,7 +196,11 @@ export type HandoffInput =
   | { readonly type: "speak"; readonly speech: string }
   | { readonly type: "voice-talking" }
   | { readonly type: "voice-done" }
-  | { readonly type: "start-timeout"; readonly attempt: number };
+  | { readonly type: "start-timeout"; readonly attempt: number }
+  | { readonly type: "user-delta"; readonly delta: string }
+  | { readonly type: "user-said"; readonly text: string }
+  | { readonly type: "silence"; readonly silence: number }
+  | { readonly type: "hang-up" };
 
 export interface HandoffStep {
   readonly state: Handoff;
@@ -176,6 +213,10 @@ export interface HandoffStep {
   } | null;
   /** Speech given up on. */
   readonly lost: string | null;
+  /** Start the turn window over, reporting `silence` when it passes. */
+  readonly listen: number | null;
+  /** The user's turn, to post now. */
+  readonly post: string | null;
 }
 
 /** Appends of one speech before it is given up. */
@@ -187,48 +228,84 @@ export const idleHandoff: Handoff = {
   queued: [],
   inFlight: null,
   attempts: 0,
+  heard: "",
+  transcribing: false,
+  silences: 0,
 };
+
+const settle = (state: Handoff, step: Partial<Omit<HandoffStep, "state">> = {}): HandoffStep => ({
+  state,
+  append: null,
+  lost: null,
+  listen: null,
+  post: null,
+  ...step,
+});
 
 const pump = (state: Handoff, lost: string | null = null): HandoffStep => {
   const [speech, ...rest] = state.queued;
   if (state.voiceTalking || state.inFlight !== null || speech === undefined)
-    return { state, append: null, lost };
+    return settle(state, { lost });
   const attempt = state.attempts + 1;
-  return {
-    state: { ...state, queued: rest, inFlight: { speech, attempt, tries: 1 }, attempts: attempt },
-    append: { speech, attempt, retry: false },
-    lost,
-  };
+  return settle(
+    { ...state, queued: rest, inFlight: { speech, attempt, tries: 1 }, attempts: attempt },
+    { append: { speech, attempt, retry: false }, lost },
+  );
+};
+
+const listen = (state: Handoff): HandoffStep =>
+  settle({ ...state, silences: state.silences + 1 }, { listen: state.silences + 1 });
+
+/** Utterances are joined with a space; the deltas within one carry their own spacing. */
+const hear = (heard: string, text: string, startsUtterance: boolean) =>
+  startsUtterance && heard.trim() !== "" ? `${heard.trimEnd()} ${text.trimStart()}` : heard + text;
+
+const endTurn = (state: Handoff): HandoffStep => {
+  const turn = state.heard.trim();
+  return turn === "" ? settle(state) : settle({ ...state, heard: "" }, { post: turn });
 };
 
 export function handoffReducer(state: Handoff, input: HandoffInput): HandoffStep {
   switch (input.type) {
     case "running":
-      return { state: { ...state, running: input.running }, append: null, lost: null };
+      return settle({ ...state, running: input.running });
     case "speak":
       return pump({ ...state, queued: [...state.queued, input.speech] });
     case "voice-talking":
       // Speech goes out only while the voice is quiet, so the turn that starts is speaking it.
-      return { state: { ...state, voiceTalking: true, inFlight: null }, append: null, lost: null };
+      return settle({ ...state, voiceTalking: true, inFlight: null });
     case "voice-done":
       return pump({ ...state, voiceTalking: false });
     case "start-timeout": {
       const inFlight = state.inFlight;
-      if (inFlight === null || inFlight.attempt !== input.attempt)
-        return { state, append: null, lost: null };
+      if (inFlight === null || inFlight.attempt !== input.attempt) return settle(state);
       if (inFlight.tries >= MAX_SPEECH_TRIES)
         return pump({ ...state, inFlight: null }, inFlight.speech);
       const attempt = state.attempts + 1;
-      return {
-        state: {
+      return settle(
+        {
           ...state,
           inFlight: { ...inFlight, attempt, tries: inFlight.tries + 1 },
           attempts: attempt,
         },
-        append: { speech: inFlight.speech, attempt, retry: true },
-        lost: null,
-      };
+        { append: { speech: inFlight.speech, attempt, retry: true } },
+      );
     }
+    case "user-delta":
+      return listen({
+        ...state,
+        heard: hear(state.heard, input.delta, !state.transcribing),
+        transcribing: true,
+      });
+    case "user-said":
+      // The deltas already carried this utterance, even when they were posted before it ended.
+      return state.transcribing
+        ? settle({ ...state, transcribing: false })
+        : listen({ ...state, heard: hear(state.heard, input.text, true) });
+    case "silence":
+      return input.silence === state.silences ? endTurn(state) : settle(state);
+    case "hang-up":
+      return endTurn(state);
   }
 }
 
@@ -243,6 +320,7 @@ export const layer = Layer.effect(
     const codex = yield* CodexRealtime.CodexRealtime;
     const threads = yield* VoiceThreads;
     const voice = yield* readVoice;
+    const turnSilence = yield* readTurnSilence;
     const readies = new Map<VoiceSessionId, Effect.Effect<void, BotsError>>();
     return VoiceSessions.of({
       session: ({ threadId, mode, sdp }) =>
@@ -271,6 +349,9 @@ export const layer = Layer.effect(
 
             let handoff = idleHandoff;
             let reported: boolean | null = null;
+            let silenceTimer: Fiber.Fiber<void> | null = null;
+            const postTurn = (turn: string) =>
+              threads.post(threadId, `${VOICE_MESSAGE_PREFIX}${turn}`);
             const step = (input: HandoffInput): Effect.Effect<void> =>
               Effect.suspend(() => {
                 const next = handoffReducer(handoff, input);
@@ -301,13 +382,55 @@ export const layer = Layer.effect(
                   next.lost !== null && mode.type === "read"
                     ? end("The voice did not start reading.")
                     : Effect.void;
-                return report.pipe(Effect.andThen(append), Effect.andThen(lost), Effect.asVoid);
+                const silence = next.listen;
+                const listen =
+                  silence === null
+                    ? Effect.void
+                    : Effect.suspend(() =>
+                        silenceTimer === null ? Effect.void : Fiber.interrupt(silenceTimer),
+                      ).pipe(
+                        Effect.andThen(
+                          fork(
+                            Effect.sleep(turnSilence).pipe(
+                              // Restarting the window must not cancel a turn being posted.
+                              Effect.andThen(
+                                Effect.uninterruptible(step({ type: "silence", silence })),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Effect.map((timer) => {
+                          silenceTimer = timer;
+                        }),
+                      );
+                const post = next.post === null ? Effect.void : relay(next.post);
+                return report.pipe(
+                  Effect.andThen(append),
+                  Effect.andThen(lost),
+                  Effect.andThen(listen),
+                  Effect.andThen(post),
+                  Effect.asVoid,
+                );
               });
-            const relay = (utterance: string) =>
+            const relay = (turn: string) =>
               step({ type: "running", running: true }).pipe(
-                Effect.andThen(threads.post(threadId, `${VOICE_MESSAGE_PREFIX}${utterance}`)),
+                Effect.andThen(postTurn(turn)),
                 Effect.catch((error) => end(error.message)),
               );
+            // Registered before the fibers below, so it runs once they have stopped hearing.
+            yield* Effect.addFinalizer(() =>
+              Effect.suspend(() => {
+                const last = handoffReducer(handoff, { type: "hang-up" });
+                handoff = last.state;
+                return last.post === null
+                  ? Effect.void
+                  : postTurn(last.post).pipe(
+                      Effect.catch((error) =>
+                        Effect.logWarning("Couldn't send what was said before hanging up.", error),
+                      ),
+                    );
+              }),
+            );
 
             yield* fork(
               Stream.runForEach(realtime.events, (event) => {
@@ -318,9 +441,15 @@ export const layer = Layer.effect(
                     return mode.type === "read"
                       ? endAfter(SPEECH_END_GRACE, end(null))
                       : step({ type: "voice-done" });
+                  // The microphone stays silent until the client is ready.
+                  case "user-transcript-delta":
+                    return mode.type === "conversation"
+                      ? step({ type: "user-delta", delta: event.delta })
+                      : Effect.void;
                   case "user-transcript":
-                    // The microphone stays silent until the client is ready.
-                    return mode.type === "conversation" ? relay(event.text) : Effect.void;
+                    return mode.type === "conversation"
+                      ? step({ type: "user-said", text: event.text })
+                      : Effect.void;
                   case "error":
                     return end(event.message);
                   case "closed":

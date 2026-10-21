@@ -101,68 +101,67 @@ it.effect("sends a voice Codex offers and leaves out one it does not", () =>
   }).pipe(Effect.scoped),
 );
 
-it.effect(
-  "reports the voice's words and finished user utterances of its own thread, then closed",
-  () =>
-    Effect.gen(function* () {
-      const fake = yield* fakeRpc;
-      const host = yield* makeRealtimeHost(fake.rpc, "thread");
-      const pending = yield* host.startSession(input).pipe(Effect.forkChild);
-      yield* Queue.take(fake.requests);
-      yield* fake.emit("thread/realtime/sdp", { threadId: "thread", sdp: "answer" });
-      const session = yield* Fiber.join(pending);
-      yield* fake.emit("thread/realtime/transcript/delta", {
-        threadId: "other",
-        role: "assistant",
-        delta: "ignored",
-      });
-      yield* fake.emit("thread/realtime/transcript/delta", {
-        threadId: "thread",
-        role: "user",
-        delta: "ignored",
-      });
-      yield* fake.emit("thread/realtime/transcript/done", {
-        threadId: "thread",
-        role: "user",
-        text: " Quanto é sete vezes oito ",
-      });
-      yield* fake.emit("thread/realtime/transcript/done", {
-        threadId: "thread",
-        role: "user",
-        text: " ",
-      });
-      yield* fake.emit("thread/realtime/transcript/done", {
-        threadId: "other",
-        role: "user",
-        text: "ignored",
-      });
-      yield* fake.emit("thread/realtime/transcript/delta", {
-        threadId: "thread",
-        role: "assistant",
-        delta: "hello",
-      });
-      yield* fake.emit("thread/realtime/transcript/done", {
-        threadId: "thread",
-        role: "assistant",
-        text: "hello",
-      });
-      yield* fake.emit("thread/realtime/error", { threadId: "thread", message: "late error" });
-      yield* fake.emit("thread/realtime/closed", { threadId: "other", reason: "ignored" });
-      yield* fake.emit("thread/realtime/closed", { threadId: "thread" });
-      yield* fake.emit("thread/realtime/transcript/delta", {
-        threadId: "thread",
-        role: "assistant",
-        delta: "after closed",
-      });
-      const events = yield* Stream.runCollect(session.events);
-      assert.deepEqual(Array.from(events), [
-        { type: "user-transcript", text: "Quanto é sete vezes oito" },
-        { type: "transcript", delta: "hello" },
-        { type: "transcript-done" },
-        { type: "error", message: "late error" },
-        { type: "closed", reason: null },
-      ]);
-    }).pipe(Effect.scoped),
+it.effect("reports the voice's words and the user's speech of its own thread, then closed", () =>
+  Effect.gen(function* () {
+    const fake = yield* fakeRpc;
+    const host = yield* makeRealtimeHost(fake.rpc, "thread");
+    const pending = yield* host.startSession(input).pipe(Effect.forkChild);
+    yield* Queue.take(fake.requests);
+    yield* fake.emit("thread/realtime/sdp", { threadId: "thread", sdp: "answer" });
+    const session = yield* Fiber.join(pending);
+    yield* fake.emit("thread/realtime/transcript/delta", {
+      threadId: "other",
+      role: "assistant",
+      delta: "ignored",
+    });
+    yield* fake.emit("thread/realtime/transcript/delta", {
+      threadId: "thread",
+      role: "user",
+      delta: " Quanto",
+    });
+    yield* fake.emit("thread/realtime/transcript/done", {
+      threadId: "thread",
+      role: "user",
+      text: " Quanto é sete vezes oito ",
+    });
+    yield* fake.emit("thread/realtime/transcript/done", {
+      threadId: "thread",
+      role: "user",
+      text: " ",
+    });
+    yield* fake.emit("thread/realtime/transcript/done", {
+      threadId: "other",
+      role: "user",
+      text: "ignored",
+    });
+    yield* fake.emit("thread/realtime/transcript/delta", {
+      threadId: "thread",
+      role: "assistant",
+      delta: "hello",
+    });
+    yield* fake.emit("thread/realtime/transcript/done", {
+      threadId: "thread",
+      role: "assistant",
+      text: "hello",
+    });
+    yield* fake.emit("thread/realtime/error", { threadId: "thread", message: "late error" });
+    yield* fake.emit("thread/realtime/closed", { threadId: "other", reason: "ignored" });
+    yield* fake.emit("thread/realtime/closed", { threadId: "thread" });
+    yield* fake.emit("thread/realtime/transcript/delta", {
+      threadId: "thread",
+      role: "assistant",
+      delta: "after closed",
+    });
+    const events = yield* Stream.runCollect(session.events);
+    assert.deepEqual(Array.from(events), [
+      { type: "user-transcript-delta", delta: " Quanto" },
+      { type: "user-transcript", text: "Quanto é sete vezes oito" },
+      { type: "transcript", delta: "hello" },
+      { type: "transcript-done" },
+      { type: "error", message: "late error" },
+      { type: "closed", reason: null },
+    ]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("fails on realtime error before SDP", () =>
