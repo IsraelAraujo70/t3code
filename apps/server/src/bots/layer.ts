@@ -15,6 +15,7 @@ import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
 import * as BotCompactionReactor from "./compaction/BotCompactionReactor.ts";
+import * as BotPushReactor from "./push/BotPushReactor.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 
@@ -42,6 +43,9 @@ const layerStoreOff = Layer.succeed(
     getAboutMe: notHost(),
     setAboutMe: notHost,
     importBatch: notHost,
+    upsertPushDevice: notHost,
+    deletePushDevice: notHost,
+    listPushDevices: notHost(),
   }),
 );
 
@@ -70,6 +74,8 @@ const layerServiceOff = Layer.succeed(
     arrange: notHost,
     // Not a bots host: no thread belongs to a bot here.
     botForThread: () => Effect.succeed(Option.none()),
+    registerPushDevice: notHost,
+    unregisterPushDevice: notHost,
   }),
 );
 
@@ -104,7 +110,7 @@ export const layerCore = Layer.unwrap(
 );
 
 /**
- * BotsService, thread watches (store and waking reactor) and bot compaction, above the
+ * BotsService, thread watches (store and waking reactor), bot compaction and bot push, above the
  * orchestration runtime.
  */
 export const layerService = Layer.unwrap(
@@ -115,6 +121,7 @@ export const layerService = Layer.unwrap(
             BotsService.layer,
             ThreadWatchReactor.layerStart,
             BotCompactionReactor.layerStart,
+            BotPushReactor.layerStart,
           ).pipe(Layer.provideMerge(ThreadWatchStore.layer))
         : Layer.merge(layerServiceOff, layerThreadWatchOff),
     ),

@@ -41,6 +41,8 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.sectionDelete]: (input) => bots.deleteSection(input),
       [BOTS_WS_METHODS.arrange]: (input) => bots.arrange(input),
       [BOTS_WS_METHODS.dictationTranscribe]: (input) => dictation.transcribe(input),
+      [BOTS_WS_METHODS.pushDeviceRegister]: (input) => bots.registerPushDevice(input),
+      [BOTS_WS_METHODS.pushDeviceUnregister]: (input) => bots.unregisterPushDevice(input),
     });
   }),
 );
