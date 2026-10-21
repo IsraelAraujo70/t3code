@@ -19,7 +19,11 @@ export const SEAMS: readonly Seam[] = [
     why: "sidebarBotsLayout client setting",
   },
   { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots contracts" },
-  { file: "packages/contracts/src/environment.ts", markers: 1, why: "bots host capability" },
+  {
+    file: "packages/contracts/src/environment.ts",
+    markers: 2,
+    why: "bots host and dictation capabilities",
+  },
   { file: "packages/contracts/src/rpc.ts", markers: 2, why: "bots RPCs in WsRpcGroup" },
   {
     file: "packages/contracts/src/clientRpcPermissions.ts",
@@ -121,8 +125,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
-    markers: 3,
-    why: "advertise bots only on the bots host",
+    markers: 5,
+    why: "advertise bots only on the bots host, dictation only with a key",
   },
   {
     file: "apps/server/src/server.ts",
@@ -153,6 +157,21 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/web/src/components/RightPanelTabs.tsx",
     markers: 10,
     why: "Computer in the surface launchers",
+  },
+  {
+    file: "scripts/build-desktop-artifact.ts",
+    markers: 1,
+    why: "macOS microphone usage text for dictation",
+  },
+  {
+    file: "apps/mobile/src/features/voice-input/VoiceInputProvider.tsx",
+    markers: 4,
+    why: "server dictation where the device cannot transcribe",
+  },
+  {
+    file: "apps/web/src/components/chat/ChatComposer.tsx",
+    markers: 2,
+    why: "dictation button in the composer",
   },
   {
     file: "apps/web/src/components/ChatView.tsx",

@@ -21,6 +21,20 @@ export function useBotsEnvironmentId(): EnvironmentId | null {
 }
 
 /**
+ * The connected environment that transcribes dictation (it advertises `dictation`), or null.
+ * `preferred` wins when it transcribes too, so a composer uses its own server when it can.
+ */
+export function useDictationEnvironmentId(preferred: EnvironmentId | null): EnvironmentId | null {
+  let fallback: EnvironmentId | null = null;
+  for (const [environmentId, config] of useServerConfigs()) {
+    if (config.environment.capabilities.dictation !== true) continue;
+    if (environmentId === preferred) return environmentId;
+    fallback ??= environmentId;
+  }
+  return fallback;
+}
+
+/**
  * The live bot directory of one environment. `directory` is null until the first snapshot
  * arrives or while the environment is unavailable; an empty directory is a loaded, empty list.
  */

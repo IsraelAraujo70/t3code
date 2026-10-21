@@ -1,11 +1,29 @@
-import { BOTS_WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import {
+  BOTS_WS_METHODS,
+  type DictationTranscribeInput,
+  type DictationTranscribeResult,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import {
+  VoiceTranscriptionError,
+  throwIfVoiceTranscriptionAborted,
+  type VoiceTranscriber,
+} from "../voice-input/transcription.ts";
+import {
+  deletePendingAttachmentUpload,
+  runAttachmentUploadCycle,
+  type AttachmentByteUpload,
+} from "./attachments.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
+  runAtomCommand,
+  squashAtomCommandFailure,
+  type AtomCommand,
 } from "./runtime.ts";
 
 /**
@@ -24,7 +42,7 @@ export function createBotsEnvironmentAtoms<R, E>(
   const command = <
     Tag extends (typeof BOTS_WS_METHODS)[Exclude<
       keyof typeof BOTS_WS_METHODS,
-      "directorySubscribe"
+      "directorySubscribe" | "dictationTranscribe"
     >],
   >(
     label: string,
@@ -55,5 +73,139 @@ export function createBotsEnvironmentAtoms<R, E>(
     renameSection: command("rename-section", BOTS_WS_METHODS.sectionRename),
     deleteSection: command("delete-section", BOTS_WS_METHODS.sectionDelete),
     arrange: command("arrange", BOTS_WS_METHODS.arrange),
+    // Not queued behind the bot mutations: a dictation is slow and independent of them.
+    transcribeDictation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:transcribe-dictation",
+      tag: BOTS_WS_METHODS.dictationTranscribe,
+    }),
+  };
+}
+
+/** A finished recording, as the client describes it before uploading its bytes. */
+export interface DictationRecording {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+}
+
+type UploadCycleInput<E, RE> = Parameters<typeof runAttachmentUploadCycle<E, RE>>[0];
+
+function cancelled(): VoiceTranscriptionError {
+  return new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled.");
+}
+
+function failed(message: string, cause?: unknown): VoiceTranscriptionError {
+  return new VoiceTranscriptionError("transcription-failed", message, { cause });
+}
+
+function failureMessage(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("message" in error)) return null;
+  return typeof error.message === "string" ? error.message : null;
+}
+
+/**
+ * Dictation on a T3 server, for clients without on-device transcription. The recording goes up
+ * as a pending `file` attachment over the same signed upload URL images use, so it works over
+ * every connection mode; then `bots.dictation.transcribe` returns the text and deletes it.
+ * `environmentId` is read on each use and is null when no connected server advertises
+ * `dictation`.
+ */
+export function createServerVoiceTranscriber<E, RE, TE>(input: {
+  readonly registry: AtomRegistry.AtomRegistry;
+  readonly createUploadUrl: UploadCycleInput<E, RE>["createUploadUrl"];
+  readonly remove: UploadCycleInput<E, RE>["remove"];
+  readonly transcribe: AtomCommand<
+    { readonly environmentId: EnvironmentId; readonly input: DictationTranscribeInput },
+    DictationTranscribeResult,
+    TE
+  >;
+  readonly environmentId: () => EnvironmentId | null;
+  /** Only decides spacing around the inserted text. */
+  readonly locale: () => string;
+  readonly describeRecording: (uri: string) => Promise<DictationRecording>;
+  readonly resolveUploadUrl: (environmentId: EnvironmentId, relativeUrl: string) => string | null;
+  readonly transport: (
+    url: string,
+    uri: string,
+    recording: DictationRecording,
+  ) => AttachmentByteUpload;
+}): VoiceTranscriber {
+  const releaseUpload = (environmentId: EnvironmentId, attachmentId: string | null) => {
+    if (attachmentId === null) return;
+    deletePendingAttachmentUpload({
+      registry: input.registry,
+      remove: input.remove,
+      environmentId,
+      attachmentId,
+    });
+  };
+
+  const transcribe = async (uri: string, { signal }: { readonly signal: AbortSignal }) => {
+    throwIfVoiceTranscriptionAborted(signal);
+    const environmentId = input.environmentId();
+    if (environmentId === null) {
+      throw new VoiceTranscriptionError(
+        "unavailable",
+        "No connected server transcribes dictation.",
+      );
+    }
+    const recording = await input.describeRecording(uri);
+    let abortTransfer: (() => void) | null = null;
+    const onAbort = () => abortTransfer?.();
+    signal.addEventListener("abort", onAbort, { once: true });
+    let uploaded;
+    try {
+      uploaded = await runAttachmentUploadCycle({
+        registry: input.registry,
+        createUploadUrl: input.createUploadUrl,
+        remove: input.remove,
+        environmentId,
+        upload: { type: "file", ...recording },
+        resolveUploadUrl: (relativeUrl) => input.resolveUploadUrl(environmentId, relativeUrl),
+        transport: (url) => input.transport(url, uri, recording),
+        onMinted: () => (signal.aborted ? "cancel" : "continue"),
+        onTransferStart: (abort) => {
+          abortTransfer = abort;
+        },
+      });
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+    if (uploaded.status !== "uploaded") {
+      if (uploaded.status === "failed") releaseUpload(environmentId, uploaded.attachmentId);
+      if (signal.aborted || uploaded.status === "cancelled") throw cancelled();
+      throw failed("Could not upload the recording.", uploaded.error);
+    }
+    if (signal.aborted) {
+      releaseUpload(environmentId, uploaded.attachmentId);
+      throw cancelled();
+    }
+
+    // The server deletes the upload whatever the outcome, so nothing is released from here on.
+    const result = await runAtomCommand(
+      input.registry,
+      input.transcribe,
+      { environmentId, input: { attachmentId: uploaded.attachmentId } },
+      { reportFailure: false },
+    );
+    throwIfVoiceTranscriptionAborted(signal);
+    if (result._tag !== "Success") {
+      const error = squashAtomCommandFailure(result);
+      throw failed(failureMessage(error) ?? "Could not transcribe this recording.", error);
+    }
+    return result.value.text;
+  };
+
+  return {
+    prepare: async ({ signal }) => {
+      throwIfVoiceTranscriptionAborted(signal);
+      if (input.environmentId() === null) {
+        throw new VoiceTranscriptionError(
+          "unavailable",
+          "No connected server transcribes dictation.",
+        );
+      }
+      return { locale: input.locale(), transcribe };
+    },
   };
 }

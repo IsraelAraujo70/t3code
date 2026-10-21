@@ -5,10 +5,12 @@
  */
 import { BOTS_RPCS, BOTS_WS_METHODS, RpcScopeAuthorization } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { RpcGroup } from "effect/rpc";
 
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
+import * as Dictation from "./dictation/Dictation.ts";
 
 /** Tags ws.ts omits from upstream's handler group; their handlers come from `layer`. */
 export const BOTS_RPC_TAGS = Object.values(BOTS_WS_METHODS);
@@ -18,9 +20,11 @@ export const ServerBotsRpcGroup = RpcGroup.make(...BOTS_RPCS)
   .middleware(RpcScopeAuthorization)
   .middleware(RpcInstrumentation);
 
-export const layer = ServerBotsRpcGroup.toLayer(
+/** The handlers, with Dictation left to the caller (tests mock it). */
+export const layerHandlers = ServerBotsRpcGroup.toLayer(
   Effect.gen(function* () {
     const bots = yield* BotsService.BotsService;
+    const dictation = yield* Dictation.Dictation;
     return ServerBotsRpcGroup.of({
       [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
@@ -36,6 +40,9 @@ export const layer = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.sectionRename]: (input) => bots.renameSection(input),
       [BOTS_WS_METHODS.sectionDelete]: (input) => bots.deleteSection(input),
       [BOTS_WS_METHODS.arrange]: (input) => bots.arrange(input),
+      [BOTS_WS_METHODS.dictationTranscribe]: (input) => dictation.transcribe(input),
     });
   }),
 );
+
+export const layer = layerHandlers.pipe(Layer.provide(Dictation.layer));

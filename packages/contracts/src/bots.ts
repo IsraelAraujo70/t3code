@@ -232,6 +232,7 @@ export const BOTS_WS_METHODS = {
   sectionRename: "bots.section.rename",
   sectionDelete: "bots.section.delete",
   arrange: "bots.arrange",
+  dictationTranscribe: "bots.dictation.transcribe",
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -310,6 +311,29 @@ export const BotsArrangeRpc = Rpc.make(BOTS_WS_METHODS.arrange, {
   error: BotsRpcError,
 });
 
+/**
+ * Dictation: the client uploads a recording as a pending `file` attachment, then asks the server
+ * to transcribe it. Servers advertise the `dictation` capability only when they hold a
+ * transcription key; any server may, not just the bots host. The server deletes the recording
+ * once it answers, whether or not transcription succeeded.
+ */
+export const DictationTranscribeInput = Schema.Struct({
+  attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type DictationTranscribeInput = typeof DictationTranscribeInput.Type;
+
+export const DictationTranscribeResult = Schema.Struct({
+  /** Cleaned up for sending; the raw transcript when the cleanup step fails. */
+  text: Schema.String,
+});
+export type DictationTranscribeResult = typeof DictationTranscribeResult.Type;
+
+export const DictationTranscribeRpc = Rpc.make(BOTS_WS_METHODS.dictationTranscribe, {
+  payload: DictationTranscribeInput,
+  success: DictationTranscribeResult,
+  error: BotsRpcError,
+});
+
 /** Every bots RPC, spread into the server's WsRpcGroup. */
 export const BOTS_RPCS = [
   BotsDirectorySubscribeRpc,
@@ -326,6 +350,7 @@ export const BOTS_RPCS = [
   BotSectionRenameRpc,
   BotSectionDeleteRpc,
   BotsArrangeRpc,
+  DictationTranscribeRpc,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -343,6 +368,8 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.sectionRename]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionDelete]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.arrange]: AuthOrchestrationOperateScope,
+  // Transcribing reads an upload the same session made and spends the server's key.
+  [BOTS_WS_METHODS.dictationTranscribe]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */

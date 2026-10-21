@@ -296,6 +296,8 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+// Fork (friend): dictation transcribed by a server that advertises it.
+import { DictationButton } from "../../bots/DictationButton";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -7246,6 +7248,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {/* Fork (friend): dictate at the cursor. */}
+                  <DictationButton
+                    environmentId={environmentId}
+                    draftKey={composerDraftTargetKey}
+                    disabled={!canOperateThread}
+                    onTranscript={(text) =>
+                      insertComposerTextStable(text, "cursor", { ensureLeadingBoundary: true })
+                    }
+                  />
                   {showComposerAttachAction ? (
                     <>
                       <input

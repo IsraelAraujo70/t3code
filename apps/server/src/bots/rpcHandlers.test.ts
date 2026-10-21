@@ -13,13 +13,14 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import { rpcInstrumentationLayer } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
+import * as Dictation from "./dictation/Dictation.ts";
 import * as BotsRpc from "./rpcHandlers.ts";
 
 const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<string>) =>
   RpcTest.makeClient(BotsRpc.ServerBotsRpcGroup).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BotsRpc.layer.pipe(
+        BotsRpc.layerHandlers.pipe(
           Layer.provide(
             Layer.mock(BotsService.BotsService)({
               updateOwner: (input) =>
@@ -29,6 +30,7 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
                 }),
             }),
           ),
+          Layer.provide(Layer.mock(Dictation.Dictation)({})),
         ),
         RpcAuthorization.layer(scopes),
         rpcInstrumentationLayer,
