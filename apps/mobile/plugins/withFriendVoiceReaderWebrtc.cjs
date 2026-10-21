@@ -1,5 +1,7 @@
 // Friend fork: the voice reader plays a Codex realtime voice over react-native-webrtc.
-const { AndroidConfig, withMainApplication } = require("expo/config-plugins");
+const NodeFS = require("node:fs");
+const NodePath = require("node:path");
+const { AndroidConfig, withDangerousMod, withMainApplication } = require("expo/config-plugins");
 
 const MARKER = "friend-voice-reader-audio";
 
@@ -23,6 +25,19 @@ const SETUP = `    // ${MARKER}
         .setEnableVolumeLogger(false)
         .createAudioDeviceModule()`;
 
+// WebRTC's Java classes are reached from native code over JNI, so R8 must not drop or rename them
+// (it fails on org.webrtc.Dav1dDecoder$Natives otherwise).
+const PROGUARD = `# ${MARKER}
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
+`;
+
+/** Appends the WebRTC keep rules; a no-op when they are already there. */
+function addProguardRules(source) {
+  if (source.includes(MARKER)) return source;
+  return `${source.replace(/\n*$/, "\n")}\n${PROGUARD}`;
+}
+
 /** Adds the main application's media-audio setup; a no-op when it is already there. */
 function addAudioSetup(source) {
   if (source.includes(MARKER)) return source;
@@ -43,6 +58,19 @@ module.exports = function withFriendVoiceReaderWebrtc(config) {
     "android.permission.INTERNET",
     "android.permission.MODIFY_AUDIO_SETTINGS",
   ]);
+  config = withDangerousMod(config, [
+    "android",
+    (nextConfig) => {
+      const file = NodePath.join(
+        nextConfig.modRequest.platformProjectRoot,
+        "app",
+        "proguard-rules.pro",
+      );
+      const source = NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : "";
+      NodeFS.writeFileSync(file, addProguardRules(source));
+      return nextConfig;
+    },
+  ]);
   return withMainApplication(config, (nextConfig) => {
     if (nextConfig.modResults.language !== "kt") {
       throw new Error("The voice reader's audio setup expects a Kotlin MainApplication.");
@@ -53,3 +81,4 @@ module.exports = function withFriendVoiceReaderWebrtc(config) {
 };
 
 module.exports.addAudioSetup = addAudioSetup;
+module.exports.addProguardRules = addProguardRules;
