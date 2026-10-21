@@ -15,6 +15,7 @@ import Migration0001 from "./migrations/001_Bots.ts";
 import Migration0002 from "./migrations/002_ThreadWatches.ts";
 import Migration0003 from "./migrations/003_Sections.ts";
 import Migration0004 from "./migrations/004_BotManagers.ts";
+import Migration0005 from "./migrations/005_BotPushDevices.ts";
 
 const runMigrations = Migrator.make({})({
   loader: Migrator.fromRecord({
@@ -22,6 +23,7 @@ const runMigrations = Migrator.make({})({
     "2_ThreadWatches": Migration0002,
     "3_Sections": Migration0003,
     "4_BotManagers": Migration0004,
+    "5_BotPushDevices": Migration0005,
   }),
 });
 

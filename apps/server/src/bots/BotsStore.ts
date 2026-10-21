@@ -1,5 +1,6 @@
 /**
- * Rows of `bots.sqlite`: bots, their sidebar sections, their memories, and the owner profile. The store keeps rows only;
+ * Rows of `bots.sqlite`: bots, their sidebar sections, their memories, the owner profile, and the
+ * phones that get bot pushes. The store keeps rows only;
  * BotsService owns every rule about them (thread generations, limits, who may write what).
  *
  * The database is a separate file next to the upstream `statev2.sqlite`, with its own migration
@@ -32,6 +33,15 @@ export interface BotsImportBatch {
   readonly memories: ReadonlyArray<BotMemory>;
   /** Written only when the stored profile is empty at commit time. */
   readonly aboutMe: string | null;
+}
+
+/** A phone that gets a push when a bot replies or waits on the user. */
+export interface BotPushDevice {
+  /** The device's FCM registration token. */
+  readonly token: string;
+  readonly label: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 export class BotsStore extends Context.Service<
@@ -70,6 +80,12 @@ export class BotsStore extends Context.Service<
     readonly getAboutMe: Effect.Effect<string, BotsError>;
     readonly setAboutMe: (text: string) => Effect.Effect<void, BotsError>;
     readonly importBatch: (batch: BotsImportBatch) => Effect.Effect<void, BotsError>;
+    /** Inserts the device, or refreshes its label and updatedAt, keeping its createdAt. */
+    readonly upsertPushDevice: (device: BotPushDevice) => Effect.Effect<void, BotsError>;
+    /** Deleting a missing token succeeds. */
+    readonly deletePushDevice: (token: string) => Effect.Effect<void, BotsError>;
+    /** Oldest first. */
+    readonly listPushDevices: Effect.Effect<ReadonlyArray<BotPushDevice>, BotsError>;
   }
 >()("t3/bots/BotsStore") {}
 
@@ -81,11 +97,18 @@ const BotRow = Schema.Struct({
 const MemoryRow = Schema.Struct({ ...BotMemory.fields, enabled: Schema.BooleanFromBit });
 const SectionRow = BotSection;
 const AboutMeRow = Schema.Struct({ aboutMe: Schema.String });
+const PushDeviceRow = Schema.Struct({
+  token: Schema.String,
+  label: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+});
 
 const decodeBots = Schema.decodeUnknownEffect(Schema.Array(BotRow));
 const decodeMemories = Schema.decodeUnknownEffect(Schema.Array(MemoryRow));
 const decodeSections = Schema.decodeUnknownEffect(Schema.Array(SectionRow));
 const decodeAboutMe = Schema.decodeUnknownEffect(Schema.Array(AboutMeRow));
+const decodePushDevices = Schema.decodeUnknownEffect(Schema.Array(PushDeviceRow));
 const encodeBot = Schema.encodeEffect(BotRow);
 const encodeMemory = Schema.encodeEffect(MemoryRow);
 
@@ -335,6 +358,27 @@ const make = Effect.gen(function* () {
           }),
         );
       }).pipe(Effect.mapError(failWith("Could not import bots; nothing was written"))),
+    upsertPushDevice: (device) =>
+      sql`
+        INSERT INTO bot_push_devices (token, label, created_at, updated_at)
+        VALUES (${device.token}, ${device.label}, ${device.createdAt}, ${device.updatedAt})
+        ON CONFLICT (token) DO UPDATE SET
+          label = excluded.label,
+          updated_at = excluded.updated_at
+      `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not register the push device"))),
+    deletePushDevice: (token) =>
+      sql`DELETE FROM bot_push_devices WHERE token = ${token}`.pipe(
+        Effect.asVoid,
+        Effect.mapError(failWith("Could not unregister the push device")),
+      ),
+    listPushDevices: sql`
+      SELECT token, label, created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM bot_push_devices
+      ORDER BY created_at, token
+    `.pipe(
+      Effect.flatMap(decodePushDevices),
+      Effect.mapError(failWith("Could not read push devices from bots.sqlite")),
+    ),
   });
 });
 

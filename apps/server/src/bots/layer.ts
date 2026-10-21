@@ -42,6 +42,9 @@ const layerStoreOff = Layer.succeed(
     getAboutMe: notHost(),
     setAboutMe: notHost,
     importBatch: notHost,
+    upsertPushDevice: notHost,
+    deletePushDevice: notHost,
+    listPushDevices: notHost(),
   }),
 );
 
@@ -70,6 +73,8 @@ const layerServiceOff = Layer.succeed(
     arrange: notHost,
     // Not a bots host: no thread belongs to a bot here.
     botForThread: () => Effect.succeed(Option.none()),
+    registerPushDevice: notHost,
+    unregisterPushDevice: notHost,
   }),
 );
 
