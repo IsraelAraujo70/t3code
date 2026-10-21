@@ -1,13 +1,11 @@
 import type { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { voiceReaderPhaseOf } from "@t3tools/client-runtime/voice-reader";
+import { voiceReadPhaseOf } from "@t3tools/client-runtime/voice";
 import { SquareIcon, Volume2Icon } from "lucide-react";
-import { useSyncExternalStore } from "react";
 
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
-import { useServerConfigs } from "../state/entities";
-import { voiceReaderPlayer } from "./voiceReaderPlayer";
+import { voiceController, useVoiceAvailable, useVoiceSnapshot } from "./voiceController";
 
 type Props = {
   readonly environmentId: EnvironmentId;
@@ -23,19 +21,13 @@ export function VoiceReaderMessageButton({
   threadId,
   ...props
 }: Omit<Props, "threadId"> & { readonly threadId: ThreadId | undefined }) {
-  const configs = useServerConfigs();
-  if (
-    threadId === undefined ||
-    configs.get(props.environmentId)?.environment.capabilities.voiceReader !== true
-  )
-    return null;
+  const available = useVoiceAvailable(props.environmentId);
+  if (threadId === undefined || !available) return null;
   return <ListenButton {...props} threadId={threadId} />;
 }
 
 function ListenButton(target: Props) {
-  const phase = useSyncExternalStore(voiceReaderPlayer.subscribe, () =>
-    voiceReaderPhaseOf(voiceReaderPlayer.getSnapshot(), target),
-  );
+  const phase = voiceReadPhaseOf(useVoiceSnapshot(), target);
   const label =
     phase === null
       ? "Ouvir esta resposta"
@@ -52,11 +44,17 @@ function ListenButton(target: Props) {
             variant="ghost-muted"
             aria-label={label}
             aria-pressed={phase !== null}
-            onClick={() => voiceReaderPlayer.toggle(target)}
+            onClick={() =>
+              voiceController.toggle({
+                environmentId: target.environmentId,
+                threadId: target.threadId,
+                mode: { type: "read", messageId: target.messageId },
+              })
+            }
           />
         }
       >
-        {phase === "connecting" ? (
+        {phase === "connecting" || phase === "waiting" ? (
           <Spinner size="xs" />
         ) : phase === "speaking" ? (
           <SquareIcon className="size-3" />

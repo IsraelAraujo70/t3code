@@ -300,6 +300,8 @@ import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 // Fork (friend): dictation transcribed by a server that advertises it.
 import { DictationButton } from "../../bots/DictationButton";
+import { VoiceModeControls } from "../../bots/VoiceModeControls";
+import { VoiceConversationOrb } from "../../bots/VoiceOrb";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -6597,6 +6599,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ) : null}
       </ComposerBanner.Dock>
       <div className="relative">
+        {/* Fork (friend): voice activity sits above the full composer. */}
+        <VoiceConversationOrb environmentId={environmentId} threadId={activeThreadId} />
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}
@@ -7287,13 +7291,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {/* Fork (friend): dictate at the cursor. */}
-                  <DictationButton
+                  {/* Fork (friend): voice conversation and dictation share the footer controls. */}
+                  <VoiceModeControls
                     environmentId={environmentId}
-                    draftKey={composerDraftTargetKey}
-                    disabled={!canOperateThread}
-                    onTranscript={(text) =>
-                      insertComposerTextStable(text, "cursor", { ensureLeadingBoundary: true })
+                    threadId={activeThreadId}
+                    canOperateThread={canOperateThread}
+                    dictation={
+                      <DictationButton
+                        environmentId={environmentId}
+                        draftKey={composerDraftTargetKey}
+                        disabled={!canOperateThread}
+                        onTranscript={(text) =>
+                          insertComposerTextStable(text, "cursor", { ensureLeadingBoundary: true })
+                        }
+                      />
                     }
                   />
                   {showComposerAttachAction ? (
