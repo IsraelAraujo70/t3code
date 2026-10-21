@@ -214,6 +214,13 @@ function SettingsIndexSections() {
         />
       </SettingsSection>
 
+      {/* Fork (friend): local-only Android installs can configure bot notifications. */}
+      {Platform.OS === "android" && !hasCloudPublicConfig() ? (
+        <SettingsSection title="Notifications">
+          <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection title="App">
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
         <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />

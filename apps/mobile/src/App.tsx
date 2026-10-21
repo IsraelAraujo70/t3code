@@ -11,6 +11,8 @@ import { createStaticNavigation } from "@react-navigation/native";
 import { RegistryContext } from "@effect/atom-react";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
 import * as Dialog from "./components/ui/Dialog";
+// Fork (friend): direct bot registration also runs in local-only builds.
+import { BotPushRegistration } from "./bots/pushRegistration";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
@@ -73,6 +75,8 @@ export default function App() {
 
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
+      {/* Fork (friend): share the app atom registry without requiring cloud auth. */}
+      <BotPushRegistration />
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
           <AppContent />

@@ -13,6 +13,27 @@ export type Seam =
   | { readonly file: string; readonly contains: string; readonly why: string };
 
 export const SEAMS: readonly Seam[] = [
+  { file: "apps/mobile/src/App.tsx", markers: 2, why: "mount direct bot push registration" },
+  {
+    file: "apps/mobile/src/features/agent-awareness/androidNotifications.ts",
+    markers: 2,
+    why: "configure direct bot pushes",
+  },
+  {
+    file: "apps/mobile/src/persistence/mobile-preferences.ts",
+    markers: 3,
+    why: "persist bot notification preference",
+  },
+  {
+    file: "apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx",
+    markers: 3,
+    why: "independent bot notifications switch",
+  },
+  {
+    file: "apps/mobile/src/features/settings/SettingsRouteScreen.tsx",
+    markers: 1,
+    why: "local-only notification settings",
+  },
   {
     file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
     markers: 2,
