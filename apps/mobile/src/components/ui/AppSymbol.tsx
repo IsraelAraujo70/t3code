@@ -1,4 +1,6 @@
-// Fork (friend): the Android voice reader's listen button uses a speaker glyph.
+// Fork (friend): native voice controls need speaker, waveform, and muted microphone glyphs.
+import IconWaveSine from "@tabler/icons-react-native/IconWaveSine";
+import IconMicrophoneOff from "@tabler/icons-react-native/IconMicrophoneOff";
 import IconVolume from "@tabler/icons-react-native/IconVolume";
 import type { Icon } from "@tabler/icons-react-native/types";
 /*
@@ -138,8 +140,10 @@ import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
 import { withUniwind } from "uniwind";
 
 const ANDROID_ICON_BY_SF_SYMBOL = {
-  // Fork (friend): the voice reader's speaker, named as on iOS.
+  // Fork (friend): native voice glyphs use the same names as iOS.
   "speaker.wave.2": IconVolume,
+  waveform: IconWaveSine,
+  "mic.slash": IconMicrophoneOff,
   plusminus: IconPlusMinus,
   "git.pull-request.closed": IconGitPullRequestClosed,
   "git.pull-request.draft": IconGitPullRequestDraft,

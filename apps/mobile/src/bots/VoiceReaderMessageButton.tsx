@@ -1,12 +1,10 @@
 import type { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { voiceReaderPhaseOf } from "@t3tools/client-runtime/voice-reader";
-import { useSyncExternalStore } from "react";
-import { Platform, Pressable, type ColorValue } from "react-native";
+import { voiceReadPhaseOf } from "@t3tools/client-runtime/voice";
+import { Pressable, type ColorValue } from "react-native";
 
 import { AppActivityIndicator } from "../components/ui/AppActivityIndicator";
 import { SymbolView } from "../components/ui/AppSymbol";
-import { useServerConfigs } from "../state/entities";
-import { voiceReaderPlayer } from "./voiceReaderPlayer";
+import { voiceController, useVoiceAvailable, useVoiceSnapshot } from "./voiceController";
 
 type Props = {
   readonly environmentId: EnvironmentId;
@@ -20,19 +18,12 @@ type Props = {
  * and only when the reply's server offers the reader.
  */
 export function VoiceReaderMessageButton(props: Props) {
-  const configs = useServerConfigs();
-  if (
-    Platform.OS !== "android" ||
-    configs.get(props.environmentId)?.environment.capabilities.voiceReader !== true
-  )
-    return null;
+  if (!useVoiceAvailable(props.environmentId)) return null;
   return <ListenButton {...props} />;
 }
 
 function ListenButton({ iconColor, ...target }: Props) {
-  const phase = useSyncExternalStore(voiceReaderPlayer.subscribe, () =>
-    voiceReaderPhaseOf(voiceReaderPlayer.getSnapshot(), target),
-  );
+  const phase = voiceReadPhaseOf(useVoiceSnapshot(), target);
   return (
     <Pressable
       accessibilityRole="button"
@@ -45,10 +36,16 @@ function ListenButton({ iconColor, ...target }: Props) {
       }
       accessibilityState={{ selected: phase !== null }}
       hitSlop={8}
-      onPress={() => voiceReaderPlayer.toggle(target)}
+      onPress={() =>
+        voiceController.toggle({
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+          mode: { type: "read", messageId: target.messageId },
+        })
+      }
       className="h-7 w-7 items-center justify-center"
     >
-      {phase === "connecting" ? (
+      {phase === "connecting" || phase === "waiting" ? (
         <AppActivityIndicator size="small" />
       ) : (
         <SymbolView

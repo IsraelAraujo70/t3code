@@ -1,3 +1,5 @@
+// Fork (friend): voice conversations share the dictation action slot.
+import { VoiceModeControls } from "../../bots/VoiceModeControls";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -1064,12 +1066,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onLayout={(event) => measureRow("trailingWidth", event.nativeEvent.layout.width)}
               >
                 {modelControl}
-                <ComposerDictationStartAction
-                  state={voiceInput.state}
-                  isAvailable={voiceInput.isAvailable}
-                  onStart={voiceInput.start}
-                  onCancel={voiceInput.cancel}
-                />
+                {/* Fork (friend): native voice controls replace dictation during a conversation. */}
+                <VoiceModeControls
+                  environmentId={props.environmentId}
+                  threadId={props.selectedThread.id}
+                  canOperateThread={props.canOperateThread}
+                >
+                  <ComposerDictationStartAction
+                    state={voiceInput.state}
+                    isAvailable={voiceInput.isAvailable}
+                    onStart={voiceInput.start}
+                    onCancel={voiceInput.cancel}
+                  />
+                </VoiceModeControls>
                 {showStopAction ? (
                   <ComposerActionButton
                     accessibilityLabel="Stop agent"
@@ -1149,14 +1158,21 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   </View>
                 )}
                 <View className="shrink-0 flex-row items-center">
-                  <ComposerDictationPrimaryAction
-                    state={voiceInput.state}
-                    presentation={voicePresentation}
-                    isAvailable={voiceInput.isAvailable}
-                    onStart={voiceInput.start}
-                    onConfirm={voiceInput.stop}
-                    onCancel={voiceInput.cancel}
-                  />
+                  {/* Fork (friend): native voice controls replace dictation during a conversation. */}
+                  <VoiceModeControls
+                    environmentId={props.environmentId}
+                    threadId={props.selectedThread.id}
+                    canOperateThread={props.canOperateThread}
+                  >
+                    <ComposerDictationPrimaryAction
+                      state={voiceInput.state}
+                      presentation={voicePresentation}
+                      isAvailable={voiceInput.isAvailable}
+                      onStart={voiceInput.start}
+                      onConfirm={voiceInput.stop}
+                      onCancel={voiceInput.cancel}
+                    />
+                  </VoiceModeControls>
                   {showStopAction ? (
                     <ComposerActionButton
                       accessibilityLabel="Stop agent"

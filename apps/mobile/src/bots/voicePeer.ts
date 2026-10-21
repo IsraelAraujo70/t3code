@@ -1,4 +1,4 @@
-import type { VoiceReaderPeer } from "@t3tools/client-runtime/voice-reader";
+import type { VoicePeer } from "@t3tools/client-runtime/voice";
 import {
   mediaDevices,
   RTCPeerConnection,
@@ -26,10 +26,10 @@ async function acquireMicrophone(): Promise<MediaStream> {
 }
 
 /**
- * One utterance's native peer. It holds the microphone (Android asks for it on first use) only
+ * One voice session's native peer. It holds the microphone (Android asks for it on first use) only
  * until `close`.
  */
-export async function openNativeVoiceReaderPeer(): Promise<VoiceReaderPeer> {
+export async function openNativeVoicePeer(): Promise<VoicePeer> {
   const microphone = await acquireMicrophone();
   const pc = new RTCPeerConnection();
   for (const track of microphone.getTracks()) {
@@ -39,38 +39,24 @@ export async function openNativeVoiceReaderPeer(): Promise<VoiceReaderPeer> {
   const channel = pc.createDataChannel("oai-events");
   let closed = false;
   const pendingWaits = new Set<() => void>();
-  let ended = false;
-  let listener: (() => void) | null = null;
-  let delivered = false;
-  const deliver = () => {
-    if (closed || !ended || !listener || delivered) return;
-    delivered = true;
-    listener();
-  };
+  let listener: ((data: string) => void) | null = null;
+  const buffered: string[] = [];
+  let audible = false;
+  pc.addEventListener("track", (event) => {
+    if (event.track?.kind === "audio") event.track.enabled = audible;
+  });
   channel.addEventListener("message", (event) => {
-    if (typeof event.data !== "string") return;
-    try {
-      const message: unknown = JSON.parse(event.data);
-      if (
-        typeof message === "object" &&
-        message !== null &&
-        "type" in message &&
-        message.type === "turn.done"
-      ) {
-        ended = true;
-        deliver();
-      }
-    } catch {
-      /* Other data-channel payloads do not affect speech completion. */
-    }
+    if (closed || typeof event.data !== "string") return;
+    if (listener) listener(event.data);
+    else buffered.push(event.data);
   });
   return {
     async createOffer() {
-      if (closed) throw new Error("The voice reader connection closed.");
+      if (closed) throw new Error("The voice connection closed.");
       const offer: Parameters<RTCPeerConnection["setLocalDescription"]>[0] = await pc.createOffer();
-      if (closed) throw new Error("The voice reader connection closed.");
+      if (closed) throw new Error("The voice connection closed.");
       await pc.setLocalDescription(offer);
-      if (closed) throw new Error("The voice reader connection closed.");
+      if (closed) throw new Error("The voice connection closed.");
       if (pc.iceGatheringState !== "complete") {
         await new Promise<void>((resolve) => {
           const finish = () => {
@@ -88,16 +74,16 @@ export async function openNativeVoiceReaderPeer(): Promise<VoiceReaderPeer> {
           changed();
         });
       }
-      if (closed) throw new Error("The voice reader connection closed.");
+      if (closed) throw new Error("The voice connection closed.");
       const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The voice reader peer did not produce an SDP offer.");
+      if (!sdp) throw new Error("The voice peer did not produce an SDP offer.");
       return sdp;
     },
     async accept(sdp) {
-      if (closed) throw new Error("The voice reader connection closed.");
+      if (closed) throw new Error("The voice connection closed.");
       await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp }));
       await new Promise<void>((resolve, reject) => {
-        const cancel = () => finish(new Error("The voice reader connection closed."));
+        const cancel = () => finish(new Error("The voice connection closed."));
         const finish = (error?: Error) => {
           pendingWaits.delete(cancel);
           clearTimeout(timer);
@@ -107,21 +93,51 @@ export async function openNativeVoiceReaderPeer(): Promise<VoiceReaderPeer> {
         };
         const changed = () => {
           if (closed || pc.connectionState === "failed" || pc.connectionState === "closed")
-            finish(new Error("The voice reader connection closed or failed."));
+            finish(new Error("The voice connection closed or failed."));
           else if (pc.connectionState === "connected") finish();
         };
         pendingWaits.add(cancel);
         const timer = setTimeout(
-          () => finish(new Error("The voice reader connection timed out.")),
+          () => finish(new Error("The voice connection timed out.")),
           15_000,
         );
         pc.addEventListener("connectionstatechange", changed);
         changed();
       });
     },
-    onSpeechEnd(next) {
+    onChannelMessage(next) {
       listener = next;
-      deliver();
+      for (const data of buffered.splice(0)) next(data);
+    },
+    setMicrophoneEnabled(enabled) {
+      for (const track of microphone.getAudioTracks()) track.enabled = enabled;
+    },
+    setVoiceAudible(enabled) {
+      audible = enabled;
+      for (const receiver of pc.getReceivers()) {
+        if (receiver.track?.kind === "audio") receiver.track.enabled = enabled;
+      }
+    },
+    async levels() {
+      let voice = 0;
+      let microphone = 0;
+      try {
+        const stats = await pc.getStats();
+        stats.forEach(
+          (report: { type: string; kind?: string; mediaType?: string; audioLevel?: number }) => {
+            if (report.kind !== "audio" && report.mediaType !== "audio") return;
+            const level =
+              typeof report.audioLevel === "number" && Number.isFinite(report.audioLevel)
+                ? Math.max(0, Math.min(1, report.audioLevel))
+                : 0;
+            if (report.type === "inbound-rtp") voice = Math.max(voice, level);
+            if (report.type === "media-source") microphone = Math.max(microphone, level);
+          },
+        );
+      } catch {
+        return { voice: 0, microphone: 0 };
+      }
+      return { voice, microphone };
     },
     close() {
       if (closed) return;

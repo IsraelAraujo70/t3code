@@ -58,7 +58,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "packages/contracts/src/environment.ts",
     markers: 3,
-    why: "bots host, dictation and voice reader capabilities",
+    why: "bots host, dictation and voice capabilities",
   },
   { file: "packages/contracts/src/rpc.ts", markers: 2, why: "bots RPCs in WsRpcGroup" },
   {
@@ -74,7 +74,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "packages/client-runtime/src/rpc/client.ts",
     markers: 2,
-    why: "bots directory is a subscription; a voice reader read is a stream command",
+    why: "bots directory is a subscription; a voice session is a stream command",
   },
   {
     file: "packages/client-runtime/src/operations/commands.ts",
@@ -98,8 +98,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "packages/client-runtime/package.json",
-    contains: '"./voice-reader"',
-    why: "export the voice reader player",
+    contains: '"./voice"',
+    why: "export the voice session controller",
   },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
@@ -167,7 +167,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
     markers: 6,
-    why: "advertise bots only on the bots host, dictation only with a key, the voice reader always",
+    why: "advertise bots only on the bots host, dictation only with a key, voice always",
   },
   {
     file: "apps/server/src/server.ts",
@@ -210,14 +210,29 @@ export const SEAMS: readonly Seam[] = [
     why: "Android records audio for dictation; the voice reader's WebRTC plugin",
   },
   {
+    file: "apps/mobile/src/features/threads/ThreadComposer.tsx",
+    markers: 3,
+    why: "voice controls in compact and card dictation action slots",
+  },
+  {
+    file: "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
+    markers: 2,
+    why: "voice orb in the feed slot",
+  },
+  {
     file: "apps/mobile/src/components/ui/AppSymbol.tsx",
     markers: 2,
-    why: "speaker glyph for the voice reader",
+    why: "speaker, waveform, and muted microphone glyphs for native voice",
+  },
+  {
+    file: "apps/web/src/components/ui/button.tsx",
+    markers: 1,
+    why: "round icon button size for voice controls",
   },
   {
     file: "apps/web/src/components/chat/ChatComposer.tsx",
-    markers: 2,
-    why: "dictation button in the composer",
+    markers: 3,
+    why: "voice and dictation controls in the composer",
   },
   {
     file: "apps/web/src/components/ChatView.tsx",
@@ -270,7 +285,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
   "packages/client-runtime/src/state/bots.ts",
-  "packages/client-runtime/src/voiceReader",
+  "packages/client-runtime/src/voice.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",
