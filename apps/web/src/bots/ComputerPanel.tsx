@@ -1,6 +1,6 @@
 import type { ComputerStreamInfo, ComputerStreamInput, EnvironmentId } from "@t3tools/contracts";
 import { MonitorIcon, MousePointerClickIcon, PauseIcon, PlayIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -12,6 +12,7 @@ import {
   EmptyTitle,
 } from "../components/ui/empty";
 import { Toggle } from "../components/ui/toggle";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { useBotsEnvironmentId } from "../state/bots";
 import { useEnvironment } from "../state/environments";
 import { type ComputerStreamClient, createComputerStreamClient } from "./computerStream";
@@ -80,8 +81,9 @@ function ComputerScreen(props: {
   const clientRef = useRef<ComputerStreamClient | null>(null);
   const controlling = control && canControl;
 
-  const send = useCallback((input: ComputerStreamInput) => clientRef.current?.send(input), []);
-  const leaveControl = useCallback(() => setControl(false), []);
+  // Stable, so control listeners are not re-attached on every render.
+  const send = useStableCallback((input: ComputerStreamInput) => clientRef.current?.send(input));
+  const leaveControl = useStableCallback(() => setControl(false));
   useComputerControl({
     active: controlling && hasFrame,
     root: rootRef,

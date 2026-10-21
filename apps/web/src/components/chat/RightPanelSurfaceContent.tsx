@@ -31,6 +31,10 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+// Fork (friend): the bots host's live screen.
+const ComputerPanel = lazy(() =>
+  import("../../bots/ComputerPanel").then((module) => ({ default: module.ComputerPanel })),
+);
 
 export type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -181,6 +185,13 @@ export function RightPanelSurfaceContent(props: {
               useRightPanelStore.getState().show(threadRef);
             }}
           />
+        </Suspense>
+      );
+    // Fork (friend): the bots host's live screen.
+    case "computer":
+      return (
+        <Suspense fallback={null}>
+          <ComputerPanel visible={visible} />
         </Suspense>
       );
     case "files":

@@ -14,12 +14,12 @@ import {
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText } from "../components/AppText";
-import { ControlPill } from "../components/ControlPill";
-import { ScreenHeader } from "../components/ScreenHeader";
-import { ThemedSwitch } from "../components/ThemedSwitch";
+import { AppBar } from "../components/ui/AppBar";
+import { AppText } from "../components/ui/AppText";
+import { ControlPill } from "../components/ui/ControlPill";
+import { SheetHeader } from "../components/ui/SheetHeader";
+import { ThemedSwitch } from "../components/ui/ThemedSwitch";
 import { cn } from "../lib/cn";
-import { NativeHeaderToolbar } from "../native/StackHeader";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { COMPUTER_KEY_BAR, computerTypingInputs } from "./computer.logic";
 import { ComputerStreamView, type ComputerStreamRef } from "./ComputerStreamView";
@@ -121,7 +121,7 @@ function ComputerScreen({
 
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
-      <ScreenHeader
+      <AppBar
         title="Computer"
         subtitle={status}
         sidebar={false}
@@ -144,14 +144,7 @@ function ComputerScreen({
         }
       />
       {Platform.OS === "ios" ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
-            icon="xmark"
-            accessibilityLabel="Close computer"
-            onPress={onClose}
-            separateBackground
-          />
-        </NativeHeaderToolbar>
+        <SheetHeader title="Computer" onClose={onClose} accessibilityLabel="Close computer" />
       ) : null}
       {canControl ? (
         <View className="flex-row items-center justify-between gap-3 px-4 pb-2">

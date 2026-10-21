@@ -103,7 +103,7 @@ export const SEAMS: readonly Seam[] = [
     markers: 1,
     why: "bots RPC trace labels",
   },
-  { file: "apps/server/src/ws.ts", markers: 3, why: "bots RPC handlers" },
+  { file: "apps/server/src/ws.ts", markers: 4, why: "serve the bots RPCs from their own layer" },
   {
     file: "apps/server/src/orchestration-v2/RunExecutionService.ts",
     markers: 4,
@@ -211,7 +211,12 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/ChatView.tsx",
-    markers: 4,
+    markers: 2,
+    why: "open the Computer surface from the launchers",
+  },
+  {
+    file: "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
+    markers: 2,
     why: "render the Computer surface",
   },
   {

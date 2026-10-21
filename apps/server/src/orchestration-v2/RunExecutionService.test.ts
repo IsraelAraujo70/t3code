@@ -979,6 +979,7 @@ const startTurnWithBots = (
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               captureBaseline: () => Effect.void,
             }),
+            layerTurnItemPositionsTest,
             Layer.mock(EventSink.EventSinkV2)({}),
             IdAllocator.layer,
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({

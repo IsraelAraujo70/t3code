@@ -5,7 +5,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
 } from "@t3tools/contracts";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
@@ -81,21 +81,18 @@ export function BotEditorDialog({
   const submissionPending = useRef(false);
   const botMissing = editing && bot === null;
 
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-      ),
-    [providers, settings],
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
   );
   const selection =
     draft.model ??
     bot?.model ??
     resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
-  const modelOptionsByInstance = useMemo(
-    () =>
-      getCustomModelOptionsByInstance(settings, providers, selection?.instanceId, selection?.model),
-    [settings, providers, selection?.instanceId, selection?.model],
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    selection?.instanceId,
+    selection?.model,
   );
 
   const submit = async () => {

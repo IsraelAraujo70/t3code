@@ -117,9 +117,8 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
-// Fork (friend): bots RPC handlers delegate to BotsService.
-import * as BotsService from "./bots/BotsService.ts";
-import { BOTS_WS_METHODS } from "@t3tools/contracts";
+// Fork (friend): bots RPCs are served by their own handler layer.
+import * as BotsRpc from "./bots/rpcHandlers.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
@@ -546,7 +545,8 @@ function projectFileFailureContext(
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
-const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Fork (friend): bots RPCs are handled by BotsRpc.layer, outside this group's handler map.
+const ServerWsRpcGroup = WsRpcGroup.omit(...BotsRpc.BOTS_RPC_TAGS).middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1225,8 +1225,6 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
-      // Fork (friend): bots service for the handlers below.
-      const bots = yield* BotsService.BotsService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -1809,17 +1807,6 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
-        // Fork (friend): bots.
-        [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
-        [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
-        [BOTS_WS_METHODS.botUpdate]: (input) => bots.updateBot(input),
-        [BOTS_WS_METHODS.botDelete]: (input) => bots.deleteBot(input),
-        [BOTS_WS_METHODS.botResetConversation]: (input) => bots.resetConversation(input),
-        [BOTS_WS_METHODS.memoryCreate]: (input) => bots.createMemory(input, "user"),
-        [BOTS_WS_METHODS.memoryUpdate]: (input) => bots.updateMemory(input),
-        [BOTS_WS_METHODS.memoryDelete]: (input) => bots.deleteMemory(input),
-        [BOTS_WS_METHODS.ownerUpdate]: (input) => bots.updateOwner(input),
-        [BOTS_WS_METHODS.import]: (input) => bots.importFriend(input),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3192,7 +3179,11 @@ export const layer = Layer.unwrap(
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
-          yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
+          // Fork (friend): serve the bots RPCs too.
+          yield* RpcServer.make(
+            ServerWsRpcGroup.merge(BotsRpc.ServerBotsRpcGroup),
+            WS_RPC_SERVER_OPTIONS,
+          ).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.merge(
@@ -3227,6 +3218,8 @@ export const layer = Layer.unwrap(
               previewAutomationBroker,
               serverBrowser,
             ).pipe(
+              // Fork (friend): handlers for the bots RPCs.
+              Layer.merge(BotsRpc.layer),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.
