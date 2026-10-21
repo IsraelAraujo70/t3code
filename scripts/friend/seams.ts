@@ -210,6 +210,11 @@ export const SEAMS: readonly Seam[] = [
     why: "Android records audio for dictation",
   },
   {
+    file: "apps/web/src/components/chat/ChatHeader.tsx",
+    markers: 2,
+    why: "voice reader button in the thread header",
+  },
+  {
     file: "apps/web/src/components/chat/ChatComposer.tsx",
     markers: 2,
     why: "dictation button in the composer",
