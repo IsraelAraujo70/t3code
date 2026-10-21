@@ -28,6 +28,16 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
                   calls.push(input.aboutMe);
                   return input;
                 }),
+              registerPushDevice: (input) =>
+                Effect.sync(() => {
+                  calls.push(`register ${input.token} ${input.label ?? "-"}`);
+                  return { token: input.token };
+                }),
+              unregisterPushDevice: (input) =>
+                Effect.sync(() => {
+                  calls.push(`unregister ${input.token}`);
+                  return input;
+                }),
             }),
           ),
           Layer.provide(Layer.mock(Dictation.Dictation)({})),
@@ -57,6 +67,31 @@ describe("bots RPC handler layer", () => {
       );
       assert.equal(rejection._tag, "EnvironmentAuthorizationError");
       assert.deepStrictEqual(calls, ["Ada"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("registers and unregisters push devices for operators only", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const operator = yield* connect(
+        [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        calls,
+      );
+      assert.deepStrictEqual(
+        yield* operator[BOTS_WS_METHODS.pushDeviceRegister]({ token: "fcm-1", label: "Pixel" }),
+        { token: "fcm-1" },
+      );
+      assert.deepStrictEqual(
+        yield* operator[BOTS_WS_METHODS.pushDeviceUnregister]({ token: "fcm-1" }),
+        { token: "fcm-1" },
+      );
+
+      const reader = yield* connect([AuthOrchestrationReadScope], calls);
+      const rejection = yield* reader[BOTS_WS_METHODS.pushDeviceRegister]({ token: "fcm-2" }).pipe(
+        Effect.flip,
+      );
+      assert.equal(rejection._tag, "EnvironmentAuthorizationError");
+      assert.deepStrictEqual(calls, ["register fcm-1 Pixel", "unregister fcm-1"]);
     }).pipe(Effect.scoped),
   );
 });

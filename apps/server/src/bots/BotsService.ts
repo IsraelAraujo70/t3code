@@ -41,6 +41,8 @@ import {
   type BotMemoryRef,
   type BotMemorySource,
   type BotMemoryUpdateInput,
+  type BotPushDeviceRef,
+  type BotPushDeviceRegisterInput,
   type BotRef,
   type BotSection,
   type BotSectionCreateInput,
@@ -97,6 +99,14 @@ export class BotsService extends Context.Service<
     readonly arrange: (input: BotsArrangeInput) => Effect.Effect<BotsArrangeInput, BotsError>;
     /** The bot a thread belongs to, from its id; none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
+    /** Idempotent: the app repeats it on every connect and token rotation. */
+    readonly registerPushDevice: (
+      input: BotPushDeviceRegisterInput,
+    ) => Effect.Effect<BotPushDeviceRef, BotsError>;
+    /** Unregistering an unknown token succeeds. */
+    readonly unregisterPushDevice: (
+      input: BotPushDeviceRef,
+    ) => Effect.Effect<BotPushDeviceRef, BotsError>;
   }
 >()("t3/bots/BotsService") {}
 
@@ -507,6 +517,21 @@ const make = Effect.gen(function* () {
     return parsed === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(parsed.botId);
   };
 
+  const registerPushDevice = (input: BotPushDeviceRegisterInput) =>
+    Effect.gen(function* () {
+      const now = yield* nowIso;
+      yield* store.upsertPushDevice({
+        token: input.token,
+        label: input.label ?? null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { token: input.token };
+    });
+
+  const unregisterPushDevice = (input: BotPushDeviceRef) =>
+    store.deletePushDevice(input.token).pipe(Effect.as(input));
+
   // Heals a crash between a bot's row write and its launch. Runs beside startup, not before it.
   yield* store.listBots.pipe(
     Effect.flatMap((bots) =>
@@ -546,6 +571,8 @@ const make = Effect.gen(function* () {
     deleteSection,
     arrange,
     botForThread,
+    registerPushDevice,
+    unregisterPushDevice,
   });
 });
 

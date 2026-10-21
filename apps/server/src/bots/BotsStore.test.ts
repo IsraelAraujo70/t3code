@@ -191,3 +191,56 @@ it.effect("writes nothing when any row of an import fails", () =>
     }),
   ),
 );
+
+it.effect("registers a push device once, refreshing its label and keeping createdAt", () =>
+  withStore((store) =>
+    Effect.gen(function* () {
+      const first = {
+        token: "fcm-1",
+        label: "Pixel",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      yield* store.upsertPushDevice(first);
+      yield* store.upsertPushDevice(first);
+      yield* store.upsertPushDevice({
+        token: "fcm-1",
+        label: null,
+        createdAt: "2026-02-01T00:00:00.000Z",
+        updatedAt: "2026-02-01T00:00:00.000Z",
+      });
+
+      assert.deepStrictEqual(yield* store.listPushDevices, [
+        {
+          token: "fcm-1",
+          label: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-02-01T00:00:00.000Z",
+        },
+      ]);
+    }),
+  ),
+);
+
+it.effect("deletes a push device, and deleting it again succeeds", () =>
+  withStore((store) =>
+    Effect.gen(function* () {
+      const device = (token: string) => ({
+        token,
+        label: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* store.upsertPushDevice(device("fcm-1"));
+      yield* store.upsertPushDevice(device("fcm-2"));
+
+      yield* store.deletePushDevice("fcm-1");
+      yield* store.deletePushDevice("fcm-1");
+
+      assert.deepStrictEqual(
+        (yield* store.listPushDevices).map((row) => row.token),
+        ["fcm-2"],
+      );
+    }),
+  ),
+);
