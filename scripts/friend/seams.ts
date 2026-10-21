@@ -14,6 +14,21 @@ export type Seam =
 
 export const SEAMS: readonly Seam[] = [
   {
+    file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
+    markers: 2,
+    why: "direct bot notification delivery",
+  },
+  {
+    file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/T3AgentNotificationsModule.kt",
+    markers: 1,
+    why: "bot native configuration",
+  },
+  {
+    file: "apps/mobile/modules/t3-agent-notifications/android/src/test/java/expo/modules/t3agentnotifications/AgentNotificationsTest.kt",
+    markers: 1,
+    why: "independent bot delivery test",
+  },
+  {
     file: "packages/contracts/src/settings.ts",
     markers: 1,
     why: "sidebarBotsLayout client setting",

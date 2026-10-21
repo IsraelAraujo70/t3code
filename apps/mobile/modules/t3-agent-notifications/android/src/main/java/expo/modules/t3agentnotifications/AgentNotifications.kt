@@ -22,6 +22,9 @@ class AgentMessagingService : ExpoFirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     if (remoteMessage.data["t3_kind"] == "agent_activity") {
       AgentNotifications.receive(this, remoteMessage.data)
+    // Fork (friend): direct bots-host pushes bypass the relay identity.
+    } else if (remoteMessage.data["t3_kind"] == "bot_message") {
+      AgentNotifications.receiveBot(this, remoteMessage.data)
     } else {
       super.onMessageReceived(remoteMessage)
     }
@@ -130,6 +133,26 @@ object AgentNotifications {
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       showAlert(context, prefs, scheme, data)
       updateActivity(context, prefs, scheme, data, updatedAt)
+    }
+  }
+
+  // Fork (friend): relay account cleanup must not erase bot settings or replay history.
+  @Synchronized
+  fun configureBots(context: Context, scheme: String, enabled: Boolean) {
+    context.getSharedPreferences("t3-bot-notifications", Context.MODE_PRIVATE).edit()
+      .putString("botsScheme", scheme).putBoolean("botsEnabled", enabled).apply()
+  }
+
+  @Synchronized
+  fun receiveBot(context: Context, data: Map<String, String>) {
+    val prefs = context.getSharedPreferences("t3-bot-notifications", Context.MODE_PRIVATE)
+    val sentAt = data["sent_at"]?.toLongOrNull() ?: return
+    val fresh = System.currentTimeMillis() - sentAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
+    if (prefs.getBoolean("botsEnabled", false) && fresh &&
+      NotificationManagerCompat.from(context).areNotificationsEnabled()
+    ) {
+      channels(context)
+      showAlert(context, prefs, prefs.getString("botsScheme", "t3code") ?: "t3code", data)
     }
   }
 

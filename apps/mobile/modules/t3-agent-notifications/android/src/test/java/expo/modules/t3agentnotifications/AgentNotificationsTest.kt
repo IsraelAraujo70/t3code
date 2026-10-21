@@ -661,4 +661,24 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, message)
     assertEquals(2, manager.activeNotifications.size)
   }
+  // Fork (friend): relay cleanup cannot disable direct bot delivery.
+  @Test
+  fun botAlertsSurviveRelayClearAndRespectTheirOwnGate() {
+    val data = mapOf(
+      "alert_id" to "bot-reply", "alert_title" to "Bot", "alert_body" to "Hello",
+      "alert_path" to "/threads/env/thread", "sent_at" to System.currentTimeMillis().toString()
+    )
+    AgentNotifications.configureBots(context, "t3code", false)
+    AgentNotifications.receiveBot(context, data)
+    assertTrue(manager.activeNotifications.isEmpty())
+    AgentNotifications.configureBots(context, "t3code", true)
+    AgentNotifications.clear(context)
+    AgentNotifications.receiveBot(context, data + ("sent_at" to "0"))
+    assertTrue(manager.activeNotifications.isEmpty())
+    AgentNotifications.receiveBot(context, data)
+    assertEquals(1, manager.activeNotifications.size)
+    AgentNotifications.receiveBot(context, data)
+    assertEquals(1, manager.activeNotifications.size)
+  }
+
 }

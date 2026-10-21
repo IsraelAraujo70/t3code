@@ -22,6 +22,11 @@ class T3AgentNotificationsModule : Module() {
       }
     }
 
+    // Fork (friend): bot delivery is independent of the cloud relay account.
+    Function("configureBots") { scheme: String, enabled: Boolean ->
+      appContext.reactContext?.let { AgentNotifications.configureBots(it, scheme, enabled) }
+    }
+
     Function("clear") {
       appContext.reactContext?.let { AgentNotifications.clear(it) }
     }
