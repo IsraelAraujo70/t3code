@@ -30,6 +30,8 @@ vi.mock("@react-navigation/native", () => {
     useNavigation: () => navigation,
   };
 });
+// Fork (friend): Header option tests do not start the native reader or its connection runtime.
+vi.mock("../../bots/useVoiceReaderAction", () => ({ useVoiceReaderAction: () => [] }));
 vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));
 
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
