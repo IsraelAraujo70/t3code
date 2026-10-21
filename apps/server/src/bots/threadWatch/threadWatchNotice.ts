@@ -34,6 +34,15 @@ export const THREAD_WATCH_MESSAGE_PREFIX = "message:thread-watch:";
 
 const MAX_TITLE = 80;
 
+/**
+ * A pending request someone must answer in the conversation. Client-run tools and sign-in
+ * refreshes are pending too, but no one answers them there.
+ */
+export const awaitsAnswer = (request: Pick<OrchestrationV2RuntimeRequest, "status" | "kind">) =>
+  request.status === "pending" &&
+  request.kind !== "dynamic_tool_call" &&
+  request.kind !== "auth_refresh";
+
 const shortTitle = (title: string | null) => {
   const trimmed = title?.trim() ?? "";
   if (trimmed.length === 0) return undefined;
@@ -77,11 +86,7 @@ export function threadWatchNotice(
     };
   }
 
-  // Client-run tools and sign-in refreshes do not wait on an answer in the conversation.
-  if (change.request.status !== "pending") return null;
-  if (change.request.kind === "dynamic_tool_call" || change.request.kind === "auth_refresh") {
-    return null;
-  }
+  if (!awaitsAnswer(change.request)) return null;
   const asks =
     change.request.kind === "user_input" ? "is waiting for an answer" : "is waiting for approval";
   return {
