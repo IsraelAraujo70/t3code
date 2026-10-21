@@ -43,6 +43,20 @@ attachment, and the server transcribes it with `T3CODE_DICTATION_MODEL` (default
 `anthropic/claude-haiku-5.5`, `off` skips this step), and deletes it. See
 [`apps/server/src/bots/dictation/Dictation.ts`](apps/server/src/bots/dictation/Dictation.ts).
 
+## Voice reader
+
+Every server of the fork advertises `voiceReader`. A thread's header then offers "Ler respostas" (web,
+desktop, Android). While it is on, the server speaks a short pt-BR summary of each completed run's
+final reply through Codex realtime, using the `codex` provider instance's ChatGPT login. API keys
+are not involved: the WebSocket/PCM transport would need one, so the reader uses only WebRTC. The
+client owns the peer and sends a muted microphone track, which realtime needs before it talks. The
+server only signals and feeds the text. It runs a dedicated `codex app-server` per subscription and
+one realtime session per reply, closed when the speech ends, so nothing stays open while idle. The
+protocol is experimental in Codex. See
+[`apps/server/src/bots/voiceReader/`](apps/server/src/bots/voiceReader/) and
+`VoiceReaderSubscribeRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts).
+On Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
