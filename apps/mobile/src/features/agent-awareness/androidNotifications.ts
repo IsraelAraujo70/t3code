@@ -4,6 +4,8 @@ import { Linking, Platform } from "react-native";
 
 interface AndroidAgentNotifications {
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
+  // Fork (friend): direct bot pushes have an independent native gate.
+  configureBots?(scheme: string, enabled: boolean): void;
   clear(): void;
   setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
@@ -54,4 +56,10 @@ export async function openAndroidLiveUpdateSettings(): Promise<void> {
   if (!native?.openLiveUpdateSettings?.()) {
     await Linking.openSettings();
   }
+}
+
+// Fork (friend): bot notifications do not require a relay identity.
+/** Configures native bot delivery, including when the JS bridge is stopped. */
+export function configureAndroidBotNotifications(enabled: boolean): void {
+  native?.configureBots?.(appScheme(), enabled);
 }

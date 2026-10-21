@@ -63,8 +63,10 @@ export function SettingsNotificationsRouteScreen() {
           contentInsetAdjustmentBehavior="automatic"
           contentContainerClassName="px-5 pt-4"
         >
+          {/* Fork (friend): direct bot pushes work without cloud configuration. */}
+          <BotNotificationsSection />
           <Text className="text-base text-foreground-muted">
-            Notifications require T3 Connect in this app build.
+            Agent activity notifications require T3 Connect in this app build.
           </Text>
         </ScrollView>
       </SettingsScreen>
@@ -402,6 +404,8 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
+        {/* Fork (friend): bot preference is independent of relay notifications. */}
+        <BotNotificationsSection />
         <SettingsSection title="Agent activity">
           <SettingsSwitchRow
             icon="bell.badge"
@@ -466,5 +470,26 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         </SettingsSection>
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+// Fork (friend): local and cloud builds share the same bot notification preference.
+function BotNotificationsSection() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const save = useAtomSet(updateMobilePreferencesAtom);
+  if (Platform.OS !== "android") return null;
+  return (
+    <SettingsSection title="Bot notifications">
+      <SettingsSwitchRow
+        icon="bell.badge"
+        label="Bot notifications"
+        subtitle="Get notified when a bot replies or needs your answer."
+        disabled={!AsyncResult.isSuccess(preferences)}
+        value={
+          !AsyncResult.isSuccess(preferences) || preferences.value.botNotificationsEnabled !== false
+        }
+        onValueChange={(enabled) => save({ botNotificationsEnabled: enabled })}
+      />
+    </SettingsSection>
   );
 }
