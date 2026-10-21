@@ -210,6 +210,26 @@ export const SEAMS: readonly Seam[] = [
     why: "Android records audio for dictation; the voice reader's WebRTC plugin",
   },
   {
+    file: "apps/mobile/src/features/threads/ThreadHeader.tsx",
+    markers: 4,
+    why: "voice reader action in the Android thread header",
+  },
+  {
+    file: "apps/mobile/src/features/threads/ThreadRouteScreen.tsx",
+    markers: 1,
+    why: "pass the thread to the voice reader action",
+  },
+  {
+    file: "apps/mobile/src/features/threads/useThreadHeaderOptions.test.tsx",
+    markers: 1,
+    why: "header tests stub the voice reader",
+  },
+  {
+    file: "apps/mobile/src/components/ui/AppSymbol.tsx",
+    markers: 2,
+    why: "speaker and waveform glyphs for the voice reader",
+  },
+  {
     file: "apps/web/src/components/chat/ChatHeader.tsx",
     markers: 2,
     why: "voice reader button in the thread header",
