@@ -391,7 +391,8 @@ const config: ExpoConfig = {
         cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
         microphonePermission: false,
         barcodeScannerEnabled: true,
-        recordAudioAndroid: false,
+        // Fork (friend): `false` here would strip the microphone expo-audio now asks for.
+        recordAudioAndroid: true,
       },
     ],
     ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
