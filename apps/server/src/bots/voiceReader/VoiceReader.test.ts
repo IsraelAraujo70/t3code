@@ -10,6 +10,7 @@ import {
   type OrchestrationV2DomainEvent,
   type VoiceReaderAnswer,
 } from "@t3tools/contracts";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -26,9 +27,10 @@ import * as VoiceReader from "./VoiceReader.ts";
 const threadId = ThreadId.make("voice-test");
 const messageId = MessageId.make("reply");
 
-const setup = Effect.fn("test.setup")(function* () {
+const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {}) {
   const events = yield* Queue.unbounded<CodexRealtime.RealtimeEvent>();
   const texts: string[] = [];
+  const voices: string[] = [];
   const lookups: Array<[ThreadId, MessageId]> = [];
   let opens = 0;
   let stops = 0;
@@ -51,8 +53,9 @@ const setup = Effect.fn("test.setup")(function* () {
             open: Effect.sync(() => {
               opens++;
               return {
-                startSession: () =>
+                startSession: (input: { readonly voice: string }) =>
                   Effect.gen(function* () {
+                    voices.push(input.voice);
                     const stop = Effect.sync(() => {
                       stops++;
                     });
@@ -71,6 +74,7 @@ const setup = Effect.fn("test.setup")(function* () {
             }),
           }),
         ),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
       ),
     ),
   );
@@ -89,6 +93,7 @@ const setup = Effect.fn("test.setup")(function* () {
     service,
     events,
     texts,
+    voices,
     lookups,
     read,
     opens: () => opens,
@@ -114,6 +119,20 @@ describe("VoiceReader", () => {
       yield* TestClock.adjust(VoiceReader.SPEECH_END_GRACE);
       assert.isTrue(Exit.isSuccess(yield* Fiber.join(fiber)));
       assert.strictEqual(h.stops(), 1);
+    }),
+  );
+
+  it.effect("starts realtime with the configured voice, else the default", () =>
+    Effect.gen(function* () {
+      for (const [env, expected] of [
+        [{}, VoiceReader.DEFAULT_VOICE_READER_VOICE],
+        [{ [VoiceReader.VOICE_READER_VOICE_ENV]: " Porto " }, "porto"],
+        [{ [VoiceReader.VOICE_READER_VOICE_ENV]: "  " }, VoiceReader.DEFAULT_VOICE_READER_VOICE],
+      ] as const) {
+        const h = yield* setup(env);
+        yield* h.read();
+        assert.deepStrictEqual(h.voices, [expected]);
+      }
     }),
   );
 

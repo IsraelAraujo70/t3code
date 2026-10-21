@@ -23,8 +23,11 @@ const fakeRpc = Effect.gen(function* () {
     request: (method, params) =>
       Effect.gen(function* () {
         calls.push({ method, params });
-        yield* Queue.offer(requests, method);
         const response = responses.get(method);
+        // The host lists voices once when it is made, before any session.
+        if (method === "thread/realtime/listVoices")
+          return yield* response ?? Effect.fail(new BotsError({ message: "unknown method" }));
+        yield* Queue.offer(requests, method);
         if (response) return yield* response;
         // Like Codex: a requested stop is followed by `closed`.
         if (method === "thread/realtime/stop")
@@ -40,9 +43,9 @@ const fakeRpc = Effect.gen(function* () {
   return { rpc, calls, requests, emit, responses };
 });
 
-const input = { offerSdp: "offer", prompt: "Read this aloud" };
+const input = { offerSdp: "offer", prompt: "Read this aloud", voice: "porto" } as const;
 
-it.effect("starts WebRTC v3 with the prompt and returns the notified answer", () =>
+it.effect("starts WebRTC v3 with the prompt and voice and returns the notified answer", () =>
   Effect.gen(function* () {
     const fake = yield* fakeRpc;
     const host = yield* makeRealtimeHost(fake.rpc, "thread");
@@ -51,7 +54,7 @@ it.effect("starts WebRTC v3 with the prompt and returns the notified answer", ()
     yield* fake.emit("thread/realtime/sdp", { threadId: "thread", sdp: "answer" });
     const session = yield* Fiber.join(pending);
     assert.equal(session.answerSdp, "answer");
-    assert.deepEqual(fake.calls[0], {
+    assert.deepEqual(fake.calls[1], {
       method: "thread/realtime/start",
       params: {
         threadId: "thread",
@@ -62,9 +65,32 @@ it.effect("starts WebRTC v3 with the prompt and returns the notified answer", ()
         flushTranscriptTailOnSessionEnd: false,
         delegationAckFiller: false,
         prompt: input.prompt,
+        voice: "porto",
         transport: { type: "webrtc", sdp: "offer" },
       },
     });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("sends a voice Codex offers and leaves out one it does not", () =>
+  Effect.gen(function* () {
+    const started = Effect.fn("test.started")(function* (offered: unknown, voice: string) {
+      const fake = yield* fakeRpc;
+      fake.responses.set("thread/realtime/listVoices", Effect.succeed(offered));
+      const host = yield* makeRealtimeHost(fake.rpc, "thread");
+      const pending = yield* host.startSession({ ...input, voice }).pipe(Effect.forkChild);
+      yield* Queue.take(fake.requests);
+      yield* fake.emit("thread/realtime/sdp", { threadId: "thread", sdp: "answer" });
+      yield* Fiber.join(pending);
+      const start = fake.calls.find((call) => call.method === "thread/realtime/start");
+      return (start?.params as { voice?: string } | undefined)?.voice;
+    });
+    const v3 = { voices: { v1: ["cove"], v3: ["cove", "porto"] } };
+    // Releases before the v3 list offer only v1 voices for v3.
+    const v1Only = { voices: { v1: ["cove", "sol"] } };
+    assert.equal(yield* started(v3, "porto"), "porto");
+    assert.equal(yield* started(v1Only, "porto"), undefined);
+    assert.equal(yield* started(v1Only, "sol"), "sol");
   }).pipe(Effect.scoped),
 );
 

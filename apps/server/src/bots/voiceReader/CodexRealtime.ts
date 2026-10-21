@@ -45,6 +45,15 @@ export interface RealtimeSession {
   readonly stop: Effect.Effect<void>;
 }
 
+/** `thread/realtime/listVoices`; releases before v3 voices list only `v1`, which v3 then uses. */
+const RealtimeVoices = Schema.Struct({
+  voices: Schema.Struct({
+    v1: Schema.Array(Schema.String),
+    v3: Schema.optional(Schema.Array(Schema.String)),
+  }),
+});
+const decodeRealtimeVoices = Schema.decodeUnknownEffect(RealtimeVoices);
+
 export interface RealtimeHost {
   /**
    * `thread/realtime/start` over WebRTC with the client's offer, then waits for the answer SDP.
@@ -53,6 +62,8 @@ export interface RealtimeHost {
   readonly startSession: (input: {
     readonly offerSdp: string;
     readonly prompt: string;
+    /** A voice this Codex does not offer for v3 is left out, so Codex uses its default. */
+    readonly voice: string;
   }) => Effect.Effect<RealtimeSession, BotsError, Scope.Scope>;
 }
 
@@ -107,6 +118,12 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
   threadId: string,
 ) {
   const active = yield* Ref.make<ActiveSession | null>(null);
+  // The voices depend on the installed Codex; null when it cannot list them.
+  const voices = yield* rpc.request("thread/realtime/listVoices", {}).pipe(
+    Effect.flatMap(decodeRealtimeVoices),
+    Effect.map(({ voices }) => voices.v3 ?? voices.v1),
+    Effect.orElseSucceed(() => null),
+  );
   const receive =
     <M extends keyof RealtimeNotifications>(
       handler: (
@@ -159,6 +176,7 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
     startSession: Effect.fn("CodexRealtime.startSession")(function* (input: {
       readonly offerSdp: string;
       readonly prompt: string;
+      readonly voice: string;
     }) {
       const session: ActiveSession = {
         answer: yield* Deferred.make<string, BotsError>(),
@@ -166,6 +184,13 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
         closed: yield* Deferred.make<void>(),
       };
       const stopped = yield* Ref.make(false);
+      let voice: string | undefined = input.voice;
+      if (voices !== null && !voices.includes(voice)) {
+        yield* Effect.logWarning(
+          `This Codex has no realtime voice "${voice}" (it offers ${voices.join(", ")}); using its default.`,
+        );
+        voice = undefined;
+      }
       const stop = Effect.gen(function* () {
         if (yield* Ref.getAndSet(stopped, true)) return;
         yield* rpc
@@ -188,6 +213,7 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
             flushTranscriptTailOnSessionEnd: false,
             delegationAckFiller: false,
             prompt: input.prompt,
+            ...(voice === undefined ? {} : { voice }),
             transport: { type: "webrtc", sdp: input.offerSdp },
           })
           .pipe(

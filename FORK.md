@@ -54,7 +54,10 @@ of that thread. API keys are not involved: the WebSocket/PCM transport would nee
 reader uses only WebRTC. The client owns the peer and sends a muted microphone track, which
 realtime needs before it talks; it takes the microphone on the press and releases it when the reply
 ends. Each press runs its own `codex app-server` and realtime session, closed when the speech ends,
-so nothing stays open while idle. The protocol is experimental in Codex. See
+so nothing stays open while idle. `T3CODE_VOICE_READER_VOICE` picks the voice (default `cove`,
+Codex's own); a voice the installed Codex does not offer for v3 falls back to Codex's default with a
+warning in the log. The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
+is experimental in Codex. See
 [`apps/server/src/bots/voiceReader/`](apps/server/src/bots/voiceReader/) and
 `VoiceReaderReadRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts).
 On Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
