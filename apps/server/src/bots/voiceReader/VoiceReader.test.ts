@@ -147,7 +147,7 @@ describe("VoiceReader", () => {
       const h = yield* setup();
       const text = "complete text\n".repeat(1000);
       const ref = yield* h.speaking(text);
-      assert.deepStrictEqual(h.texts, [text]);
+      assert.deepStrictEqual(h.texts, [VoiceReader.voiceReaderSpeech(text)]);
       yield* Queue.offer(h.events, { type: "transcript", delta: "Olá " });
       yield* Queue.offer(h.events, { type: "transcript", delta: "mundo" });
       yield* h.until((s) => s.current?.transcript === "Olá mundo");
