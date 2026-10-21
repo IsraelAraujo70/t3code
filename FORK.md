@@ -43,24 +43,40 @@ attachment, and the server transcribes it with `T3CODE_DICTATION_MODEL` (default
 `anthropic/claude-haiku-5.5`, `off` skips this step), and deletes it. See
 [`apps/server/src/bots/dictation/Dictation.ts`](apps/server/src/bots/dictation/Dictation.ts).
 
-## Voice reader
+## Voice
 
-Every server of the fork advertises `voiceReader`. Each assistant reply then gets a listen button in
-its action row, next to copy and fork (web, desktop, Android). Pressing it speaks a short pt-BR
-summary of that reply through Codex realtime, using the `codex` provider instance's ChatGPT login;
-pressing it again stops it, and starting another reply stops the one playing. The client sends only
-the thread and message ids: the server loads the text and refuses anything but an assistant message
-of that thread. API keys are not involved: the WebSocket/PCM transport would need one, so the
-reader uses only WebRTC. The client owns the peer and sends a muted microphone track, which
-realtime needs before it talks; it takes the microphone on the press and releases it when the reply
-ends. Each press runs its own `codex app-server` and realtime session, closed when the speech ends,
-so nothing stays open while idle. `T3CODE_VOICE_READER_VOICE` picks the voice (default `cove`,
+Every server of the fork advertises `voice`. Voice runs through Codex realtime with the `codex`
+provider instance's ChatGPT login. It uses only WebRTC, because the WebSocket/PCM transport would
+need an API key. Clients get two entry points (web, desktop, Android):
+
+- **Listen to a reply.** Each assistant reply has a listen button in its action row. Pressing it
+  speaks a short pt-BR summary of that reply. The client sends only the thread and message ids; the
+  server loads the text and refuses anything but an assistant message of that thread.
+- **Talk to a bot.** A bot thread's composer has a voice button next to dictation. While a
+  conversation is on, an orb shows whether the voice is listening, waiting on the bot, or speaking.
+  On mobile the orb takes the chat's place. Mute and close replace the two buttons, and typing still
+  works.
+
+In a conversation the realtime voice is only a receptionist. The server posts each finished
+utterance to the thread as a normal user message starting with 🎙️, queued behind a running turn,
+and reads aloud every reply that completes while the call is open. Approvals and questions are
+never answered by voice: the voice only says that one is waiting on screen. The call holds no
+conversation state, so hanging up loses nothing.
+
+The realtime model answers simple questions by itself even when told not to. Its prompt therefore
+tells it to delegate everything, and after a delegation it only acknowledges. The client plays the
+voice's audio only for that acknowledgement and for the replies the server sends; turns the voice
+starts by itself stay silent (`voiceAudible` in
+[`packages/client-runtime/src/voice.ts`](packages/client-runtime/src/voice.ts)). The delegations
+reach no agent, because the realtime thread's Codex cannot run turns.
+
+Each session runs its own `codex app-server` and realtime session, closed when the session ends, so
+nothing stays open while idle. `T3CODE_VOICE_READER_VOICE` picks the voice (default `cove`,
 Codex's own); a voice the installed Codex does not offer for v3 falls back to Codex's default with a
 warning in the log. The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
-is experimental in Codex. See
-[`apps/server/src/bots/voiceReader/`](apps/server/src/bots/voiceReader/) and
-`VoiceReaderReadRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts).
-On Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
+is experimental in Codex. See [`apps/server/src/bots/voice/`](apps/server/src/bots/voice/)
+and `VoiceSessionRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts). On
+Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
 
 ## State and rollback
 
