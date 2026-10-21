@@ -169,6 +169,11 @@ export const SEAMS: readonly Seam[] = [
     why: "server dictation where the device cannot transcribe; Android permission dialog",
   },
   {
+    file: "apps/mobile/app.config.ts",
+    markers: 1,
+    why: "Android records audio for dictation",
+  },
+  {
     file: "apps/web/src/components/chat/ChatComposer.tsx",
     markers: 2,
     why: "dictation button in the composer",
