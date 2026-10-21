@@ -178,37 +178,34 @@ const make = Effect.gen(function* () {
       );
 
   /** Idempotent: the command id is fixed per bot generation, so retries replay the receipt. */
-  const launchMainThread = (bot: Bot) =>
-    Effect.gen(function* () {
-      const { projectId } = yield* managed.ensureScratchProject.pipe(
-        Effect.mapError((error) =>
-          error._tag === "ScratchUnavailableError"
-            ? new BotsError({ message: SCRATCH_UNAVAILABLE_MESSAGE })
-            : new BotsError({ message: error.message, cause: error }),
-        ),
-      );
-      yield* launches
-        .launch({
-          commandId: CommandId.make(`bots:launch:${bot.id}:${bot.homeGeneration}`),
-          threadId: botThreadId(bot.id, bot.homeGeneration),
-          projectId,
-          title: threadTitle(bot),
-          generateTitle: false,
-          modelSelection: bot.model,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          workspaceStrategy: { type: "root" },
-          createdBy: "system",
-          creationSource: "server",
-        })
-        .pipe(
-          Effect.mapError(botsError(`Could not start the conversation of ${threadTitle(bot)}.`)),
-        );
-    });
+  const launchMainThread = Effect.fn("BotsService.launchMainThread")(function* (bot: Bot) {
+    const { projectId } = yield* managed.ensureScratchProject.pipe(
+      Effect.mapError((error) =>
+        error._tag === "ScratchUnavailableError"
+          ? new BotsError({ message: SCRATCH_UNAVAILABLE_MESSAGE })
+          : new BotsError({ message: error.message, cause: error }),
+      ),
+    );
+    yield* launches
+      .launch({
+        commandId: CommandId.make(`bots:launch:${bot.id}:${bot.homeGeneration}`),
+        threadId: botThreadId(bot.id, bot.homeGeneration),
+        projectId,
+        title: threadTitle(bot),
+        generateTitle: false,
+        modelSelection: bot.model,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        createdBy: "system",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError(botsError(`Could not start the conversation of ${threadTitle(bot)}.`)));
+  });
 
   /** An archived, deleted or missing thread is left as it is. */
-  const archiveThread = (botId: BotId, generation: number) =>
-    Effect.gen(function* () {
+  const archiveThread = Effect.fn("BotsService.archiveThread")(
+    function* (botId: BotId, generation: number) {
       const threadId = botThreadId(botId, generation);
       const shell = yield* threads.getThreadShell(threadId);
       if (shell === null || shell.archivedAt !== null || shell.deletedAt !== null) return;
@@ -217,11 +214,16 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`bots:archive:${botId}:${generation}`),
         threadId,
       });
-    }).pipe(Effect.mapError(botsError(`Could not archive the conversation of bot ${botId}.`)));
+    },
+    (effect, botId) =>
+      effect.pipe(
+        Effect.mapError(botsError(`Could not archive the conversation of bot ${botId}.`)),
+      ),
+  );
 
   /** A thread already carrying the title is left alone, so retries and restarts are no-ops. */
-  const retitleThread = (bot: Bot) =>
-    Effect.gen(function* () {
+  const retitleThread = Effect.fn("BotsService.retitleThread")(
+    function* (bot: Bot) {
       const threadId = botThreadId(bot.id, bot.homeGeneration);
       const shell = yield* threads.getThreadShell(threadId);
       if (shell === null || shell.deletedAt !== null || shell.title === threadTitle(bot)) return;
@@ -233,9 +235,12 @@ const make = Effect.gen(function* () {
         threadId,
         title: threadTitle(bot),
       });
-    }).pipe(
-      Effect.mapError(botsError(`Could not rename the conversation of ${threadTitle(bot)}.`)),
-    );
+    },
+    (effect, bot) =>
+      effect.pipe(
+        Effect.mapError(botsError(`Could not rename the conversation of ${threadTitle(bot)}.`)),
+      ),
+  );
 
   const readDirectory: Effect.Effect<BotDirectory, BotsError> = Effect.gen(function* () {
     const sections = yield* store.listSections;
@@ -281,71 +286,67 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const createBot = (input: BotCreateInput) =>
-    Effect.gen(function* () {
-      yield* requireEnabledInstance(input.model);
-      const bots = yield* store.listBots;
-      const now = yield* nowIso;
-      const bot: Bot = {
-        id: BotId.make(`b_${yield* randomHex}`),
-        name: input.name,
-        role: input.role,
-        model: input.model,
-        homeGeneration: 1,
-        sectionId: null,
-        position: nextPosition(bots),
-        canManageBots: input.canManageBots ?? false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      yield* store.insertBot(bot);
-      yield* publish;
-      yield* launchMainThread(bot);
-      return bot;
-    });
+  const createBot = Effect.fn("BotsService.createBot")(function* (input: BotCreateInput) {
+    yield* requireEnabledInstance(input.model);
+    const bots = yield* store.listBots;
+    const now = yield* nowIso;
+    const bot: Bot = {
+      id: BotId.make(`b_${yield* randomHex}`),
+      name: input.name,
+      role: input.role,
+      model: input.model,
+      homeGeneration: 1,
+      sectionId: null,
+      position: nextPosition(bots),
+      canManageBots: input.canManageBots ?? false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.insertBot(bot);
+    yield* publish;
+    yield* launchMainThread(bot);
+    return bot;
+  });
 
-  const updateBot = (input: BotUpdateInput) =>
-    Effect.gen(function* () {
-      const current = yield* requireBot(input.botId);
-      if (input.model !== undefined) yield* requireEnabledInstance(input.model);
-      const bot: Bot = {
-        ...current,
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.role !== undefined ? { role: input.role } : {}),
-        // The live thread keeps its model; the next conversation generation starts with this one.
-        ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.canManageBots !== undefined ? { canManageBots: input.canManageBots } : {}),
-        updatedAt: yield* nowIso,
-      };
-      yield* store.updateBot(bot);
-      yield* publish;
-      if (bot.name !== current.name) yield* retitleThread(bot);
-      return bot;
-    });
+  const updateBot = Effect.fn("BotsService.updateBot")(function* (input: BotUpdateInput) {
+    const current = yield* requireBot(input.botId);
+    if (input.model !== undefined) yield* requireEnabledInstance(input.model);
+    const bot: Bot = {
+      ...current,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.role !== undefined ? { role: input.role } : {}),
+      // The live thread keeps its model; the next conversation generation starts with this one.
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.canManageBots !== undefined ? { canManageBots: input.canManageBots } : {}),
+      updatedAt: yield* nowIso,
+    };
+    yield* store.updateBot(bot);
+    yield* publish;
+    if (bot.name !== current.name) yield* retitleThread(bot);
+    return bot;
+  });
 
-  const deleteBot = (input: BotRef) =>
-    Effect.gen(function* () {
-      const bot = yield* store.getBot(input.botId);
-      if (Option.isSome(bot)) yield* archiveThread(bot.value.id, bot.value.homeGeneration);
-      yield* store.deleteBot(input.botId);
-      yield* publish;
-      return input;
-    });
+  const deleteBot = Effect.fn("BotsService.deleteBot")(function* (input: BotRef) {
+    const bot = yield* store.getBot(input.botId);
+    if (Option.isSome(bot)) yield* archiveThread(bot.value.id, bot.value.homeGeneration);
+    yield* store.deleteBot(input.botId);
+    yield* publish;
+    return input;
+  });
 
-  const resetConversation = (input: BotRef) =>
-    Effect.gen(function* () {
-      const current = yield* requireBot(input.botId);
-      const bot: Bot = {
-        ...current,
-        homeGeneration: current.homeGeneration + 1,
-        updatedAt: yield* nowIso,
-      };
-      yield* store.updateBot(bot);
-      yield* publish;
-      yield* archiveThread(current.id, current.homeGeneration);
-      yield* launchMainThread(bot);
-      return bot;
-    });
+  const resetConversation = Effect.fn("BotsService.resetConversation")(function* (input: BotRef) {
+    const current = yield* requireBot(input.botId);
+    const bot: Bot = {
+      ...current,
+      homeGeneration: current.homeGeneration + 1,
+      updatedAt: yield* nowIso,
+    };
+    yield* store.updateBot(bot);
+    yield* publish;
+    yield* archiveThread(current.id, current.homeGeneration);
+    yield* launchMainThread(bot);
+    return bot;
+  });
 
   // A full memory makes the bot merge or forget instead of growing every prompt; the bot reads
   // this message as memory_save's error, so it says how.
@@ -363,42 +364,45 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const createMemory = (input: BotMemoryCreateInput, source: BotMemorySource) =>
-    Effect.gen(function* () {
-      yield* requireBot(input.botId);
-      yield* assertNewMemoryText(input.botId, input.text);
-      if (source === "bot") yield* assertWithinBudget(input.botId, input.text);
-      const now = yield* nowIso;
-      const memory: BotMemory = {
-        id: BotMemoryId.make(`mem_${yield* randomHex}`),
-        botId: input.botId,
-        text: input.text,
-        source,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-      yield* store.insertMemory(memory);
-      yield* publish;
-      return memory;
-    });
+  const createMemory = Effect.fn("BotsService.createMemory")(function* (
+    input: BotMemoryCreateInput,
+    source: BotMemorySource,
+  ) {
+    yield* requireBot(input.botId);
+    yield* assertNewMemoryText(input.botId, input.text);
+    if (source === "bot") yield* assertWithinBudget(input.botId, input.text);
+    const now = yield* nowIso;
+    const memory: BotMemory = {
+      id: BotMemoryId.make(`mem_${yield* randomHex}`),
+      botId: input.botId,
+      text: input.text,
+      source,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.insertMemory(memory);
+    yield* publish;
+    return memory;
+  });
 
-  const updateMemory = (input: BotMemoryUpdateInput) =>
-    Effect.gen(function* () {
-      const current = yield* requireMemory(input.memoryId);
-      if (input.text !== undefined && input.text !== current.text) {
-        yield* assertNewMemoryText(current.botId, input.text, current.id);
-      }
-      const memory: BotMemory = {
-        ...current,
-        ...(input.text !== undefined ? { text: input.text } : {}),
-        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-        updatedAt: yield* nowIso,
-      };
-      yield* store.updateMemory(memory);
-      yield* publish;
-      return memory;
-    });
+  const updateMemory = Effect.fn("BotsService.updateMemory")(function* (
+    input: BotMemoryUpdateInput,
+  ) {
+    const current = yield* requireMemory(input.memoryId);
+    if (input.text !== undefined && input.text !== current.text) {
+      yield* assertNewMemoryText(current.botId, input.text, current.id);
+    }
+    const memory: BotMemory = {
+      ...current,
+      ...(input.text !== undefined ? { text: input.text } : {}),
+      ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+      updatedAt: yield* nowIso,
+    };
+    yield* store.updateMemory(memory);
+    yield* publish;
+    return memory;
+  });
 
   const deleteMemory = (input: BotMemoryRef) =>
     store.deleteMemory(input.memoryId).pipe(Effect.andThen(publish), Effect.as(input));
@@ -406,50 +410,49 @@ const make = Effect.gen(function* () {
   const updateOwner = (input: BotsOwnerUpdateInput) =>
     store.setAboutMe(input.aboutMe).pipe(Effect.andThen(publish), Effect.as(input));
 
-  const importFriend = (input: BotsImportInput) =>
-    Effect.gen(function* () {
-      const friendPath =
-        input.path ?? path.join(yield* HostProcess.HomeDirectory, FRIEND_DB_RELATIVE_PATH);
-      const snapshot = yield* readFriendDatabase(friendPath);
-      const existing = yield* store.listBots;
-      const instances = yield* providers.listInstances;
-      const { result, batch } = planFriendImport({
-        snapshot,
-        path: friendPath,
-        existingBotIds: new Set(existing.map((bot) => bot.id)),
-        existingAboutMe: yield* store.getAboutMe,
-        instances: instances
-          .filter((instance) => instance.enabled)
-          .map((instance) => ({
-            instanceId: instance.instanceId,
-            driver: instance.driverKind,
-            enabled: instance.enabled,
-          })),
-        now: yield* nowIso,
-      });
-      if (!input.apply) return result;
-      // Imported bots go after the ones already here, keeping friend's order among themselves.
-      const firstPosition = nextPosition(existing);
-      const bots = batch.bots.map((bot, index) => ({ ...bot, position: firstPosition + index }));
-      yield* store.importBatch({ ...batch, bots });
-      yield* publish;
-      const launchWarnings = yield* Effect.forEach(bots, (bot) =>
-        launchMainThread(bot).pipe(
-          Effect.as(Option.none<string>()),
-          Effect.catch((error) =>
-            Effect.logWarning("Could not start an imported bot's conversation", {
-              botId: bot.id,
-              error,
-            }).pipe(Effect.as(Option.some(error.message))),
-          ),
-        ),
-      );
-      return {
-        ...result,
-        applied: true,
-        warnings: [...result.warnings, ...launchWarnings.flatMap(Option.toArray)],
-      } satisfies BotsImportResult;
+  const importFriend = Effect.fn("BotsService.importFriend")(function* (input: BotsImportInput) {
+    const friendPath =
+      input.path ?? path.join(yield* HostProcess.HomeDirectory, FRIEND_DB_RELATIVE_PATH);
+    const snapshot = yield* readFriendDatabase(friendPath);
+    const existing = yield* store.listBots;
+    const instances = yield* providers.listInstances;
+    const { result, batch } = planFriendImport({
+      snapshot,
+      path: friendPath,
+      existingBotIds: new Set(existing.map((bot) => bot.id)),
+      existingAboutMe: yield* store.getAboutMe,
+      instances: instances
+        .filter((instance) => instance.enabled)
+        .map((instance) => ({
+          instanceId: instance.instanceId,
+          driver: instance.driverKind,
+          enabled: instance.enabled,
+        })),
+      now: yield* nowIso,
     });
+    if (!input.apply) return result;
+    // Imported bots go after the ones already here, keeping friend's order among themselves.
+    const firstPosition = nextPosition(existing);
+    const bots = batch.bots.map((bot, index) => ({ ...bot, position: firstPosition + index }));
+    yield* store.importBatch({ ...batch, bots });
+    yield* publish;
+    const launchWarnings = yield* Effect.forEach(bots, (bot) =>
+      launchMainThread(bot).pipe(
+        Effect.as(Option.none<string>()),
+        Effect.catch((error) =>
+          Effect.logWarning("Could not start an imported bot's conversation", {
+            botId: bot.id,
+            error,
+          }).pipe(Effect.as(Option.some(error.message))),
+        ),
+      ),
+    );
+    return {
+      ...result,
+      applied: true,
+      warnings: [...result.warnings, ...launchWarnings.flatMap(Option.toArray)],
+    } satisfies BotsImportResult;
+  });
 
   const requireSection = (sectionId: BotSectionId) =>
     store.getSection(sectionId).pipe(
@@ -462,72 +465,74 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const createSection = (input: BotSectionCreateInput) =>
-    Effect.gen(function* () {
-      const sections = yield* store.listSections;
-      const now = yield* nowIso;
-      const section: BotSection = {
-        id: BotSectionId.make(`s_${yield* randomHex}`),
-        name: input.name,
-        position: nextPosition(sections),
-        createdAt: now,
-        updatedAt: now,
-      };
-      yield* store.insertSection(section);
-      yield* publish;
-      return section;
-    });
+  const createSection = Effect.fn("BotsService.createSection")(function* (
+    input: BotSectionCreateInput,
+  ) {
+    const sections = yield* store.listSections;
+    const now = yield* nowIso;
+    const section: BotSection = {
+      id: BotSectionId.make(`s_${yield* randomHex}`),
+      name: input.name,
+      position: nextPosition(sections),
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.insertSection(section);
+    yield* publish;
+    return section;
+  });
 
-  const renameSection = (input: BotSectionRenameInput) =>
-    Effect.gen(function* () {
-      const current = yield* requireSection(input.sectionId);
-      const section: BotSection = { ...current, name: input.name, updatedAt: yield* nowIso };
-      yield* store.updateSection(section);
-      yield* publish;
-      return section;
-    });
+  const renameSection = Effect.fn("BotsService.renameSection")(function* (
+    input: BotSectionRenameInput,
+  ) {
+    const current = yield* requireSection(input.sectionId);
+    const section: BotSection = { ...current, name: input.name, updatedAt: yield* nowIso };
+    yield* store.updateSection(section);
+    yield* publish;
+    return section;
+  });
 
   const deleteSection = (input: BotSectionRef) =>
     store.deleteSection(input.sectionId).pipe(Effect.andThen(publish), Effect.as(input));
 
-  const arrange = (input: BotsArrangeInput) =>
-    Effect.gen(function* () {
-      const sections = yield* store.listSections;
-      const bots = yield* store.listBots;
-      const sectionIds = sections.map((section) => section.id);
-      if (
-        !sameIds(sectionIds, input.sectionIds) ||
-        !sameIds(
-          bots.map((bot) => bot.id),
-          input.bots.map((bot) => bot.botId),
-        ) ||
-        input.bots.some((bot) => bot.sectionId !== null && !sectionIds.includes(bot.sectionId))
-      ) {
-        return yield* new BotsError({
-          message: "The bots changed while you were arranging them. Try again.",
-        });
-      }
-      yield* store.arrange(input);
-      yield* publish;
-      return input;
-    });
+  const arrange = Effect.fn("BotsService.arrange")(function* (input: BotsArrangeInput) {
+    const sections = yield* store.listSections;
+    const bots = yield* store.listBots;
+    const sectionIds = sections.map((section) => section.id);
+    if (
+      !sameIds(sectionIds, input.sectionIds) ||
+      !sameIds(
+        bots.map((bot) => bot.id),
+        input.bots.map((bot) => bot.botId),
+      ) ||
+      input.bots.some((bot) => bot.sectionId !== null && !sectionIds.includes(bot.sectionId))
+    ) {
+      return yield* new BotsError({
+        message: "The bots changed while you were arranging them. Try again.",
+      });
+    }
+    yield* store.arrange(input);
+    yield* publish;
+    return input;
+  });
 
   const botForThread = (threadId: ThreadId) => {
     const parsed = parseBotThreadId(threadId);
     return parsed === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(parsed.botId);
   };
 
-  const registerPushDevice = (input: BotPushDeviceRegisterInput) =>
-    Effect.gen(function* () {
-      const now = yield* nowIso;
-      yield* store.upsertPushDevice({
-        token: input.token,
-        label: input.label ?? null,
-        createdAt: now,
-        updatedAt: now,
-      });
-      return { token: input.token };
+  const registerPushDevice = Effect.fn("BotsService.registerPushDevice")(function* (
+    input: BotPushDeviceRegisterInput,
+  ) {
+    const now = yield* nowIso;
+    yield* store.upsertPushDevice({
+      token: input.token,
+      label: input.label ?? null,
+      createdAt: now,
+      updatedAt: now,
     });
+    return { token: input.token };
+  });
 
   const unregisterPushDevice = (input: BotPushDeviceRef) =>
     store.deletePushDevice(input.token).pipe(Effect.as(input));
