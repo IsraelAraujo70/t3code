@@ -1,5 +1,6 @@
 import {
   BOTS_WS_METHODS,
+  type VoiceReaderSubscribeInput,
   type DictationTranscribeInput,
   type DictationTranscribeResult,
   type EnvironmentId,
@@ -7,6 +8,7 @@ import {
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { runStreamGuarded } from "../rpc/client.ts";
 import {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
@@ -21,6 +23,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   runAtomCommand,
   squashAtomCommandFailure,
   type AtomCommand,
@@ -42,7 +45,12 @@ export function createBotsEnvironmentAtoms<R, E>(
   const command = <
     Tag extends (typeof BOTS_WS_METHODS)[Exclude<
       keyof typeof BOTS_WS_METHODS,
-      "directorySubscribe" | "dictationTranscribe"
+      | "directorySubscribe"
+      | "dictationTranscribe"
+      | "voiceReaderSubscribe"
+      | "voiceReaderOffer"
+      | "voiceReaderSpeak"
+      | "voiceReaderStop"
     >],
   >(
     label: string,
@@ -79,6 +87,29 @@ export function createBotsEnvironmentAtoms<R, E>(
     transcribeDictation: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:bots:transcribe-dictation",
       tag: BOTS_WS_METHODS.dictationTranscribe,
+    }),
+    /**
+     * The voice reader of one thread. Mounting it subscribes (the server starts Codex); unmounting
+     * ends the subscription at once and the server closes the session. Never replayed on reconnect.
+     */
+    voiceReader: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:bots:voice-reader",
+      subscribe: (input: VoiceReaderSubscribeInput) =>
+        runStreamGuarded(BOTS_WS_METHODS.voiceReaderSubscribe, input),
+      idleTtlMs: 0,
+    }),
+    // Signaling for the voice reader's current utterance; independent of the bot mutations.
+    voiceReaderOffer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:voice-reader-offer",
+      tag: BOTS_WS_METHODS.voiceReaderOffer,
+    }),
+    voiceReaderSpeak: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:voice-reader-speak",
+      tag: BOTS_WS_METHODS.voiceReaderSpeak,
+    }),
+    voiceReaderStop: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:voice-reader-stop",
+      tag: BOTS_WS_METHODS.voiceReaderStop,
     }),
   };
 }

@@ -79,6 +79,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalObserve;
 
 export type EnvironmentStreamCommandRpcTag =
+  // Fork (friend): the voice reader ends with its subscriber and is never resubscribed.
+  | typeof BOTS_WS_METHODS.voiceReaderSubscribe
   | typeof WS_METHODS.chatGptHandoffSubscribe
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress

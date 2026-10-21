@@ -7,6 +7,10 @@
       "types": "./src/botAvatar.ts",
       "default": "./src/botAvatar.ts"
     },
+    "./voice-reader": {
+      "types": "./src/voiceReader.ts",
+      "default": "./src/voiceReader.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

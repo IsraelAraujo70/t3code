@@ -233,6 +233,7 @@ export const make = Effect.gen(function* () {
       threadSettlement: true,
       ...(botsHost ? { bots: true } : {}), // Fork (friend)
       ...(dictation ? { dictation: true } : {}), // Fork (friend)
+      voiceReader: true, // Fork (friend)
       threadAutoSettlement: true,
       storageCleanup: true,
       storageCleanupRun: true,

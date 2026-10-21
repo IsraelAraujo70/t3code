@@ -57,8 +57,8 @@ export const SEAMS: readonly Seam[] = [
   { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots contracts" },
   {
     file: "packages/contracts/src/environment.ts",
-    markers: 2,
-    why: "bots host and dictation capabilities",
+    markers: 3,
+    why: "bots host, dictation and voice reader capabilities",
   },
   { file: "packages/contracts/src/rpc.ts", markers: 2, why: "bots RPCs in WsRpcGroup" },
   {
@@ -73,8 +73,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "packages/client-runtime/src/rpc/client.ts",
-    markers: 1,
-    why: "bots directory is a subscription",
+    markers: 2,
+    why: "bots directory is a subscription; the voice reader is a stream command",
   },
   {
     file: "packages/client-runtime/src/operations/commands.ts",
@@ -95,6 +95,11 @@ export const SEAMS: readonly Seam[] = [
     file: "packages/client-runtime/package.json",
     contains: '"./bot-avatar"',
     why: "export the bot faces",
+  },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./voice-reader"',
+    why: "export the voice reader driver",
   },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
@@ -161,8 +166,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
-    markers: 5,
-    why: "advertise bots only on the bots host, dictation only with a key",
+    markers: 6,
+    why: "advertise bots only on the bots host, dictation only with a key, the voice reader always",
   },
   {
     file: "apps/server/src/server.ts",
@@ -259,6 +264,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
   "packages/client-runtime/src/state/bots.ts",
+  "packages/client-runtime/src/voiceReader",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",

@@ -250,6 +250,10 @@ export const BOTS_WS_METHODS = {
   dictationTranscribe: "bots.dictation.transcribe",
   pushDeviceRegister: "bots.pushDevice.register",
   pushDeviceUnregister: "bots.pushDevice.unregister",
+  voiceReaderSubscribe: "bots.voiceReader.subscribe",
+  voiceReaderOffer: "bots.voiceReader.offer",
+  voiceReaderSpeak: "bots.voiceReader.speak",
+  voiceReaderStop: "bots.voiceReader.stop",
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -379,6 +383,99 @@ export const BotPushDeviceUnregisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceUnr
   error: BotsRpcError,
 });
 
+/**
+ * Voice reader: while a client subscribes to a thread, the server speaks each completed run's
+ * final assistant reply aloud through a Codex realtime session (the `codex` provider instance's
+ * ChatGPT login, never an API key). Any server of the fork offers it, bots host or not.
+ *
+ * The client owns the WebRTC peer; the server only signals and feeds the text. One realtime session
+ * per reply: the subscription's state names a `current` utterance in phase `offer`; the client
+ * opens a peer (a muted microphone track plus the `oai-events` data channel; a receive-only peer
+ * stays silent) and sends its SDP offer with `offer`, which answers with the remote SDP. Once the
+ * peer connects the client calls `speak`, and the server appends the reply. When the speech ends
+ * (the data channel's `turn.done`) or the user stops it, the client calls `stop`; the server closes
+ * the session and moves to the next queued reply. Replies that complete meanwhile wait in order.
+ *
+ * The subscription belongs to the connection that opened it: when it ends, the server closes the
+ * session. Setup failures (Codex missing, not signed in with ChatGPT, no realtime support) fail
+ * the stream with a `BotsError` whose message the client shows.
+ */
+export const VoiceReaderUtteranceId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
+  Schema.brand("VoiceReaderUtteranceId"),
+);
+export type VoiceReaderUtteranceId = typeof VoiceReaderUtteranceId.Type;
+
+/**
+ * `offer`: waiting for the client's SDP offer. `connecting`: answered; waiting for the client to
+ * report the peer connected. `speaking`: the reply was handed to the realtime session.
+ */
+export const VoiceReaderUtterancePhase = Schema.Literals(["offer", "connecting", "speaking"]);
+export type VoiceReaderUtterancePhase = typeof VoiceReaderUtterancePhase.Type;
+
+export const VoiceReaderUtterance = Schema.Struct({
+  id: VoiceReaderUtteranceId,
+  phase: VoiceReaderUtterancePhase,
+  /** What the voice has said so far (the realtime model's transcript, a summary of the reply). */
+  transcript: Schema.String,
+});
+export type VoiceReaderUtterance = typeof VoiceReaderUtterance.Type;
+
+/**
+ * The whole reader state, re-sent on every change. A snapshot rather than events, so a client that
+ * renders only the latest value never misses a step.
+ */
+export const VoiceReaderState = Schema.Struct({
+  current: Schema.NullOr(VoiceReaderUtterance),
+  /** Replies waiting behind `current`. */
+  queued: Schema.Int,
+  /** The last utterance that failed (realtime error); the reader keeps going. Null once one succeeds. */
+  lastError: Schema.NullOr(Schema.String),
+});
+export type VoiceReaderState = typeof VoiceReaderState.Type;
+
+export const VoiceReaderSubscribeInput = Schema.Struct({ threadId: ThreadId });
+export type VoiceReaderSubscribeInput = typeof VoiceReaderSubscribeInput.Type;
+
+/** WebRTC SDP blobs are a few KB; the cap only bounds abuse. */
+const VoiceReaderSdp = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(65_536));
+
+export const VoiceReaderOfferInput = Schema.Struct({
+  utteranceId: VoiceReaderUtteranceId,
+  sdp: VoiceReaderSdp,
+});
+export type VoiceReaderOfferInput = typeof VoiceReaderOfferInput.Type;
+
+export const VoiceReaderAnswer = Schema.Struct({ sdp: VoiceReaderSdp });
+export type VoiceReaderAnswer = typeof VoiceReaderAnswer.Type;
+
+export const VoiceReaderUtteranceRef = Schema.Struct({ utteranceId: VoiceReaderUtteranceId });
+export type VoiceReaderUtteranceRef = typeof VoiceReaderUtteranceRef.Type;
+
+export const VoiceReaderSubscribeRpc = Rpc.make(BOTS_WS_METHODS.voiceReaderSubscribe, {
+  payload: VoiceReaderSubscribeInput,
+  success: VoiceReaderState,
+  error: BotsRpcError,
+  stream: true,
+});
+/** Fails when the utterance is not `current` in phase `offer`, or realtime refuses to start. */
+export const VoiceReaderOfferRpc = Rpc.make(BOTS_WS_METHODS.voiceReaderOffer, {
+  payload: VoiceReaderOfferInput,
+  success: VoiceReaderAnswer,
+  error: BotsRpcError,
+});
+/** The peer connected: speak the reply. Fails unless the utterance is `current` and `connecting`. */
+export const VoiceReaderSpeakRpc = Rpc.make(BOTS_WS_METHODS.voiceReaderSpeak, {
+  payload: VoiceReaderUtteranceRef,
+  success: VoiceReaderUtteranceRef,
+  error: BotsRpcError,
+});
+/** Ends the utterance (speech done or stopped by the user). A stale or unknown id is a no-op. */
+export const VoiceReaderStopRpc = Rpc.make(BOTS_WS_METHODS.voiceReaderStop, {
+  payload: VoiceReaderUtteranceRef,
+  success: VoiceReaderUtteranceRef,
+  error: BotsRpcError,
+});
+
 /** Every bots RPC, spread into the server's WsRpcGroup. */
 export const BOTS_RPCS = [
   BotsDirectorySubscribeRpc,
@@ -398,6 +495,10 @@ export const BOTS_RPCS = [
   DictationTranscribeRpc,
   BotPushDeviceRegisterRpc,
   BotPushDeviceUnregisterRpc,
+  VoiceReaderSubscribeRpc,
+  VoiceReaderOfferRpc,
+  VoiceReaderSpeakRpc,
+  VoiceReaderStopRpc,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -419,6 +520,11 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.dictationTranscribe]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.pushDeviceRegister]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.pushDeviceUnregister]: AuthOrchestrationOperateScope,
+  // The voice reader spends the server's ChatGPT realtime allowance.
+  [BOTS_WS_METHODS.voiceReaderSubscribe]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.voiceReaderOffer]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.voiceReaderSpeak]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.voiceReaderStop]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */
