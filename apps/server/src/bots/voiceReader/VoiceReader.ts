@@ -175,13 +175,19 @@ export const layer = Layer.effect(
               scope: Scope.Closeable | null;
             } | null = null;
             let disposed = false;
+            /**
+             * Finishes `id` after `duration` unless it moved past `phase` (null: in any phase).
+             * A timer for an utterance that already finished does nothing (see finishLocked).
+             */
             const timer: (
               id: VoiceReaderUtteranceId,
               duration: Duration.Duration,
+              phase: "offer" | "connecting" | null,
               error: string | null,
             ) => Effect.Effect<void> = Effect.fn("VoiceReader.timer")(function* (
               id: VoiceReaderUtteranceId,
               duration: Duration.Duration,
+              phase: "offer" | "connecting" | null,
               error: string | null,
             ) {
               yield* Effect.forkIn(
@@ -189,10 +195,10 @@ export const layer = Layer.effect(
                   Effect.andThen(() =>
                     lock.withPermits(1)(
                       Effect.gen(function* () {
-                        const phase = (yield* SubscriptionRef.get(state)).current?.phase;
-                        if (duration === OFFER_TIMEOUT && (phase !== "offer" || active?.starting))
-                          return;
-                        if (duration === CONNECT_TIMEOUT && phase !== "connecting") return;
+                        const current = (yield* SubscriptionRef.get(state)).current?.phase;
+                        if (phase !== null && current !== phase) return;
+                        // An offer being answered is past waiting even before its phase changes.
+                        if (phase === "offer" && active?.starting) return;
                         yield* finishLocked(id, error);
                       }),
                     ),
@@ -221,6 +227,7 @@ export const layer = Layer.effect(
                 yield* timer(
                   id,
                   OFFER_TIMEOUT,
+                  "offer",
                   "The client did not answer the voice reader in time.",
                 );
                 yield* SubscriptionRef.update(state, (s) => ({
@@ -287,6 +294,7 @@ export const layer = Layer.effect(
                     yield* timer(
                       input.utteranceId,
                       CONNECT_TIMEOUT,
+                      "connecting",
                       "The voice connection did not come up.",
                     );
                     yield* SubscriptionRef.update(state, (s) => ({
@@ -310,7 +318,7 @@ export const layer = Layer.effect(
                             ),
                           );
                         if (event.type === "transcript-done")
-                          return timer(input.utteranceId, SPEECH_END_GRACE, null);
+                          return timer(input.utteranceId, SPEECH_END_GRACE, null, null);
                         // Closing a session must not await the event consumer that requested its close.
                         return Effect.forkIn(
                           finish(input.utteranceId, event.type === "error" ? event.message : null),
@@ -342,7 +350,7 @@ export const layer = Layer.effect(
                       return yield* Effect.fail(result.failure);
                     }
                     active.speaking = true;
-                    yield* timer(input.utteranceId, MAX_UTTERANCE, null);
+                    yield* timer(input.utteranceId, MAX_UTTERANCE, null, null);
                     yield* SubscriptionRef.update(state, (s) => ({
                       ...s,
                       current: s.current && { ...s.current, phase: "speaking" as const },

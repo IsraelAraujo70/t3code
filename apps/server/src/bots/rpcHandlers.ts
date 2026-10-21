@@ -55,5 +55,5 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
 
 export const layer = layerHandlers.pipe(
   Layer.provide(Dictation.layer),
-  Layer.provide(VoiceReader.layer),
+  Layer.provide(VoiceReader.layerLive),
 );
