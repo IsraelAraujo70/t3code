@@ -45,6 +45,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { RealtimeVoice } from "./bots.ts"; // Fork (friend)
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1251,6 +1252,10 @@ export const ServerSettings = Schema.Struct({
   pullRequestMergeMethod: Schema.NullOr(PullRequestMergeMethod).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Fork (friend): the voice of voice sessions. Null defers to `T3CODE_VOICE_READER_VOICE`. */
+  voiceReaderVoice: ForwardCompatibleNullable(RealtimeVoice).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 
   // The driver-specific config blob is `Schema.Unknown` at this layer so
   // envelopes with unknown drivers (forks, downgrades, in-flight PR branches)
@@ -1518,6 +1523,7 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
+  voiceReaderVoice: Schema.optionalKey(Schema.NullOr(RealtimeVoice)), // Fork (friend)
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

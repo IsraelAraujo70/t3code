@@ -11,6 +11,7 @@ import {
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type RealtimeVoice,
   type ThreadId,
   VoiceSessionId,
   type VoiceSessionEvent,
@@ -35,6 +36,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as CodexRealtime from "./CodexRealtime.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { isFromBot } from "../botSender.ts";
 import { BOT_COMPACTION_MESSAGE_PREFIX } from "../compaction/botCompaction.ts";
 import { awaitsAnswer } from "../threadWatch/threadWatchNotice.ts";
@@ -105,11 +107,12 @@ Se o usuário falar enquanto você fala, pare na hora e volte a escutar.`;
 /** Marks a message the user spoke. */
 export const VOICE_MESSAGE_PREFIX = "🎙️ ";
 
-/** The voice when `VOICE_ENV` is unset; Codex's own v3 default. */
+/** The voice when neither the setting nor `VOICE_ENV` picks one; Codex's own v3 default. */
 export const DEFAULT_VOICE = "cove";
 /**
- * Overrides the voice, read at startup. A voice the installed Codex does not offer falls back to
- * Codex's default (see `RealtimeHost.startSession`).
+ * The voice when the `voiceReaderVoice` setting is unset, read at startup. Unlike the setting it
+ * is not limited to `REALTIME_VOICES`, so a newer Codex's voices stay reachable; one the installed
+ * Codex does not offer falls back to Codex's default (see `RealtimeHost.startSession`).
  */
 export const VOICE_ENV = "T3CODE_VOICE_READER_VOICE";
 
@@ -118,6 +121,10 @@ const readVoice: Effect.Effect<string> = Config.String(VOICE_ENV).pipe(
   Effect.map((voice) => voice.trim().toLowerCase() || DEFAULT_VOICE),
   Effect.orElseSucceed(() => DEFAULT_VOICE),
 );
+
+/** The setting wins; unset, the voice `VOICE_ENV` picked (or the default) applies. */
+export const resolveVoice = (setting: RealtimeVoice | null, envVoice: string): string =>
+  setting ?? envVoice;
 
 /** How long the user stays silent before what they said goes to the agent, unless overridden. */
 export const DEFAULT_TURN_SILENCE_MS = 10_000;
@@ -322,7 +329,8 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const codex = yield* CodexRealtime.CodexRealtime;
     const threads = yield* VoiceThreads;
-    const voice = yield* readVoice;
+    const settings = yield* ServerSettingsService;
+    const envVoice = yield* readVoice;
     const turnSilence = yield* readTurnSilence;
     const readies = new Map<VoiceSessionId, Effect.Effect<void, BotsError>>();
     return VoiceSessions.of({
@@ -333,6 +341,11 @@ export const layer = Layer.effect(
             const fork = <A, E>(effect: Effect.Effect<A, E>) => Effect.forkIn(effect, scope);
             const text =
               mode.type === "read" ? yield* threads.replyText(threadId, mode.messageId) : null;
+            // Read per session, so a changed setting applies from the next session on.
+            const voice = yield* settings.getSettings.pipe(
+              Effect.map((current) => resolveVoice(current.voiceReaderVoice, envVoice)),
+              Effect.orElseSucceed(() => envVoice),
+            );
             const host = yield* codex.open;
             const realtime = yield* host.startSession({
               offerSdp: sdp,
@@ -341,6 +354,7 @@ export const layer = Layer.effect(
               delegationAckFiller: mode.type === "conversation",
             });
             const id = VoiceSessionId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+            yield* Effect.logInfo(`Voice ${id} (${mode.type}) asked for voice ${voice}.`);
             const events = yield* Queue.unbounded<VoiceSessionEvent, BotsError | Cause.Done>();
             const end = (error: string | null) =>
               error === null

@@ -1035,6 +1035,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "bots-voice",
+    title: "Voice",
+    to: "/settings/bots",
+    searchTerms: ["friend bots read aloud conversation speak realtime codex arbor cove"],
+    environmentOnly: true,
+  },
+  {
     id: "bots-import",
     title: "Import from friend",
     to: "/settings/bots",

@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { BOT_COMPACTION_MESSAGE_PREFIX } from "../compaction/botCompaction.ts";
 import * as CodexRealtime from "./CodexRealtime.ts";
@@ -49,6 +50,9 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
   let postFailure: string | null = null;
   const delivered: string[] = [];
   let postGate: Deferred.Deferred<void> | null = null;
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.provide(ServerSettings.layerTest()),
+  );
   const service = yield* VoiceSession.VoiceSessions.pipe(
     Effect.provide(
       VoiceSession.layer.pipe(
@@ -116,6 +120,7 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
           }),
         ),
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+        Layer.provide(Layer.succeed(ServerSettings.ServerSettingsService, settings)),
       ),
     ),
   );
@@ -134,6 +139,7 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
   });
   return {
     service,
+    settings,
     realtimeEvents,
     activity,
     spoken,
@@ -224,6 +230,23 @@ describe("VoiceSessions read", () => {
           [expected],
         );
       }
+    }),
+  );
+
+  it.effect("starts each session with the voice setting, which wins over the env voice", () =>
+    Effect.gen(function* () {
+      const h = yield* setup({ [VoiceSession.VOICE_ENV]: "arbor" });
+      const voiceAfter = (voiceReaderVoice: "sol" | null) =>
+        h.settings
+          .updateSettings({ voiceReaderVoice })
+          .pipe(Effect.andThen(h.open(read)), Effect.scoped);
+      yield* h.open(read).pipe(Effect.scoped);
+      yield* voiceAfter("sol");
+      yield* voiceAfter(null);
+      assert.deepStrictEqual(
+        h.starts.map((start) => start.voice),
+        ["arbor", "sol", "arbor"],
+      );
     }),
   );
 
