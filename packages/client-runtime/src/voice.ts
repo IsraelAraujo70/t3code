@@ -1,4 +1,5 @@
 // @effect-diagnostics globalTimers:off - The shared controller runs without an Effect runtime.
+// @effect-diagnostics globalDate:off - Diagnostics carry client wall-clock times for the server log.
 /**
  * Voice sessions (friend fork), shared by web and mobile: a live conversation with a thread, or
  * one assistant reply read aloud. Each platform supplies `openPeer` (DOM `RTCPeerConnection` on
@@ -10,6 +11,7 @@ import type {
   EnvironmentId,
   MessageId,
   ThreadId,
+  VoiceDiagnosticEntry,
   VoiceSessionAnswer,
   VoiceSessionId,
   VoiceSessionMode,
@@ -28,12 +30,18 @@ export type VoiceChannelEvent =
 
 /** Parses one data-channel message; null for everything a session ignores. */
 export function parseVoiceChannelEvent(data: string): VoiceChannelEvent | null {
-  let message: unknown;
+  return voiceChannelEventOf(parseChannelMessage(data));
+}
+
+function parseChannelMessage(data: string): unknown {
   try {
-    message = JSON.parse(data);
+    return JSON.parse(data);
   } catch {
     return null;
   }
+}
+
+function voiceChannelEventOf(message: unknown): VoiceChannelEvent | null {
   if (typeof message !== "object" || message === null || !("type" in message)) return null;
   const role =
     "turn" in message &&
@@ -206,7 +214,8 @@ export interface VoicePeer {
   readonly setMicrophoneEnabled: (enabled: boolean) => void;
   /** Plays or silences the voice's audio. Idempotent. */
   readonly setVoiceAudible: (audible: boolean) => void;
-  readonly levels: () => Promise<VoiceLevels>;
+  /** One `getStats` read. */
+  readonly sample: () => Promise<VoiceSample>;
   /** Releases the connection, the microphone and the audio output. Idempotent. */
   readonly close: () => void;
 }
@@ -215,6 +224,124 @@ export interface VoicePeer {
 export interface VoiceLevels {
   readonly microphone: number;
   readonly voice: number;
+}
+
+export interface VoiceSample {
+  readonly levels: VoiceLevels;
+  /** The received audio's cumulative counters (`inbound-rtp`, `media-playout`) and the RTT. */
+  readonly inbound: Readonly<Record<string, number>>;
+  /** The selected ICE pair, e.g. `wifi host/udp -> host/udp`; null before one is chosen. */
+  readonly route: string | null;
+}
+
+/** What both platforms' `getStats` results offer: every report, in any order. */
+export interface VoiceStatsReport {
+  readonly forEach: (callback: (report: unknown) => void) => void;
+}
+
+/** Fields that tell late packets, lost packets and an empty jitter buffer apart. */
+const INBOUND_FIELDS = [
+  "packetsReceived",
+  "packetsLost",
+  "packetsDiscarded",
+  "jitter",
+  "jitterBufferDelay",
+  "jitterBufferTargetDelay",
+  "jitterBufferEmittedCount",
+  "jitterBufferFlushes",
+  "jitterBufferEmptiedCount",
+  "concealedSamples",
+  "silentConcealedSamples",
+  "concealmentEvents",
+  "delayedPacketOutageSamples",
+  "insertedSamplesForDeceleration",
+  "removedSamplesForAcceleration",
+  "interruptionCount",
+  "totalInterruptionDuration",
+  "totalSamplesReceived",
+  "totalSamplesDuration",
+  "fecPacketsReceived",
+  "audioLevel",
+] as const;
+const PLAYOUT_FIELDS = [
+  "synthesizedSamplesDuration",
+  "synthesizedSamplesEvents",
+  "totalSamplesDuration",
+  "totalPlayoutDelay",
+  "totalSamplesCount",
+] as const;
+
+type StatsEntry = Readonly<Record<string, unknown>>;
+
+const isStatsEntry = (value: unknown): value is StatsEntry =>
+  typeof value === "object" && value !== null;
+const numberOf = (entry: StatsEntry | undefined, key: string) => {
+  const value = entry?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
+const stringOf = (entry: StatsEntry | undefined, key: string) => {
+  const value = entry?.[key];
+  return typeof value === "string" ? value : null;
+};
+const unit = (value: number | null) => (value === null ? 0 : Math.max(0, Math.min(1, value)));
+const round = (value: number) => Math.round(value * 10_000) / 10_000;
+
+/**
+ * Reads levels and the received audio's counters from one `getStats` result. Android's
+ * react-native-webrtc reports `mediaType` where browsers report `kind`.
+ */
+export function readVoiceStats(report: VoiceStatsReport): VoiceSample {
+  const byId = new Map<string, StatsEntry>();
+  const all: StatsEntry[] = [];
+  report.forEach((value) => {
+    if (!isStatsEntry(value)) return;
+    all.push(value);
+    const id = stringOf(value, "id");
+    if (id !== null) byId.set(id, value);
+  });
+  const isAudio = (entry: StatsEntry) => entry.kind === "audio" || entry.mediaType === "audio";
+  const inboundEntry = all.find((entry) => entry.type === "inbound-rtp" && isAudio(entry));
+  const microphone = all.find((entry) => entry.type === "media-source" && isAudio(entry));
+  const playout = all.find((entry) => entry.type === "media-playout");
+  const transport = all.find((entry) => entry.type === "transport");
+  const selectedId = stringOf(transport, "selectedCandidatePairId");
+  const pair =
+    (selectedId === null ? undefined : byId.get(selectedId)) ??
+    all.find(
+      (entry) =>
+        entry.type === "candidate-pair" && entry.nominated === true && entry.state === "succeeded",
+    );
+  const inbound: Record<string, number> = {};
+  for (const field of INBOUND_FIELDS) {
+    const value = numberOf(inboundEntry, field);
+    if (value !== null) inbound[field] = round(value);
+  }
+  for (const field of PLAYOUT_FIELDS) {
+    const value = numberOf(playout, field);
+    if (value !== null) inbound[`playout.${field}`] = round(value);
+  }
+  const rtt = numberOf(pair, "currentRoundTripTime");
+  if (rtt !== null) inbound.rtt = round(rtt);
+  const candidate = (key: string) => {
+    const id = stringOf(pair, key);
+    const entry = id === null ? undefined : byId.get(id);
+    if (entry === undefined) return "?";
+    const relay = stringOf(entry, "relayProtocol");
+    return `${stringOf(entry, "candidateType") ?? "?"}/${stringOf(entry, "protocol") ?? "?"}${relay === null ? "" : `/${relay}`}`;
+  };
+  const local = stringOf(pair, "localCandidateId");
+  const network = local === null ? null : stringOf(byId.get(local), "networkType");
+  return {
+    levels: {
+      voice: unit(numberOf(inboundEntry, "audioLevel")),
+      microphone: unit(numberOf(microphone, "audioLevel")),
+    },
+    inbound,
+    route:
+      pair === undefined
+        ? null
+        : `${network ?? "?"} ${candidate("localCandidateId")} -> ${candidate("remoteCandidateId")}`,
+  };
 }
 
 /** A session's thread on its server, and what the session does there. */
@@ -242,6 +369,12 @@ export interface VoiceTransport {
   ) => () => void;
   /** Rejects on failure. */
   readonly ready: (environmentId: EnvironmentId, sessionId: VoiceSessionId) => Promise<void>;
+  /** Sends diagnostics to the server log. Rejects on failure; the controller ignores that. */
+  readonly report: (
+    environmentId: EnvironmentId,
+    sessionId: VoiceSessionId,
+    entries: ReadonlyArray<VoiceDiagnosticEntry>,
+  ) => Promise<void>;
 }
 
 export interface VoiceSnapshot {
@@ -278,7 +411,18 @@ export interface VoiceControllerOptions {
    */
   readonly speechEndGraceMs?: number;
   readonly levelIntervalMs?: number;
+  /** How often a live session sends its diagnostics. Defaults to `VOICE_REPORT_INTERVAL_MS`. */
+  readonly reportIntervalMs?: number;
 }
+
+/**
+ * Every live session reports what its client observed (one stats sample per level poll, gate
+ * changes, data-channel events) so audio that never played can be traced to the network, the
+ * jitter buffer, or the gate from the server log.
+ */
+export const VOICE_REPORT_INTERVAL_MS = 5_000;
+/** A batch is sent early at this size; the contract caps a batch at 1,000 entries. */
+const REPORT_BATCH = 500;
 
 const SILENCE: VoiceLevels = { microphone: 0, voice: 0 };
 
@@ -323,6 +467,10 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     peer: VoicePeer | null;
     endStream: (() => void) | null;
     readonly timers: Set<ReturnType<typeof setTimeout>>;
+    sessionId: VoiceSessionId | null;
+    readonly diagnostics: VoiceDiagnosticEntry[];
+    reportedAt: number;
+    route: string | null;
   };
   let current: Session | null = null;
   let levels = SILENCE;
@@ -336,8 +484,22 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     levels = next;
     emit(levelListeners);
   };
+  const report = (session: Session) => {
+    if (session.sessionId === null || session.diagnostics.length === 0) return;
+    session.reportedAt = Date.now();
+    const entries = session.diagnostics.splice(0);
+    void options.transport
+      .report(session.target.environmentId, session.sessionId, entries)
+      .catch(() => {});
+  };
+  const note = (session: Session, entry: VoiceDiagnosticEntry) => {
+    session.diagnostics.push({ t: Date.now(), ...entry });
+    if (session.diagnostics.length >= REPORT_BATCH) report(session);
+  };
   const finish = (session: Session, error: string | null) => {
     if (current !== session) return;
+    note(session, { end: error ?? "ok" });
+    report(session);
     current = null;
     for (const timer of session.timers) clearTimeout(timer);
     session.peer?.close();
@@ -351,6 +513,8 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     const previous = session.state;
     const state = voiceReducer(previous, input);
     session.state = state;
+    const audible = voiceAudible(state);
+    if (audible !== voiceAudible(previous)) note(session, { input: input.type, audible });
     session.peer?.setVoiceAudible(voiceAudible(state));
     session.peer?.setMicrophoneEnabled(
       state.mode === "conversation" && state.connection === "live" && !state.muted,
@@ -371,20 +535,38 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     if (state.readDone && !previous.readDone) finish(session, null);
   };
   const pollLevels = (session: Session, peer: VoicePeer) => {
+    const interval = options.levelIntervalMs ?? 100;
+    const due = Date.now() + interval;
     const timer = setTimeout(() => {
       session.timers.delete(timer);
-      void peer.levels().then(
+      const asked = Date.now();
+      void peer.sample().then(
         (next) => {
           if (current !== session) return;
+          const answered = Date.now();
+          // `lag`: how late the poll ran; `took`: how long `getStats` took.
+          note(session, { lag: asked - due, took: answered - asked, ...next.inbound });
+          if (next.route !== session.route) {
+            session.route = next.route;
+            if (next.route !== null) note(session, { route: next.route });
+          }
+          if (
+            answered - session.reportedAt >=
+            (options.reportIntervalMs ?? VOICE_REPORT_INTERVAL_MS)
+          )
+            report(session);
+          const levels = next.levels;
           // The gate silences the voice's own turns, so their level is not shown either.
-          setLevels(voiceAudible(session.state) ? next : { microphone: next.microphone, voice: 0 });
+          setLevels(
+            voiceAudible(session.state) ? levels : { microphone: levels.microphone, voice: 0 },
+          );
           pollLevels(session, peer);
         },
         () => {
           if (current === session) pollLevels(session, peer);
         },
       );
-    }, options.levelIntervalMs ?? 100);
+    }, interval);
     session.timers.add(timer);
   };
   const run = async (session: Session) => {
@@ -399,7 +581,13 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       peer.setMicrophoneEnabled(false);
       peer.setVoiceAudible(false);
       peer.onChannelMessage((data) => {
-        const event = parseVoiceChannelEvent(data);
+        const message = parseChannelMessage(data);
+        const type =
+          typeof message === "object" && message !== null && "type" in message
+            ? message.type
+            : null;
+        note(session, { channel: typeof type === "string" ? type.slice(0, 64) : "?" });
+        const event = voiceChannelEventOf(message);
         if (event !== null) apply(session, event);
       });
       const sdp = await peer.createOffer();
@@ -410,6 +598,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
         session.endStream = options.transport.session(session.target, sdp, {
           onAnswer: (value) => {
             answered = true;
+            session.sessionId = value.sessionId;
             resolve(value);
           },
           onBot: (working) => apply(session, { type: "bot", working }),
@@ -443,6 +632,10 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       peer: null,
       endStream: null,
       timers: new Set(),
+      sessionId: null,
+      diagnostics: [],
+      reportedAt: Date.now(),
+      route: null,
     };
     current = session;
     emit(listeners);

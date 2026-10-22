@@ -47,6 +47,7 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.pushDeviceUnregister]: (input) => bots.unregisterPushDevice(input),
       [BOTS_WS_METHODS.voiceSession]: (input) => voice.session(input),
       [BOTS_WS_METHODS.voiceReady]: (input) => voice.ready(input),
+      [BOTS_WS_METHODS.voiceReport]: (input) => voice.report(input),
     });
   }),
 );

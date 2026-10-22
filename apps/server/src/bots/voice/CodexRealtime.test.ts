@@ -157,7 +157,7 @@ it.effect("reports the voice's words and the user's speech of its own thread, th
       { type: "user-transcript-delta", delta: " Quanto" },
       { type: "user-transcript", text: "Quanto é sete vezes oito" },
       { type: "transcript", delta: "hello" },
-      { type: "transcript-done" },
+      { type: "transcript-done", text: "hello" },
       { type: "error", message: "late error" },
       { type: "closed", reason: null },
     ]);

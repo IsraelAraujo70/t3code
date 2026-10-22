@@ -1,4 +1,4 @@
-import type { VoicePeer } from "@t3tools/client-runtime/voice";
+import { readVoiceStats, type VoicePeer } from "@t3tools/client-runtime/voice";
 
 /** Realtime requires a sending track; disabling it keeps the user's microphone muted. */
 async function acquireMicrophone(): Promise<MediaStream> {
@@ -104,17 +104,8 @@ export async function openBrowserVoicePeer(): Promise<VoicePeer> {
     setVoiceAudible(audible) {
       audio.muted = !audible;
     },
-    async levels() {
-      let microphone = 0;
-      let voice = 0;
-      const stats = await pc.getStats();
-      stats.forEach((report) => {
-        if (report.kind !== "audio" || typeof report.audioLevel !== "number") return;
-        const level = Math.max(0, Math.min(1, report.audioLevel));
-        if (report.type === "inbound-rtp") voice = Math.max(voice, level);
-        if (report.type === "media-source") microphone = Math.max(microphone, level);
-      });
-      return { microphone, voice };
+    async sample() {
+      return readVoiceStats(await pc.getStats());
     },
     close() {
       if (closed) return;

@@ -4,11 +4,13 @@ import {
   createVoiceController,
   initialVoiceState,
   parseVoiceChannelEvent,
+  readVoiceStats,
   voiceAudible,
   voicePhase,
   voiceReadPhaseOf,
   voiceReducer,
   VOICE_PLAYOUT_GRACE_MS,
+  VOICE_REPORT_INTERVAL_MS,
   type VoiceInput,
   type VoicePeer,
   type VoiceState,
@@ -168,7 +170,11 @@ function setup() {
       },
       setMicrophoneEnabled: vi.fn<(enabled: boolean) => void>(),
       setVoiceAudible: vi.fn<(audible: boolean) => void>(),
-      levels: async () => ({ microphone: 0.5, voice: 0.25 }),
+      sample: async () => ({
+        levels: { microphone: 0.5, voice: 0.25 },
+        inbound: { packetsReceived: 50, concealedSamples: 0 },
+        route: "wifi host/udp -> host/udp",
+      }),
       close: vi.fn<() => void>(),
       send: (message) => listener(channel[message]),
     };
@@ -208,6 +214,13 @@ function setup() {
     ready: vi.fn(async (_environmentId: string, sessionId: string) => {
       calls.push(`ready:${sessionId}`);
     }),
+    report: vi.fn(
+      async (
+        _environmentId: string,
+        _sessionId: string,
+        _entries: ReadonlyArray<Readonly<Record<string, unknown>>>,
+      ) => {},
+    ),
   };
   const onError = vi.fn();
   const controller = createVoiceController({ openPeer, transport, onError });
@@ -382,5 +395,140 @@ describe("voice controller", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("readVoiceStats", () => {
+  // Shapes react-native-webrtc 155 (Android) returns: `mediaType`, ids that link the pair.
+  const android = new Map<string, unknown>([
+    [
+      "IT01A",
+      {
+        id: "IT01A",
+        type: "inbound-rtp",
+        mediaType: "audio",
+        kind: "audio",
+        packetsReceived: 812,
+        packetsLost: 0,
+        packetsDiscarded: 37,
+        jitter: 0.012345678,
+        concealedSamples: 48_000,
+        audioLevel: 0.4,
+        codecId: "CIT01_111",
+      },
+    ],
+    ["SA1", { id: "SA1", type: "media-source", kind: "audio", audioLevel: 0.1 }],
+    ["T01", { id: "T01", type: "transport", selectedCandidatePairId: "CP1" }],
+    [
+      "CP1",
+      {
+        id: "CP1",
+        type: "candidate-pair",
+        localCandidateId: "L1",
+        remoteCandidateId: "R1",
+        currentRoundTripTime: 0.183,
+      },
+    ],
+    [
+      "L1",
+      {
+        id: "L1",
+        type: "local-candidate",
+        networkType: "wifi",
+        candidateType: "srflx",
+        protocol: "udp",
+      },
+    ],
+    ["R1", { id: "R1", type: "remote-candidate", candidateType: "host", protocol: "udp" }],
+  ]);
+
+  it("reads levels, the inbound audio counters and the selected route", () => {
+    expect(readVoiceStats(android)).toEqual({
+      levels: { voice: 0.4, microphone: 0.1 },
+      inbound: {
+        packetsReceived: 812,
+        packetsLost: 0,
+        packetsDiscarded: 37,
+        jitter: 0.0123,
+        concealedSamples: 48_000,
+        audioLevel: 0.4,
+        rtt: 0.183,
+      },
+      route: "wifi srflx/udp -> host/udp",
+    });
+  });
+
+  it("falls back to the nominated pair and reports nothing it cannot find", () => {
+    const browser = new Map<string, unknown>([
+      ["v", { id: "v", type: "inbound-rtp", kind: "video", packetsReceived: 9 }],
+      ["p", { id: "p", type: "candidate-pair", nominated: true, state: "succeeded" }],
+      ["junk", null],
+    ]);
+    expect(readVoiceStats(browser)).toEqual({
+      levels: { voice: 0, microphone: 0 },
+      inbound: {},
+      route: "? ? -> ?",
+    });
+    expect(readVoiceStats(new Map())).toEqual({
+      levels: { voice: 0, microphone: 0 },
+      inbound: {},
+      route: null,
+    });
+  });
+});
+
+describe("voice diagnostics", () => {
+  it("reports samples, the route, gate changes and channel events, then the end", async () => {
+    using _timers = fakeTimers();
+    const t = setup();
+    t.controller.start(conversation);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    const peer = t.peers[0]!;
+    peer.send("appended");
+    peer.send("voiceStarted");
+    await vi.advanceTimersByTimeAsync(VOICE_REPORT_INTERVAL_MS);
+    expect(t.transport.report).toHaveBeenCalledTimes(1);
+    const [environmentId, sessionId, first] = t.transport.report.mock.calls[0]!;
+    expect([environmentId, sessionId]).toEqual(["env", "s1"]);
+    const keyed = (key: string) => first.filter((entry) => key in entry);
+    expect(keyed("channel").map((entry) => entry.channel)).toEqual([
+      "session.context.appended",
+      "turn.created",
+    ]);
+    expect(keyed("audible")).toEqual([
+      expect.objectContaining({ input: "voice-turn-started", audible: true }),
+    ]);
+    expect(keyed("route")).toEqual([
+      expect.objectContaining({ route: "wifi host/udp -> host/udp" }),
+    ]);
+    // One sample per level poll, each with its counters and timing.
+    expect(keyed("packetsReceived").length).toBeGreaterThanOrEqual(40);
+    expect(keyed("packetsReceived")[0]).toEqual(
+      expect.objectContaining({ lag: 0, took: 0, concealedSamples: 0 }),
+    );
+    expect(first.every((entry) => typeof entry.t === "number")).toBe(true);
+    // Hanging up sends what is left, ending with how the session ended.
+    peer.send("voiceDone");
+    t.controller.stop();
+    expect(t.transport.report).toHaveBeenCalledTimes(2);
+    const last = t.transport.report.mock.calls[1]![2];
+    expect(last.at(-1)).toEqual(expect.objectContaining({ end: "ok" }));
+    expect(last.some((entry) => entry.channel === "turn.done")).toBe(true);
+  });
+
+  it("keeps a failed report from affecting the session", async () => {
+    using _timers = fakeTimers();
+    const t = setup();
+    t.transport.report.mockRejectedValue(new Error("offline"));
+    t.controller.start(conversation);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    await vi.advanceTimersByTimeAsync(VOICE_REPORT_INTERVAL_MS * 2);
+    expect(t.transport.report).toHaveBeenCalled();
+    expect(t.controller.getSnapshot()?.phase).toBe("listening");
+    expect(t.onError).not.toHaveBeenCalled();
   });
 });

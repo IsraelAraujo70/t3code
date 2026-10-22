@@ -14,6 +14,7 @@ import {
   type ThreadId,
   VoiceSessionId,
   type VoiceSessionEvent,
+  type VoiceReportInput,
   type VoiceSessionInput,
   type VoiceSessionRef,
 } from "@t3tools/contracts";
@@ -69,6 +70,8 @@ export class VoiceSessions extends Context.Service<
     /** The answer once realtime is ready, then agent activity until the session ends. */
     readonly session: (input: VoiceSessionInput) => Stream.Stream<VoiceSessionEvent, BotsError>;
     readonly ready: (input: VoiceSessionRef) => Effect.Effect<VoiceSessionRef, BotsError>;
+    /** Writes what a client observed to the server log, to diagnose audio it did not hear. */
+    readonly report: (input: VoiceReportInput) => Effect.Effect<void>;
   }
 >()("t3/bots/voice/VoiceSession/VoiceSessions") {}
 
@@ -436,11 +439,22 @@ export const layer = Layer.effect(
               Stream.runForEach(realtime.events, (event) => {
                 switch (event.type) {
                   case "transcript":
-                    return handoff.voiceTalking ? Effect.void : step({ type: "voice-talking" });
-                  case "transcript-done":
-                    return mode.type === "read"
-                      ? endAfter(SPEECH_END_GRACE, end(null))
-                      : step({ type: "voice-done" });
+                    return handoff.voiceTalking
+                      ? Effect.void
+                      : Effect.logInfo(`Voice ${id} started talking.`).pipe(
+                          Effect.andThen(step({ type: "voice-talking" })),
+                        );
+                  case "transcript-done": {
+                    // What the voice generated, to compare with what a client played.
+                    const said = Effect.logInfo(`Voice ${id} said: ${event.text}`);
+                    return said.pipe(
+                      Effect.andThen(
+                        mode.type === "read"
+                          ? endAfter(SPEECH_END_GRACE, end(null))
+                          : step({ type: "voice-done" }),
+                      ),
+                    );
+                  }
                   // The microphone stays silent until the client is ready.
                   case "user-transcript-delta":
                     return mode.type === "conversation"
@@ -508,6 +522,8 @@ export const layer = Layer.effect(
           readies.get(input.sessionId) ??
           Effect.fail(new BotsError({ message: "This voice session is not waiting to connect." }))
         ).pipe(Effect.as(input)),
+      report: ({ sessionId, entries }) =>
+        Effect.logInfo(`Voice ${sessionId} client: ${JSON.stringify(entries)}`),
     });
   }),
 ).pipe(Layer.provide(NodeCrypto.layer));

@@ -47,7 +47,7 @@ export function createBotsEnvironmentAtoms<R, E>(
   const command = <
     Tag extends (typeof BOTS_WS_METHODS)[Exclude<
       keyof typeof BOTS_WS_METHODS,
-      "directorySubscribe" | "dictationTranscribe" | "voiceSession" | "voiceReady"
+      "directorySubscribe" | "dictationTranscribe" | "voiceSession" | "voiceReady" | "voiceReport"
     >],
   >(
     label: string,
@@ -104,13 +104,20 @@ export function createBotsEnvironmentAtoms<R, E>(
       label: "environment-command:bots:voice-ready",
       tag: BOTS_WS_METHODS.voiceReady,
     }),
+    voiceReport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:voice-report",
+      tag: BOTS_WS_METHODS.voiceReport,
+    }),
   };
 }
 
 /** Voice signaling over one client's bots atoms. */
 export function createVoiceTransport(
   registry: AtomRegistry.AtomRegistry,
-  bots: Pick<ReturnType<typeof createBotsEnvironmentAtoms>, "voiceSession" | "voiceReady">,
+  bots: Pick<
+    ReturnType<typeof createBotsEnvironmentAtoms>,
+    "voiceSession" | "voiceReady" | "voiceReport"
+  >,
 ): VoiceTransport {
   return {
     session: (target, sdp, { onAnswer, onBot, onEnd }) => {
@@ -155,6 +162,13 @@ export function createVoiceTransport(
         throw new Error(
           failureMessage(squashAtomCommandFailure(result)) ?? "The voice session failed.",
         );
+    },
+    report: async (environmentId, sessionId, entries) => {
+      const result = await runAtomCommand(registry, bots.voiceReport, {
+        environmentId,
+        input: { sessionId, entries },
+      });
+      if (result._tag === "Failure") throw new Error("The voice report failed.");
     },
   };
 }

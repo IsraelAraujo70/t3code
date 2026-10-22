@@ -178,7 +178,7 @@ describe("VoiceSessions read", () => {
       assert.strictEqual(h.subscriptions(), 0);
       yield* Queue.offerAll(h.realtimeEvents, [
         { type: "transcript", delta: "Resumo" },
-        { type: "transcript-done" },
+        { type: "transcript-done", text: "Resumo" },
       ]);
       yield* TestClock.adjust(VoiceSession.SPEECH_END_GRACE);
       assert.isTrue(Exit.isSuccess(yield* Fiber.join(fiber)));
@@ -327,7 +327,7 @@ describe("VoiceSessions conversation", () => {
       assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReplySpeech("56.")]);
       yield* Queue.offerAll(h.realtimeEvents, [
         { type: "transcript", delta: "Cinquenta" },
-        { type: "transcript-done" },
+        { type: "transcript-done", text: "Cinquenta" },
       ]);
       yield* Effect.yieldNow;
       assert.deepStrictEqual(h.spoken, [

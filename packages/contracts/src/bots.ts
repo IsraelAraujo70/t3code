@@ -258,6 +258,7 @@ export const BOTS_WS_METHODS = {
   pushDeviceUnregister: "bots.pushDevice.unregister",
   voiceSession: "bots.voice.session",
   voiceReady: "bots.voice.ready",
+  voiceReport: "bots.voice.report",
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -461,6 +462,29 @@ export const VoiceReadyRpc = Rpc.make(BOTS_WS_METHODS.voiceReady, {
   error: BotsRpcError,
 });
 
+/**
+ * One diagnostic observation from a voice client: `t` (client epoch ms) plus inbound audio
+ * counters, a gate change, or a data-channel event. Keys are free-form so the client can add
+ * fields without a contract change; the server only logs them.
+ */
+export const VoiceDiagnosticEntry = Schema.Record(
+  Schema.String.check(Schema.isMaxLength(64)),
+  Schema.Union([Schema.Number, Schema.Boolean, Schema.String.check(Schema.isMaxLength(256))]),
+);
+export type VoiceDiagnosticEntry = typeof VoiceDiagnosticEntry.Type;
+
+export const VoiceReportInput = Schema.Struct({
+  sessionId: VoiceSessionId,
+  entries: Schema.Array(VoiceDiagnosticEntry).check(Schema.isMaxLength(1_000)),
+});
+export type VoiceReportInput = typeof VoiceReportInput.Type;
+
+/** What a session's client observed, for the server log; accepted also right after it ends. */
+export const VoiceReportRpc = Rpc.make(BOTS_WS_METHODS.voiceReport, {
+  payload: VoiceReportInput,
+  error: BotsRpcError,
+});
+
 /** Every bots RPC, spread into the server's WsRpcGroup. */
 export const BOTS_RPCS = [
   BotsDirectorySubscribeRpc,
@@ -482,6 +506,7 @@ export const BOTS_RPCS = [
   BotPushDeviceUnregisterRpc,
   VoiceSessionRpc,
   VoiceReadyRpc,
+  VoiceReportRpc,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -506,6 +531,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   // Voice spends the server's ChatGPT realtime allowance and posts to threads.
   [BOTS_WS_METHODS.voiceSession]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.voiceReady]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.voiceReport]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */

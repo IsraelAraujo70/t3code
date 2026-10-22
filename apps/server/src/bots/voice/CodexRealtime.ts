@@ -35,7 +35,7 @@ export type RealtimeEvent =
   /** One finished user utterance, transcribed: its deltas joined. */
   | { readonly type: "user-transcript"; readonly text: string }
   /** The voice finished generating a response; its audio may still be playing on the client. */
-  | { readonly type: "transcript-done" }
+  | { readonly type: "transcript-done"; readonly text: string }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "closed"; readonly reason: string | null };
 
@@ -186,7 +186,7 @@ export const makeRealtimeHost = Effect.fn("CodexRealtime.makeRealtimeHost")(func
     "thread/realtime/transcript/done": receive<"thread/realtime/transcript/done">(
       (session, payload) =>
         payload.role === "assistant"
-          ? Queue.offer(session.events, { type: "transcript-done" })
+          ? Queue.offer(session.events, { type: "transcript-done", text: payload.text })
           : payload.role === "user" && payload.text.trim() !== ""
             ? Queue.offer(session.events, { type: "user-transcript", text: payload.text.trim() })
             : Effect.void,

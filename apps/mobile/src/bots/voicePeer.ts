@@ -1,4 +1,4 @@
-import type { VoicePeer } from "@t3tools/client-runtime/voice";
+import { readVoiceStats, type VoicePeer } from "@t3tools/client-runtime/voice";
 import {
   mediaDevices,
   RTCPeerConnection,
@@ -118,26 +118,8 @@ export async function openNativeVoicePeer(): Promise<VoicePeer> {
         if (receiver.track?.kind === "audio") receiver.track.enabled = enabled;
       }
     },
-    async levels() {
-      let voice = 0;
-      let microphone = 0;
-      try {
-        const stats = await pc.getStats();
-        stats.forEach(
-          (report: { type: string; kind?: string; mediaType?: string; audioLevel?: number }) => {
-            if (report.kind !== "audio" && report.mediaType !== "audio") return;
-            const level =
-              typeof report.audioLevel === "number" && Number.isFinite(report.audioLevel)
-                ? Math.max(0, Math.min(1, report.audioLevel))
-                : 0;
-            if (report.type === "inbound-rtp") voice = Math.max(voice, level);
-            if (report.type === "media-source") microphone = Math.max(microphone, level);
-          },
-        );
-      } catch {
-        return { voice: 0, microphone: 0 };
-      }
-      return { voice, microphone };
+    async sample() {
+      return readVoiceStats(await pc.getStats());
     },
     close() {
       if (closed) return;
