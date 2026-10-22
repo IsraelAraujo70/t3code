@@ -73,9 +73,12 @@ starts by itself stay silent (`voiceAudible` in
 reach no agent, because the realtime thread's Codex cannot run turns.
 
 Each session runs its own `codex app-server` and realtime session, closed when the session ends, so
-nothing stays open while idle. `T3CODE_VOICE_READER_VOICE` picks the voice (default `cove`,
-Codex's own); a voice the installed Codex does not offer for v3 falls back to Codex's default with a
-warning in the log. The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
+nothing stays open while idle. Settings → Bots → Voice picks the voice on the bots host
+(`voiceReaderVoice` in the server settings, one of the nine v3 voices Codex 0.162 offers). The
+choice applies from the next session; one already open keeps its voice. Left on "Server default",
+`T3CODE_VOICE_READER_VOICE` picks it (default `cove`, Codex's own); a voice the installed Codex does
+not offer for v3 falls back to Codex's default with a warning in the log. The picker's previews load
+from the bots host's tailnet (`/vozes/`). The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
 is experimental in Codex. See [`apps/server/src/bots/voice/`](apps/server/src/bots/voice/)
 and `VoiceSessionRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts). On
 Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.

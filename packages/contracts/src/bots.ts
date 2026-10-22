@@ -406,6 +406,21 @@ export const BotPushDeviceUnregisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceUnr
  * The stream stays open until the client ends it (hanging up, or a read whose reply was spoken),
  * realtime closes, or it fails with a `BotsError` whose message the client shows.
  */
+
+/** The v3 voices Codex 0.162 realtime offers. The `voiceReaderVoice` server setting picks one. */
+export const REALTIME_VOICES = [
+  "juniper",
+  "maple",
+  "spruce",
+  "ember",
+  "vale",
+  "breeze",
+  "arbor",
+  "sol",
+  "cove",
+] as const;
+export const RealtimeVoice = Schema.Literals(REALTIME_VOICES);
+export type RealtimeVoice = typeof RealtimeVoice.Type;
 export const VoiceSessionId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
   Schema.brand("VoiceSessionId"),
 );

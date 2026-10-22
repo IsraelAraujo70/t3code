@@ -41,6 +41,7 @@ import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
 import { BotsImportSection } from "./BotsImportSection";
+import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import { confirmDestructive, modelLabel, reportCommandResult } from "./botsSettingsShared";
 
 /**
@@ -145,6 +146,7 @@ function BotsEnvironmentSettings({
           aboutMe={directory.aboutMe}
         />
       ) : null}
+      <VoiceSettingsSection environmentId={environmentId} connected={connected} />
       <BotsImportSection environmentId={environmentId} connected={connected} />
       {editor ? (
         <BotEditorDialog
