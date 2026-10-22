@@ -2,7 +2,8 @@
  * Compacts a bot's conversation once its context passes the threshold in botCompaction.ts. The
  * bot first gets a turn to save what it needs to its memory, which survives compaction because
  * it rides in the system prompt; when that turn completes, the server sends `/compact`. Both
- * queue behind whatever the bot is doing, and stable command ids keep each to one message.
+ * queue behind whatever the bot is doing, and stable command ids keep each to one message. One
+ * cycle runs at a time, however many runs complete past the threshold before it ends.
  */
 import {
   botThreadId,
@@ -22,7 +23,7 @@ import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { BotsStore } from "../BotsStore.ts";
-import { botCompactionStep, latestContextUsage } from "./botCompaction.ts";
+import { botCompactionPending, botCompactionStep, latestContextUsage } from "./botCompaction.ts";
 
 export class BotCompactionReactor extends Context.Service<
   BotCompactionReactor,
@@ -38,12 +39,17 @@ const make = Effect.gen(function* () {
 
   const react = Effect.fnUntraced(function* (threadId: ThreadId, run: OrchestrationV2Run) {
     if (run.status !== "completed") return;
-    const { thread, providerTurns } = yield* projections.getThreadRecords(threadId, [
+    const { thread, runs, providerTurns } = yield* projections.getThreadRecords(threadId, [
+      "runs",
       "providerTurns",
     ]);
     if (thread.deletedAt !== null || thread.archivedAt !== null) return;
     const providerThreadId = run.providerThreadId ?? thread.activeProviderThreadId;
-    const step = botCompactionStep(run, latestContextUsage(providerTurns, providerThreadId));
+    const step = botCompactionStep(
+      run,
+      latestContextUsage(providerTurns, providerThreadId),
+      botCompactionPending(runs),
+    );
     if (step === null) return;
     yield* engine.dispatch({
       type: "message.dispatch",

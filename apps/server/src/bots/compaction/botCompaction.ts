@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 /** Opens the id of every message the server sends a bot to save its memory and then compact. */
 export const BOT_COMPACTION_MESSAGE_PREFIX = "message:bot-compaction:";
@@ -67,15 +68,51 @@ const flushText = (usage: BotContextUsage) =>
     "Start no new work. Answer in one line.",
   ].join("\n\n");
 
+type CompactionRun = Pick<OrchestrationV2Run, "id" | "status" | "userMessageId" | "completedAt">;
+
+const unfinished = new Set<OrchestrationV2Run["status"]>([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * Pure. Whether a compaction cycle is already under way: a flush or `/compact` that has not
+ * finished, or a flush that completed last and whose `/compact` is not queued yet. Runs that were
+ * queued before the cycle started complete over the threshold too, and must not start another.
+ */
+export function botCompactionPending(runs: ReadonlyArray<CompactionRun>): boolean {
+  let latest: CompactionRun | undefined;
+  for (const run of runs) {
+    if (run.userMessageId.startsWith(BOT_COMPACTION_MESSAGE_PREFIX) && unfinished.has(run.status)) {
+      return true;
+    }
+    if (
+      run.status === "completed" &&
+      run.completedAt !== null &&
+      (latest?.completedAt == null ||
+        DateTime.toEpochMillis(run.completedAt) > DateTime.toEpochMillis(latest.completedAt))
+    ) {
+      latest = run;
+    }
+  }
+  if (latest === undefined || !latest.userMessageId.startsWith(FLUSH_PREFIX)) return false;
+  const compactId = `${COMPACT_PREFIX}${latest.id}`;
+  return !runs.some((run) => run.userMessageId === compactId);
+}
+
 /**
  * Pure. What a completed run of a bot's conversation calls for: after a run the flush started,
- * compact; after any other run past the threshold, a turn to save memory first. A run the
- * compaction started, or one that did not complete, calls for nothing, so the two can never
- * chain into a loop.
+ * compact; after any other run past the threshold, a turn to save memory first, unless a cycle
+ * is already pending. A run the compaction started, or one that did not complete, calls for
+ * nothing, so the two can never chain into a loop.
  */
 export function botCompactionStep(
   run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
   usage: BotContextUsage | null,
+  compactionPending: boolean,
 ): BotCompactionStep | null {
   if (run.status !== "completed") return null;
   if (run.userMessageId.startsWith(COMPACT_PREFIX)) return null;
@@ -88,6 +125,7 @@ export function botCompactionStep(
       text: "/compact",
     };
   }
+  if (compactionPending) return null;
   if (usage === null || usage.usedTokens < botCompactionThreshold(usage.maxTokens)) return null;
   return {
     kind: "flush",
