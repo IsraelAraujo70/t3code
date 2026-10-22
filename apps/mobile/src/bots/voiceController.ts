@@ -15,6 +15,9 @@ export const voiceController = createVoiceController({
   openPeer: openNativeVoicePeer,
   transport: createVoiceTransport(appAtomRegistry, botsEnvironment),
   onError: (description) => Dialog.alert("Falha na voz", description),
+  // Android's libwebrtc gathers stats on the network thread that also receives the voice's audio,
+  // so a live session never asks; it samples once as it ends.
+  liveStats: false,
 });
 
 /** Observes the app's single voice session. */

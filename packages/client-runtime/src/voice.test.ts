@@ -142,10 +142,11 @@ type TestPeer = VoicePeer & {
   readonly close: Mock<() => void>;
   readonly setMicrophoneEnabled: Mock<(enabled: boolean) => void>;
   readonly setVoiceAudible: Mock<(audible: boolean) => void>;
+  readonly sample: Mock<VoicePeer["sample"]>;
   send: (message: keyof typeof channel) => void;
 };
 
-function setup() {
+function setup(overrides: { readonly liveStats?: boolean } = {}) {
   const calls: string[] = [];
   const peers: TestPeer[] = [];
   const sessions: Array<{
@@ -170,11 +171,11 @@ function setup() {
       },
       setMicrophoneEnabled: vi.fn<(enabled: boolean) => void>(),
       setVoiceAudible: vi.fn<(audible: boolean) => void>(),
-      sample: async () => ({
+      sample: vi.fn<VoicePeer["sample"]>(async () => ({
         levels: { microphone: 0.5, voice: 0.25 },
         inbound: { packetsReceived: 50, concealedSamples: 0 },
         route: "wifi host/udp -> host/udp",
-      }),
+      })),
       close: vi.fn<() => void>(),
       send: (message) => listener(channel[message]),
     };
@@ -223,7 +224,7 @@ function setup() {
     ),
   };
   const onError = vi.fn();
-  const controller = createVoiceController({ openPeer, transport, onError });
+  const controller = createVoiceController({ openPeer, transport, onError, ...overrides });
   return { controller, peers, sessions, openPeer, transport, onError, calls, makePeer };
 }
 
@@ -516,6 +517,51 @@ describe("voice diagnostics", () => {
     const last = t.transport.report.mock.calls[1]![2];
     expect(last.at(-1)).toEqual(expect.objectContaining({ end: "ok" }));
     expect(last.some((entry) => entry.channel === "turn.done")).toBe(true);
+  });
+
+  it("without live stats, samples only as the session ends and reports that sample", async () => {
+    using _timers = fakeTimers();
+    const t = setup({ liveStats: false });
+    t.controller.start(conversation);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    const peer = t.peers[0]!;
+    peer.send("appended");
+    peer.send("voiceStarted");
+    await vi.advanceTimersByTimeAsync(VOICE_REPORT_INTERVAL_MS * 2);
+    expect(peer.sample).not.toHaveBeenCalled();
+    expect(t.controller.getLevels()).toEqual({ microphone: 0, voice: 0 });
+    t.controller.stop();
+    expect(t.controller.getSnapshot()).toBeNull();
+    expect(peer.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    await flush();
+    expect(peer.sample).toHaveBeenCalledTimes(1);
+    expect(peer.close).toHaveBeenCalled();
+    const entries = t.transport.report.mock.calls.flatMap((call) => call[2]);
+    expect(entries.slice(-3)).toEqual([
+      expect.objectContaining({ route: "wifi host/udp -> host/udp" }),
+      expect.objectContaining({ final: true, packetsReceived: 50, concealedSamples: 0 }),
+      expect.objectContaining({ end: "ok" }),
+    ]);
+    expect(entries.some((entry) => entry.channel === "turn.created")).toBe(true);
+  });
+
+  it("releases the peer when the final sample never answers", async () => {
+    using _timers = fakeTimers();
+    const t = setup({ liveStats: false });
+    t.controller.start(conversation);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    const peer = t.peers[0]!;
+    peer.sample.mockReturnValue(new Promise(() => {}));
+    t.controller.stop();
+    expect(peer.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(peer.close).toHaveBeenCalled();
+    const entries = t.transport.report.mock.calls.flatMap((call) => call[2]);
+    expect(entries.at(-1)).toEqual(expect.objectContaining({ end: "ok" }));
   });
 
   it("keeps a failed report from affecting the session", async () => {

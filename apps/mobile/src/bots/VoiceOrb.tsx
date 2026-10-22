@@ -3,7 +3,7 @@ import { useEffect, type ReactNode } from "react";
 import { View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { AppText as Text } from "../components/ui/AppText";
-import { voiceController, useVoiceSnapshot } from "./voiceController";
+import { useVoiceSnapshot } from "./voiceController";
 
 type Props = {
   readonly environmentId: EnvironmentId;
@@ -21,24 +21,11 @@ export function VoiceOrb({ environmentId, threadId, children }: Props) {
   const phase = active ? snapshot.phase : null;
   const muted = active && snapshot.muted;
   const scale = useSharedValue(1);
+  // The phase sizes the orb: on Android a live session reads no audio levels (`liveStats`).
+  const target = phase === "speaking" ? 1.2 : phase === "listening" && !muted ? 1 : 0.9;
   useEffect(() => {
-    let previous: number | null = null;
-    const update = () => {
-      const levels = voiceController.getLevels();
-      const level =
-        phase === "speaking"
-          ? levels.voice
-          : phase === "listening" && !muted
-            ? levels.microphone
-            : 0;
-      const next = 1 + level * 0.3;
-      if (next === previous) return;
-      previous = next;
-      scale.set(withTiming(next, { duration: 100 }));
-    };
-    update();
-    return voiceController.subscribeLevels(update);
-  }, [phase, muted, scale]);
+    scale.set(withTiming(target, { duration: 250 }));
+  }, [target, scale]);
   const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const label = muted
     ? "Microfone desligado"

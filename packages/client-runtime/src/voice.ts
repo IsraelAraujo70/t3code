@@ -394,7 +394,10 @@ export interface VoiceController {
   /** The current session; a new object on every change. */
   readonly getSnapshot: () => VoiceSnapshot | null;
   readonly subscribe: (listener: () => void) => () => void;
-  /** Polled while a session is live; zeros otherwise. A new object on every change. */
+  /**
+   * Polled while a session is live when `liveStats` is on; zeros otherwise. A new object on every
+   * change.
+   */
   readonly getLevels: () => VoiceLevels;
   readonly subscribeLevels: (listener: () => void) => () => void;
 }
@@ -411,6 +414,12 @@ export interface VoiceControllerOptions {
    */
   readonly speechEndGraceMs?: number;
   readonly levelIntervalMs?: number;
+  /**
+   * Whether a live session polls `sample` for levels and diagnostics. Defaults to true. Off, the
+   * levels stay at zero and the session samples once as it ends, so its report still carries the
+   * received audio's totals.
+   */
+  readonly liveStats?: boolean;
   /** How often a live session sends its diagnostics. Defaults to `VOICE_REPORT_INTERVAL_MS`. */
   readonly reportIntervalMs?: number;
 }
@@ -423,6 +432,8 @@ export interface VoiceControllerOptions {
 export const VOICE_REPORT_INTERVAL_MS = 5_000;
 /** A batch is sent early at this size; the contract caps a batch at 1,000 entries. */
 const REPORT_BATCH = 500;
+/** How long an ending session waits for its last sample before releasing the peer anyway. */
+const FINAL_SAMPLE_TIMEOUT_MS = 3_000;
 
 const SILENCE: VoiceLevels = { microphone: 0, voice: 0 };
 
@@ -496,17 +507,46 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     session.diagnostics.push({ t: Date.now(), ...entry });
     if (session.diagnostics.length >= REPORT_BATCH) report(session);
   };
+  const noteSample = (session: Session, sample: VoiceSample) => {
+    if (sample.route !== session.route) {
+      session.route = sample.route;
+      if (sample.route !== null) note(session, { route: sample.route });
+    }
+  };
   const finish = (session: Session, error: string | null) => {
     if (current !== session) return;
-    note(session, { end: error ?? "ok" });
-    report(session);
     current = null;
     for (const timer of session.timers) clearTimeout(timer);
-    session.peer?.close();
     session.endStream?.();
     setLevels(SILENCE);
     emit(listeners);
     if (error !== null) options.onError(error);
+    const peer = session.peer;
+    const end = () => {
+      note(session, { end: error ?? "ok" });
+      report(session);
+      peer?.close();
+    };
+    if (peer === null || options.liveStats !== false || session.state.connection !== "live") {
+      end();
+      return;
+    }
+    peer.setMicrophoneEnabled(false);
+    peer.setVoiceAudible(false);
+    let ended = false;
+    const endOnce = () => {
+      if (ended) return;
+      ended = true;
+      clearTimeout(timer);
+      end();
+    };
+    const timer = setTimeout(endOnce, FINAL_SAMPLE_TIMEOUT_MS);
+    void peer.sample().then((sample) => {
+      if (ended) return;
+      noteSample(session, sample);
+      note(session, { final: true, ...sample.inbound });
+      endOnce();
+    }, endOnce);
   };
   const apply = (session: Session, input: VoiceInput) => {
     if (current !== session) return;
@@ -546,10 +586,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
           const answered = Date.now();
           // `lag`: how late the poll ran; `took`: how long `getStats` took.
           note(session, { lag: asked - due, took: answered - asked, ...next.inbound });
-          if (next.route !== session.route) {
-            session.route = next.route;
-            if (next.route !== null) note(session, { route: next.route });
-          }
+          noteSample(session, next);
           if (
             answered - session.reportedAt >=
             (options.reportIntervalMs ?? VOICE_REPORT_INTERVAL_MS)
@@ -614,7 +651,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       await options.transport.ready(session.target.environmentId, answer.sessionId);
       if (!live()) return;
       apply(session, { type: "connected" });
-      pollLevels(session, peer);
+      if (options.liveStats !== false) pollLevels(session, peer);
     } catch (error) {
       finish(session, error instanceof Error ? error.message : "The voice session failed.");
     }
