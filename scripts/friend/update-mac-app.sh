@@ -76,11 +76,27 @@ if [[ "$dry_run" == 1 ]]; then
   exit 0
 fi
 osascript -e 'tell application "T3 Code (Beta)" to quit'
-for ((attempt=0; attempt<30; attempt++)); do
+for ((attempt=0; attempt<10; attempt++)); do
   if ! pgrep -x 'T3 Code \(Beta\)' >/dev/null; then break; fi
   sleep 1
 done
-if pgrep -x 'T3 Code \(Beta\)' >/dev/null; then echo 'ERROR: app did not quit'; exit 1; fi
+if pgrep -x 'T3 Code \(Beta\)' >/dev/null; then
+  # AppleScript can return success over SSH while the main app stays alive.
+  main_pids=$(pgrep -x -P 1 'T3 Code \(Beta\)' || test "$?" -eq 1)
+  while IFS= read -r main_pid; do
+    [[ -n "$main_pid" ]] || continue
+    main_command=$(ps -p "$main_pid" -o command=) || continue
+    if [[ "$main_command" == '/Applications/T3 Code (Beta).app/Contents/MacOS/T3 Code (Beta)' ]]; then
+      echo "Sending SIGTERM to verified main app PID $main_pid"
+      kill -TERM "$main_pid"
+    fi
+  done <<< "$main_pids"
+  for ((attempt=0; attempt<20; attempt++)); do
+    if ! pgrep -x 'T3 Code \(Beta\)' >/dev/null; then break; fi
+    sleep 1
+  done
+fi
+if pgrep -x 'T3 Code \(Beta\)' >/dev/null; then echo 'ERROR: app did not quit after AppleScript and SIGTERM grace periods'; exit 1; fi
 if [[ -e "$app" ]]; then
   backup="$HOME/t3-app-backup-$(date +%Y%m%d%H%M%S).app"
   [[ ! -e "$backup" ]] || { echo "ERROR: backup already exists: $backup"; exit 1; }
