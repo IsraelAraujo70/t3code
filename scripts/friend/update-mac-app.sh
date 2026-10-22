@@ -39,7 +39,7 @@ cd "$HOME/Projetos/t3code-friend"
 [[ -z "$(git status --porcelain)" ]] || { echo 'ERROR: Mac repo has uncommitted changes'; exit 1; }
 app='/Applications/T3 Code (Beta).app'
 marker="$HOME/.t3-mac-app-commit"
-if [[ "$dry_run" == 0 && -d "$app" && -f "$marker" && "$(cat "$marker")" == "$commit" && -f "$app/Contents/Resources/friend-commit" && "$(cat "$app/Contents/Resources/friend-commit")" == "$commit" ]]; then
+if [[ "$dry_run" == 0 && -d "$app" && -f "$marker" && "$(cat "$marker")" == "$commit" ]]; then
   echo "Already installed at $commit; skipping build and install"
   exit 0
 fi
@@ -89,7 +89,6 @@ if [[ -e "$app" ]]; then
 fi
 ditto "$source_app" "$app"
 xattr -dr com.apple.quarantine "$app"
-printf '%s\n' "$commit" > "$app/Contents/Resources/friend-commit"
 cmp "$source_app/Contents/Resources/app.asar" "$app/Contents/Resources/app.asar"
 open "$app"
 for ((attempt=0; attempt<30; attempt++)); do

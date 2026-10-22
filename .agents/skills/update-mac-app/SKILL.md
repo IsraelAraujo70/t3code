@@ -24,8 +24,8 @@ detached in `~/Projetos/t3code-friend`, and builds the arm64 DMG. It logs to
 
 A real run quits the app, backs it up, installs the DMG's app with `ditto`, removes
 quarantine, opens it, compares the installed app.asar with the DMG, and verifies
-the process is running. It records the commit in `~/.t3-mac-app-commit` and inside
-the installed app. Matching markers skip subsequent builds and installs. It keeps
+the process is running. It records the commit in `~/.t3-mac-app-commit` after verifying the process.
+A matching marker skips subsequent builds and installs. It keeps
 the two newest timestamp-named `~/t3-app-backup-*.app` backups.
 
 `--dry-run` still checks out and builds, even when the marker matches, and mounts
