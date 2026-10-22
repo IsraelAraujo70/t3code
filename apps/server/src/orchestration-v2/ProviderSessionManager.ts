@@ -173,6 +173,11 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
+    /**
+     * Fork (friend): leaves the session live while a turn or background work runs on it, or when
+     * activity lands during the release; `isLive` tells the caller which happened.
+     */
+    readonly onlyIfIdle?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -2347,7 +2352,22 @@ export const layerWithOptions = (
               ),
             ),
         ),
-        release: releaseEntry,
+        // Fork (friend): an idle-only release keeps a session whose turn or background work runs.
+        release: (input) =>
+          input.onlyIfIdle !== true
+            ? releaseEntry(input)
+            : Effect.gen(function* () {
+                const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+                if (entry === undefined || entry.busyTurns.size > 0) return;
+                const pending =
+                  entry.runtime.hasPendingBackgroundWork === undefined
+                    ? false
+                    : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                        Effect.catchCause(() => Effect.succeed(true)),
+                      );
+                if (pending) return;
+                yield* releaseEntry({ ...input, onlyIfIdleGeneration: entry.idleGeneration });
+              }),
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
             const key = sessionKey(input.providerSessionId);

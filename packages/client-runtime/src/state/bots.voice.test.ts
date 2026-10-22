@@ -46,8 +46,11 @@ const session = (operate: boolean): AuthSessionState => ({
   permissions: operate ? [AuthOrchestrationOperateScope] : [],
 });
 
-/** Opens a read session through the transport; the fake server answers and ends it. */
-const read = Effect.fn(function* (operate: boolean) {
+/** Opens a read session through the transport; the fake server sends `sent` at once and ends. */
+const read = Effect.fn(function* (
+  operate: boolean,
+  sent: ReadonlyArray<VoiceSessionEvent> = [answer],
+) {
   const reads: unknown[] = [];
   const rpcSession = {
     client: {
@@ -55,9 +58,8 @@ const read = Effect.fn(function* (operate: boolean) {
         Stream.fromEffect(
           Effect.sync(() => {
             reads.push(input);
-            return answer;
           }),
-        ),
+        ).pipe(Stream.flatMap(() => Stream.fromIterable(sent))),
     },
   } as unknown as RpcSession;
   const supervisor = {
@@ -88,6 +90,7 @@ const read = Effect.fn(function* (operate: boolean) {
           {
             onAnswer: (value) => events.push(value),
             onBot: (working) => events.push({ working }),
+            onVoiceChange: () => events.push("voice-changed"),
             onEnd: (error) => {
               events.push({ end: error });
               resolve();
@@ -109,9 +112,25 @@ describe("voice transport", () => {
             threadId: "thread-1",
             mode: { type: "read", messageId: "message-1" },
             sdp: "offer-sdp",
+            liveVoiceChange: true,
           },
         ]);
         expect(events).toEqual([answer, { end: null }]);
+      }),
+    ),
+  );
+
+  it.effect("hears every event even when a later one arrives in the same batch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { events } = yield* read(true, [
+          answer,
+          { type: "bot", working: true },
+          { type: "voice-changed" },
+          { type: "bot", working: true },
+          { type: "bot", working: false },
+        ]);
+        expect(events).toEqual([answer, { working: false }, "voice-changed", { end: null }]);
       }),
     ),
   );

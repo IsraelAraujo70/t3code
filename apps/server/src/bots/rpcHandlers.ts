@@ -11,6 +11,7 @@ import { RpcGroup } from "effect/rpc";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
+import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 
 /** Tags ws.ts omits from upstream's handler group; their handlers come from `layer`. */
@@ -21,18 +22,23 @@ export const ServerBotsRpcGroup = RpcGroup.make(...BOTS_RPCS)
   .middleware(RpcScopeAuthorization)
   .middleware(RpcInstrumentation);
 
-/** The handlers, with Dictation and VoiceSessions left to the caller (tests mock them). */
+/**
+ * The handlers, with Dictation, VoiceSessions and BotSessionRestart left to the caller (tests mock
+ * them).
+ */
 export const layerHandlers = ServerBotsRpcGroup.toLayer(
   Effect.gen(function* () {
     const bots = yield* BotsService.BotsService;
     const dictation = yield* Dictation.Dictation;
     const voice = yield* VoiceSession.VoiceSessions;
+    const restarts = yield* BotSessionRestart.BotSessionRestart;
     return ServerBotsRpcGroup.of({
       [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
       [BOTS_WS_METHODS.botUpdate]: (input) => bots.updateBot(input),
       [BOTS_WS_METHODS.botDelete]: (input) => bots.deleteBot(input),
       [BOTS_WS_METHODS.botResetConversation]: (input) => bots.resetConversation(input),
+      [BOTS_WS_METHODS.botRestartSession]: (input) => restarts.restart(input),
       [BOTS_WS_METHODS.memoryCreate]: (input) => bots.createMemory(input, "user"),
       [BOTS_WS_METHODS.memoryUpdate]: (input) => bots.updateMemory(input),
       [BOTS_WS_METHODS.memoryDelete]: (input) => bots.deleteMemory(input),
@@ -47,6 +53,7 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.pushDeviceUnregister]: (input) => bots.unregisterPushDevice(input),
       [BOTS_WS_METHODS.voiceSession]: (input) => voice.session(input),
       [BOTS_WS_METHODS.voiceReady]: (input) => voice.ready(input),
+      [BOTS_WS_METHODS.voiceReconnect]: (input) => voice.reconnect(input),
       [BOTS_WS_METHODS.voiceReport]: (input) => voice.report(input),
     });
   }),
@@ -55,4 +62,5 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
 export const layer = layerHandlers.pipe(
   Layer.provide(Dictation.layer),
   Layer.provide(VoiceSession.layerLive),
+  Layer.provide(BotSessionRestart.layerLive),
 );

@@ -107,7 +107,9 @@ export type VoiceInput =
   | { readonly type: "bot"; readonly working: boolean }
   | { readonly type: "muted"; readonly muted: boolean }
   /** The audio of voice turn `turn` has had time to play. */
-  | { readonly type: "played-out"; readonly turn: number };
+  | { readonly type: "played-out"; readonly turn: number }
+  /** A new peer replaces the current one, to hear a new voice; `connected` follows. */
+  | { readonly type: "reconnecting" };
 
 /** `listening` while the user may talk (or is talking), `waiting` while the agent works. */
 export type VoicePhase = "connecting" | "listening" | "waiting" | "speaking";
@@ -132,6 +134,16 @@ export function voiceReducer(state: VoiceState, input: VoiceInput): VoiceState {
   switch (input.type) {
     case "connected":
       return { ...state, connection: "live" };
+    case "reconnecting":
+      // The old peer's turns end with it.
+      return {
+        ...state,
+        connection: "connecting",
+        userSpeaking: false,
+        expected: null,
+        voiceTurn: null,
+        playingOut: null,
+      };
     case "muted":
       return {
         ...state,
@@ -189,6 +201,19 @@ export function voiceAudible(state: VoiceState): boolean {
     state.connection === "live" &&
     !state.userSpeaking &&
     (state.voiceTurn === "ack" || state.voiceTurn === "reply" || state.playingOut !== null)
+  );
+}
+
+/**
+ * Whether the voice can be swapped without cutting anything the user hears or says. Text sent for
+ * the voice to speak needs no wait: the server speaks it with the new voice.
+ */
+export function voiceSwappable(state: VoiceState): boolean {
+  return (
+    state.connection === "live" &&
+    !state.userSpeaking &&
+    state.voiceTurn === null &&
+    state.playingOut === null
   );
 }
 
@@ -355,8 +380,9 @@ export interface VoiceTarget {
 export interface VoiceTransport {
   /**
    * Opens the session stream. `onAnswer` fires once; `onBot` on each change of the agent's
-   * activity; `onEnd` once when the server ends the session (`null`) or fails it (a message the
-   * user can read). The returned function ends the stream early, after which none fires.
+   * activity; `onVoiceChange` when the server's voice setting changed, asking for `reconnect`;
+   * `onEnd` once when the server ends the session (`null`) or fails it (a message the user can
+   * read). The returned function ends the stream early, after which none fires.
    */
   readonly session: (
     target: VoiceTarget,
@@ -364,11 +390,18 @@ export interface VoiceTransport {
     handlers: {
       readonly onAnswer: (answer: VoiceSessionAnswer) => void;
       readonly onBot: (working: boolean) => void;
+      readonly onVoiceChange: () => void;
       readonly onEnd: (error: string | null) => void;
     },
   ) => () => void;
   /** Rejects on failure. */
   readonly ready: (environmentId: EnvironmentId, sessionId: VoiceSessionId) => Promise<void>;
+  /** A new peer's offer for a live session; resolves with its answer SDP, rejects on failure. */
+  readonly reconnect: (
+    environmentId: EnvironmentId,
+    sessionId: VoiceSessionId,
+    sdp: string,
+  ) => Promise<string>;
   /** Sends diagnostics to the server log. Rejects on failure; the controller ignores that. */
   readonly report: (
     environmentId: EnvironmentId,
@@ -475,7 +508,13 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     readonly target: VoiceTarget;
     state: VoiceState;
     snapshot: VoiceSnapshot;
+    /** The peer the session hears and plays; null while a reconnect replaces it. */
     peer: VoicePeer | null;
+    /** The peer a reconnect is replacing, closed once the server has let it go. */
+    retiring: VoicePeer | null;
+    /** The server's voice changed since the last swap began; it waits for `voiceSwappable`. */
+    voiceChanged: boolean;
+    swapping: boolean;
     endStream: (() => void) | null;
     readonly timers: Set<ReturnType<typeof setTimeout>>;
     sessionId: VoiceSessionId | null;
@@ -522,6 +561,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     emit(listeners);
     if (error !== null) options.onError(error);
     const peer = session.peer;
+    session.retiring?.close();
     const end = () => {
       note(session, { end: error ?? "ok" });
       report(session);
@@ -573,12 +613,86 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       session.timers.add(timer);
     }
     if (state.readDone && !previous.readDone) finish(session, null);
+    else swapWhenQuiet(session);
   };
-  const pollLevels = (session: Session, peer: VoicePeer) => {
+  const swapWhenQuiet = (session: Session) => {
+    if (
+      current === session &&
+      session.voiceChanged &&
+      !session.swapping &&
+      voiceSwappable(session.state)
+    )
+      void swapVoice(session);
+  };
+  /** Hands the peer's data-channel events to the session while it is the session's peer. */
+  const hear = (session: Session, peer: VoicePeer) =>
+    peer.onChannelMessage((data) => {
+      if (session.peer !== peer) return;
+      const message = parseChannelMessage(data);
+      const type =
+        typeof message === "object" && message !== null && "type" in message ? message.type : null;
+      note(session, { channel: typeof type === "string" ? type.slice(0, 64) : "?" });
+      const event = voiceChannelEventOf(message);
+      if (event !== null) apply(session, event);
+    });
+  /**
+   * Realtime fixes its voice at the start, so a new voice needs a new peer: the old one goes quiet,
+   * the server stops its realtime session and starts one in the new voice for the new peer.
+   */
+  const swapVoice = async (session: Session) => {
+    const live = () => current === session;
+    const sessionId = session.sessionId;
+    if (sessionId === null) return;
+    session.voiceChanged = false;
+    session.swapping = true;
+    const old = session.peer;
+    session.peer = null;
+    session.retiring = old;
+    old?.setMicrophoneEnabled(false);
+    old?.setVoiceAudible(false);
+    note(session, { voice: "swap" });
+    apply(session, { type: "reconnecting" });
+    let next: VoicePeer | null = null;
+    try {
+      next = await options.openPeer();
+      if (!live()) return;
+      next.setMicrophoneEnabled(false);
+      next.setVoiceAudible(false);
+      hear(session, next);
+      const answer = await options.transport.reconnect(
+        session.target.environmentId,
+        sessionId,
+        await next.createOffer(),
+      );
+      if (!live()) return;
+      old?.close();
+      session.retiring = null;
+      session.peer = next;
+      await next.accept(answer);
+      if (!live()) return;
+      await options.transport.ready(session.target.environmentId, sessionId);
+      if (!live()) return;
+      session.swapping = false;
+      note(session, { voice: "swapped" });
+      apply(session, { type: "connected" });
+    } catch (error) {
+      finish(session, error instanceof Error ? error.message : "The voice could not change.");
+    } finally {
+      // A session that ended before adopting the new peer never closes it.
+      if (next !== null && session.peer !== next) next.close();
+    }
+  };
+  /** Samples whichever peer the session has at each poll, so a reconnect's peer is followed. */
+  const pollLevels = (session: Session) => {
     const interval = options.levelIntervalMs ?? 100;
     const due = Date.now() + interval;
     const timer = setTimeout(() => {
       session.timers.delete(timer);
+      const peer = session.peer;
+      if (peer === null) {
+        pollLevels(session);
+        return;
+      }
       const asked = Date.now();
       void peer.sample().then(
         (next) => {
@@ -597,10 +711,10 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
           setLevels(
             voiceAudible(session.state) ? levels : { microphone: levels.microphone, voice: 0 },
           );
-          pollLevels(session, peer);
+          pollLevels(session);
         },
         () => {
-          if (current === session) pollLevels(session, peer);
+          if (current === session) pollLevels(session);
         },
       );
     }, interval);
@@ -617,16 +731,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       session.peer = peer;
       peer.setMicrophoneEnabled(false);
       peer.setVoiceAudible(false);
-      peer.onChannelMessage((data) => {
-        const message = parseChannelMessage(data);
-        const type =
-          typeof message === "object" && message !== null && "type" in message
-            ? message.type
-            : null;
-        note(session, { channel: typeof type === "string" ? type.slice(0, 64) : "?" });
-        const event = voiceChannelEventOf(message);
-        if (event !== null) apply(session, event);
-      });
+      hear(session, peer);
       const sdp = await peer.createOffer();
       if (!live()) return;
       // Settles only while the session is live: ending it unsubscribes every handler.
@@ -639,6 +744,11 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
             resolve(value);
           },
           onBot: (working) => apply(session, { type: "bot", working }),
+          onVoiceChange: () => {
+            if (session.target.mode.type !== "conversation") return;
+            session.voiceChanged = true;
+            swapWhenQuiet(session);
+          },
           onEnd: (error) => {
             if (answered) finish(session, error);
             else reject(new Error(error ?? "The voice session ended before it answered."));
@@ -650,8 +760,8 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       if (!live()) return;
       await options.transport.ready(session.target.environmentId, answer.sessionId);
       if (!live()) return;
+      if (options.liveStats !== false) pollLevels(session);
       apply(session, { type: "connected" });
-      if (options.liveStats !== false) pollLevels(session, peer);
     } catch (error) {
       finish(session, error instanceof Error ? error.message : "The voice session failed.");
     }
@@ -667,6 +777,9 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       state,
       snapshot: { target, phase: voicePhase(state), muted: false },
       peer: null,
+      retiring: null,
+      voiceChanged: false,
+      swapping: false,
       endStream: null,
       timers: new Set(),
       sessionId: null,

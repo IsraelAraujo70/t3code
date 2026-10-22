@@ -1,11 +1,14 @@
 import {
   BOTS_WS_METHODS,
+  type VoiceSessionAnswer,
+  type VoiceSessionEvent,
   type VoiceSessionInput,
   type DictationTranscribeInput,
   type DictationTranscribeResult,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -47,7 +50,12 @@ export function createBotsEnvironmentAtoms<R, E>(
   const command = <
     Tag extends (typeof BOTS_WS_METHODS)[Exclude<
       keyof typeof BOTS_WS_METHODS,
-      "directorySubscribe" | "dictationTranscribe" | "voiceSession" | "voiceReady" | "voiceReport"
+      | "directorySubscribe"
+      | "dictationTranscribe"
+      | "voiceSession"
+      | "voiceReady"
+      | "voiceReconnect"
+      | "voiceReport"
     >],
   >(
     label: string,
@@ -69,6 +77,7 @@ export function createBotsEnvironmentAtoms<R, E>(
     updateBot: command("update-bot", BOTS_WS_METHODS.botUpdate),
     deleteBot: command("delete-bot", BOTS_WS_METHODS.botDelete),
     resetConversation: command("reset-conversation", BOTS_WS_METHODS.botResetConversation),
+    restartSession: command("restart-session", BOTS_WS_METHODS.botRestartSession),
     createMemory: command("create-memory", BOTS_WS_METHODS.memoryCreate),
     updateMemory: command("update-memory", BOTS_WS_METHODS.memoryUpdate),
     deleteMemory: command("delete-memory", BOTS_WS_METHODS.memoryDelete),
@@ -88,13 +97,15 @@ export function createBotsEnvironmentAtoms<R, E>(
     /**
      * One voice session. Mounting it opens the session (the server starts Codex); unmounting ends
      * the stream at once and the server closes the session. Never replayed on reconnect. The atom
-     * holds the latest event only: the server sends `bot` events after `ready`, so they never
-     * replace the answer before the client reads it.
+     * holds only the latest value, so the stream is folded into `VoiceSessionProgress`: an event
+     * that arrives in the same batch as a later one still counts.
      */
     voiceSession: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:bots:voice-session",
       subscribe: (input: VoiceSessionInput) =>
-        runStreamGuarded(BOTS_WS_METHODS.voiceSession, input),
+        runStreamGuarded(BOTS_WS_METHODS.voiceSession, input).pipe(
+          Stream.mapAccum((): VoiceSessionProgress | null => null, foldVoiceSession),
+        ),
       idleTtlMs: 0,
       // The key carries the SDP offer.
       sensitiveInput: true,
@@ -104,6 +115,10 @@ export function createBotsEnvironmentAtoms<R, E>(
       label: "environment-command:bots:voice-ready",
       tag: BOTS_WS_METHODS.voiceReady,
     }),
+    voiceReconnect: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:voice-reconnect",
+      tag: BOTS_WS_METHODS.voiceReconnect,
+    }),
     voiceReport: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:bots:voice-report",
       tag: BOTS_WS_METHODS.voiceReport,
@@ -111,33 +126,59 @@ export function createBotsEnvironmentAtoms<R, E>(
   };
 }
 
+/** A voice session's stream so far. */
+export interface VoiceSessionProgress {
+  readonly answer: VoiceSessionAnswer;
+  /** The agent's work as last reported; null before the first report. */
+  readonly working: boolean | null;
+  /** How many `voice-changed` events arrived. */
+  readonly voiceChanges: number;
+}
+
+/** Folds one event in; nothing is emitted before the answer, which the server sends first. */
+export function foldVoiceSession(
+  progress: VoiceSessionProgress | null,
+  event: VoiceSessionEvent,
+): readonly [VoiceSessionProgress | null, ReadonlyArray<VoiceSessionProgress>] {
+  const next =
+    event.type === "answer"
+      ? { answer: event, working: null, voiceChanges: 0 }
+      : progress === null
+        ? null
+        : event.type === "bot"
+          ? { ...progress, working: event.working }
+          : { ...progress, voiceChanges: progress.voiceChanges + 1 };
+  return [next, next === null ? [] : [next]];
+}
+
 /** Voice signaling over one client's bots atoms. */
 export function createVoiceTransport(
   registry: AtomRegistry.AtomRegistry,
   bots: Pick<
     ReturnType<typeof createBotsEnvironmentAtoms>,
-    "voiceSession" | "voiceReady" | "voiceReport"
+    "voiceSession" | "voiceReady" | "voiceReconnect" | "voiceReport"
   >,
 ): VoiceTransport {
   return {
-    session: (target, sdp, { onAnswer, onBot, onEnd }) => {
+    session: (target, sdp, { onAnswer, onBot, onVoiceChange, onEnd }) => {
       const atom = bots.voiceSession({
         environmentId: target.environmentId,
-        input: { threadId: target.threadId, mode: target.mode, sdp },
+        input: { threadId: target.threadId, mode: target.mode, sdp, liveVoiceChange: true },
       });
       let ended = false;
-      let lastEvent: unknown = null;
+      let seen: VoiceSessionProgress | null = null;
       const unsubscribe = registry.subscribe(
         atom,
         (result) => {
           if (ended) return;
           if (AsyncResult.isSuccess(result)) {
-            const event = result.value;
-            if (event !== lastEvent) {
-              lastEvent = event;
-              if (event.type === "answer") onAnswer(event);
-              else onBot(event.working);
-            }
+            const progress = result.value;
+            const previous = seen;
+            seen = progress;
+            if (previous === null) onAnswer(progress.answer);
+            if (progress.working !== null && progress.working !== previous?.working)
+              onBot(progress.working);
+            if (progress.voiceChanges > (previous?.voiceChanges ?? 0)) onVoiceChange();
             if (result.waiting) return;
             ended = true;
             onEnd(null);
@@ -162,6 +203,17 @@ export function createVoiceTransport(
         throw new Error(
           failureMessage(squashAtomCommandFailure(result)) ?? "The voice session failed.",
         );
+    },
+    reconnect: async (environmentId, sessionId, sdp) => {
+      const result = await runAtomCommand(registry, bots.voiceReconnect, {
+        environmentId,
+        input: { sessionId, sdp },
+      });
+      if (result._tag === "Failure")
+        throw new Error(
+          failureMessage(squashAtomCommandFailure(result)) ?? "The voice could not change.",
+        );
+      return result.value.sdp;
     },
     report: async (environmentId, sessionId, entries) => {
       const result = await runAtomCommand(registry, bots.voiceReport, {

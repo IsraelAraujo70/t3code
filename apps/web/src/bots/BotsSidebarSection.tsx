@@ -48,7 +48,7 @@ import {
   type BotRowModel,
   type BotThreadShell,
 } from "./BotsSidebarSection.logic";
-import { confirmDestructive } from "./botsSettingsShared";
+import { confirmDestructive, useRestartBotSession } from "./botsSettingsShared";
 
 const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
 const BOTS_TAB_KEY = "t3code:bots:sidebar-tab";
@@ -352,6 +352,8 @@ export function BotsSidebarSection(props: {
     label: "bot section delete",
   });
   const canArrange = useAtomValue(botsEnvironment.arrange.permissionAtom(environmentId));
+  const canRestart = useAtomValue(botsEnvironment.restartSession.permissionAtom(environmentId));
+  const restartSession = useRestartBotSession();
   const canEditSections = useAtomValue(botsEnvironment.createSection.permissionAtom(environmentId));
   // A move shows at once and holds until the server's next directory replaces it: it is kept
   // with the directory it was made from and ignored once another one arrives.
@@ -455,6 +457,12 @@ export function BotsSidebarSection(props: {
           ? { id: "reopen", label: "Reopen" }
           : { id: "settle", label: "Settle", disabled: row.status.kind === "working" },
         {
+          id: "restart",
+          label: "Restart session",
+          // Cutting a running turn short would lose its work; the server refuses it too.
+          disabled: !canRestart || row.status.kind === "working",
+        },
+        {
           id: "move",
           label: "Move to",
           disabled: !canArrange,
@@ -478,7 +486,9 @@ export function BotsSidebarSection(props: {
     if (clicked === null) return;
     if (clicked === "settle") void settleThread(row.threadRef);
     else if (clicked === "reopen") void unsettleThread(row.threadRef);
-    else if (clicked === "move:new") setCreating({ moveBot: row.bot.id });
+    else if (clicked === "restart") {
+      if (environmentId !== null) void restartSession(environmentId, row.bot);
+    } else if (clicked === "move:new") setCreating({ moveBot: row.bot.id });
     else if (clicked.startsWith("move:")) {
       const target = clicked.slice("move:".length);
       const base = baseArrangement();

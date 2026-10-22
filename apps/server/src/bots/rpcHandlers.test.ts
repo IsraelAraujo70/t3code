@@ -15,6 +15,7 @@ import { rpcInstrumentationLayer } from "../observability/RpcInstrumentation.ts"
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
 import * as BotsRpc from "./rpcHandlers.ts";
+import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 
 const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<string>) =>
@@ -43,6 +44,7 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
           ),
           Layer.provide(Layer.mock(Dictation.Dictation)({})),
           Layer.provide(Layer.mock(VoiceSession.VoiceSessions)({})),
+          Layer.provide(Layer.mock(BotSessionRestart.BotSessionRestart)({})),
         ),
         RpcAuthorization.layer(scopes),
         rpcInstrumentationLayer,

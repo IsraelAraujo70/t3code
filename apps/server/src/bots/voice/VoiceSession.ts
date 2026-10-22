@@ -2,8 +2,8 @@
  * Voice sessions: a live spoken conversation with a thread, or one assistant reply read aloud,
  * through Codex realtime. See `VoiceSessionRpc` in the contracts for the protocol. The realtime
  * voice is only a receptionist: the thread's agent answers, and the session holds only what the user
- * said and the agent has not received yet. One app-server and one realtime session per session, both
- * closed when its stream ends.
+ * said and the agent has not received yet. One app-server per session, closed when its stream ends;
+ * one realtime session at a time on it, replaced when a conversation's voice changes.
  */
 import {
   BotsError,
@@ -15,6 +15,8 @@ import {
   type ThreadId,
   VoiceSessionId,
   type VoiceSessionEvent,
+  type VoiceReconnectAnswer,
+  type VoiceReconnectInput,
   type VoiceReportInput,
   type VoiceSessionInput,
   type VoiceSessionRef,
@@ -24,12 +26,13 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 
@@ -72,6 +75,10 @@ export class VoiceSessions extends Context.Service<
     /** The answer once realtime is ready, then agent activity until the session ends. */
     readonly session: (input: VoiceSessionInput) => Stream.Stream<VoiceSessionEvent, BotsError>;
     readonly ready: (input: VoiceSessionRef) => Effect.Effect<VoiceSessionRef, BotsError>;
+    /** A live conversation's realtime session, replaced with one in the current voice. */
+    readonly reconnect: (
+      input: VoiceReconnectInput,
+    ) => Effect.Effect<VoiceReconnectAnswer, BotsError>;
     /** Writes what a client observed to the server log, to diagnose audio it did not hear. */
     readonly report: (input: VoiceReportInput) => Effect.Effect<void>;
   }
@@ -181,6 +188,8 @@ export const WAITING_ON_USER_SPEECH = voiceReplySpeech(
  * over it, until something else ends the realtime turn) and only marks where the utterance ends.
  */
 export interface Handoff {
+  /** The realtime session is being replaced: nothing is appended until the new one connects. */
+  readonly paused: boolean;
   /** The thread has an unsettled run, or an utterance is being relayed. */
   readonly running: boolean;
   readonly voiceTalking: boolean;
@@ -210,7 +219,11 @@ export type HandoffInput =
   | { readonly type: "user-delta"; readonly delta: string }
   | { readonly type: "user-said"; readonly text: string }
   | { readonly type: "silence"; readonly silence: number }
-  | { readonly type: "hang-up" };
+  | { readonly type: "hang-up" }
+  /** The realtime session is about to be replaced; it hears and says nothing more. */
+  | { readonly type: "pause" }
+  /** Its replacement connected. */
+  | { readonly type: "resume" };
 
 export interface HandoffStep {
   readonly state: Handoff;
@@ -233,6 +246,7 @@ export interface HandoffStep {
 export const MAX_SPEECH_TRIES = 2;
 
 export const idleHandoff: Handoff = {
+  paused: false,
   running: false,
   voiceTalking: false,
   queued: [],
@@ -254,7 +268,7 @@ const settle = (state: Handoff, step: Partial<Omit<HandoffStep, "state">> = {}):
 
 const pump = (state: Handoff, lost: string | null = null): HandoffStep => {
   const [speech, ...rest] = state.queued;
-  if (state.voiceTalking || state.inFlight !== null || speech === undefined)
+  if (state.paused || state.voiceTalking || state.inFlight !== null || speech === undefined)
     return settle(state, { lost });
   const attempt = state.attempts + 1;
   return settle(
@@ -316,13 +330,25 @@ export function handoffReducer(state: Handoff, input: HandoffInput): HandoffStep
       return input.silence === state.silences ? endTurn(state) : settle(state);
     case "hang-up":
       return endTurn(state);
+    case "pause":
+      // Speech appended to the old session may never have started, so the new one speaks it.
+      return settle({
+        ...state,
+        paused: true,
+        voiceTalking: false,
+        transcribing: false,
+        inFlight: null,
+        queued: state.inFlight === null ? state.queued : [state.inFlight.speech, ...state.queued],
+      });
+    case "resume":
+      return pump({ ...state, paused: false });
   }
 }
 
 export const handoffWorking = (state: Handoff) =>
   state.running || state.inFlight !== null || state.queued.length > 0;
 
-/** Sessions share only the lookup from session id to its `ready`. */
+/** Sessions share only the lookups from session id to its `ready` and `reconnect`. */
 export const layer = Layer.effect(
   VoiceSessions,
   Effect.gen(function* () {
@@ -333,26 +359,32 @@ export const layer = Layer.effect(
     const envVoice = yield* readVoice;
     const turnSilence = yield* readTurnSilence;
     const readies = new Map<VoiceSessionId, Effect.Effect<void, BotsError>>();
+    const reconnects = new Map<VoiceSessionId, (sdp: string) => Effect.Effect<string, BotsError>>();
+    const currentVoice = settings.getSettings.pipe(
+      Effect.map((current) => resolveVoice(current.voiceReaderVoice, envVoice)),
+      Effect.orElseSucceed(() => envVoice),
+    );
     return VoiceSessions.of({
-      session: ({ threadId, mode, sdp }) =>
+      session: ({ threadId, mode, sdp, liveVoiceChange }) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const scope = yield* Effect.scope;
             const fork = <A, E>(effect: Effect.Effect<A, E>) => Effect.forkIn(effect, scope);
             const text =
               mode.type === "read" ? yield* threads.replyText(threadId, mode.messageId) : null;
-            // Read per session, so a changed setting applies from the next session on.
-            const voice = yield* settings.getSettings.pipe(
-              Effect.map((current) => resolveVoice(current.voiceReaderVoice, envVoice)),
-              Effect.orElseSucceed(() => envVoice),
-            );
+            // Read per realtime session, so a changed setting applies to the next one.
+            let voice = yield* currentVoice;
             const host = yield* codex.open;
-            const realtime = yield* host.startSession({
-              offerSdp: sdp,
-              prompt: mode.type === "read" ? VOICE_READER_PROMPT : VOICE_CONVERSATION_PROMPT,
-              voice,
-              delegationAckFiller: mode.type === "conversation",
-            });
+            const startRealtime = (offerSdp: string) =>
+              host
+                .startSession({
+                  offerSdp,
+                  prompt: mode.type === "read" ? VOICE_READER_PROMPT : VOICE_CONVERSATION_PROMPT,
+                  voice,
+                  delegationAckFiller: mode.type === "conversation",
+                })
+                .pipe(Scope.provide(scope));
+            let realtime = yield* startRealtime(sdp);
             const id = VoiceSessionId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
             yield* Effect.logInfo(`Voice ${id} (${mode.type}) asked for voice ${voice}.`);
             const events = yield* Queue.unbounded<VoiceSessionEvent, BotsError | Cause.Done>();
@@ -362,7 +394,6 @@ export const layer = Layer.effect(
                 : Queue.fail(events, new BotsError({ message: error }));
             const endAfter = (duration: Duration.Duration, ending: Effect.Effect<unknown>) =>
               fork(Effect.sleep(duration).pipe(Effect.andThen(ending)));
-            const ready = yield* Deferred.make<void>();
 
             let handoff = idleHandoff;
             let reported: boolean | null = null;
@@ -449,50 +480,54 @@ export const layer = Layer.effect(
               }),
             );
 
-            yield* fork(
-              Stream.runForEach(realtime.events, (event) => {
-                switch (event.type) {
-                  case "transcript":
-                    return handoff.voiceTalking
-                      ? Effect.void
-                      : Effect.logInfo(`Voice ${id} started talking.`).pipe(
-                          Effect.andThen(step({ type: "voice-talking" })),
-                        );
-                  case "transcript-done": {
-                    // What the voice generated, to compare with what a client played.
-                    const said = Effect.logInfo(`Voice ${id} said: ${event.text}`);
-                    return said.pipe(
-                      Effect.andThen(
-                        mode.type === "read"
-                          ? endAfter(SPEECH_END_GRACE, end(null))
-                          : step({ type: "voice-done" }),
-                      ),
-                    );
+            const hear = (session: CodexRealtime.RealtimeSession) =>
+              fork(
+                Stream.runForEach(session.events, (event) => {
+                  switch (event.type) {
+                    case "transcript":
+                      return handoff.voiceTalking
+                        ? Effect.void
+                        : Effect.logInfo(`Voice ${id} started talking.`).pipe(
+                            Effect.andThen(step({ type: "voice-talking" })),
+                          );
+                    case "transcript-done": {
+                      // What the voice generated, to compare with what a client played.
+                      const said = Effect.logInfo(`Voice ${id} said: ${event.text}`);
+                      return said.pipe(
+                        Effect.andThen(
+                          mode.type === "read"
+                            ? endAfter(SPEECH_END_GRACE, end(null))
+                            : step({ type: "voice-done" }),
+                        ),
+                      );
+                    }
+                    // The microphone stays silent until the client is ready.
+                    case "user-transcript-delta":
+                      return mode.type === "conversation"
+                        ? step({ type: "user-delta", delta: event.delta })
+                        : Effect.void;
+                    case "user-transcript":
+                      return mode.type === "conversation"
+                        ? step({ type: "user-said", text: event.text })
+                        : Effect.void;
+                    case "error":
+                      return end(event.message);
+                    case "closed":
+                      return end(null);
                   }
-                  // The microphone stays silent until the client is ready.
-                  case "user-transcript-delta":
-                    return mode.type === "conversation"
-                      ? step({ type: "user-delta", delta: event.delta })
-                      : Effect.void;
-                  case "user-transcript":
-                    return mode.type === "conversation"
-                      ? step({ type: "user-said", text: event.text })
-                      : Effect.void;
-                  case "error":
-                    return end(event.message);
-                  case "closed":
-                    return end(null);
-                }
-              }),
-            );
-            yield* endAfter(
-              CONNECT_TIMEOUT,
-              Deferred.isDone(ready).pipe(
-                Effect.flatMap((done) =>
-                  done ? Effect.void : end("The voice connection did not come up."),
-                ),
-              ),
-            );
+                }),
+              );
+            let hearing = yield* hear(realtime);
+
+            // Each connect (the first peer, then each reconnect's) waits for its own `ready`.
+            let connects = 1;
+            let awaiting: number | null = 1;
+            const awaitReady = (connect: number, failure: string) =>
+              endAfter(
+                CONNECT_TIMEOUT,
+                Effect.suspend(() => (awaiting === connect ? end(failure) : Effect.void)),
+              );
+            yield* awaitReady(1, "The voice connection did not come up.");
             const start =
               text !== null
                 ? step({ type: "speak", speech: voiceReaderSpeech(text) }).pipe(
@@ -512,17 +547,63 @@ export const layer = Layer.effect(
                   );
             readies.set(
               id,
-              Deferred.succeed(ready, undefined).pipe(
-                Effect.flatMap((first) =>
-                  first
-                    ? start.pipe(Effect.asVoid)
-                    : Effect.fail(
-                        new BotsError({ message: "This voice session is already live." }),
-                      ),
-                ),
-              ),
+              Effect.suspend(() => {
+                const connect = awaiting;
+                awaiting = null;
+                if (connect === null)
+                  return Effect.fail(
+                    new BotsError({ message: "This voice session is already live." }),
+                  );
+                return connect === 1 ? start.pipe(Effect.asVoid) : step({ type: "resume" });
+              }),
             );
             yield* Effect.addFinalizer(() => Effect.sync(() => readies.delete(id)));
+
+            if (mode.type === "conversation" && liveVoiceChange === true) {
+              // The realtime session is stopped before its replacement starts: Codex runs one
+              // realtime session per thread, and its notifications name only the thread.
+              const switching = yield* Semaphore.make(1);
+              let announced: string | null = null;
+              const reconnect = Effect.fn("VoiceSession.reconnect")(
+                function* (offerSdp: string) {
+                  if (awaiting !== null)
+                    return yield* new BotsError({
+                      message: "This voice session is not connected yet.",
+                    });
+                  yield* step({ type: "pause" });
+                  yield* Fiber.interrupt(hearing);
+                  yield* realtime.stop;
+                  voice = yield* currentVoice;
+                  announced = null;
+                  realtime = yield* startRealtime(offerSdp);
+                  hearing = yield* hear(realtime);
+                  connects += 1;
+                  awaiting = connects;
+                  yield* awaitReady(connects, "The voice did not come back after changing.");
+                  yield* Effect.logInfo(`Voice ${id} reconnected with voice ${voice}.`);
+                  return realtime.answerSdp;
+                },
+                (effect) =>
+                  effect.pipe(
+                    Effect.tapError((error) => end(error.message)),
+                    Effect.uninterruptible,
+                    switching.withPermits(1),
+                  ),
+              );
+              reconnects.set(id, reconnect);
+              yield* Effect.addFinalizer(() => Effect.sync(() => reconnects.delete(id)));
+              yield* fork(
+                Stream.runForEach(settings.streamChanges, (changed) =>
+                  Effect.suspend(() => {
+                    const next = resolveVoice(changed.voiceReaderVoice, envVoice);
+                    if (next === voice || next === announced) return Effect.void;
+                    announced = next;
+                    return Queue.offer(events, { type: "voice-changed" });
+                  }),
+                ),
+              );
+            }
+
             const answer: VoiceSessionEvent = {
               type: "answer",
               sessionId: id,
@@ -536,6 +617,11 @@ export const layer = Layer.effect(
           readies.get(input.sessionId) ??
           Effect.fail(new BotsError({ message: "This voice session is not waiting to connect." }))
         ).pipe(Effect.as(input)),
+      reconnect: ({ sessionId, sdp }) =>
+        (
+          reconnects.get(sessionId)?.(sdp) ??
+          Effect.fail(new BotsError({ message: "This voice session cannot change its voice." }))
+        ).pipe(Effect.map((answer) => ({ sdp: answer }))),
       report: ({ sessionId, entries }) =>
         Effect.logInfo(`Voice ${sessionId} client: ${JSON.stringify(entries)}`),
     });

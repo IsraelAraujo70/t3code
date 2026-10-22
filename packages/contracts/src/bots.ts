@@ -244,6 +244,7 @@ export const BOTS_WS_METHODS = {
   botUpdate: "bots.bot.update",
   botDelete: "bots.bot.delete",
   botResetConversation: "bots.bot.resetConversation",
+  botRestartSession: "bots.bot.restartSession",
   memoryCreate: "bots.memory.create",
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
@@ -258,6 +259,7 @@ export const BOTS_WS_METHODS = {
   pushDeviceUnregister: "bots.pushDevice.unregister",
   voiceSession: "bots.voice.session",
   voiceReady: "bots.voice.ready",
+  voiceReconnect: "bots.voice.reconnect",
   voiceReport: "bots.voice.report",
 } as const;
 
@@ -287,6 +289,23 @@ export const BotDeleteRpc = Rpc.make(BOTS_WS_METHODS.botDelete, {
 export const BotResetConversationRpc = Rpc.make(BOTS_WS_METHODS.botResetConversation, {
   payload: BotRef,
   success: Bot,
+  error: BotsRpcError,
+});
+/**
+ * Stops the bot's idle provider process (Claude's `claude`, Codex's shared app-server) so the next
+ * message starts a fresh one, which loads new MCP servers, skills and config, and resumes the same
+ * provider conversation. Fails while the bot has a run that has not settled, or while its process
+ * still works (a turn, or background work), so nothing in flight is cut off.
+ */
+export const BotRestartSessionResult = Schema.Struct({
+  botId: BotId,
+  /** False when no process was running: the next message starts a fresh one anyway. */
+  stopped: Schema.Boolean,
+});
+export type BotRestartSessionResult = typeof BotRestartSessionResult.Type;
+export const BotRestartSessionRpc = Rpc.make(BOTS_WS_METHODS.botRestartSession, {
+  payload: BotRef,
+  success: BotRestartSessionResult,
   error: BotsRpcError,
 });
 export const BotMemoryCreateRpc = Rpc.make(BOTS_WS_METHODS.memoryCreate, {
@@ -405,6 +424,12 @@ export const BotPushDeviceUnregisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceUnr
  * once the peer connects the client calls `ready`, and only then does the server relay or speak.
  * The stream stays open until the client ends it (hanging up, or a read whose reply was spoken),
  * realtime closes, or it fails with a `BotsError` whose message the client shows.
+ *
+ * Realtime fixes the voice when it starts. When the `voiceReaderVoice` setting changes during a
+ * conversation whose client sent `liveVoiceChange`, the server emits `voice-changed`; once the voice
+ * is quiet the client opens a new peer and calls `reconnect` with its offer. The server swaps in a
+ * realtime session with the new voice, answers, and holds speech until the client calls `ready`
+ * again. The session, what the user said, and the agent's pending replies carry over.
  */
 
 /** The v3 voices Codex 0.162 realtime offers. The `voiceReaderVoice` server setting picks one. */
@@ -440,6 +465,8 @@ export const VoiceSessionInput = Schema.Struct({
   threadId: ThreadId,
   mode: VoiceSessionMode,
   sdp: VoiceSdp,
+  /** The client handles `voice-changed`. Clients that predate it never receive one. */
+  liveVoiceChange: Schema.optional(Schema.Boolean),
 });
 export type VoiceSessionInput = typeof VoiceSessionInput.Type;
 
@@ -458,6 +485,8 @@ export const VoiceSessionEvent = Schema.Union([
    * message, or an utterance being relayed).
    */
   Schema.Struct({ type: Schema.Literal("bot"), working: Schema.Boolean }),
+  /** Conversations whose client sent `liveVoiceChange`: reconnect to hear the new voice. */
+  Schema.Struct({ type: Schema.Literal("voice-changed") }),
 ]);
 export type VoiceSessionEvent = typeof VoiceSessionEvent.Type;
 
@@ -470,7 +499,23 @@ export const VoiceSessionRpc = Rpc.make(BOTS_WS_METHODS.voiceSession, {
   error: BotsRpcError,
   stream: true,
 });
-/** The peer connected. Fails unless the session is open and not yet ready. */
+export const VoiceReconnectInput = Schema.Struct({ sessionId: VoiceSessionId, sdp: VoiceSdp });
+export type VoiceReconnectInput = typeof VoiceReconnectInput.Type;
+/** The answer for the new peer. */
+export const VoiceReconnectAnswer = Schema.Struct({ sdp: VoiceSdp });
+export type VoiceReconnectAnswer = typeof VoiceReconnectAnswer.Type;
+
+/** Swaps in a realtime session with the current voice for the client's new peer. */
+export const VoiceReconnectRpc = Rpc.make(BOTS_WS_METHODS.voiceReconnect, {
+  payload: VoiceReconnectInput,
+  success: VoiceReconnectAnswer,
+  error: BotsRpcError,
+});
+
+/**
+ * The peer connected. Fails unless the session is open and waiting for its first peer, or for the
+ * peer of a `reconnect`.
+ */
 export const VoiceReadyRpc = Rpc.make(BOTS_WS_METHODS.voiceReady, {
   payload: VoiceSessionRef,
   success: VoiceSessionRef,
@@ -507,6 +552,7 @@ export const BOTS_RPCS = [
   BotUpdateRpc,
   BotDeleteRpc,
   BotResetConversationRpc,
+  BotRestartSessionRpc,
   BotMemoryCreateRpc,
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
@@ -521,6 +567,7 @@ export const BOTS_RPCS = [
   BotPushDeviceUnregisterRpc,
   VoiceSessionRpc,
   VoiceReadyRpc,
+  VoiceReconnectRpc,
   VoiceReportRpc,
 ] as const;
 
@@ -530,6 +577,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.botUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.botDelete]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.botResetConversation]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.botRestartSession]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,
@@ -546,6 +594,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   // Voice spends the server's ChatGPT realtime allowance and posts to threads.
   [BOTS_WS_METHODS.voiceSession]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.voiceReady]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.voiceReconnect]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.voiceReport]: AuthOrchestrationOperateScope,
 } as const;
 

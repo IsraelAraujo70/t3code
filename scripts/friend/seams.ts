@@ -125,6 +125,11 @@ export const SEAMS: readonly Seam[] = [
     why: "name the bot that sent a message; read a reply aloud",
   },
   {
+    file: "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+    markers: 2,
+    why: "idle-only release for restarting a bot's session",
+  },
+  {
     file: "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
     markers: 2,
     why: "mark messages a bot sends another thread",

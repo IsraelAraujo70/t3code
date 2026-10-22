@@ -21,8 +21,8 @@ const SAMPLES_URL = "https://omarchy.taild92f5b.ts.net/vozes/";
 const SERVER_DEFAULT = "server:default";
 
 /**
- * Settings → Bots → Voice. Edits the voice of voice sessions on the bots host. A session keeps the
- * voice it started with; the next one uses the new choice.
+ * Settings → Bots → Voice. Edits the voice of voice sessions on the bots host. The next read uses
+ * it, and an open conversation switches to it once the voice falls quiet.
  */
 export function VoiceSettingsSection({
   environmentId,
@@ -74,7 +74,7 @@ export function VoiceSettingsSection({
     <SettingsSection {...searchableSetting("bots-voice")}>
       <SettingsRow
         title="Voice"
-        description="Reads replies aloud and talks in voice conversations. A conversation already open keeps its voice until it ends."
+        description="Reads replies aloud and talks in voice conversations. A new voice applies at once, also to a conversation already open."
       >
         <RadioGroup
           aria-label="Voice"

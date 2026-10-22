@@ -10,6 +10,7 @@ import {
   VoiceSessionId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
+  type ServerSettings as ServerSettingsValue,
   type VoiceSessionEvent,
   type VoiceSessionInput,
 } from "@t3tools/contracts";
@@ -20,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Duration from "effect/Duration";
 import * as Stream from "effect/Stream";
@@ -50,9 +52,17 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
   let postFailure: string | null = null;
   const delivered: string[] = [];
   let postGate: Deferred.Deferred<void> | null = null;
-  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+  // The test layer never reports changes; voice sessions follow them.
+  const stored = yield* ServerSettings.ServerSettingsService.pipe(
     Effect.provide(ServerSettings.layerTest()),
   );
+  const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+  const settings: ServerSettings.ServerSettingsService["Service"] = {
+    ...stored,
+    updateSettings: (patch) =>
+      stored.updateSettings(patch).pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+    streamChanges: Stream.fromPubSub(changes),
+  };
   const service = yield* VoiceSession.VoiceSessions.pipe(
     Effect.provide(
       VoiceSession.layer.pipe(
@@ -407,6 +417,104 @@ describe("VoiceSessions conversation", () => {
   );
 });
 
+describe("VoiceSessions voice change", () => {
+  const live = Effect.fn("test.liveVoiceChange")(function* (liveVoiceChange: boolean) {
+    const h = yield* setup();
+    const session = yield* h.open({ ...conversation, liveVoiceChange });
+    yield* h.service.ready(session.ref);
+    yield* Effect.yieldNow;
+    return { ...h, ...session };
+  });
+
+  it.effect(
+    "swaps an open conversation's realtime session, and its next reply uses the new voice",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* live(true);
+        yield* h.settings.updateSettings({ voiceReaderVoice: "sol" });
+        assert.deepStrictEqual(yield* Queue.take(h.events), { type: "voice-changed" });
+        // Another settings change before the client reconnects asks only once.
+        yield* h.settings.updateSettings({ voiceReaderVoice: "sol" });
+
+        assert.deepStrictEqual(
+          yield* h.service.reconnect({ sessionId: h.ref.sessionId, sdp: "second offer" }),
+          { sdp: "answer" },
+        );
+        assert.deepStrictEqual(
+          h.starts.map((start) => [
+            start.voice,
+            start.prompt === VoiceSession.VOICE_CONVERSATION_PROMPT,
+          ]),
+          [
+            ["cove", true],
+            ["sol", true],
+          ],
+        );
+        assert.strictEqual(h.stops(), 1);
+
+        // A reply that completes while the new peer connects waits for it, then is spoken once.
+        yield* Queue.offerAll(h.activity, [
+          { type: "working", working: true },
+          { type: "reply", text: "56." },
+          { type: "working", working: false },
+        ]);
+        yield* Effect.yieldNow;
+        assert.deepStrictEqual(h.spoken, []);
+        yield* h.service.ready(h.ref);
+        assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReplySpeech("56.")]);
+        assert.strictEqual(
+          (yield* h.service.ready(h.ref).pipe(Effect.flip)).message,
+          "This voice session is already live.",
+        );
+
+        // What the user says to the new session still reaches the thread.
+        yield* Queue.offer(h.realtimeEvents, { type: "user-transcript", text: "Valeu" });
+        yield* TestClock.adjust(turnWindow);
+        assert.deepStrictEqual(h.posted, ["🎙️ Valeu"]);
+        assert.isUndefined(h.fiber.pollUnsafe());
+        // Idle at the swap, working on the reply until the (silent) fake voice gives it up, then
+        // relaying the user's turn.
+        assert.deepStrictEqual(yield* Queue.takeAll(h.events), [
+          { type: "bot", working: false },
+          { type: "bot", working: true },
+          { type: "bot", working: false },
+          { type: "bot", working: true },
+        ]);
+      }),
+  );
+
+  it.effect("ends a conversation whose new peer never connects", () =>
+    Effect.gen(function* () {
+      const h = yield* live(true);
+      yield* h.service.reconnect({ sessionId: h.ref.sessionId, sdp: "second offer" });
+      yield* TestClock.adjust(VoiceSession.CONNECT_TIMEOUT);
+      assert.strictEqual(
+        failureMessage(yield* Fiber.join(h.fiber)),
+        "The voice did not come back after changing.",
+      );
+    }),
+  );
+
+  it.effect("leaves a client that did not ask for it, and reads, on their voice", () =>
+    Effect.gen(function* () {
+      const h = yield* live(false);
+      yield* h.settings.updateSettings({ voiceReaderVoice: "sol" });
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* Queue.size(h.events), 0);
+      assert.strictEqual(
+        (yield* h.service
+          .reconnect({ sessionId: h.ref.sessionId, sdp: "second offer" })
+          .pipe(Effect.flip)).message,
+        "This voice session cannot change its voice.",
+      );
+      const reading = yield* h.open({ ...read, liveVoiceChange: true });
+      yield* h.settings.updateSettings({ voiceReaderVoice: "maple" });
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* Queue.size(reading.events), 0);
+    }),
+  );
+});
+
 describe("VoiceSessions conversation turns", () => {
   /** Realtime's deltas for `text` as it is spoken, word by word. */
   const deltas = (text: string): CodexRealtime.RealtimeEvent[] =>
@@ -534,6 +642,21 @@ describe("VoiceSessions conversation turns", () => {
 });
 
 describe("handoffReducer", () => {
+  it("holds speech while the realtime session is replaced, and speaks what never started", () => {
+    const appended = VoiceSession.handoffReducer(VoiceSession.idleHandoff, {
+      type: "speak",
+      speech: "first",
+    });
+    assert.strictEqual(appended.append?.speech, "first");
+    const paused = VoiceSession.handoffReducer(appended.state, { type: "pause" });
+    const queued = VoiceSession.handoffReducer(paused.state, { type: "speak", speech: "second" });
+    assert.isNull(queued.append);
+    assert.isTrue(VoiceSession.handoffWorking(queued.state));
+    const resumed = VoiceSession.handoffReducer(queued.state, { type: "resume" });
+    assert.strictEqual(resumed.append?.speech, "first");
+    assert.deepStrictEqual(resumed.state.queued, ["second"]);
+  });
+
   const run = (...inputs: ReadonlyArray<VoiceSession.HandoffInput>) =>
     inputs.reduce<{ state: VoiceSession.Handoff; appended: string[]; lost: string[] }>(
       (acc, input) => {

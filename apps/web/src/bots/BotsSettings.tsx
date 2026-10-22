@@ -12,6 +12,7 @@ import {
   MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
+  RefreshCwIcon,
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -42,7 +43,12 @@ import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
 import { BotsImportSection } from "./BotsImportSection";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
-import { confirmDestructive, modelLabel, reportCommandResult } from "./botsSettingsShared";
+import {
+  confirmDestructive,
+  modelLabel,
+  reportCommandResult,
+  useRestartBotSession,
+} from "./botsSettingsShared";
 
 /**
  * Settings → Bots. Bots live on one machine, so the page always edits the environment that hosts
@@ -177,6 +183,8 @@ function BotRow({
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const canUpdate = useAtomValue(botsEnvironment.updateBot.permissionAtom(environmentId));
   const canReset = useAtomValue(botsEnvironment.resetConversation.permissionAtom(environmentId));
+  const canRestart = useAtomValue(botsEnvironment.restartSession.permissionAtom(environmentId));
+  const restartSession = useRestartBotSession();
   const canDelete = useAtomValue(botsEnvironment.deleteBot.permissionAtom(environmentId));
   const reset = useAtomCommand(botsEnvironment.resetConversation, {
     label: "bot reset conversation",
@@ -243,6 +251,13 @@ function BotRow({
               <MenuItem disabled={!canUpdate} onClick={onEdit}>
                 <PencilIcon />
                 Edit
+              </MenuItem>
+              <MenuItem
+                disabled={!canRestart}
+                onClick={() => void restartSession(environmentId, bot)}
+              >
+                <RefreshCwIcon />
+                Restart session
               </MenuItem>
               <MenuItem disabled={!canReset} onClick={() => void act("reset")}>
                 <RotateCcwIcon />

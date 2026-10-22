@@ -153,6 +153,7 @@ function setup(overrides: { readonly liveStats?: boolean } = {}) {
     target: VoiceTarget;
     answer: () => void;
     bot: (working: boolean) => void;
+    voiceChanged: () => void;
     end: (error: string | null) => void;
     ended: Mock<() => void>;
   }> = [];
@@ -206,6 +207,7 @@ function setup(overrides: { readonly liveStats?: boolean } = {}) {
               sdp: "answer-sdp",
             }),
           bot: handlers.onBot,
+          voiceChanged: handlers.onVoiceChange,
           end: handlers.onEnd,
           ended,
         });
@@ -214,6 +216,10 @@ function setup(overrides: { readonly liveStats?: boolean } = {}) {
     ),
     ready: vi.fn(async (_environmentId: string, sessionId: string) => {
       calls.push(`ready:${sessionId}`);
+    }),
+    reconnect: vi.fn(async (_environmentId: string, sessionId: string, sdp: string) => {
+      calls.push(`reconnect:${sessionId}:${sdp}`);
+      return "new-answer-sdp";
     }),
     report: vi.fn(
       async (
@@ -375,6 +381,89 @@ describe("voice controller", () => {
     expect(t.onError).toHaveBeenLastCalledWith("Realtime closed");
     expect(t.controller.getSnapshot()).toBeNull();
     expect(t.peers.every((peer) => peer.close.mock.calls.length > 0)).toBe(true);
+  });
+
+  it("swaps the peer for a new voice once the voice is quiet, keeping the session", async () => {
+    using _timers = fakeTimers();
+    const t = setup();
+    const phases: Array<string | undefined> = [];
+    t.controller.subscribe(() => phases.push(t.controller.getSnapshot()?.phase));
+    t.controller.start(conversation);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    const old = t.peers[0]!;
+    old.send("appended");
+    old.send("voiceStarted");
+    t.sessions[0]!.voiceChanged();
+    await flush();
+    // The reply being spoken is not cut off, nor is its playout.
+    old.send("voiceDone");
+    await vi.advanceTimersByTimeAsync(VOICE_PLAYOUT_GRACE_MS - 1);
+    expect(t.openPeer).toHaveBeenCalledTimes(1);
+    expect(old.setVoiceAudible).toHaveBeenLastCalledWith(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await flush();
+    expect(t.calls.slice(5)).toEqual([
+      "openPeer",
+      "createOffer",
+      "reconnect:s1:offer-sdp",
+      "accept:new-answer-sdp",
+      "ready:s1",
+    ]);
+    expect(t.transport.session).toHaveBeenCalledTimes(1);
+    expect(old.close).toHaveBeenCalledTimes(1);
+    expect(old.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    const next = t.peers[1]!;
+    expect(next.setMicrophoneEnabled).toHaveBeenLastCalledWith(true);
+    expect(phases).toEqual([
+      "connecting",
+      "listening",
+      "speaking",
+      "listening",
+      "connecting",
+      "listening",
+    ]);
+
+    // The old peer no longer reaches the session; the new one does, and levels follow it.
+    old.send("userStarted");
+    expect(t.controller.getSnapshot()?.phase).toBe("listening");
+    next.send("appended");
+    next.send("voiceStarted");
+    expect(t.controller.getSnapshot()?.phase).toBe("speaking");
+    expect(next.setVoiceAudible).toHaveBeenLastCalledWith(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(next.sample).toHaveBeenCalled();
+    expect(t.controller.getLevels()).toEqual({ microphone: 0.5, voice: 0.25 });
+    expect(t.onError).not.toHaveBeenCalled();
+  });
+
+  it("ends the session and releases both peers when the voice cannot change", async () => {
+    const t = setup();
+    t.transport.reconnect.mockRejectedValueOnce(
+      new Error("Codex realtime did not answer in time."),
+    );
+    t.controller.start(conversation);
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    t.sessions[0]!.voiceChanged();
+    await flush();
+    expect(t.onError).toHaveBeenLastCalledWith("Codex realtime did not answer in time.");
+    expect(t.controller.getSnapshot()).toBeNull();
+    expect(t.peers).toHaveLength(2);
+    expect(t.peers.every((peer) => peer.close.mock.calls.length > 0)).toBe(true);
+  });
+
+  it("never swaps the peer of a read", async () => {
+    const t = setup();
+    t.controller.start(read("a"));
+    await flush();
+    t.sessions[0]!.answer();
+    await flush();
+    t.sessions[0]!.voiceChanged();
+    await flush();
+    expect(t.transport.reconnect).not.toHaveBeenCalled();
   });
 
   it("reports levels while live, hiding the voice's own turns, and zeros after", async () => {
