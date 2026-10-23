@@ -8,8 +8,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalRandom:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -18,12 +18,12 @@ import { SANDBOX_LAUNCHER_PATH } from "../sandboxInstance.ts";
 
 const enabled = process.env.T3CODE_GUEST_SANDBOX_IT === "1";
 const guest = `t3it-${Math.random().toString(36).slice(2, 8)}`;
-const scratch = NodeFs.mkdtempSync(
-  NodePath.join(process.env.TMPDIR ?? NodeOs.tmpdir(), "t3-guest-it-"),
+const scratch = NodeFS.mkdtempSync(
+  NodePath.join(process.env.TMPDIR ?? NodeOS.tmpdir(), "t3-guest-it-"),
 );
 
 /** Every non-loopback IPv4 of this host: the LAN, the tailnet and Docker's bridges. */
-const hostAddresses = Object.values(NodeOs.networkInterfaces())
+const hostAddresses = Object.values(NodeOS.networkInterfaces())
   .flat()
   .flatMap((entry) => (entry && entry.family === "IPv4" && !entry.internal ? [entry.address] : []));
 
@@ -68,7 +68,7 @@ afterAll(() => {
   if (leftovers.length > 0) NodeChildProcess.spawnSync("docker", ["rm", "-f", ...leftovers], quiet);
   NodeChildProcess.spawnSync("docker", ["network", "rm", `t3-guest-${guest}`], quiet);
   NodeChildProcess.spawnSync("docker", ["volume", "rm", `t3-guest-${guest}-home`], quiet);
-  NodeFs.rmSync(scratch, { recursive: true, force: true });
+  NodeFS.rmSync(scratch, { recursive: true, force: true });
 });
 
 describe.skipIf(!enabled)("guest sandbox (docker)", () => {

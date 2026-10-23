@@ -86,23 +86,27 @@ const guarded = <A>(
   ) => Effect.Effect<A, GuestApiError>,
   respond: (value: A) => HttpServerResponse.HttpServerResponse,
 ) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const params = yield* HttpRouter.params;
-    return respond(yield* handler(request, params));
-  }).pipe(
-    Effect.catchTag("GuestApiError", (error) => Effect.succeed(errorResponse(error))),
-    Effect.catchDefect((defect) =>
-      Effect.logError("Guest request failed", { defect }).pipe(
-        Effect.as(
-          HttpServerResponse.jsonUnsafe(
-            { error: "O servidor teve um probleminha. Tente de novo." },
-            { status: 500 },
+  Effect.fn("GuestHttp.request")(
+    function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const params = yield* HttpRouter.params;
+      return respond(yield* handler(request, params));
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchTags({ GuestApiError: (error) => Effect.succeed(errorResponse(error)) }),
+        Effect.catchDefect((defect) =>
+          Effect.logError("Guest request failed", { defect }).pipe(
+            Effect.as(
+              HttpServerResponse.jsonUnsafe(
+                { error: "O servidor teve um probleminha. Tente de novo." },
+                { status: 500 },
+              ),
+            ),
           ),
         ),
       ),
-    ),
-  );
+  )();
 
 const ok = (body: unknown) => HttpServerResponse.jsonUnsafe(body);
 
@@ -113,93 +117,92 @@ const historyLimit = (url: string) => {
 };
 
 /** Every route of the guest listener; nothing else is registered on its router. */
-const addRoutes = (router: HttpRouter.HttpRouter) =>
-  Effect.gen(function* () {
-    const service = yield* GuestService;
-    const auth = (request: HttpServerRequest.HttpServerRequest) =>
-      service.authenticate(request.headers["authorization"]);
+const addRoutes = Effect.fn("GuestHttp.addRoutes")(function* (router: HttpRouter.HttpRouter) {
+  const service = yield* GuestService;
+  const auth = (request: HttpServerRequest.HttpServerRequest) =>
+    service.authenticate(request.headers["authorization"]);
 
-    yield* router.add(
-      "GET",
-      GUEST_API_ROUTES.bots,
-      guarded((request) => auth(request).pipe(Effect.flatMap(service.listBots)), ok),
-    );
-    yield* router.add(
-      "GET",
-      GUEST_API_ROUTES.messages,
-      guarded(
-        (request, params) =>
-          auth(request).pipe(
-            Effect.flatMap((guest) =>
-              service.history(guest, params.botId ?? "", historyLimit(request.url)),
-            ),
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.bots,
+    guarded((request) => auth(request).pipe(Effect.flatMap(service.listBots)), ok),
+  );
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.messages,
+    guarded(
+      (request, params) =>
+        auth(request).pipe(
+          Effect.flatMap((guest) =>
+            service.history(guest, params.botId ?? "", historyLimit(request.url)),
           ),
-        ok,
-      ),
-    );
-    yield* router.add(
-      "POST",
-      GUEST_API_ROUTES.messages,
-      guarded(
-        (request, params) =>
-          Effect.gen(function* () {
-            const guest = yield* auth(request);
-            return yield* service.send(guest, params.botId ?? "", yield* decodeSend(request));
-          }),
-        (result) => HttpServerResponse.jsonUnsafe(result, { status: 202 }),
-      ),
-    );
-    yield* router.add(
-      "GET",
-      GUEST_API_ROUTES.events,
-      guarded(
-        (request, params) =>
-          auth(request).pipe(Effect.flatMap((guest) => service.events(guest, params.botId ?? ""))),
-        sse,
-      ),
-    );
-    yield* router.add(
-      "GET",
-      GUEST_API_ROUTES.attachment,
-      guarded(
-        (request, params) =>
-          auth(request).pipe(
-            Effect.flatMap((guest) =>
-              service.attachment(guest, params.botId ?? "", params.attachmentId ?? ""),
-            ),
+        ),
+      ok,
+    ),
+  );
+  yield* router.add(
+    "POST",
+    GUEST_API_ROUTES.messages,
+    guarded(
+      (request, params) =>
+        Effect.gen(function* () {
+          const guest = yield* auth(request);
+          return yield* service.send(guest, params.botId ?? "", yield* decodeSend(request));
+        }),
+      (result) => HttpServerResponse.jsonUnsafe(result, { status: 202 }),
+    ),
+  );
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.events,
+    guarded(
+      (request, params) =>
+        auth(request).pipe(Effect.flatMap((guest) => service.events(guest, params.botId ?? ""))),
+      sse,
+    ),
+  );
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.attachment,
+    guarded(
+      (request, params) =>
+        auth(request).pipe(
+          Effect.flatMap((guest) =>
+            service.attachment(guest, params.botId ?? "", params.attachmentId ?? ""),
           ),
-        (file) =>
-          HttpServerResponse.uint8Array(file.bytes, {
-            contentType: file.mimeType,
-            headers: { "cache-control": "private, max-age=31536000, immutable" },
-          }),
-      ),
-    );
-    yield* router.add(
-      "POST",
-      GUEST_API_ROUTES.pushRegister,
-      guarded(
-        (request) =>
-          Effect.gen(function* () {
-            const guest = yield* auth(request);
-            return yield* service.registerPushDevice(guest, yield* decodePushRegister(request));
-          }),
-        ok,
-      ),
-    );
-    yield* router.add(
-      "POST",
-      GUEST_API_ROUTES.pushUnregister,
-      guarded(
-        (request) =>
-          Effect.gen(function* () {
-            const guest = yield* auth(request);
-            return yield* service.unregisterPushDevice(guest, yield* decodePushRef(request));
-          }),
-        ok,
-      ),
-    );
-  });
+        ),
+      (file) =>
+        HttpServerResponse.uint8Array(file.bytes, {
+          contentType: file.mimeType,
+          headers: { "cache-control": "private, max-age=31536000, immutable" },
+        }),
+    ),
+  );
+  yield* router.add(
+    "POST",
+    GUEST_API_ROUTES.pushRegister,
+    guarded(
+      (request) =>
+        Effect.gen(function* () {
+          const guest = yield* auth(request);
+          return yield* service.registerPushDevice(guest, yield* decodePushRegister(request));
+        }),
+      ok,
+    ),
+  );
+  yield* router.add(
+    "POST",
+    GUEST_API_ROUTES.pushUnregister,
+    guarded(
+      (request) =>
+        Effect.gen(function* () {
+          const guest = yield* auth(request);
+          return yield* service.unregisterPushDevice(guest, yield* decodePushRef(request));
+        }),
+      ok,
+    ),
+  );
+});
 
 /** The guest listener when `T3CODE_GUEST_LISTEN` is set; nothing otherwise. Needs GuestService. */
 export const layerListener = Layer.unwrap(

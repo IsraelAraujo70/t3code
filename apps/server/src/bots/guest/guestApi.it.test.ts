@@ -11,12 +11,12 @@
 // @effect-diagnostics globalFetch:off
 // @effect-diagnostics globalTimers:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 
 import type { GuestBotsResponse, GuestHistoryResponse, GuestStreamEvent } from "@t3tools/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -146,14 +146,14 @@ const runningSandboxes = () =>
 
 beforeAll(async () => {
   if (!enabled) return;
-  NodeFs.mkdirSync(NodePath.join(NodeOs.homedir(), ".cache/friend-tmp"), { recursive: true });
-  base = NodeFs.mkdtempSync(NodePath.join(NodeOs.homedir(), ".cache/friend-tmp/bia-it-"));
+  NodeFS.mkdirSync(NodePath.join(NodeOS.homedir(), ".cache/friend-tmp"), { recursive: true });
+  base = NodeFS.mkdtempSync(NodePath.join(NodeOS.homedir(), ".cache/friend-tmp/bia-it-"));
   const [port, guestPort] = [await freePort(), await freePort()];
   guestOrigin = `http://127.0.0.1:${guestPort}`;
 
-  NodeFs.mkdirSync(NodePath.join(base, "userdata"), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(base, "userdata"), { recursive: true });
   // Only the sandbox instance is enabled, so the server never probes the host's own CLIs.
-  NodeFs.writeFileSync(
+  NodeFS.writeFileSync(
     NodePath.join(base, "userdata/settings.json"),
     JSON.stringify({
       providerInstances: {
@@ -204,7 +204,7 @@ beforeAll(async () => {
         T3CODE_GUEST_LISTEN: `127.0.0.1:${guestPort}`,
         T3CODE_GUEST_IDLE_MS: "3000",
       },
-      stdio: ["ignore", NodeFs.openSync(NodePath.join(base, "server.log"), "a"), "inherit"],
+      stdio: ["ignore", NodeFS.openSync(NodePath.join(base, "server.log"), "a"), "inherit"],
     },
   );
   // The server is an external process: wait for its guest listener to answer.
@@ -240,7 +240,7 @@ afterAll(async () => {
     NodeChildProcess.spawnSync("docker", ["volume", "rm", `t3-guest-${bia}-home`], quiet);
   }
   if (process.env.T3CODE_GUEST_IT_KEEP !== "1")
-    NodeFs.rmSync(base, { recursive: true, force: true });
+    NodeFS.rmSync(base, { recursive: true, force: true });
 }, 60_000);
 
 describe.skipIf(!enabled)("guest API on a real server", () => {
@@ -397,7 +397,7 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
         ["assistant", `Eco #1: ${first}`],
       ]);
 
-      const db = new DatabaseSync(NodePath.join(base, "userdata/statev2.sqlite"), {
+      const db = new NodeSqlite.DatabaseSync(NodePath.join(base, "userdata/statev2.sqlite"), {
         readOnly: true,
       });
       const runs = db

@@ -10,7 +10,7 @@
  * - `isSandboxedFor` is strict: the guest API sends to a bot only when its instance is enabled,
  *   names that guest, and launches through the real launcher file.
  */
-import * as NodeUrl from "node:url";
+import * as NodeURL from "node:url";
 
 import type { GuestId, ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -24,7 +24,7 @@ import type * as ServerSettings from "../../serverSettings.ts";
 export const GUEST_ID_ENV = "T3CODE_GUEST_ID";
 
 /** Absolute path of the launcher a sandbox instance's `binaryPath` must point at. */
-export const SANDBOX_LAUNCHER_PATH = NodeUrl.fileURLToPath(
+export const SANDBOX_LAUNCHER_PATH = NodeURL.fileURLToPath(
   new URL("./sandbox/t3-guest-claude", import.meta.url),
 );
 

@@ -1,6 +1,5 @@
-import { once } from "node:events";
-import net from "node:net";
-import type { Server } from "node:net";
+import * as NodeEvents from "node:events";
+import * as NodeNet from "node:net";
 import { expect, it } from "vite-plus/test";
 import { createEgressProxy, isPublicAddress } from "./egress-proxy.mjs";
 
@@ -51,29 +50,29 @@ it.each([
   "2002:0808:0808::1",
 ])("allows %s", (ip) => expect(isPublicAddress(ip)).toBe(true));
 
-async function listen(server: Server) {
+async function listen(server: NodeNet.Server) {
   server.listen(0, "127.0.0.1");
-  await once(server, "listening");
+  await NodeEvents.EventEmitter.once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing TCP address");
   return address.port;
 }
 
-async function close(server: Server) {
+async function close(server: NodeNet.Server) {
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   );
 }
 
 async function request(port: number, raw: string) {
-  const socket = net.connect(port, "127.0.0.1");
+  const socket = NodeNet.connect(port, "127.0.0.1");
   let response = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk: string) => {
     response += chunk;
   });
   try {
-    const ended = once(socket, "end");
+    const ended = NodeEvents.EventEmitter.once(socket, "end");
     socket.end(raw);
     await ended;
     return response;
@@ -83,7 +82,7 @@ async function request(port: number, raw: string) {
 }
 
 it("rejects loopback with the default policy and DNS rebinding", async () => {
-  const echo = net.createServer((socket) => socket.pipe(socket));
+  const echo = NodeNet.createServer((socket) => socket.pipe(socket));
   const proxies = [
     createEgressProxy(),
     createEgressProxy({ lookup: async () => [{ address: "127.0.0.1", family: 4 }] }),
@@ -104,13 +103,13 @@ it("rejects loopback with the default policy and DNS rebinding", async () => {
 });
 
 it("tunnels CONNECT head bytes and subsequent bytes", async () => {
-  const echo = net.createServer((socket) => socket.pipe(socket));
+  const echo = NodeNet.createServer((socket) => socket.pipe(socket));
   const proxy = createEgressProxy({ isAllowedAddress: () => true });
-  let socket: net.Socket | undefined;
+  let socket: NodeNet.Socket | undefined;
   try {
     const echoPort = await listen(echo);
     const port = await listen(proxy);
-    socket = net.connect(port, "127.0.0.1");
+    socket = NodeNet.connect(port, "127.0.0.1");
     const client = socket;
     client.setEncoding("utf8");
     let response = "";
@@ -182,8 +181,8 @@ it.each([
 });
 
 it("prefers IPv4 and falls back to the next validated address", async () => {
-  const echo = net.createServer((socket) => socket.pipe(socket));
-  let socket: net.Socket | undefined;
+  const echo = NodeNet.createServer((socket) => socket.pipe(socket));
+  let socket: NodeNet.Socket | undefined;
   try {
     const echoPort = await listen(echo);
     // Nothing listens on 127.0.0.2, and the IPv6 answer sorts last, so only the third works.
@@ -197,7 +196,7 @@ it("prefers IPv4 and falls back to the next validated address", async () => {
     });
     const port = await listen(proxy);
     try {
-      socket = net.connect(port, "127.0.0.1");
+      socket = NodeNet.connect(port, "127.0.0.1");
       const client = socket;
       client.setEncoding("utf8");
       let response = "";

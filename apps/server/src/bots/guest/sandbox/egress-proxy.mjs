@@ -1,7 +1,7 @@
-import { lookup as dnsLookup } from "node:dns/promises";
-import http from "node:http";
-import net from "node:net";
-import { pathToFileURL } from "node:url";
+import * as NodeDnsPromises from "node:dns/promises";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
+import * as NodeURL from "node:url";
 
 function publicV4(ip) {
   const [a, b, c] = ip.split(".").map(Number);
@@ -21,7 +21,7 @@ function publicV4(ip) {
 
 /** Reject non-public destinations, including IPv4 embedded in IPv6 transition addresses. */
 export function isPublicAddress(ip) {
-  const family = net.isIP(ip);
+  const family = NodeNet.isIP(ip);
   if (family === 4) return publicV4(ip);
   if (family !== 6 || ip.includes("%")) return false;
   const normalized = ip.replace(/\d+\.\d+\.\d+\.\d+$/, (v4) => {
@@ -63,11 +63,11 @@ export function isPublicAddress(ip) {
 
 /** Create a CONNECT-only proxy that pins connections to validated DNS results. */
 export function createEgressProxy({
-  lookup = (host) => dnsLookup(host, { all: true, verbatim: true }),
+  lookup = (host) => NodeDnsPromises.lookup(host, { all: true, verbatim: true }),
   isAllowedAddress = isPublicAddress,
   log = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
-  const server = http.createServer((_request, response) => {
+  const server = NodeHttp.createServer((_request, response) => {
     response.writeHead(405, { "Content-Type": "text/plain", Connection: "close" });
     response.end("Only HTTPS CONNECT is supported.\n");
   });
@@ -82,10 +82,10 @@ export function createEgressProxy({
     if (!match || Number(match[3]) < 1 || Number(match[3]) > 65535)
       return deny("403 Forbidden", "invalid target");
     const host = match[1] ?? match[2];
-    if (match[1] && net.isIP(host) !== 6) return deny("403 Forbidden", "invalid IPv6 literal");
+    if (match[1] && NodeNet.isIP(host) !== 6) return deny("403 Forbidden", "invalid IPv6 literal");
     let addresses;
     try {
-      addresses = net.isIP(host) ? [{ address: host }] : await lookup(host);
+      addresses = NodeNet.isIP(host) ? [{ address: host }] : await lookup(host);
     } catch {
       return deny("502 Bad Gateway", "lookup failed");
     }
@@ -95,11 +95,11 @@ export function createEgressProxy({
     // Docker bridges are usually IPv4-only, so an AAAA answer first must not fail the tunnel.
     const candidates = addresses
       .map(({ address }) => address)
-      .toSorted((a, b) => net.isIP(a) - net.isIP(b));
+      .toSorted((a, b) => NodeNet.isIP(a) - NodeNet.isIP(b));
     const port = Number(match[3]);
     const attempt = (index) => {
       const ip = candidates[index];
-      const upstream = net.connect({ host: ip, port });
+      const upstream = NodeNet.connect({ host: ip, port });
       let connected = false;
       upstream.setTimeout(10_000, () => upstream.destroy(new Error("timeout")));
       const onClientClose = () => upstream.destroy();
@@ -126,6 +126,6 @@ export function createEgressProxy({
   return server;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   createEgressProxy().listen(Number(process.env.EGRESS_PROXY_PORT || 3128), "0.0.0.0");
 }
