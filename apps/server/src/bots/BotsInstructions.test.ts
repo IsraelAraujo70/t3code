@@ -6,19 +6,23 @@ import {
   BotId,
   BotMemoryId,
   botThreadId,
+  GuestId,
   ProviderInstanceId,
   ThreadId,
   type Bot,
   type BotMemory,
 } from "@t3tools/contracts";
 
+import * as BotsDb from "./BotsDb.ts";
 import {
   BOT_INSTRUCTION_SECTION_LIMIT,
   BotsInstructions,
   buildBotInstructions,
+  buildGuestBotInstructions,
   layer as instructionsLayer,
 } from "./BotsInstructions.ts";
-import { BotsStore, layerMemory as storeLayerMemory } from "./BotsStore.ts";
+import { BotsStore, layerFromDb as storeLayerFromDb } from "./BotsStore.ts";
+import { GuestStore, layerFromDb as guestLayerFromDb } from "./guest/GuestStore.ts";
 
 const bot: Bot = {
   id: BotId.make(`b_${"a".repeat(32)}`),
@@ -173,7 +177,33 @@ describe("buildBotInstructions", () => {
   });
 });
 
-const layerTest = instructionsLayer.pipe(Layer.provideMerge(storeLayerMemory));
+describe("buildGuestBotInstructions", () => {
+  it("names the guest and the sandbox, and carries none of the owner's tools or profile", () => {
+    const { sections } = buildGuestBotInstructions({
+      bot,
+      memories: [memory("mem_1", "Pays rent on the 5th")],
+      guestName: "Bia",
+    });
+    assert.deepStrictEqual(
+      sections.map((section) => section.key),
+      ["bot", "memories", "workspace"],
+    );
+    assert.include(sections[0]!.text, "You are Al, Bia's assistant.");
+    assert.include(sections[0]!.text, "Reviews pull requests.");
+    // Guests have no memory tools, so the ids that memory_forget takes are not shown.
+    assert.strictEqual(sections[1]!.text, "- Pays rent on the 5th");
+    assert.include(sections[2]!.text, "/home/guest");
+    const all = sections.map((section) => section.text).join("\n");
+    for (const ownerOnly of ["memory_save", "t3_thread_launch", "delegate_task", "bot_create"]) {
+      assert.notInclude(all, ownerOnly);
+    }
+  });
+});
+
+const layerTest = instructionsLayer.pipe(
+  Layer.provideMerge(Layer.merge(storeLayerFromDb, guestLayerFromDb)),
+  Layer.provide(BotsDb.layerMemory),
+);
 
 describe("BotsInstructions.forThread", () => {
   it.effect("reads the bot, its enabled memories and the profile for any generation", () =>
@@ -195,6 +225,34 @@ describe("BotsInstructions.forThread", () => {
         result!.sections.find((section) => section.key === "owner")!.text,
         "I build T3.",
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("gives a guest's bot guest instructions and hides it from the owner's bots", () =>
+    Effect.gen(function* () {
+      const store = yield* BotsStore;
+      const guests = yield* GuestStore;
+      const instructions = yield* BotsInstructions;
+      const guestBot: Bot = { ...bot, id: BotId.make(`b_${"c".repeat(32)}`), name: "Fin" };
+      yield* store.insertBot(bot);
+      yield* store.insertBot({ ...guestBot, position: 1 });
+      yield* store.setAboutMe("I build T3.");
+      yield* guests.insertGuest({
+        id: GuestId.make("bia"),
+        name: "Bia",
+        tokenHash: null,
+        tokenCreatedAt: null,
+        createdAt: bot.createdAt,
+        updatedAt: bot.createdAt,
+      });
+      yield* guests.assignBot(GuestId.make("bia"), guestBot.id, bot.createdAt);
+
+      const forGuestBot = yield* instructions.forThread(botThreadId(guestBot.id, 1));
+      assert.include(forGuestBot!.sections[0]!.text, "You are Fin, Bia's assistant.");
+      assert.isUndefined(forGuestBot!.sections.find((section) => section.key === "owner"));
+
+      const forOwnerBot = yield* instructions.forThread(botThreadId(bot.id, 1));
+      assert.isUndefined(forOwnerBot!.sections.find((section) => section.key === "other-bots"));
     }).pipe(Effect.provide(layerTest)),
   );
 

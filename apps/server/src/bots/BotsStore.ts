@@ -389,3 +389,6 @@ export const layer = Layer.effect(BotsStore, make).pipe(Layer.provide(BotsDb.lay
 
 /** A migrated in-memory database, for tests. */
 export const layerMemory = Layer.effect(BotsStore, make).pipe(Layer.provide(BotsDb.layerMemory));
+
+/** Over an existing bots database, for tests that share one with GuestStore. */
+export const layerFromDb = Layer.effect(BotsStore, make);
