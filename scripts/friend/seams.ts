@@ -54,7 +54,7 @@ export const SEAMS: readonly Seam[] = [
     markers: 4,
     why: "sidebarBotsLayout client setting; voiceReaderVoice server setting",
   },
-  { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots contracts" },
+  { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
   {
     file: "packages/contracts/src/environment.ts",
     markers: 3,
@@ -289,6 +289,8 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
+  "packages/contracts/src/guest.ts",
+  "apps/bia/",
   "packages/client-runtime/src/state/bots.ts",
   "packages/client-runtime/src/voice.",
   "scripts/friend/",
