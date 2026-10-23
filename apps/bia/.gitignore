@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+expo-env.d.ts
+.metro-health-check*
+*.jks
+*.keystore
+google-services.json
+
+# generated native folders
+/ios
+/android
