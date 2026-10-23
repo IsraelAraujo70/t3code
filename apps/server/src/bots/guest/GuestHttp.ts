@@ -25,7 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { GuestApiError, GuestService } from "./GuestService.ts";
 
@@ -47,6 +47,7 @@ const errorResponse = (error: GuestApiError) =>
   HttpServerResponse.jsonUnsafe({ error: error.message }, { status: error.status });
 
 const badRequest = (message: string) => new GuestApiError({ status: 400, message });
+const notFound = () => new GuestApiError({ status: 404, message: "Not found." });
 
 /** Strict: unknown keys (a model, an effort, anything) fail instead of being ignored. */
 const decodeBody = <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S) =>
@@ -111,7 +112,7 @@ const historyLimit = (url: string) => {
 };
 
 /** Every route of the guest listener; nothing else is registered on its router. */
-export const routes = HttpRouter.use((router) =>
+const addRoutes = (router: HttpRouter.HttpRouter) =>
   Effect.gen(function* () {
     const service = yield* GuestService;
     const auth = (request: HttpServerRequest.HttpServerRequest) =>
@@ -197,8 +198,7 @@ export const routes = HttpRouter.use((router) =>
         ok,
       ),
     );
-  }),
-);
+  });
 
 /** The guest listener when `T3CODE_GUEST_LISTEN` is set; nothing otherwise. Needs GuestService. */
 export const layerListener = Layer.unwrap(
@@ -214,7 +214,14 @@ export const layerListener = Layer.unwrap(
       return Layer.empty;
     }
     yield* Effect.logInfo("Guest API listening", address);
-    return HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+    // A router of its own, never HttpRouter.serve: that one reuses the main listener's memoized
+    // router, which would expose every T3 route on this port.
+    const router = yield* HttpRouter.make;
+    yield* addRoutes(router);
+    // Handlers turn their own failures into answers, so what reaches here is an unknown route.
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the router's own signature.
+    const app = router.asHttpEffect().pipe(Effect.orElseSucceed(() => errorResponse(notFound())));
+    return HttpServer.serve(app).pipe(
       Layer.provide(NodeHttpServer.layer(() => NodeHttp.createServer(), address)),
     );
   }),
