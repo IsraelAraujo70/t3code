@@ -44,6 +44,11 @@ export function isPublicAddress(ip) {
   if (words[0] === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0))
     return embeddedV4(6);
   if (words[0] === 0x2002) return embeddedV4(1);
+  // ::/64 holds the unspecified, loopback, IPv4-compatible and IPv4-translated forms; none is a
+  // public destination, and the kernel may still map some of them onto IPv4.
+  if (words.slice(0, 4).every((word) => word === 0)) return false;
+  // NAT64 local-use prefix: the gateway behind it is whatever the local network says.
+  if (words[0] === 0x64 && words[1] === 0xff9b && words[2] === 1) return false;
   return !(
     words.every((word) => word === 0) ||
     (words.slice(0, 7).every((word) => word === 0) && words[7] === 1) ||
@@ -87,25 +92,36 @@ export function createEgressProxy({
     if (!addresses.length || addresses.some(({ address }) => !isAllowedAddress(address)))
       return deny("403 Forbidden", "non-public address");
     if (client.destroyed) return;
-    const ip = addresses[0].address;
-    const upstream = net.connect({ host: ip, port: Number(match[3]) });
-    let connected = false;
-    upstream.setTimeout(10_000, () => upstream.destroy(new Error("timeout")));
-    client.on("close", () => upstream.destroy());
-    upstream.on("error", () => {
-      if (!connected) deny("502 Bad Gateway", "connect failed");
-      else client.destroy();
-    });
-    upstream.on("connect", () => {
-      connected = true;
-      log(`allow ${target} -> ${ip}`);
-      upstream.setTimeout(600_000, () => upstream.destroy());
-      client.setTimeout(600_000, () => client.destroy());
-      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head.length) upstream.write(head);
-      client.pipe(upstream).pipe(client);
-    });
-    upstream.on("close", () => client.destroy());
+    // Docker bridges are usually IPv4-only, so an AAAA answer first must not fail the tunnel.
+    const candidates = addresses
+      .map(({ address }) => address)
+      .toSorted((a, b) => net.isIP(a) - net.isIP(b));
+    const port = Number(match[3]);
+    const attempt = (index) => {
+      const ip = candidates[index];
+      const upstream = net.connect({ host: ip, port });
+      let connected = false;
+      upstream.setTimeout(10_000, () => upstream.destroy(new Error("timeout")));
+      const onClientClose = () => upstream.destroy();
+      client.on("close", onClientClose);
+      upstream.on("error", () => {
+        if (connected) return client.destroy();
+        client.off("close", onClientClose);
+        if (index + 1 < candidates.length && !client.destroyed) attempt(index + 1);
+        else deny("502 Bad Gateway", "connect failed");
+      });
+      upstream.on("connect", () => {
+        connected = true;
+        log(`allow ${target} -> ${ip}`);
+        upstream.setTimeout(600_000, () => upstream.destroy());
+        client.setTimeout(600_000, () => client.destroy());
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        client.pipe(upstream).pipe(client);
+        upstream.on("close", () => client.destroy());
+      });
+    };
+    attempt(0);
   });
   return server;
 }

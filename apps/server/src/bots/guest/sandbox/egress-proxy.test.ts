@@ -34,6 +34,9 @@ const blocked = [
   "::ffff:7f00:1",
   "64:ff9b::a00:1",
   "2002:c0a8:0101::1",
+  "::127.0.0.1",
+  "::ffff:0:7f00:1",
+  "64:ff9b:1::808:808",
   "invalid",
   "1.2.3.999",
 ];
@@ -175,5 +178,45 @@ it.each([
     expect(await request(port, `CONNECT ${target} HTTP/1.1\r\n\r\n`)).toContain("403 Forbidden");
   } finally {
     await close(proxy);
+  }
+});
+
+it("prefers IPv4 and falls back to the next validated address", async () => {
+  const echo = net.createServer((socket) => socket.pipe(socket));
+  let socket: net.Socket | undefined;
+  try {
+    const echoPort = await listen(echo);
+    // Nothing listens on 127.0.0.2, and the IPv6 answer sorts last, so only the third works.
+    const proxy = createEgressProxy({
+      isAllowedAddress: () => true,
+      lookup: async () => [
+        { address: "fd00::dead", family: 6 },
+        { address: "127.0.0.2", family: 4 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+    });
+    const port = await listen(proxy);
+    try {
+      socket = net.connect(port, "127.0.0.1");
+      const client = socket;
+      client.setEncoding("utf8");
+      let response = "";
+      const received = new Promise<void>((resolve, reject) => {
+        client.on("error", reject);
+        client.on("data", (chunk: string) => {
+          response += chunk;
+          if (response.endsWith("ping")) resolve();
+        });
+      });
+      client.write(`CONNECT multi.test:${echoPort} HTTP/1.1\r\n\r\n`);
+      client.write("ping");
+      await received;
+      expect(response).toBe("HTTP/1.1 200 Connection Established\r\n\r\nping");
+    } finally {
+      socket?.destroy();
+      await close(proxy);
+    }
+  } finally {
+    await close(echo);
   }
 });
