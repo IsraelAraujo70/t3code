@@ -61,10 +61,15 @@ export interface BotCompactionStep {
   readonly notification?: OrchestrationV2Notification;
 }
 
-const flushText = (usage: BotContextUsage) =>
+/** Owner bots save to their T3 memory; a guest's bot has no T3 tools, only its sandbox's files. */
+export type BotCompactionSaver = "memory" | "files";
+
+const flushText = (usage: BotContextUsage, saver: BotCompactionSaver) =>
   [
     `Your conversation now carries ${usage.usedTokens}${usage.maxTokens == null ? "" : ` of ${usage.maxTokens}`} tokens of context, so T3 compacts it right after this turn. Only your memories, your instructions and a short summary carry over.`,
-    "Before that, save with memory_save what you would need to continue: open work and who is waiting on it, decisions and corrections from the user, and the threads you follow. Merge related memories and forget stale ones first, so everything fits your memory budget.",
+    saver === "memory"
+      ? "Before that, save with memory_save what you would need to continue: open work and who is waiting on it, decisions and corrections from the user, and the threads you follow. Merge related memories and forget stale ones first, so everything fits your memory budget."
+      : "Before that, write what you would need to continue to a notes file in your home directory: open work, decisions and corrections from the user, and anything you promised to do. Update the file instead of starting a new one.",
     "Start no new work. Answer in one line.",
   ].join("\n\n");
 
@@ -113,6 +118,7 @@ export function botCompactionStep(
   run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
   usage: BotContextUsage | null,
   compactionPending: boolean,
+  saver: BotCompactionSaver = "memory",
 ): BotCompactionStep | null {
   if (run.status !== "completed") return null;
   if (run.userMessageId.startsWith(COMPACT_PREFIX)) return null;
@@ -131,7 +137,7 @@ export function botCompactionStep(
     kind: "flush",
     key: run.id,
     messageId: `${FLUSH_PREFIX}${run.id}`,
-    text: flushText(usage),
+    text: flushText(usage, saver),
     notification: {
       source: { kind: "system" },
       outcome: "updated",

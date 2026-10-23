@@ -21,6 +21,12 @@ const over = { usedTokens: 320_000, maxTokens: 1_000_000 };
 const under = { usedTokens: 120_000, maxTokens: 1_000_000 };
 
 describe("botCompactionStep", () => {
+  it("tells a guest's bot, which has no memory tool, to save to its files", () => {
+    const step = botCompactionStep(run("message:user-1"), over, false, "files");
+    assert.notInclude(step!.text, "memory_save");
+    assert.include(step!.text, "notes file in your home directory");
+  });
+
   it("asks a bot past the threshold to save its memory, once per run", () => {
     const step = botCompactionStep(run("message:user-1"), over, false);
     assert.strictEqual(step?.kind, "flush");
