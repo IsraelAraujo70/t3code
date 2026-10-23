@@ -79,6 +79,7 @@ const layerServiceOff = Layer.succeed(
     renameSection: notHost,
     deleteSection: notHost,
     arrange: notHost,
+    ensureConversation: notHost,
     // Not a bots host: no thread belongs to a bot here.
     botForThread: () => Effect.succeed(Option.none()),
     registerPushDevice: notHost,
@@ -159,13 +160,12 @@ export const layerService = Layer.unwrap(
     Effect.map((host) =>
       host
         ? Layer.mergeAll(
-            BotsService.layer,
+            layerGuests,
             ThreadWatchReactor.layerStart,
             BotCompactionReactor.layerStart,
             BotQueueReactor.layerStart,
             BotPushReactor.layerStart,
-            layerGuests,
-          ).pipe(Layer.provideMerge(ThreadWatchStore.layer))
+          ).pipe(Layer.provideMerge(BotsService.layer), Layer.provideMerge(ThreadWatchStore.layer))
         : Layer.merge(layerServiceOff, layerThreadWatchOff),
     ),
   ),

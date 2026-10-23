@@ -97,6 +97,12 @@ export class BotsService extends Context.Service<
     readonly deleteSection: (input: BotSectionRef) => Effect.Effect<BotSectionRef, BotsError>;
     /** Reorders sections and bots and moves bots between sections, all at once. */
     readonly arrange: (input: BotsArrangeInput) => Effect.Effect<BotsArrangeInput, BotsError>;
+    /**
+     * Launches the bot's current main thread if it is missing. Idempotent; for bots written to
+     * `bots.sqlite` while the server runs (the guest CLI), which startup reconciliation would
+     * otherwise only launch at the next start.
+     */
+    readonly ensureConversation: (input: BotRef) => Effect.Effect<Bot, BotsError>;
     /** The bot a thread belongs to, from its id; none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
     /** Idempotent: the app repeats it on every connect and token rotation. */
@@ -516,6 +522,12 @@ const make = Effect.gen(function* () {
     return input;
   });
 
+  const ensureConversation = Effect.fn("BotsService.ensureConversation")(function* (input: BotRef) {
+    const bot = yield* requireBot(input.botId);
+    yield* launchMainThread(bot);
+    return bot;
+  });
+
   const botForThread = (threadId: ThreadId) => {
     const parsed = parseBotThreadId(threadId);
     return parsed === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(parsed.botId);
@@ -575,6 +587,7 @@ const make = Effect.gen(function* () {
     renameSection,
     deleteSection,
     arrange,
+    ensureConversation,
     botForThread,
     registerPushDevice,
     unregisterPushDevice,

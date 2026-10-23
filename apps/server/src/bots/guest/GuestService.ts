@@ -58,6 +58,7 @@ import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { isTerminalRunStatus } from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { BotsService } from "../BotsService.ts";
 import { BotsStore } from "../BotsStore.ts";
 import { hashGuestToken } from "./guestToken.ts";
 import { type GuestRecord, GuestStore } from "./GuestStore.ts";
@@ -147,6 +148,7 @@ const isWorking = (run: Pick<OrchestrationV2Run, "status" | "queueHeld">) =>
 const make = Effect.gen(function* () {
   const guests = yield* GuestStore;
   const bots = yield* BotsStore;
+  const botsService = yield* BotsService;
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
@@ -186,6 +188,17 @@ const make = Effect.gen(function* () {
 
   const threadOf = (bot: Bot): ThreadId => botThreadId(bot.id, bot.homeGeneration);
 
+  /** The owned bot with its conversation launched: one the guest CLI wrote while the server ran has none yet. */
+  const ownedConversation = Effect.fn("GuestService.ownedConversation")(function* (
+    guest: GuestRecord,
+    rawBotId: string,
+  ) {
+    const bot = yield* ownedBot(guest, rawBotId);
+    return yield* botsService
+      .ensureConversation({ botId: bot.id })
+      .pipe(Effect.mapError(internal("Could not start the conversation.")));
+  });
+
   const readThread = (threadId: ThreadId) =>
     projections
       .getThreadRecords(threadId, ["messages", "runs"], { messageRoles: ["user", "assistant"] })
@@ -221,7 +234,7 @@ const make = Effect.gen(function* () {
     botId: string,
     limit: number,
   ) {
-    const bot = yield* ownedBot(guest, botId);
+    const bot = yield* ownedConversation(guest, botId);
     const { messages, runs } = yield* readThread(threadOf(bot));
     const visible = messages.filter(isGuestVisible);
     const count = Math.min(Math.max(1, Math.trunc(limit)), GUEST_LIMITS.historyMax);
@@ -282,7 +295,7 @@ const make = Effect.gen(function* () {
     botId: string,
     input: GuestSendInput,
   ) {
-    const bot = yield* ownedBot(guest, botId);
+    const bot = yield* ownedConversation(guest, botId);
     const uploads = input.attachments ?? [];
     if (input.text.trim() === "" && uploads.length === 0) {
       return yield* new GuestApiError({ status: 400, message: "Write a message or add a photo." });
@@ -330,7 +343,7 @@ const make = Effect.gen(function* () {
   });
 
   const events = Effect.fn("GuestService.events")(function* (guest: GuestRecord, botId: string) {
-    const bot = yield* ownedBot(guest, botId);
+    const bot = yield* ownedConversation(guest, botId);
     const threadId = threadOf(bot);
     // Taken before reading the runs, so a change between the two reads still replays.
     const afterSequence = yield* engine
@@ -373,7 +386,7 @@ const make = Effect.gen(function* () {
     botId: string,
     attachmentId: string,
   ) {
-    const bot = yield* ownedBot(guest, botId);
+    const bot = yield* ownedConversation(guest, botId);
     const { messages } = yield* readThread(threadOf(bot));
     const found = messages
       .filter(isGuestVisible)
