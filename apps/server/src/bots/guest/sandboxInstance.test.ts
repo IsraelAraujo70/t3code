@@ -34,6 +34,21 @@ describe("sandbox instances", () => {
     assert.isFalse(declaresGuest({}, id));
   });
 
+  it("treats duplicate guest entries the way the launched process sees them", () => {
+    const duplicated = (first: string, last: string) =>
+      instance({
+        environment: [
+          { name: GUEST_ID_ENV, value: first, sensitive: false },
+          { name: GUEST_ID_ENV, value: last, sensitive: false },
+        ],
+      });
+    // The process gets the last value, so a first entry naming the guest proves nothing.
+    assert.isNull(sandboxBinaryFor({ [id]: duplicated("bia", "ana") }, id, bia));
+    assert.isNull(sandboxBinaryFor({ [id]: duplicated("bia", "bia") }, id, bia));
+    assert.isTrue(declaresGuest({ [id]: duplicated("", "ana") }, id));
+    assert.isTrue(declaresGuest({ [id]: duplicated("ana", "") }, id));
+  });
+
   it("sandboxes only an enabled claudeAgent instance naming that guest", () => {
     assert.strictEqual(sandboxBinaryFor({ [id]: instance() }, id, bia), SANDBOX_LAUNCHER_PATH);
     assert.isNull(sandboxBinaryFor({ [id]: instance() }, id, GuestId.make("ana")));

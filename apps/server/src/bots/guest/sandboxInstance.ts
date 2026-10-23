@@ -10,6 +10,8 @@
  * - `isSandboxedFor` is strict: the guest API sends to a bot only when its instance is enabled,
  *   names that guest, and launches through the real launcher file.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a sync check on the adapter's turn path.
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import type { GuestId, ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contracts";
@@ -30,15 +32,21 @@ export const SANDBOX_LAUNCHER_PATH = NodeURL.fileURLToPath(
 
 type ProviderInstances = Readonly<Record<ProviderInstanceId, ProviderInstanceConfig>>;
 
-/** Pure. The guest id an instance's environment declares, or null. */
+const guestEntries = (instance: ProviderInstanceConfig | undefined) =>
+  instance?.environment?.filter((variable) => variable.name === GUEST_ID_ENV) ?? [];
+
+/**
+ * Pure. The guest id the instance's process receives, or null. The last entry wins, as in
+ * mergeProviderInstanceEnvironment.
+ */
 export function declaredGuest(instance: ProviderInstanceConfig | undefined): string | null {
-  const value = instance?.environment?.find((variable) => variable.name === GUEST_ID_ENV)?.value;
-  return value === undefined || value.trim() === "" ? null : value.trim();
+  const value = guestEntries(instance).at(-1)?.value;
+  return value === undefined || value === "" ? null : value;
 }
 
-/** Pure. Whether this instance must never receive a T3 MCP credential. */
+/** Pure. Whether this instance must never receive a T3 MCP credential: any entry names a guest. */
 export function declaresGuest(instances: ProviderInstances, instanceId: ProviderInstanceId) {
-  return declaredGuest(instances[instanceId]) !== null;
+  return guestEntries(instances[instanceId]).some((variable) => variable.value.trim() !== "");
 }
 
 /**
@@ -66,7 +74,9 @@ export function sandboxBinaryFor(
   if (instance === undefined || instance.driver !== "claudeAgent" || instance.enabled === false) {
     return null;
   }
-  if (declaredGuest(instance) !== guestId) return null;
+  // Exactly one entry, so the check and the launched process cannot disagree on the guest.
+  const entries = guestEntries(instance);
+  if (entries.length !== 1 || entries[0]!.value !== guestId) return null;
   const config = instance.config;
   if (typeof config !== "object" || config === null || !("binaryPath" in config)) return null;
   const binaryPath = config.binaryPath;
@@ -89,3 +99,17 @@ export const isSandboxedFor = Effect.fn("GuestSandbox.isSandboxedFor")(function*
   const launcher = yield* resolve(SANDBOX_LAUNCHER_PATH);
   return configured !== null && configured === launcher;
 });
+
+/**
+ * Whether a Claude instance's resolved binary is the sandbox launcher. Synchronous for the Claude
+ * adapter: a sandboxed turn must not discover the host's skills, which would also let guest text
+ * name them as commands.
+ */
+export function isSandboxLauncher(binaryPath: string | undefined): boolean {
+  if (binaryPath === undefined || binaryPath === "") return false;
+  try {
+    return NodeFS.realpathSync(binaryPath) === NodeFS.realpathSync(SANDBOX_LAUNCHER_PATH);
+  } catch {
+    return false;
+  }
+}

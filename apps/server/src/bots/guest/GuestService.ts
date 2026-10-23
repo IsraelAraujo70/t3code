@@ -66,7 +66,7 @@ import { isSandboxedFor } from "./sandboxInstance.ts";
 
 /** An answer for the guest: `status` is the HTTP status, `message` is shown to them, in Portuguese. */
 export class GuestApiError extends Schema.TaggedError<GuestApiError>()("GuestApiError", {
-  status: Schema.Literals([400, 401, 404, 409, 413, 500]),
+  status: Schema.Literals([400, 401, 404, 409, 413, 429, 500]),
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
@@ -143,6 +143,17 @@ const toGuestMessage = (message: OrchestrationV2ConversationMessage): GuestMessa
   streaming: message.streaming,
   createdAt: DateTime.formatIso(message.createdAt),
 });
+
+/**
+ * Claude Code runs a message that starts with "/" as one of its commands, and `/model` would
+ * switch the bot's model. A leading zero-width space keeps it plain text for the bot.
+ */
+export const asPlainText = (text: string) => (/^\s*\//.test(text) ? `\u200b${text}` : text);
+
+/** Live streams one guest may hold open at once (a phone keeps one per bot). */
+const MAX_STREAMS_PER_GUEST = 8;
+/** How soon an open stream notices a revoked token or a bot given to someone else. */
+const STREAM_REVALIDATE = "5 seconds";
 
 /** A held queued run waits for a person, so it is not the bot working. */
 const isWorking = (run: Pick<OrchestrationV2Run, "status" | "queueHeld">) =>
@@ -342,7 +353,7 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`guest:${guest.id}:${id}`),
         threadId,
         messageId,
-        text: input.text,
+        text: asPlainText(input.text),
         attachments,
         // The bot definition decides the model and effort; the guest never does.
         modelSelection: bot.model,
@@ -354,7 +365,36 @@ const make = Effect.gen(function* () {
     return { messageId } satisfies GuestSendResult;
   });
 
+  const openStreams = new Map<GuestRecord["id"], number>();
+
+  /** The guest still holds this token and still owns the bot. */
+  const stillAuthorized = (guest: GuestRecord, bot: Bot) =>
+    Effect.all([guests.getGuest(guest.id), guests.guestOfBot(bot.id)]).pipe(
+      Effect.map(
+        ([current, owner]) =>
+          Option.isSome(current) &&
+          current.value.tokenHash !== null &&
+          current.value.tokenHash === guest.tokenHash &&
+          Option.isSome(owner) &&
+          owner.value === guest.id,
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+
+  /** Completes once the stream's guest or bot stops being authorized. */
+  const revoked = (guest: GuestRecord, bot: Bot): Effect.Effect<void> =>
+    Effect.sleep(STREAM_REVALIDATE).pipe(
+      Effect.andThen(stillAuthorized(guest, bot)),
+      Effect.flatMap((ok) => (ok ? revoked(guest, bot) : Effect.void)),
+    );
+
   const events = Effect.fn("GuestService.events")(function* (guest: GuestRecord, botId: string) {
+    if ((openStreams.get(guest.id) ?? 0) >= MAX_STREAMS_PER_GUEST) {
+      return yield* new GuestApiError({
+        status: 429,
+        message: "Muitas conversas abertas ao mesmo tempo. Feche o app e abra de novo.",
+      });
+    }
     const bot = yield* ownedConversation(guest, botId);
     const threadId = threadOf(bot);
     // Taken before reading the runs, so a change between the two reads still replays.
@@ -378,7 +418,7 @@ const make = Effect.gen(function* () {
       return [{ type: "working", working }];
     };
     const initial: GuestStreamEvent = { type: "working", working };
-    return Stream.make(initial).pipe(
+    const live = Stream.make(initial).pipe(
       Stream.concat(
         engine.streamStoredEventsFrom({ threadId, afterSequence }).pipe(
           Stream.map((stored) => changes(stored.event)),
@@ -390,6 +430,22 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
+      Stream.interruptWhen(revoked(guest, bot)),
+    );
+    // Counted while the response body streams, so a stream that never starts holds no slot.
+    return Stream.unwrap(
+      Effect.sync(() => {
+        openStreams.set(guest.id, (openStreams.get(guest.id) ?? 0) + 1);
+        return live.pipe(
+          Stream.ensuring(
+            Effect.sync(() => {
+              const left = (openStreams.get(guest.id) ?? 1) - 1;
+              if (left <= 0) openStreams.delete(guest.id);
+              else openStreams.set(guest.id, left);
+            }),
+          ),
+        );
+      }),
     );
   });
 

@@ -128,6 +128,8 @@ async function readEvents(
   }
 }
 
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const finalReply = (events: GuestStreamEvent[], text: string | RegExp) =>
   events.some(
     (event) =>
@@ -162,7 +164,12 @@ beforeAll(async () => {
         [instanceId]: {
           driver: "claudeAgent",
           enabled: true,
-          config: { binaryPath: SANDBOX_LAUNCHER_PATH },
+          // A host skill the guest must not be able to invoke: without isSandboxLauncher in the
+          // Claude adapter, `$t3it-skill` in guest text would become a native skill command.
+          config: {
+            binaryPath: SANDBOX_LAUNCHER_PATH,
+            homePath: NodePath.join(base, "claude-home"),
+          },
           environment: [
             { name: GUEST_ID_ENV, value: bia },
             { name: "T3CODE_GUEST_FAKE_ANTHROPIC", value: "1" },
@@ -171,6 +178,13 @@ beforeAll(async () => {
         },
       },
     }),
+  );
+
+  const skill = NodePath.join(base, "claude-home/skills/t3it-skill");
+  NodeFS.mkdirSync(skill, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(skill, "SKILL.md"),
+    "---\nname: t3it-skill\ndescription: A host-only skill for the guest API test.\n---\n\nSay HOST-SKILL.\n",
   );
 
   cli("create", bia, "--name", "Bia");
@@ -359,6 +373,69 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
     expect(upgrade).toBe(404);
   });
 
+  it("refuses oversized bodies, declared or chunked, before parsing them", async () => {
+    const big = " ".repeat(64 * 1024) + JSON.stringify({ token: "x" });
+    // The server answers 413 and drops the upload, so the client sees the 413 or a reset.
+    const refused = (init: RequestInit) =>
+      api("/guest/v1/push-devices", {
+        token: biaToken,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...init,
+      }).then(
+        (response) => response.status,
+        (error: unknown) =>
+          error instanceof TypeError &&
+          String((error.cause as Error | undefined)?.message).includes("ECONNRESET")
+            ? "reset"
+            : Promise.reject(error),
+      );
+    expect([413, "reset"]).toContain(await refused({ body: big }));
+    expect([413, "reset"]).toContain(
+      await refused({ body: new Blob([big]).stream(), duplex: "half" } as RequestInit),
+    );
+    // A small, valid body still works afterwards.
+    const ok = await api("/guest/v1/push-devices", {
+      token: biaToken,
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "fcm-test-token" }),
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("caps a guest's open live streams", async () => {
+    const controllers = Array.from({ length: 8 }, () => new AbortController());
+    try {
+      const open = await Promise.all(
+        controllers.map((controller) =>
+          api(`/guest/v1/bots/${finance}/events`, { token: biaToken, signal: controller.signal }),
+        ),
+      );
+      expect(open.map((response) => response.status)).toEqual(Array(8).fill(200));
+      // The slot is taken once each body starts streaming.
+      await Promise.all(open.map((response) => response.body!.getReader().read()));
+      const ninth = await api(`/guest/v1/bots/${finance}/events`, { token: biaToken });
+      expect(ninth.status).toBe(429);
+    } finally {
+      for (const controller of controllers) controller.abort();
+    }
+  });
+
+  it("closes an open live stream once its token is revoked", async () => {
+    const response = await api(`/guest/v1/bots/${anaBot}/events`, { token: anaToken });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    await reader.read();
+    cli("revoke", ana);
+    const ended = (async () => {
+      for (;;) if ((await reader.read()).done) return true;
+    })();
+    const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000));
+    expect(await Promise.race([ended, timeout])).toBe(true);
+    anaToken = cli("mint", ana, "--server", guestOrigin).token as string;
+  }, 30_000);
+
   describe.skipIf(!sandbox)("chatting through the sandbox", () => {
     it("streams the reply, pins the bot's model, stops when idle and resumes", async () => {
       const first = "olá, quanto gastamos com mercado este mês? me ajuda a organizar";
@@ -430,6 +507,21 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
       );
       expect(finalReply(resumed, "Eco #2: de novo")).toBe(true);
     }, 240_000);
+
+    it("passes guest commands and skill names to the bot as plain text", async () => {
+      for (const text of ["/model claude-opus-5-5", "olha $t3it-skill isso"]) {
+        const events = await readEvents(
+          biaToken,
+          finance,
+          (seen) => finalReply(seen, new RegExp(`^Eco #\\d+: \\u200b?${escape(text)}$`)),
+          60_000,
+          async () => {
+            expect((await send(biaToken, finance, { text })).status).toBe(202);
+          },
+        );
+        expect(finalReply(events, new RegExp(`^Eco #\\d+: \\u200b?${escape(text)}$`))).toBe(true);
+      }
+    }, 150_000);
 
     it("delivers a photo to the bot and serves it back to its owner only", async () => {
       // The image reaches Claude inline; T3 also appends a path hint, which the echo repeats.

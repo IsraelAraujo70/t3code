@@ -25,7 +25,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as ByteSize from "effect/ByteSize";
+import {
+  HttpIncomingMessage,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 
 import { GuestApiError, GuestService } from "./GuestService.ts";
 
@@ -49,18 +56,37 @@ const errorResponse = (error: GuestApiError) =>
 const badRequest = (message: string) => new GuestApiError({ status: 400, message });
 const notFound = () => new GuestApiError({ status: 404, message: "Não encontrado." });
 
-/** Strict: unknown keys (a model, an effort, anything) fail instead of being ignored. */
-const decodeBody = <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S) =>
+/** Photos travel as data URLs: the send limit fits GUEST_LIMITS' images plus the text. */
+const SEND_BODY_LIMIT = ByteSize.mebibytes(46);
+const SMALL_BODY_LIMIT = ByteSize.kibibytes(16);
+
+const tooLarge = () => new GuestApiError({ status: 413, message: "Pedido grande demais." });
+
+/**
+ * Reads at most `limit` bytes (chunked bodies included, the stream is cut once it passes) and
+ * decodes strictly: unknown keys (a model, an effort, anything) fail instead of being ignored.
+ */
+const decodeBody = <S extends Schema.Top & { readonly DecodingServices: never }>(
+  schema: S,
+  limit: ByteSize.ByteSize,
+) =>
   Effect.fn("GuestHttp.decodeBody")(function* (request: HttpServerRequest.HttpServerRequest) {
-    const body = yield* request.json.pipe(Effect.mapError(() => badRequest("Pedido inválido.")));
+    const declared = Number(request.headers["content-length"] ?? Number.NaN);
+    if (Number.isFinite(declared) && declared > Number(limit)) return yield* tooLarge();
+    const body = yield* request.json.pipe(
+      Effect.provideService(HttpIncomingMessage.MaxBodySize, limit),
+      Effect.mapError((cause) =>
+        String(cause).includes("maxBytes") ? tooLarge() : badRequest("Pedido inválido."),
+      ),
+    );
     return yield* Schema.decodeUnknownEffect(schema)(body, { onExcessProperty: "error" }).pipe(
       Effect.mapError((issue) => badRequest(`Pedido inválido: ${issue.message}`)),
     );
   });
 
-const decodeSend = decodeBody(GuestSendInput);
-const decodePushRegister = decodeBody(GuestPushDeviceInput);
-const decodePushRef = decodeBody(GuestPushDeviceRef);
+const decodeSend = decodeBody(GuestSendInput, SEND_BODY_LIMIT);
+const decodePushRegister = decodeBody(GuestPushDeviceInput, SMALL_BODY_LIMIT);
+const decodePushRef = decodeBody(GuestPushDeviceRef, SMALL_BODY_LIMIT);
 
 const sse = (events: Stream.Stream<GuestStreamEvent>) =>
   HttpServerResponse.stream(

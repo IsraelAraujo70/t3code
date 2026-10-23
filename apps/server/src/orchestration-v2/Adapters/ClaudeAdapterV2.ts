@@ -124,6 +124,8 @@ import {
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
+// Fork (friend): guest sandboxes discover no host skills.
+import { isSandboxLauncher } from "../../bots/guest/sandboxInstance.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -3871,23 +3873,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
+  // Fork (friend): a guest sandbox has none of the host's skills, and guest text must not name them.
   const userInvocableSkills = (cwd: string | null) =>
-    discoverClaudeSkills(
-      adapterOptions.settings,
-      cwd ?? undefined,
-      adapterOptions.environment,
-    ).pipe(
-      Effect.map(
-        (skills) =>
-          new Map(
-            skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
-              .map((skill) => [skill.name, skill]),
+    isSandboxLauncher(adapterOptions.settings.binaryPath)
+      ? Effect.succeed(new Map<string, ClaudeSkillTarget>())
+      : discoverClaudeSkills(
+          adapterOptions.settings,
+          cwd ?? undefined,
+          adapterOptions.environment,
+        ).pipe(
+          Effect.map(
+            (skills) =>
+              new Map(
+                skills
+                  .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                  .map((skill) => [skill.name, skill]),
+              ),
           ),
-      ),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-    );
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
