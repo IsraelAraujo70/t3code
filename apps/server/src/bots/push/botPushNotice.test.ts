@@ -15,7 +15,7 @@ import {
 
 import { BOT_COMPACTION_MESSAGE_PREFIX } from "../compaction/botCompaction.ts";
 import { THREAD_WATCH_MESSAGE_PREFIX } from "../threadWatch/threadWatchNotice.ts";
-import { type BotPushChange, botPushData, botPushNotice } from "./botPushNotice.ts";
+import { type BotPushChange, botPushData, botPushNotice, guestPushData } from "./botPushNotice.ts";
 
 const bot = { id: BotId.make("b_ada"), homeGeneration: 2 };
 const home = botThreadId(bot.id, 2);
@@ -220,5 +220,16 @@ describe("botPushData", () => {
         sent_at: "1792000000000",
       },
     );
+  });
+});
+
+describe("guestPushData", () => {
+  it("names the bot the guest app opens, and nothing about the owner's environment", () => {
+    const notice = botPushNotice(home, bot, ran())!;
+    assert.deepStrictEqual(guestPushData(notice), {
+      t3_kind: "guest_bot_message",
+      botId: "b_ada",
+      alert_id: "bot-push:run:run-1",
+    });
   });
 });

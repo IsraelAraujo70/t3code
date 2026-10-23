@@ -24,7 +24,7 @@ import { forkParked } from "../../serverActivation.ts";
 import { BotsStore } from "../BotsStore.ts";
 import { GuestStore } from "../guest/GuestStore.ts";
 import * as BotPushDelivery from "./BotPushDelivery.ts";
-import { botPushData, botPushNotice, type BotPushChange } from "./botPushNotice.ts";
+import { botPushData, botPushNotice, guestPushData, type BotPushChange } from "./botPushNotice.ts";
 
 /** Keys remembered so a repeated event never pushes twice; old ones are long settled. */
 const MAX_SENT_KEYS = 512;
@@ -107,12 +107,14 @@ const make = Effect.gen(function* () {
       const notice = botPushNotice(event.threadId, bot, change);
       if (notice === null || bot === undefined || sent.has(notice.key)) return;
       remember(notice.key);
-      const data = botPushData(notice, {
-        botName: bot.name,
-        environmentId,
-        sentAt: yield* Clock.currentTimeMillis,
-      });
       const guestId = yield* guests.guestOfBot(bot.id);
+      const data = Option.isSome(guestId)
+        ? guestPushData(notice)
+        : botPushData(notice, {
+            botName: bot.name,
+            environmentId,
+            sentAt: yield* Clock.currentTimeMillis,
+          });
       const audience = audienceFor(bot, guestId, notice.body, store, guests);
       yield* Effect.forkIn(delivery.deliver(data, audience), scope);
     },

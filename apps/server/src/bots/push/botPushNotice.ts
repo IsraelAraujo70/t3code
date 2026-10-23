@@ -125,3 +125,11 @@ export function botPushData(
     sent_at: String(context.sentAt),
   };
 }
+
+/**
+ * Pure. A guest's phone runs the guest app, which opens the bot's chat by `botId`. It gets nothing
+ * about the owner's environment or threads; Android shows the FCM `notification` itself.
+ */
+export function guestPushData(notice: BotPushNotice): BotPushData {
+  return { t3_kind: "guest_bot_message", botId: notice.botId, alert_id: notice.key };
+}
