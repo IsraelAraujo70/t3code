@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Claude Code for a guest's bot, run inside that guest's Docker sandbox (friend fork).
+#
+# A `claudeAgent` provider instance uses this file as its binary and names the guest with
+# T3CODE_GUEST_ID in its environment. The Agent SDK spawns it like the real `claude`: arguments
+# in, stream-json over stdin/stdout. Each provider session is one `docker run --rm -i`, so when
+# T3 releases the idle session (idle timeout, Restart session, the guest idle reaper) the SDK
+# closes stdin, Claude exits and the container is removed. Conversations survive in the guest's
+# volume, so the next session resumes them.
+#
+# The container never sees the host's environment, files or keys:
+# - Only the guest's volume (/home/guest) and two read-only secret files are mounted.
+# - Its network is `--internal`: no route to the host, the LAN, the tailnet or the internet.
+#   The only way out is the guest's egress proxy, which refuses every non-public address.
+# - Non-root, all capabilities dropped, no-new-privileges, read-only root, memory/CPU/pids caps.
+# - No variable of the T3 server process is forwarded, except the SDK's own two identifiers.
+set -euo pipefail
+
+die() {
+  echo "t3-guest-claude: $*" >&2
+  exit 64
+}
+
+guest="${T3CODE_GUEST_ID:-}"
+[[ "$guest" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || die "T3CODE_GUEST_ID is missing or invalid."
+
+image="${T3CODE_GUEST_IMAGE:-t3-guest-sandbox:latest}"
+secrets_dir="${T3CODE_GUEST_SECRETS_DIR:-$HOME/.config/t3-$guest}"
+anthropic_key="${T3CODE_GUEST_ANTHROPIC_KEY_FILE:-$secrets_dir/anthropic.key}"
+git_key="${T3CODE_GUEST_GIT_KEY_FILE:-$secrets_dir/git_deploy_key}"
+memory="${T3CODE_GUEST_MEMORY:-2g}"
+cpus="${T3CODE_GUEST_CPUS:-2}"
+pids="${T3CODE_GUEST_PIDS:-512}"
+
+network="t3-guest-$guest"
+egress_network="t3-guest-egress"
+proxy="t3-guest-$guest-egress"
+volume="t3-guest-$guest-home"
+# The image's `guest` user; secret files must be readable by this uid.
+uid="1000:1000"
+
+docker image inspect "$image" >/dev/null 2>&1 ||
+  die "image $image is missing. Build it: docker build -t $image apps/server/src/bots/guest/sandbox"
+
+if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
+  exec docker run --rm --network none --user "$uid" --cap-drop ALL \
+    --security-opt no-new-privileges "$image" claude --version
+fi
+
+hardening=(
+  --user "$uid"
+  --cap-drop ALL
+  --security-opt no-new-privileges
+  --read-only
+  --tmpfs /tmp:rw,nosuid,nodev,size=512m
+  --label "t3.guest=$guest"
+)
+
+# Idempotent, and serialized per guest so two sessions starting at once do not race to create
+# the same network or proxy.
+ensure_infra() {
+  docker network inspect "$network" >/dev/null 2>&1 ||
+    docker network create --internal --label "t3.guest=$guest" "$network" >/dev/null
+  docker network inspect "$egress_network" >/dev/null 2>&1 ||
+    docker network create --label t3.guest=egress "$egress_network" >/dev/null
+  if [[ "$(docker container inspect -f '{{.State.Running}}' "$proxy" 2>/dev/null)" != "true" ]]; then
+    docker rm -f "$proxy" >/dev/null 2>&1 || true
+    docker run -d --name "$proxy" --restart unless-stopped --network "$egress_network" \
+      "${hardening[@]}" --memory 128m --cpus 0.5 --pids-limit 64 \
+      "$image" node /opt/t3-guest/egress-proxy.mjs >/dev/null
+  fi
+  if ! docker container inspect -f '{{json .NetworkSettings.Networks}}' "$proxy" |
+    grep -q "\"$network\""; then
+    docker network connect --alias egress "$network" "$proxy"
+  fi
+}
+
+lock="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/t3-guest-$guest.lock"
+(
+  flock -w 60 9 || die "timed out waiting for $lock"
+  ensure_infra
+) 9>"$lock"
+
+# Host paths mean nothing inside the container; T3 passes its workspace and attachments
+# directories, and images reach Claude inline, not by path.
+args=()
+while (($#)); do
+  case "$1" in
+  --add-dir | --plugin-dir | --plugin-dir-no-mcp | --debug-file | --mcp-config)
+    shift 2 || shift
+    ;;
+  --add-dir=* | --plugin-dir=* | --plugin-dir-no-mcp=* | --debug-file=* | --mcp-config=*)
+    shift
+    ;;
+  *)
+    args+=("$1")
+    shift
+    ;;
+  esac
+done
+
+mounts=(--mount "type=volume,src=$volume,dst=/home/guest")
+[[ -r "$anthropic_key" ]] &&
+  mounts+=(--mount "type=bind,src=$anthropic_key,dst=/run/secrets/anthropic.key,readonly")
+[[ -r "$git_key" ]] &&
+  mounts+=(--mount "type=bind,src=$git_key,dst=/run/secrets/git_deploy_key,readonly")
+
+env=(
+  -e HTTPS_PROXY=http://egress:3128 -e https_proxy=http://egress:3128
+  -e HTTP_PROXY=http://egress:3128 -e http_proxy=http://egress:3128
+  -e NO_PROXY=localhost,127.0.0.1 -e no_proxy=localhost,127.0.0.1
+  -e "T3_GUEST_ID=$guest"
+  -e "T3_GUEST_GIT_NAME=${T3CODE_GUEST_GIT_NAME:-}"
+  -e "T3_GUEST_GIT_EMAIL=${T3CODE_GUEST_GIT_EMAIL:-}"
+  -e "T3_GUEST_GIT_REMOTE=${T3CODE_GUEST_GIT_REMOTE:-}"
+  -e "T3_GUEST_GIT_DIR=${T3CODE_GUEST_GIT_DIR:-}"
+  -e "T3_GUEST_FAKE_ANTHROPIC=${T3CODE_GUEST_FAKE_ANTHROPIC:-}"
+)
+for name in CLAUDE_CODE_ENTRYPOINT CLAUDE_AGENT_SDK_VERSION; do
+  [[ -n "${!name:-}" ]] && env+=(-e "$name")
+done
+
+exec docker run --rm -i --init \
+  --name "t3-guest-$guest-$(date +%s)-$$" \
+  --network "$network" \
+  "${hardening[@]}" \
+  --memory "$memory" --memory-swap "$memory" --cpus "$cpus" --pids-limit "$pids" \
+  "${mounts[@]}" \
+  "${env[@]}" \
+  "$image" t3-guest-entrypoint claude "${args[@]}"

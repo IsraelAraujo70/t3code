@@ -25,6 +25,7 @@ import {
 
 import { BOT_SENDER_PREFIX } from "./botSender.ts";
 import { BotsStore } from "./BotsStore.ts";
+import { GuestStore } from "./guest/GuestStore.ts";
 
 /** Section texts never exceed this, so adapters can deliver each section on its own. */
 export const BOT_INSTRUCTION_SECTION_LIMIT = 3_500;
@@ -37,6 +38,23 @@ export interface BotInstructionInput {
   /** The user's other bots, in sidebar order. */
   readonly peers: ReadonlyArray<Bot>;
 }
+
+export interface GuestBotInstructionInput {
+  readonly bot: Bot;
+  /** Only enabled memories, oldest first. */
+  readonly memories: ReadonlyArray<BotMemory>;
+  /** The guest's display name. */
+  readonly guestName: string;
+}
+
+// Guest bots run in a Docker sandbox with no T3 MCP tools, so they get none of the owner's tool
+// instructions, profile or peers; their files are their only memory they can write.
+const GUEST_WORKSPACE_TEXT = [
+  "You run inside an isolated Linux container. Your home directory, /home/guest, persists between conversations: keep notes, lists and files there, and read them back when they matter. Repositories you were given are cloned in your home directory.",
+  "You can reach the internet (through a proxy) and use git, but you cannot reach the computer that hosts you or anything on its network.",
+  "You have no T3 tools: you cannot start other threads, message other bots or save memories with a tool. When something must be remembered, write it to a file in your home directory.",
+  "Reply in the language the user writes in, simply and kindly.",
+].join("\n\n");
 
 // Roles and memories imported from the old friend app still name its tools; this overrides them.
 const WORK_TOOLS_TEXT = [
@@ -116,11 +134,38 @@ export function buildBotInstructions(input: BotInstructionInput): AppInstruction
         ]
       : []),
   ].flatMap(splitSection);
-  const fingerprint = NodeCrypto.createHash("sha256")
+  return { fingerprint: fingerprintOf(sections), sections };
+}
+
+/** Pure. Identity and role, read-only memories, and the sandbox the bot works in. */
+export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppInstructions {
+  const { bot, memories } = input;
+  const identity = `You are ${bot.name}, ${input.guestName}'s assistant. This thread is your ongoing conversation with ${input.guestName}.`;
+  const role = bot.role.trim();
+  const sections = [
+    {
+      key: "bot",
+      title: "Who you are",
+      text: role.length > 0 ? `${identity}\n\n${role}` : identity,
+    },
+    ...(memories.length > 0
+      ? [
+          {
+            key: "memories",
+            title: "What you know",
+            text: memories.map((memory) => `- ${memory.text}`).join("\n"),
+          },
+        ]
+      : []),
+    { key: "workspace", title: "Where you work", text: GUEST_WORKSPACE_TEXT },
+  ].flatMap(splitSection);
+  return { fingerprint: fingerprintOf(sections), sections };
+}
+
+const fingerprintOf = (sections: ReadonlyArray<Section>) =>
+  NodeCrypto.createHash("sha256")
     .update(JSON.stringify(sections.map((section) => [section.key, section.text])))
     .digest("hex");
-  return { fingerprint, sections };
-}
 
 type Section = AppInstructions["sections"][number];
 
@@ -166,25 +211,39 @@ export class BotsInstructions extends Context.Service<
   }
 >()("t3/bots/BotsInstructions") {}
 
-/** Reads through BotsStore. */
-export const layer: Layer.Layer<BotsInstructions, never, BotsStore> = Layer.effect(
+/** Reads through BotsStore and GuestStore. */
+export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore> = Layer.effect(
   BotsInstructions,
   Effect.gen(function* () {
     const store = yield* BotsStore;
+    const guests = yield* GuestStore;
     return BotsInstructions.of({
       forThread: Effect.fn("BotsInstructions.forThread")(function* (threadId: ThreadId) {
         const parsed = parseBotThreadId(threadId);
         if (parsed === null) return undefined;
         const bot = yield* store.getBot(parsed.botId);
         if (Option.isNone(bot)) return undefined;
-        const memories = yield* store.listMemories(parsed.botId);
+        const memories = (yield* store.listMemories(parsed.botId)).filter(
+          (memory) => memory.enabled,
+        );
+        const assignments = yield* guests.listAssignments;
+        const guestId = assignments.get(parsed.botId);
+        if (guestId !== undefined) {
+          const guest = yield* guests.getGuest(guestId);
+          return buildGuestBotInstructions({
+            bot: bot.value,
+            memories,
+            guestName: Option.isSome(guest) ? guest.value.name : guestId,
+          });
+        }
         const aboutMe = yield* store.getAboutMe;
         const bots = yield* store.listBots;
         return buildBotInstructions({
           bot: bot.value,
-          memories: memories.filter((memory) => memory.enabled),
+          memories,
           aboutMe,
-          peers: bots.filter((peer) => peer.id !== parsed.botId),
+          // A guest's bots are not the owner's to hand work to.
+          peers: bots.filter((peer) => peer.id !== parsed.botId && !assignments.has(peer.id)),
         });
       }),
     });

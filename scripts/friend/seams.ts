@@ -126,8 +126,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
-    markers: 2,
-    why: "idle-only release for restarting a bot's session",
+    markers: 4,
+    why: "idle-only release for restarting a bot's session; no MCP credential for guest sandboxes",
   },
   {
     file: "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",

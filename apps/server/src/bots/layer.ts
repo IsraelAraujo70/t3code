@@ -15,10 +15,16 @@ import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
 import * as BotCompactionReactor from "./compaction/BotCompactionReactor.ts";
+import * as GuestHttp from "./guest/GuestHttp.ts";
+import * as GuestIdle from "./guest/GuestIdle.ts";
+import * as GuestService from "./guest/GuestService.ts";
+import * as GuestStore from "./guest/GuestStore.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
 import * as BotQueueReactor from "./queue/BotQueueReactor.ts";
+import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE }));
 
@@ -91,24 +97,58 @@ const layerThreadWatchOff = Layer.succeed(
   }),
 );
 
+// Guests live in bots.sqlite too; only the bots host has them.
+const layerGuestStoreOff = Layer.succeed(
+  GuestStore.GuestStore,
+  GuestStore.GuestStore.of({
+    listGuests: notHost(),
+    getGuest: notHost,
+    getGuestByTokenHash: notHost,
+    insertGuest: notHost,
+    setTokenHash: notHost,
+    deleteGuest: notHost,
+    listGuestBotIds: notHost,
+    listAssignments: notHost(),
+    guestOfBot: notHost,
+    assignBot: notHost,
+    unassignBot: notHost,
+    upsertPushDevice: notHost,
+    deletePushDevice: notHost,
+    listPushDevices: notHost,
+  }),
+);
+
 /** Everything a server that is not the bots host provides instead of bots. */
 export const layerOff = Layer.mergeAll(
   layerStoreOff,
   layerInstructionsOff,
   layerServiceOff,
   layerThreadWatchOff,
+  layerGuestStoreOff,
 );
 
-/** BotsStore and BotsInstructions, for the orchestration runtime (RunExecutionService). */
+/**
+ * BotsStore, GuestStore and BotsInstructions, for the orchestration runtime
+ * (RunExecutionService) and the bots layers above it.
+ */
 export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? BotsInstructions.layer.pipe(Layer.provideMerge(BotsStore.layer))
-        : Layer.merge(layerStoreOff, layerInstructionsOff),
+        ? BotsInstructions.layer.pipe(
+            Layer.provideMerge(BotsStore.layer),
+            Layer.provideMerge(GuestStore.layer),
+          )
+        : Layer.mergeAll(layerStoreOff, layerInstructionsOff, layerGuestStoreOff),
     ),
   ),
 );
+
+/** The guest listener and the idle stop of guest sandboxes. */
+const layerGuests = Layer.merge(
+  GuestHttp.layerListener.pipe(Layer.provide(GuestService.layer)),
+  GuestIdle.layerStart.pipe(Layer.provide(BotSessionRestart.layerLive)),
+).pipe(Layer.provide(ProjectionStore.layer));
 
 /**
  * BotsService, thread watches (store and waking reactor), bot compaction, held-queue resume and
@@ -124,6 +164,7 @@ export const layerService = Layer.unwrap(
             BotCompactionReactor.layerStart,
             BotQueueReactor.layerStart,
             BotPushReactor.layerStart,
+            layerGuests,
           ).pipe(Layer.provideMerge(ThreadWatchStore.layer))
         : Layer.merge(layerServiceOff, layerThreadWatchOff),
     ),
