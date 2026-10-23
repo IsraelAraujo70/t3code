@@ -54,7 +54,8 @@ const withStores = Effect.fn("GuestCli.withStores")(function* <A, E, R>(
     raw === "~" ? home : raw.startsWith("~/") ? path.join(home, raw.slice(2)) : raw,
   );
   const config = ServerConfig.layerTest(process.cwd(), baseDir);
-  const stores = Layer.mergeAll(Guests.layerFromDb, Bots.layer).pipe(
+  // One connection for both stores, so bot-create's insert and assignment share a transaction.
+  const stores = Layer.mergeAll(Guests.layerFromDb, Bots.layerFromDb).pipe(
     Layer.provideMerge(BotsDb.layer),
     Layer.provideMerge(config),
   );
