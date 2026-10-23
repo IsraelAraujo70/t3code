@@ -6,7 +6,10 @@ function echo(messages) {
   let count = 0;
   let text = "";
   let images = 0;
+  // The CLI may send a turn's images and its text as separate user messages.
+  let turnImages = 0;
   for (const message of Array.isArray(messages) ? messages : []) {
+    if (message?.role === "assistant") turnImages = 0;
     if (message?.role !== "user") continue;
     const blocks =
       typeof message.content === "string"
@@ -20,6 +23,7 @@ function echo(messages) {
         typeof block.text === "string" &&
         !block.text.startsWith("<system-reminder>"),
     );
+    turnImages += blocks.filter((block) => block?.type === "image").length;
     if (texts.length === 0) continue;
     count++;
     text = texts
@@ -27,7 +31,7 @@ function echo(messages) {
       .join("\n")
       .trim()
       .slice(0, 500);
-    images = blocks.filter((block) => block?.type === "image").length;
+    images = turnImages;
   }
   return `Eco #${count}: ${text}${images ? ` (+${images} ${images === 1 ? "imagem" : "imagens"})` : ""}`;
 }
@@ -140,5 +144,8 @@ export function createFakeAnthropic({ chunkDelayMs = 25 } = {}) {
 }
 
 if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
-  createFakeAnthropic().listen(Number(process.env.FAKE_ANTHROPIC_PORT || 8099), "127.0.0.1");
+  // Slow enough in the sandbox that a client visibly receives the reply in pieces.
+  createFakeAnthropic({
+    chunkDelayMs: Number(process.env.FAKE_ANTHROPIC_CHUNK_DELAY_MS || 120),
+  }).listen(Number(process.env.FAKE_ANTHROPIC_PORT || 8099), "127.0.0.1");
 }
