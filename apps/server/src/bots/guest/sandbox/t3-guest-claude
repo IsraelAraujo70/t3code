@@ -75,6 +75,16 @@ ensure_infra() {
   fi
 }
 
+# `--sandbox-exec <command...>` runs a command in the same container instead of Claude: for the
+# owner to inspect a guest's sandbox and for the container tests. Only whoever runs this file can
+# pass it; the T3 server passes the Agent SDK's arguments, never a guest's.
+command=(claude)
+if [[ "${1:-}" == "--sandbox-exec" ]]; then
+  shift
+  (($#)) || die "--sandbox-exec needs a command."
+  command=()
+fi
+
 lock="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/t3-guest-$guest.lock"
 (
   flock -w 60 9 || die "timed out waiting for $lock"
@@ -84,7 +94,7 @@ lock="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/t3-guest-$guest.lock"
 # Host paths mean nothing inside the container; T3 passes its workspace and attachments
 # directories, and images reach Claude inline, not by path.
 args=()
-while (($#)); do
+while ((${#command[@]})) && (($#)); do
   case "$1" in
   --add-dir | --plugin-dir | --plugin-dir-no-mcp | --debug-file | --mcp-config)
     shift 2 || shift
@@ -127,4 +137,4 @@ exec docker run --rm -i --init \
   --memory "$memory" --memory-swap "$memory" --cpus "$cpus" --pids-limit "$pids" \
   "${mounts[@]}" \
   "${env[@]}" \
-  "$image" t3-guest-entrypoint claude "${args[@]}"
+  "$image" t3-guest-entrypoint "${command[@]}" "${args[@]}" "$@"
