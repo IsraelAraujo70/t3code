@@ -90,6 +90,11 @@ const register = (token: string) =>
     });
   });
 
+const ownerAudience = Effect.map(BotsStore.BotsStore, (store) => ({
+  devices: store.listPushDevices,
+  drop: store.deletePushDevice,
+}));
+
 const DATA = { t3_kind: "bot_message", alert_id: "bot-push:run:run-1", alert_body: "Done." };
 
 describe("BotPushDelivery", () => {
@@ -101,8 +106,8 @@ describe("BotPushDelivery", () => {
       yield* register("device-1");
       yield* register("device-2");
 
-      yield* delivery.deliver(DATA);
-      yield* delivery.deliver(DATA);
+      yield* delivery.deliver(DATA, yield* ownerAudience);
+      yield* delivery.deliver(DATA, yield* ownerAudience);
 
       const tokenRequests = requests.filter((request) => request.url === TOKEN_URI);
       assert.strictEqual(tokenRequests.length, 1, "the access token is cached");
@@ -167,7 +172,7 @@ describe("BotPushDelivery", () => {
       yield* register("device-2");
       yield* register("device-3");
 
-      yield* delivery.deliver(DATA);
+      yield* delivery.deliver(DATA, yield* ownerAudience);
 
       assert.deepStrictEqual(
         (yield* store.listPushDevices).map((device) => device.token),
@@ -196,13 +201,53 @@ describe("BotPushDelivery", () => {
     );
   });
 
+  it.effect("sends guest notifications and drops rejected tokens only through the audience", () => {
+    const requests: Array<Recorded> = [];
+    return Effect.gen(function* () {
+      const delivery = yield* BotPushDelivery.BotPushDelivery;
+      const store = yield* BotsStore.BotsStore;
+      yield* register("guest-token");
+      const dropped: string[] = [];
+      const notification = { title: "Bia's bot", body: "Done." };
+      yield* delivery.deliver(DATA, {
+        devices: Effect.succeed([{ token: "guest-token", label: null }]),
+        drop: (token) =>
+          Effect.sync(() => {
+            dropped.push(token);
+          }),
+        notification,
+      });
+      assert.deepStrictEqual(dropped, ["guest-token"]);
+      assert.strictEqual((yield* store.listPushDevices).length, 1);
+      assert.deepStrictEqual(
+        JSON.parse(requests.find((request) => request.url === SEND_URL)!.body),
+        {
+          message: {
+            token: "guest-token",
+            data: DATA,
+            notification,
+            android: { priority: "HIGH", ttl: "600s", notification: { channel_id: "respostas" } },
+          },
+        },
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest(
+          { [BotPushDelivery.FCM_SERVICE_ACCOUNT_ENV]: writeServiceAccount() },
+          { "guest-token": { status: 404, body: {} } },
+          requests,
+        ),
+      ),
+    );
+  });
+
   it.effect("is off and sends nothing without a service account", () => {
     const requests: Array<Recorded> = [];
     return Effect.gen(function* () {
       const delivery = yield* BotPushDelivery.BotPushDelivery;
       yield* register("device-1");
 
-      yield* delivery.deliver(DATA);
+      yield* delivery.deliver(DATA, yield* ownerAudience);
 
       assert.isFalse(delivery.enabled);
       assert.deepStrictEqual(requests, []);

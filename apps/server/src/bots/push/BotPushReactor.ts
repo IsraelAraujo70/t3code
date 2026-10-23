@@ -3,7 +3,12 @@
  * event tail: a restart never resends what was already news before it. Pushes run beside the
  * stream, so a slow FCM never holds up the next event.
  */
-import { parseBotThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  parseBotThreadId,
+  type Bot,
+  type GuestId,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,6 +22,7 @@ import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { BotsStore } from "../BotsStore.ts";
+import { GuestStore } from "../guest/GuestStore.ts";
 import * as BotPushDelivery from "./BotPushDelivery.ts";
 import { botPushData, botPushNotice, type BotPushChange } from "./botPushNotice.ts";
 
@@ -32,10 +38,30 @@ export class BotPushReactor extends Context.Service<
   }
 >()("t3/bots/push/BotPushReactor") {}
 
+/** Keeps guest pushes and rejected-token cleanup in the guest's device registry. */
+export function audienceFor(
+  bot: Pick<Bot, "name">,
+  guestId: Option.Option<GuestId>,
+  body: string,
+  store: Pick<BotsStore["Service"], "listPushDevices" | "deletePushDevice">,
+  guests: Pick<GuestStore["Service"], "listPushDevices" | "deletePushDevice">,
+): BotPushDelivery.BotPushAudience {
+  if (Option.isSome(guestId)) {
+    const id = guestId.value;
+    return {
+      devices: guests.listPushDevices(id),
+      drop: (token) => guests.deletePushDevice(id, token),
+      notification: { title: bot.name, body },
+    };
+  }
+  return { devices: store.listPushDevices, drop: store.deletePushDevice };
+}
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const store = yield* BotsStore;
+  const guests = yield* GuestStore;
   const delivery = yield* BotPushDelivery.BotPushDelivery;
   const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const scope = yield* Effect.scope;
@@ -86,7 +112,9 @@ const make = Effect.gen(function* () {
         environmentId,
         sentAt: yield* Clock.currentTimeMillis,
       });
-      yield* Effect.forkIn(delivery.deliver(data), scope);
+      const guestId = yield* guests.guestOfBot(bot.id);
+      const audience = audienceFor(bot, guestId, notice.body, store, guests);
+      yield* Effect.forkIn(delivery.deliver(data, audience), scope);
     },
     (effect, event) =>
       effect.pipe(
