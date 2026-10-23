@@ -64,7 +64,7 @@ import { hashGuestToken } from "./guestToken.ts";
 import { type GuestRecord, GuestStore } from "./GuestStore.ts";
 import { isSandboxedFor } from "./sandboxInstance.ts";
 
-/** An answer for the guest: `status` is the HTTP status, `message` is safe to show them. */
+/** An answer for the guest: `status` is the HTTP status, `message` is shown to them, in Portuguese. */
 export class GuestApiError extends Schema.TaggedError<GuestApiError>()("GuestApiError", {
   status: Schema.Literals([400, 401, 404, 409, 413, 500]),
   message: Schema.String,
@@ -116,8 +116,11 @@ export class GuestService extends Context.Service<
 >()("t3/bots/guest/GuestService") {}
 
 const unauthorized = () =>
-  new GuestApiError({ status: 401, message: "Missing, unknown or revoked guest token." });
-const botNotFound = () => new GuestApiError({ status: 404, message: "Bot not found." });
+  new GuestApiError({
+    status: 401,
+    message: "Seu acesso expirou ou foi revogado. Peça um novo QR code.",
+  });
+const botNotFound = () => new GuestApiError({ status: 404, message: "Assistente não encontrado." });
 const internal = (message: string) => (cause: unknown) =>
   new GuestApiError({ status: 500, message, cause });
 
@@ -166,7 +169,7 @@ const make = Effect.gen(function* () {
     if (hash === null) return yield* unauthorized();
     const guest = yield* guests
       .getGuestByTokenHash(hash)
-      .pipe(Effect.mapError(internal("Could not check the guest token.")));
+      .pipe(Effect.mapError(internal("Não consegui conferir seu acesso.")));
     return Option.isSome(guest) ? guest.value : yield* unauthorized();
   });
 
@@ -178,11 +181,11 @@ const make = Effect.gen(function* () {
     if (!isBotId(rawBotId)) return yield* botNotFound();
     const owner = yield* guests
       .guestOfBot(rawBotId)
-      .pipe(Effect.mapError(internal("Could not read the bot.")));
+      .pipe(Effect.mapError(internal("Não consegui abrir este assistente.")));
     if (Option.isNone(owner) || owner.value !== guest.id) return yield* botNotFound();
     const bot = yield* bots
       .getBot(rawBotId)
-      .pipe(Effect.mapError(internal("Could not read the bot.")));
+      .pipe(Effect.mapError(internal("Não consegui abrir este assistente.")));
     return Option.isSome(bot) ? bot.value : yield* botNotFound();
   });
 
@@ -196,7 +199,7 @@ const make = Effect.gen(function* () {
     const bot = yield* ownedBot(guest, rawBotId);
     return yield* botsService
       .ensureConversation({ botId: bot.id })
-      .pipe(Effect.mapError(internal("Could not start the conversation.")));
+      .pipe(Effect.mapError(internal("Não consegui começar a conversa.")));
   });
 
   const readThread = (threadId: ThreadId) =>
@@ -205,10 +208,13 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError((cause) =>
           cause._tag === "ProjectionStoreThreadNotFoundError"
-            ? new GuestApiError({ status: 409, message: "This bot is still starting. Try again." })
+            ? new GuestApiError({
+                status: 409,
+                message: "Este assistente ainda está começando. Tente de novo.",
+              })
             : new GuestApiError({
                 status: 500,
-                message: "Could not read the conversation.",
+                message: "Não consegui ler a conversa.",
                 cause,
               }),
         ),
@@ -217,9 +223,9 @@ const make = Effect.gen(function* () {
   const listBots = Effect.fn("GuestService.listBots")(function* (guest: GuestRecord) {
     const ids = yield* guests
       .listGuestBotIds(guest.id)
-      .pipe(Effect.mapError(internal("Could not list your bots.")));
+      .pipe(Effect.mapError(internal("Não consegui listar seus assistentes.")));
     const owned = yield* Effect.forEach(ids, (id) =>
-      bots.getBot(id).pipe(Effect.mapError(internal("Could not list your bots."))),
+      bots.getBot(id).pipe(Effect.mapError(internal("Não consegui listar seus assistentes."))),
     );
     return {
       guest: { id: guest.id, name: guest.name },
@@ -255,26 +261,29 @@ const make = Effect.gen(function* () {
         if (parsed === null || parsed.mimeType !== upload.mimeType) {
           return yield* new GuestApiError({
             status: 400,
-            message: `${upload.name} is not a valid ${upload.mimeType} image.`,
+            message: `${upload.name} não é uma imagem ${upload.mimeType} válida.`,
           });
         }
         const bytes = yield* Effect.fromResult(Base64.decode(parsed.base64)).pipe(
           Effect.mapError(
             () =>
-              new GuestApiError({ status: 400, message: `${upload.name} is not valid base64.` }),
+              new GuestApiError({
+                status: 400,
+                message: `${upload.name} veio corrompida. Tente enviar de novo.`,
+              }),
           ),
         );
         if (bytes.byteLength === 0 || bytes.byteLength > GUEST_LIMITS.imageBytes) {
           return yield* new GuestApiError({
             status: 413,
-            message: `${upload.name} is empty or larger than ${GUEST_LIMITS.imageBytes / 1024 / 1024} MB.`,
+            message: `${upload.name} está vazia ou tem mais de ${GUEST_LIMITS.imageBytes / 1024 / 1024} MB.`,
           });
         }
         const rawId = createDeterministicAttachmentId(
           threadId,
           chatAttachmentStableKey(messageId, index, bytes),
         );
-        if (rawId === null) return yield* internal("Could not store the image.")(undefined);
+        if (rawId === null) return yield* internal("Não consegui guardar a foto.")(undefined);
         const attachment: ChatImageAttachment = {
           type: "image",
           id: ChatAttachmentId.make(rawId),
@@ -284,7 +293,7 @@ const make = Effect.gen(function* () {
         };
         yield* fs
           .writeFile(path.join(config.attachmentsDir, attachmentRelativePath(attachment)!), bytes)
-          .pipe(Effect.mapError(internal("Could not store the image.")));
+          .pipe(Effect.mapError(internal("Não consegui guardar a foto.")));
         return attachment;
       }),
     );
@@ -298,10 +307,13 @@ const make = Effect.gen(function* () {
     const bot = yield* ownedConversation(guest, botId);
     const uploads = input.attachments ?? [];
     if (input.text.trim() === "" && uploads.length === 0) {
-      return yield* new GuestApiError({ status: 400, message: "Write a message or add a photo." });
+      return yield* new GuestApiError({
+        status: 400,
+        message: "Escreva uma mensagem ou escolha uma foto.",
+      });
     }
     const { providerInstances } = yield* settings.getSettings.pipe(
-      Effect.mapError(internal("Could not read the server settings.")),
+      Effect.mapError(internal("O servidor teve um probleminha. Tente de novo.")),
     );
     const sandboxed = yield* isSandboxedFor(
       providerInstances,
@@ -317,7 +329,7 @@ const make = Effect.gen(function* () {
       });
       return yield* new GuestApiError({
         status: 409,
-        message: "This bot is not ready yet. Ask Israel to check it.",
+        message: "Este assistente ainda não está pronto. Peça para o Israel dar uma olhada.",
       });
     }
     const threadId = threadOf(bot);
@@ -338,7 +350,7 @@ const make = Effect.gen(function* () {
         createdBy: "user",
         creationSource: "server",
       })
-      .pipe(Effect.mapError(internal("Could not send the message.")));
+      .pipe(Effect.mapError(internal("Não consegui enviar a mensagem.")));
     return { messageId } satisfies GuestSendResult;
   });
 
@@ -348,7 +360,7 @@ const make = Effect.gen(function* () {
     // Taken before reading the runs, so a change between the two reads still replays.
     const afterSequence = yield* engine
       .getThreadEventSequence(threadId)
-      .pipe(Effect.mapError(internal("Could not follow the conversation.")));
+      .pipe(Effect.mapError(internal("Não consegui acompanhar a conversa.")));
     const { runs } = yield* readThread(threadId);
     const active = new Set(runs.filter(isWorking).map((run) => run.id));
     let working = active.size > 0;
@@ -394,11 +406,15 @@ const make = Effect.gen(function* () {
       .find((candidate) => candidate.type === "image" && candidate.id === attachmentId);
     const relative = found === undefined ? null : attachmentRelativePath(found);
     if (found === undefined || relative === null) {
-      return yield* new GuestApiError({ status: 404, message: "Image not found." });
+      return yield* new GuestApiError({ status: 404, message: "Imagem não encontrada." });
     }
     const bytes = yield* fs
       .readFile(path.join(config.attachmentsDir, relative))
-      .pipe(Effect.mapError(() => new GuestApiError({ status: 404, message: "Image not found." })));
+      .pipe(
+        Effect.mapError(
+          () => new GuestApiError({ status: 404, message: "Imagem não encontrada." }),
+        ),
+      );
     return { bytes, mimeType: found.mimeType } satisfies GuestAttachmentFile;
   });
 
@@ -415,7 +431,7 @@ const make = Effect.gen(function* () {
         createdAt: now,
         updatedAt: now,
       })
-      .pipe(Effect.mapError(internal("Could not register this phone for notifications.")));
+      .pipe(Effect.mapError(internal("Não consegui ativar as notificações neste celular.")));
     return { token: input.token } satisfies GuestPushDeviceRef;
   });
 
@@ -425,7 +441,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* guests
       .deletePushDevice(guest.id, input.token)
-      .pipe(Effect.mapError(internal("Could not unregister this phone.")));
+      .pipe(Effect.mapError(internal("Não consegui desativar as notificações deste celular.")));
     return input;
   });
 

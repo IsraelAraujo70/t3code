@@ -5,7 +5,11 @@
  * `T3CODE_GUEST_SANDBOX_IT=1`: it runs real turns through the Docker sandbox with the fake
  * Anthropic API, so no key is spent.
  */
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- drives a server process, docker and sqlite.
+// Plain-Node integration test: it drives real processes, sockets and Docker from outside Effect.
+// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalRandom:off
+// @effect-diagnostics globalFetch:off
+// @effect-diagnostics globalTimers:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFs from "node:fs";
 import * as NodeHttp from "node:http";
@@ -15,7 +19,7 @@ import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { GuestBotsResponse, GuestHistoryResponse, GuestStreamEvent } from "@t3tools/contracts";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { GUEST_ID_ENV, SANDBOX_LAUNCHER_PATH } from "./sandboxInstance.ts";
 
@@ -264,7 +268,7 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
     const body = (await (await send(biaToken, anaBot, { text: "oi" })).json()) as {
       error: string;
     };
-    expect(body.error).toBe("Bot not found.");
+    expect(body.error).toBe("Assistente não encontrado.");
   });
 
   it("refuses unknown and revoked tokens, and an old token after a new mint", async () => {

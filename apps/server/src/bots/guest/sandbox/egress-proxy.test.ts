@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import net from "node:net";
 import type { Server } from "node:net";
-import { expect, it } from "vitest";
+import { expect, it } from "vite-plus/test";
 import { createEgressProxy, isPublicAddress } from "./egress-proxy.mjs";
 
 const blocked = [

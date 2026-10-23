@@ -163,6 +163,8 @@ function PairedApp(props: {
   const [session, setSession] = useState<Session | null>(null);
   const [banner, setBanner] = useState<Banner | null>(null);
   const activeBot = useRef<BotId | null>(null);
+  // With push registered, the server's FCM message already notifies a backgrounded app.
+  const pushRegistered = useRef(false);
 
   useEffect(() => {
     const created = createSession({
@@ -171,6 +173,7 @@ function PairedApp(props: {
       onReplyFinished: (reply) => {
         const body = replyPreview(reply);
         if (AppState.currentState !== "active") {
+          if (pushRegistered.current) return;
           showReplyNotification({ botId: reply.bot.id, title: reply.bot.name, body }).catch(
             (error: unknown) => console.warn("Notificação local falhou:", error),
           );
@@ -187,6 +190,9 @@ function PairedApp(props: {
   useEffect(() => {
     setUpNotifications()
       .then(() => registerForPush(pairing))
+      .then((registered) => {
+        pushRegistered.current = registered;
+      })
       .catch((error: unknown) => console.warn("Registro de push falhou:", error));
   }, [pairing]);
 

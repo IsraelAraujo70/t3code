@@ -131,7 +131,7 @@ export const GuestPushDeviceInput = Schema.Struct({
 });
 export type GuestPushDeviceInput = typeof GuestPushDeviceInput.Type;
 
-/** Every non-2xx answer of the guest listener. Messages are safe to show the guest. */
+/** Every non-2xx answer of the guest listener. Messages are in Portuguese, ready to show the guest. */
 export const GuestErrorBody = Schema.Struct({ error: Schema.String });
 export type GuestErrorBody = typeof GuestErrorBody.Type;
 

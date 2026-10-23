@@ -47,16 +47,14 @@ const errorResponse = (error: GuestApiError) =>
   HttpServerResponse.jsonUnsafe({ error: error.message }, { status: error.status });
 
 const badRequest = (message: string) => new GuestApiError({ status: 400, message });
-const notFound = () => new GuestApiError({ status: 404, message: "Not found." });
+const notFound = () => new GuestApiError({ status: 404, message: "Não encontrado." });
 
 /** Strict: unknown keys (a model, an effort, anything) fail instead of being ignored. */
 const decodeBody = <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S) =>
   Effect.fn("GuestHttp.decodeBody")(function* (request: HttpServerRequest.HttpServerRequest) {
-    const body = yield* request.json.pipe(
-      Effect.mapError(() => badRequest("The request body must be JSON.")),
-    );
+    const body = yield* request.json.pipe(Effect.mapError(() => badRequest("Pedido inválido.")));
     return yield* Schema.decodeUnknownEffect(schema)(body, { onExcessProperty: "error" }).pipe(
-      Effect.mapError((issue) => badRequest(`Invalid request: ${issue.message}`)),
+      Effect.mapError((issue) => badRequest(`Pedido inválido: ${issue.message}`)),
     );
   });
 
@@ -97,7 +95,10 @@ const guarded = <A>(
     Effect.catchDefect((defect) =>
       Effect.logError("Guest request failed", { defect }).pipe(
         Effect.as(
-          HttpServerResponse.jsonUnsafe({ error: "Something went wrong." }, { status: 500 }),
+          HttpServerResponse.jsonUnsafe(
+            { error: "O servidor teve um probleminha. Tente de novo." },
+            { status: 500 },
+          ),
         ),
       ),
     ),

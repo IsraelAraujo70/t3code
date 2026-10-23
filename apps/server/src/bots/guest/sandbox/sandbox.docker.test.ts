@@ -4,13 +4,15 @@
  * image and internet access. Each run uses its own guest id and removes that guest's containers,
  * network and volume afterwards.
  */
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- drives docker and the launcher.
+// Plain-Node integration test: it drives real processes, sockets and Docker from outside Effect.
+// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalRandom:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { SANDBOX_LAUNCHER_PATH } from "../sandboxInstance.ts";
 

@@ -1,3 +1,5 @@
+// Plain-Node integration test: it drives real processes, sockets and Docker from outside Effect.
+// @effect-diagnostics globalFetch:off
 import { expect, it } from "vite-plus/test";
 import { createFakeAnthropic } from "./fake-anthropic.mjs";
 

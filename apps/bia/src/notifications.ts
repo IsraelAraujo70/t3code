@@ -29,24 +29,28 @@ export async function setUpNotifications(): Promise<void> {
 }
 
 /**
- * Asks for permission and registers this phone for push. Without FCM configured (no
- * google-services file in the build) the token call fails; the app still works, without push.
+ * Asks for permission and registers this phone for push; true once the server has the token.
+ * Without FCM configured (no google-services file in the build) the token call fails; the app
+ * still works, without push.
  */
-export async function registerForPush(pairing: Pairing): Promise<void> {
+export async function registerForPush(pairing: Pairing): Promise<boolean> {
   const permission = await Notifications.requestPermissionsAsync();
-  if (!permission.granted) return;
+  if (!permission.granted) return false;
   let token: string;
   try {
     const devicePushToken = await Notifications.getDevicePushTokenAsync();
-    if (devicePushToken.type !== "android" || typeof devicePushToken.data !== "string") return;
+    if (devicePushToken.type !== "android" || typeof devicePushToken.data !== "string") {
+      return false;
+    }
     token = devicePushToken.data;
   } catch (error) {
     console.warn("Push indisponível neste build:", error);
-    return;
+    return false;
   }
   const label = (Device.modelName ?? "Android").slice(0, 128);
   await registerPushDevice(pairing, { token, label });
   await savePushToken(token);
+  return true;
 }
 
 /** Best effort: a phone that cannot reach the server still gets logged out. */
