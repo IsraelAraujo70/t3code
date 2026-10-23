@@ -95,6 +95,30 @@ nothing is held or cancelled, and refuses while the bot has an unsettled run or 
 works. Codex shares one app-server across threads, so a Codex bot restarts it only while no thread
 uses it. See [`apps/server/src/bots/restart/`](apps/server/src/bots/restart/).
 
+## Guests
+
+A guest (Bia) talks to a few bots of their own through `apps/bia`, a separate Android app, and a
+separate listener on the bots host: `T3CODE_GUEST_LISTEN=host:port`. That listener has its own
+router holding only the routes in [`packages/contracts/src/guest.ts`](packages/contracts/src/guest.ts).
+Do not serve it with `HttpRouter.serve`: that reuses the main listener's memoized router and
+exposes every T3 route on the guest port. A guest authenticates with a bearer token (only its
+sha256 is stored), and every bot id is checked against the guest's ownership. A send always uses
+the bot's stored model selection. Guests, their bots and their phones live in `bots.sqlite`.
+`apps/server/src/bots/guest/cli.ts` creates guests and their bots, and mints, revokes and prints
+the pairing QR.
+
+A guest's bots run Claude Code in Docker. Their provider instance uses
+[`sandbox/t3-guest-claude`](apps/server/src/bots/guest/sandbox/t3-guest-claude) as its binary and
+names the guest with `T3CODE_GUEST_ID`. The guest API refuses to send to a bot whose instance is
+not exactly that, and such an instance never gets a T3 MCP credential, because the token would
+grant the host's orchestration tools. Each provider session is one `docker run --rm` on an
+`--internal` network. The only way out is the guest's egress proxy, which refuses every
+non-public address. Conversations live in the guest's volume, so stopping the container loses
+nothing. `T3CODE_GUEST_IDLE_MS` (default 10 minutes) stops an idle guest bot's container through
+the same release as Restart session. Guest bots push only to the guest's phones, with a visible
+FCM notification. Claude replies reach the app per completed text block, as on every T3 surface,
+not per token.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
