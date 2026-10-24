@@ -50,8 +50,9 @@ provider instance's ChatGPT login. It uses only WebRTC, because the WebSocket/PC
 need an API key. Clients get two entry points (web, desktop, Android):
 
 - **Listen to a reply.** Each assistant reply has a listen button in its action row. Pressing it
-  speaks a short pt-BR summary of that reply. The client sends only the thread and message ids; the
-  server loads the text and refuses anything but an assistant message of that thread.
+  speaks that reply whole in pt-BR, describing code and tables instead of reading them. The client
+  sends only the thread and message ids; the server loads the text and refuses anything but an
+  assistant message of that thread.
 - **Talk to a bot.** A bot thread's composer has a voice button next to dictation. While a
   conversation is on, an orb shows whether the voice is listening, waiting on the bot, or speaking.
   On mobile the orb takes the chat's place. Mute and close replace the two buttons, and typing still
@@ -64,6 +65,14 @@ the thread as one normal user message starting with 🎙️, queued behind a run
 posts what is still waiting. The server reads aloud every reply that completes while the call is
 open. Approvals and questions are never answered by voice: the voice only says that one is waiting
 on screen.
+
+Replies are spoken whole. Codex cuts the middle out of any appended speech over about 4,000 bytes,
+so the server speaks a reply longer than `SPEECH_PART_BYTES` in parts, one realtime turn each, the
+next appended when the voice falls quiet; a read ends after its last part. The prompts are judged
+with [`voiceProbe.ts`](apps/server/src/bots/voice/voiceProbe.ts), which speaks a reply through the
+real voice and reports how much of it was said. The model varies between runs, so compare several.
+The realtime model cannot be chosen: with a ChatGPT login the backend ignores `thread/realtime/start`'s
+`model` and accepts any name.
 
 The realtime model answers simple questions by itself even when told not to. Its prompt therefore
 tells it to delegate everything, and after a delegation it only acknowledges. The client plays the

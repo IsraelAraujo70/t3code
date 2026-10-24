@@ -115,6 +115,19 @@ describe("voice state machine", () => {
     expect(run(spoken, playedOut(1)).readDone).toBe(true);
   });
 
+  it("finishes a read in parts only once its last part has played", () => {
+    const working = { type: "bot", working: true } as const;
+    const first = run(live("read"), working, "appended", "voiceStarted", "voiceDone");
+    expect(run(first, playedOut(1)).readDone).toBe(false);
+    // The server reports no more work once the last part starts.
+    const last = run(first, playedOut(1), "appended", "voiceStarted", {
+      type: "bot",
+      working: false,
+    });
+    expect(run(last, "voiceDone").readDone).toBe(false);
+    expect(run(last, "voiceDone", playedOut(2)).readDone).toBe(true);
+  });
+
   it("hears nothing before the peer is live", () => {
     expect(voiceAudible(run(initialVoiceState("read"), "appended", "voiceStarted"))).toBe(false);
   });

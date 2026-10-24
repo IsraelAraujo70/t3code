@@ -85,7 +85,10 @@ export interface VoiceState {
   /** The user turned their microphone off. */
   readonly muted: boolean;
   readonly userSpeaking: boolean;
-  /** The server reports the thread's agent has work (a run, a queued message, a relay). */
+  /**
+   * The server reports the thread's agent has work (a run, a queued message, a relay), or that a
+   * read has parts of its reply still to speak.
+   */
   readonly botWorking: boolean;
   /** How the voice's next turn is classified. */
   readonly expected: "ack" | "reply" | null;
@@ -189,8 +192,10 @@ export function voiceReducer(state: VoiceState, input: VoiceInput): VoiceState {
         : {
             ...state,
             playingOut: null,
+            // A long reply is spoken in parts; the server reports work until the last one starts.
             readDone:
-              state.readDone || (state.mode === "read" && state.playingOut.heard === "reply"),
+              state.readDone ||
+              (state.mode === "read" && state.playingOut.heard === "reply" && !state.botWorking),
           };
   }
 }
