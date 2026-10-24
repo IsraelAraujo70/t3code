@@ -38,9 +38,17 @@ import {
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
-// Fork (friend): name the bot that sent a message; read a reply aloud.
+// Fork (friend): name the bot that sent a message; read a reply aloud; bot chats use bubbles.
 import { useBotSender } from "../../bots/useBotSender";
 import { VoiceReaderMessageButton } from "../../bots/VoiceReaderMessageButton";
+import {
+  BotAssistantBubble,
+  BotChatRowCtx,
+  BotTurnFold,
+  botBubbleRowSpacingClass,
+  botBubbleShapeClass,
+} from "../../bots/BotChatBubble";
+import { botBubbleLayout, botChatRows } from "../../bots/botChatBubbles.logic";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -868,7 +876,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     availableRevertTurnCounts,
     worktreeSetup,
   });
-  const rows = useStableRows(rawRows, listIdentityKey);
+  // Fork (friend): bot conversations read as chat bubbles, without their work log.
+  const rows = useStableRows(botChatRows(citationThreadRef?.threadId, rawRows), listIdentityKey);
+  const botBubbles = botBubbleLayout(citationThreadRef?.threadId, rows);
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
@@ -1467,12 +1477,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
           className="@container/chat-lane chat-content-lane overflow-x-clip"
           data-timeline-root="true"
         >
-          <TimelineRowContent row={item} />
+          {/* Fork (friend): a new message regroups its neighbour, so the layout key is extraData too. */}
+          <BotChatRowCtx value={botBubbles?.byRowId.get(item.id) ?? null}>
+            <TimelineRowContent row={item} />
+          </BotChatRowCtx>
         </div>
       </div>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = {
+    identity: listIdentityKey,
+    rowCount: rows.length,
+    sharedState,
+    botBubbles: botBubbles?.key,
+  };
 
   const forwardMinimapWheel = (event: WheelEvent) => {
     const scrollNode = listRef.current?.getScrollableNode();
@@ -1965,6 +1983,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.kind === "work-live" ||
     row.kind === "work-toggle" ||
     row.kind === "thinking";
+  // Fork (friend): bubbles of one group sit close together.
+  const bubble = use(BotChatRowCtx)?.bubble;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
     row.expanded === true;
@@ -1972,20 +1992,22 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   return (
     <div
       className={cn(
-        isWorkLogRow || isSubagentGroup
-          ? undefined
-          : row.kind === "turn-fold" || row.kind === "working"
-            ? "pb-1.5"
-            : (row.kind === "message" &&
-                  row.message.role === "assistant" &&
-                  !row.showAssistantMeta) ||
-                row.kind === "worktree-setup" ||
-                row.kind === "event" ||
-                row.kind === "attempt-fold" ||
-                row.kind === "html-render" ||
-                row.kind === "mcp-app"
-              ? "pb-2"
-              : "pb-4",
+        bubble
+          ? botBubbleRowSpacingClass(bubble)
+          : isWorkLogRow || isSubagentGroup
+            ? undefined
+            : row.kind === "turn-fold" || row.kind === "working"
+              ? "pb-1.5"
+              : (row.kind === "message" &&
+                    row.message.role === "assistant" &&
+                    !row.showAssistantMeta) ||
+                  row.kind === "worktree-setup" ||
+                  row.kind === "event" ||
+                  row.kind === "attempt-fold" ||
+                  row.kind === "html-render" ||
+                  row.kind === "mcp-app"
+                ? "pb-2"
+                : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
@@ -2167,9 +2189,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
-  // Fork (friend): a message another bot sent names that bot.
+  // Fork (friend): a message another bot sent names that bot; a bot chat shapes the bubble.
   const botSender = useBotSender(senderThreadId);
   const agentAttribution = botSender === null ? "Sent by another agent" : `Sent by ${botSender}`;
+  const bubble = use(BotChatRowCtx)?.bubble;
   const resources = selectMessageImageResources(row.message.attachments);
   const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
   const [projectPreviews] = useState(createMessageAttachmentPreviewProjector);
@@ -2345,7 +2368,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       row.message.inputIntent === "promoted_queued_to_steer" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <div
+        className={cn(
+          "relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground",
+          bubble && cn(botBubbleShapeClass(bubble), "px-3.5 py-2.5"),
+        )}
+      >
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
@@ -2625,6 +2653,16 @@ function TimelineRowTimestamp({
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
 
+  // Fork (friend): in a bot conversation the fold is the only way to the turn's work log.
+  if (use(BotChatRowCtx)) {
+    return (
+      <BotTurnFold
+        label={row.label}
+        expanded={row.expanded}
+        onToggle={() => ctx.onToggleTurnFold(row.runId)}
+      />
+    );
+  }
   return (
     <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
       <button
@@ -2671,50 +2709,63 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const meta = row.showAssistantMeta ? (
+    <AssistantMessageMeta
+      className="mt-1.5"
+      projectedItem={row.projectedItem}
+      message={row.message}
+      showCopyButton={row.showAssistantCopyButton}
+      copyStreaming={row.assistantCopyStreaming}
+    />
+  ) : null;
+  const content = (
+    <>
+      <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+      <div data-thread-find-text="true">
+        <AssistantCitationSource
+          messageId={row.message.id}
+          {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+          itemKey={row.id}
+          request={ctx.citationRequest}
+          listRef={ctx.listRef}
+        >
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={Boolean(row.message.streaming)}
+            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+            skills={ctx.skills}
+            headingLevelOffset={MESSAGE_HEADING_LEVEL}
+            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onRunShellCommand={ctx.onRunShellCommand}
+            onImageExpand={ctx.onImageExpand}
+          />
+        </AssistantCitationSource>
+      </div>
+      <AssistantChangedFilesSection
+        turnSummary={row.assistantTurnDiffSummary}
+        routeThreadKey={ctx.routeThreadKey}
+        resolvedTheme={ctx.resolvedTheme}
+        onOpenTurnDiff={ctx.onOpenTurnDiff}
+      />
+    </>
+  );
+  // Fork (friend): a bot's reply is a bubble with its action row below.
+  const bubble = use(BotChatRowCtx)?.bubble;
+  if (bubble) {
+    return (
+      <BotAssistantBubble placement={bubble} meta={meta}>
+        {content}
+      </BotAssistantBubble>
+    );
+  }
 
   return (
-    <>
-      <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        <div data-thread-find-text="true">
-          <AssistantCitationSource
-            messageId={row.message.id}
-            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-            itemKey={row.id}
-            request={ctx.citationRequest}
-            listRef={ctx.listRef}
-          >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
-          </AssistantCitationSource>
-        </div>
-        <AssistantChangedFilesSection
-          turnSummary={row.assistantTurnDiffSummary}
-          routeThreadKey={ctx.routeThreadKey}
-          resolvedTheme={ctx.resolvedTheme}
-          onOpenTurnDiff={ctx.onOpenTurnDiff}
-        />
-        {row.showAssistantMeta ? (
-          <AssistantMessageMeta
-            className="mt-1.5"
-            projectedItem={row.projectedItem}
-            message={row.message}
-            showCopyButton={row.showAssistantCopyButton}
-            copyStreaming={row.assistantCopyStreaming}
-          />
-        ) : null}
-      </div>
-    </>
+    <div className="relative min-w-0 px-1 py-0.5">
+      {content}
+      {meta}
+    </div>
   );
 }
 

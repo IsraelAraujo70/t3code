@@ -302,6 +302,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { DictationButton } from "../../bots/DictationButton";
 import { VoiceModeControls } from "../../bots/VoiceModeControls";
 import { VoiceConversationOrb } from "../../bots/VoiceOrb";
+import { BotWorkingIndicator } from "../../bots/BotWorkingIndicator";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -6599,8 +6600,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ) : null}
       </ComposerBanner.Dock>
       <div className="relative">
-        {/* Fork (friend): voice activity sits above the full composer. */}
+        {/* Fork (friend): voice activity and a working bot sit above the full composer. */}
         <VoiceConversationOrb environmentId={environmentId} threadId={activeThreadId} />
+        <BotWorkingIndicator
+          environmentId={environmentId}
+          threadId={activeThreadId}
+          working={phase === "running"}
+        />
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}

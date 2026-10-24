@@ -116,8 +116,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.tsx",
-    markers: 4,
-    why: "name the bot that sent a message; read a reply aloud",
+    markers: 9,
+    why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles",
   },
   {
     file: "apps/mobile/src/features/threads/ThreadFeed.tsx",
@@ -242,7 +242,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/chat/ChatComposer.tsx",
     markers: 3,
-    why: "voice and dictation controls in the composer",
+    why: "voice and dictation controls in the composer; working bot indicator",
   },
   {
     file: "apps/web/src/components/ChatView.tsx",
