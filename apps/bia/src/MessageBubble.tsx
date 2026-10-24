@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { attachmentSource, type BotId } from "./api";
 import { BotFace } from "./BotFace";
-import type { OutgoingMessage } from "./conversation";
+import { authorOf, OWNER_FALLBACK, type OutgoingMessage } from "./conversation";
 import type { Pairing } from "./pairing";
 import { colors, fontSize } from "./theme";
 
@@ -35,6 +35,8 @@ interface MessageBubbleProps {
   readonly item: ChatItem;
   readonly pairing: Pairing;
   readonly botId: BotId;
+  /** The owner's name, shown on their messages in a bot they share with Bia. */
+  readonly ownerName: string | null;
   readonly onOpenImage: (source: ImageSource) => void;
 }
 
@@ -44,13 +46,15 @@ function sameBubble(before: MessageBubbleProps, after: MessageBubbleProps): bool
     before.item.message === after.item.message &&
     before.pairing === after.pairing &&
     before.botId === after.botId &&
+    before.ownerName === after.ownerName &&
     before.onOpenImage === after.onOpenImage
   );
 }
 
 export const MessageBubble = memo(function MessageBubble(props: MessageBubbleProps) {
   const { item } = props;
-  const fromBia = item.kind === "outgoing" || item.message.role === "user";
+  const author = item.kind === "outgoing" ? "bia" : authorOf(item.message);
+  const fromBia = author === "bia";
   const sources: readonly ImageSource[] =
     item.kind === "outgoing"
       ? item.message.imageUris.map((uri) => ({ uri }))
@@ -62,18 +66,21 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubblePro
 
   return (
     <View style={[styles.row, fromBia ? styles.rowRight : styles.rowLeft]}>
-      {fromBia ? null : (
+      {author === "bot" ? (
         <View style={styles.face}>
           <BotFace botId={props.botId} size={26} />
         </View>
-      )}
+      ) : null}
       <View
         style={[
           styles.bubble,
-          fromBia ? styles.userBubble : styles.botBubble,
+          fromBia ? styles.userBubble : author === "owner" ? styles.ownerBubble : styles.botBubble,
           item.kind === "outgoing" && styles.pending,
         ]}
       >
+        {author === "owner" ? (
+          <Text style={styles.ownerName}>{props.ownerName ?? OWNER_FALLBACK}</Text>
+        ) : null}
         <Photos sources={sources} onOpen={props.onOpenImage} />
         {text.length > 0 || streaming ? (
           <Text selectable style={[styles.text, fromBia && styles.userText]}>
@@ -99,6 +106,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderBottomLeftRadius: 6,
   },
+  ownerBubble: {
+    backgroundColor: colors.primarySoft,
+    borderBottomLeftRadius: 6,
+  },
+  ownerName: { fontSize: 13, fontWeight: "700", color: colors.primary, marginBottom: -4 },
   userBubble: { backgroundColor: colors.userBubble, borderBottomRightRadius: 6 },
   pending: { opacity: 0.7 },
   text: { fontSize: fontSize.body, lineHeight: 26, color: colors.text },

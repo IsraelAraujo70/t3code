@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   EMPTY_CONVERSATION,
   isNewlyFinishedReply,
+  authorOf,
   lastMessagePreview,
   reduceConversation,
   type Conversation,
@@ -145,7 +146,24 @@ describe("lastMessagePreview", () => {
         event: { type: "message", message: message("m1", "01", { text: "Feito!" }) },
       },
     ]);
-    expect(lastMessagePreview(withReply)).toEqual({ fromBia: false, text: "Feito!" });
-    expect(lastMessagePreview(run([queued], withReply))).toEqual({ fromBia: true, text: "oi" });
+    expect(lastMessagePreview(withReply)).toEqual({ from: "bot", text: "Feito!" });
+    expect(lastMessagePreview(run([queued], withReply))).toEqual({ from: "bia", text: "oi" });
+  });
+
+  it("tells Bia's messages from the owner's on a shared bot", () => {
+    const fromOwner = run([
+      {
+        type: "event",
+        event: {
+          type: "message",
+          message: message("m2", "02", { role: "user", sender: "owner", text: "Paguei a luz" }),
+        },
+      },
+    ]);
+    expect(lastMessagePreview(fromOwner)).toEqual({ from: "owner", text: "Paguei a luz" });
+    expect(authorOf({ role: "user", sender: "guest" })).toBe("bia");
+    // Servers before `sender` only sent Bia's own user messages.
+    expect(authorOf({ role: "user" })).toBe("bia");
+    expect(authorOf({ role: "assistant" })).toBe("bot");
   });
 });

@@ -11,6 +11,7 @@
 // @effect-diagnostics globalFetch:off
 // @effect-diagnostics globalTimers:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
@@ -36,6 +37,7 @@ const instanceId = "claude_guest_it";
 let base = "";
 let server: NodeChildProcess.ChildProcess | undefined;
 let guestOrigin = "";
+let mainOrigin = "";
 let biaToken = "";
 let anaToken = "";
 let finance = "";
@@ -129,6 +131,77 @@ async function readEvents(
   }
 }
 
+/**
+ * Sends a message as the owner, the way T3's own clients do: a session from the server CLI, a
+ * WebSocket ticket, and `orchestration.dispatchCommand` over the RPC socket.
+ */
+async function ownerSend(threadId: string, text: string, modelSelection: unknown) {
+  const issued = NodeChildProcess.execFileSync(
+    process.execPath,
+    [
+      NodePath.join(repo, "apps/server/src/bin.ts"),
+      "auth",
+      "session",
+      "issue",
+      "--base-dir",
+      base,
+      "--token-only",
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const token = issued.split("\n").find((line) => /^[A-Za-z0-9_.-]{40,}$/.test(line.trim()));
+  if (token === undefined) throw new Error("no session token issued");
+  const { ticket } = (await (
+    await fetch(`${mainOrigin}/api/auth/websocket-ticket`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.trim()}` },
+    })
+  ).json()) as { ticket: string };
+  const socket = new WebSocket(
+    `${mainOrigin.replace("http", "ws")}/ws?wsTicket=${encodeURIComponent(ticket)}&orchestrationProtocol=2`,
+  );
+  try {
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", reject, { once: true });
+    });
+    const exit = new Promise<{ _tag: string }>((resolve) => {
+      socket.addEventListener("message", (message) => {
+        const frame = JSON.parse(String(message.data)) as {
+          _tag: string;
+          requestId?: string;
+          exit?: { _tag: string };
+        };
+        if (frame._tag === "Exit" && frame.requestId === "1") resolve(frame.exit!);
+      });
+    });
+    const id = NodeCrypto.randomUUID();
+    socket.send(
+      JSON.stringify({
+        _tag: "Request",
+        id: "1",
+        tag: "orchestration.dispatchCommand",
+        headers: [],
+        payload: {
+          type: "message.dispatch",
+          commandId: `owner-${id}`,
+          threadId,
+          messageId: `owner-${id}`,
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        },
+      }),
+    );
+    return await exit;
+  } finally {
+    socket.close();
+  }
+}
+
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const finalReply = (events: GuestStreamEvent[], text: string | RegExp) =>
@@ -153,6 +226,7 @@ beforeAll(async () => {
   base = NodeFS.mkdtempSync(NodePath.join(NodeOS.homedir(), ".cache/friend-tmp/bia-it-"));
   const [port, guestPort] = [await freePort(), await freePort()];
   guestOrigin = `http://127.0.0.1:${guestPort}`;
+  mainOrigin = `http://127.0.0.1:${port}`;
 
   NodeFS.mkdirSync(NodePath.join(base, "userdata"), { recursive: true });
   // Only the sandbox instance is enabled, so the server never probes the host's own CLIs.
@@ -162,6 +236,13 @@ beforeAll(async () => {
       providerInstances: {
         codex: { driver: "codex", enabled: false },
         claudeAgent: { driver: "claudeAgent", enabled: false },
+        // An enabled host-side instance, as Israel's T3 has: a turn that ran here instead of the
+        // sandbox would fail, since its binary is `false`.
+        claude_host: {
+          driver: "claudeAgent",
+          enabled: true,
+          config: { binaryPath: "/usr/bin/false" },
+        },
         [instanceId]: {
           driver: "claudeAgent",
           enabled: true,
@@ -218,12 +299,13 @@ beforeAll(async () => {
         T3CODE_BOTS_HOST: "1",
         T3CODE_GUEST_LISTEN: `127.0.0.1:${guestPort}`,
         T3CODE_GUEST_IDLE_MS: "3000",
+        T3CODE_OWNER_NAME: "Israel",
       },
       stdio: ["ignore", NodeFS.openSync(NodePath.join(base, "server.log"), "a"), "inherit"],
     },
   );
   // The server is an external process: wait for its guest listener to answer.
-  for (let attempt = 0; attempt < 120; attempt++) {
+  for (let attempt = 0; attempt < 240; attempt++) {
     const status = await api("/guest/v1/bots").then(
       (response) => response.status,
       () => 0,
@@ -232,7 +314,7 @@ beforeAll(async () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`guest listener never came up; see ${base}/server.log`);
-}, 120_000);
+}, 180_000);
 
 afterAll(async () => {
   if (!enabled) return;
@@ -443,7 +525,7 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
       const events = await readEvents(
         biaToken,
         finance,
-        (seen) => finalReply(seen, `Eco #1: ${first}`),
+        (seen) => finalReply(seen, `Eco #1: Bia: ${first}`),
         90_000,
         async () => {
           expect((await send(biaToken, finance, { text: first })).status).toBe(202);
@@ -472,7 +554,7 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
       ).json()) as GuestHistoryResponse;
       expect(history.messages.map((message) => [message.role, message.text])).toEqual([
         ["user", first],
-        ["assistant", `Eco #1: ${first}`],
+        ["assistant", `Eco #1: Bia: ${first}`],
       ]);
 
       const db = new NodeSqlite.DatabaseSync(NodePath.join(base, "userdata/statev2.sqlite"), {
@@ -500,13 +582,13 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
       const resumed = await readEvents(
         biaToken,
         finance,
-        (seen) => finalReply(seen, "Eco #2: de novo"),
+        (seen) => finalReply(seen, "Eco #2: Bia: de novo"),
         90_000,
         async () => {
           expect((await send(biaToken, finance, { text: "de novo" })).status).toBe(202);
         },
       );
-      expect(finalReply(resumed, "Eco #2: de novo")).toBe(true);
+      expect(finalReply(resumed, "Eco #2: Bia: de novo")).toBe(true);
     }, 240_000);
 
     it("passes guest commands, skill names and reasoning keywords to the bot as plain text", async () => {
@@ -516,9 +598,7 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
         "UltraThink: quanto sobrou do mês?",
       ]) {
         // The bot sees asPlainText's output; a leading zero-width space may be dropped on the way.
-        const expected = new RegExp(
-          `^Eco #\\d+: ${escape(asPlainText(text)).replace(/^\u200b/, "\u200b?")}$`,
-        );
+        const expected = new RegExp(`^Eco #\\d+: Bia: ${escape(asPlainText(text))}$`);
         const events = await readEvents(
           biaToken,
           finance,
@@ -534,7 +614,7 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
 
     it("delivers a photo to the bot and serves it back to its owner only", async () => {
       // The image reaches Claude inline; T3 also appends a path hint, which the echo repeats.
-      const photoReply = /^Eco #1: olha essa foto[\s\S]* \(\+1 imagem\)$/;
+      const photoReply = /^Eco #1: Bia: olha essa foto[\s\S]* \(\+1 imagem\)$/;
       // 1×1 transparent PNG.
       const png =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -568,5 +648,69 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
       });
       expect(other.status).toBe(404);
     }, 120_000);
+
+    it("shares a bot with the owner: their T3 message runs in the sandbox and Bia sees both", async () => {
+      expect(
+        ((await (await api("/guest/v1/bots", { token: biaToken })).json()) as GuestBotsResponse)
+          .ownerName,
+      ).toBe("Israel");
+      const threadId = `bot:${finance}:1`;
+      const ownerText = "Paguei a conta de luz";
+      const reply = new RegExp(`^Eco #\\d+: ${ownerText}$`);
+      let dispatched: { _tag: string } | undefined;
+      const events = await readEvents(
+        biaToken,
+        finance,
+        (seen) => finalReply(seen, reply),
+        90_000,
+        async () => {
+          // The owner's composer sends a host model; only the pin to the bot's sandbox model
+          // lets this turn run (the host instance's binary is `false`).
+          dispatched = await ownerSend(threadId, ownerText, {
+            instanceId: "claude_host",
+            model: "claude-sonnet-5-5",
+          });
+        },
+      );
+      expect(dispatched?._tag).toBe("Success");
+      expect(
+        events.some(
+          (event) =>
+            event.type === "message" &&
+            event.message.role === "user" &&
+            event.message.sender === "owner" &&
+            event.message.text === ownerText,
+        ),
+      ).toBe(true);
+      expect(finalReply(events, reply)).toBe(true);
+
+      const history = (await (
+        await api(`/guest/v1/bots/${finance}/messages`, { token: biaToken })
+      ).json()) as GuestHistoryResponse;
+      const users = history.messages.filter((message) => message.role === "user");
+      expect(users[0]).toMatchObject({ sender: "guest", text: expect.stringMatching(/^olá/) });
+      expect(users.at(-1)).toMatchObject({ sender: "owner", text: ownerText });
+
+      const db = new NodeSqlite.DatabaseSync(NodePath.join(base, "userdata/statev2.sqlite"), {
+        readOnly: true,
+      });
+      const runs = db
+        .prepare(
+          "SELECT payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal",
+        )
+        .all(threadId) as Array<{ payload_json: string }>;
+      const guestText = db
+        .prepare(
+          "SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id = ? ORDER BY rowid LIMIT 1",
+        )
+        .get(threadId) as { payload_json: string };
+      db.close();
+      expect(JSON.parse(runs.at(-1)!.payload_json).modelSelection).toMatchObject({
+        instanceId,
+        model: "claude-sonnet-5-5",
+      });
+      // The owner reads Bia's messages in T3 with her name on them.
+      expect(JSON.parse(guestText.payload_json).text).toMatch(/^Bia: olá/);
+    }, 150_000);
   });
 });

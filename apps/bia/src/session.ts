@@ -14,6 +14,8 @@ import { openBotStream, type BotStream } from "./stream";
 
 export interface SessionState {
   readonly guestName: string;
+  /** The owner's name, for their messages on a bot they share with Bia; null when unknown. */
+  readonly ownerName: string | null;
   readonly bots: readonly GuestBotSummary[];
   readonly botsLoaded: boolean;
   readonly conversations: Readonly<Record<string, Conversation>>;
@@ -52,7 +54,13 @@ export function createSession(options: {
   readonly onReplyFinished: (reply: FinishedReply) => void;
 }): Session {
   const { pairing } = options;
-  let state: SessionState = { guestName: "", bots: [], botsLoaded: false, conversations: {} };
+  let state: SessionState = {
+    guestName: "",
+    ownerName: null,
+    bots: [],
+    botsLoaded: false,
+    conversations: {},
+  };
   const listeners = new Set<() => void>();
   const streams = new Map<string, BotStream>();
   let disposed = false;
@@ -132,7 +140,13 @@ export function createSession(options: {
 
   const refresh = async () => {
     const response = await guard(api.listBots(pairing));
-    setState({ ...state, guestName: response.guest.name, bots: response.bots, botsLoaded: true });
+    setState({
+      ...state,
+      guestName: response.guest.name,
+      ownerName: response.ownerName ?? null,
+      bots: response.bots,
+      botsLoaded: true,
+    });
     const ids = new Set<string>(response.bots.map((bot) => bot.id));
     for (const [botId, stream] of streams) {
       if (!ids.has(botId)) {

@@ -18,6 +18,9 @@
 #   with a placeholder of the same kind, so its Claude Code runs as a subscription client or an
 #   API client; the forwarder adds the real credential and enforces the guest's allowed models and
 #   maximum effort (T3CODE_GUEST_ANTHROPIC_MODELS, T3CODE_GUEST_ANTHROPIC_MAX_EFFORT).
+# - The same holds for Lurian's Bot API token (`lurian-bot.token`): the proxy forwards
+#   LURIAN_BOT_API_URL (http://egress:8081/api/bot/v1) to Lurian with the token added, and
+#   nothing else on that host gets it.
 # - Non-root, all capabilities dropped, no-new-privileges, read-only root, memory/CPU/pids caps.
 # - No variable of the T3 server process is forwarded, except the SDK's own two identifiers.
 set -euo pipefail
@@ -44,6 +47,11 @@ elif [[ -r "$anthropic_key" ]]; then
 else
   credential=()
   placeholder=(-e ANTHROPIC_API_KEY=sk-guest-sandbox-placeholder)
+fi
+lurian_token="${T3CODE_GUEST_LURIAN_TOKEN_FILE:-$secrets_dir/lurian-bot.token}"
+if [[ -r "$lurian_token" ]]; then
+  credential+=(--mount "type=bind,src=$lurian_token,dst=/run/secrets/lurian-bot.token,readonly")
+  placeholder+=(-e LURIAN_BOT_API_URL=http://egress:8081/api/bot/v1)
 fi
 git_key="${T3CODE_GUEST_GIT_KEY_FILE:-$secrets_dir/git_deploy_key}"
 memory="${T3CODE_GUEST_MEMORY:-2g}"

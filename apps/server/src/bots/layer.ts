@@ -17,6 +17,7 @@ import * as BotsStore from "./BotsStore.ts";
 import * as BotCompactionReactor from "./compaction/BotCompactionReactor.ts";
 import * as GuestHttp from "./guest/GuestHttp.ts";
 import * as GuestIdle from "./guest/GuestIdle.ts";
+import * as GuestModelPin from "./guest/GuestModelPin.ts";
 import * as GuestService from "./guest/GuestService.ts";
 import * as GuestStore from "./guest/GuestStore.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
@@ -129,14 +130,14 @@ export const layerOff = Layer.mergeAll(
 );
 
 /**
- * BotsStore, GuestStore and BotsInstructions, for the orchestration runtime
- * (RunExecutionService) and the bots layers above it.
+ * BotsStore, GuestStore, BotsInstructions and GuestModelPin, for the orchestration runtime
+ * (RunExecutionService, Orchestrator) and the bots layers above it.
  */
 export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? BotsInstructions.layer.pipe(
+        ? Layer.merge(BotsInstructions.layer, GuestModelPin.layer).pipe(
             Layer.provideMerge(BotsStore.layer),
             Layer.provideMerge(GuestStore.layer),
           )

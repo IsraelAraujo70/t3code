@@ -194,6 +194,35 @@ describe.skipIf(!enabled)("guest sandbox (docker)", () => {
     expect(turn).toMatchObject({ result: "Eco #1: oi", is_error: false });
   });
 
+  it("reaches Lurian's Bot API with a token only the proxy holds, and nothing else with it", () => {
+    const secrets = NodePath.join(scratch, "secrets-lurian");
+    NodeFS.mkdirSync(secrets, { recursive: true, mode: 0o700 });
+    NodeFS.writeFileSync(NodePath.join(secrets, "lurian-bot.token"), "lurian-test-not-real\n", {
+      mode: 0o600,
+    });
+    const env = { T3CODE_GUEST_SECRETS_DIR: secrets, T3CODE_GUEST_FAKE_ANTHROPIC: "1" };
+    // The fake Lurian in the proxy answers `authorized: true` only for `Bearer <that token>`.
+    const probe = fields(
+      sandboxBash(
+        `
+        echo "url=$LURIAN_BOT_API_URL"
+        echo "api=$(curl -s -H 'Authorization: Bearer forged' "$LURIAN_BOT_API_URL/expenses?month=10")"
+        echo "other=$(curl -s -o /dev/null -w '%{http_code}' http://egress:8081/api/admin)"
+        echo "dots=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is http://egress:8081/api/bot/v1/../admin)"
+        echo "grep=$(grep -rs lurian-test-not-real /run /home/guest /proc/self/environ >/dev/null && echo found || echo none)"
+        `,
+        env,
+      ),
+    );
+    expect(probe).toEqual({
+      url: "http://egress:8081/api/bot/v1",
+      api: JSON.stringify({ path: "/api/bot/v1/expenses?month=10", authorized: true }),
+      other: "403",
+      dots: "403",
+      grep: "none",
+    });
+  });
+
   it("runs bots only on an internal network, apart from the shared egress bridge", () => {
     const inspect = (name: string) =>
       NodeChildProcess.execFileSync(

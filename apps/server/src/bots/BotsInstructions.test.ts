@@ -186,13 +186,24 @@ describe("buildGuestBotInstructions", () => {
     });
     assert.deepStrictEqual(
       sections.map((section) => section.key),
-      ["bot", "memories", "workspace"],
+      ["bot", "memories", "people", "workspace"],
+    );
+    const shared = buildGuestBotInstructions({
+      bot,
+      memories: [],
+      guestName: "Bia",
+      ownerName: "Israel",
+    });
+    assert.include(
+      shared.sections.find((section) => section.key === "people")!.text,
+      "Any other message from the user comes from Israel.",
     );
     assert.include(sections[0]!.text, "You are Al, Bia's assistant.");
     assert.include(sections[0]!.text, "Reviews pull requests.");
     // Guests have no memory tools, so the ids that memory_forget takes are not shown.
     assert.strictEqual(sections[1]!.text, "- Pays rent on the 5th");
-    assert.include(sections[2]!.text, "/home/guest");
+    assert.include(sections[2]!.text, 'starts with "Bia:" comes from Bia');
+    assert.include(sections[3]!.text, "/home/guest");
     const all = sections.map((section) => section.text).join("\n");
     for (const ownerOnly of ["memory_save", "t3_thread_launch", "delegate_task", "bot_create"]) {
       assert.notInclude(all, ownerOnly);
@@ -246,8 +257,19 @@ describe("BotsInstructions.forThread", () => {
         updatedAt: bot.createdAt,
       });
       yield* guests.assignBot(GuestId.make("bia"), guestBot.id, bot.createdAt);
+      // Memories the bot saved before it became a guest's carry over, read-only.
+      yield* store.insertMemory(
+        memory("mem_kept", "Rent is due on the 5th", { botId: guestBot.id }),
+      );
+      yield* store.insertMemory(
+        memory("mem_off", "An old account", { botId: guestBot.id, enabled: false }),
+      );
 
       const forGuestBot = yield* instructions.forThread(botThreadId(guestBot.id, 1));
+      assert.strictEqual(
+        forGuestBot!.sections.find((section) => section.key === "memories")?.text,
+        "- Rent is due on the 5th",
+      );
       assert.include(forGuestBot!.sections[0]!.text, "You are Fin, Bia's assistant.");
       assert.isUndefined(forGuestBot!.sections.find((section) => section.key === "owner"));
 

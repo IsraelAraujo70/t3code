@@ -48,6 +48,7 @@ export function ChatScreen(props: {
   const keyboardVisible = useKeyboardVisible();
   const bot = useSessionState(session, (state) => state.bots.find((item) => item.id === botId));
   const botsLoaded = useSessionState(session, (state) => state.botsLoaded);
+  const ownerName = useSessionState(session, (state) => state.ownerName);
   const conversation =
     useSessionState(session, (state) => state.conversations[botId]) ?? EMPTY_CONVERSATION;
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -116,10 +117,11 @@ export function ChatScreen(props: {
         item={item}
         pairing={session.pairing}
         botId={botId}
+        ownerName={ownerName}
         onOpenImage={setOpenImage}
       />
     ),
-    [session.pairing, botId],
+    [session.pairing, botId, ownerName],
   );
 
   return (

@@ -96,15 +96,25 @@ export function isNewlyFinishedReply(
 }
 
 /** The text of the latest message, for the bot list. */
+/** The owner's label when the server does not say their name. */
+export const OWNER_FALLBACK = "Outra pessoa";
+
+/** Who wrote a message: Bia, the owner (on a bot they share), or the bot. */
+export type MessageAuthor = "bia" | "owner" | "bot";
+
+/** A server older than the `sender` field only had Bia's own user messages. */
+export const authorOf = (message: Pick<GuestMessage, "role" | "sender">): MessageAuthor =>
+  message.role === "assistant" ? "bot" : message.sender === "owner" ? "owner" : "bia";
+
 export function lastMessagePreview(
   conversation: Conversation,
-): { readonly fromBia: boolean; readonly text: string } | null {
+): { readonly from: MessageAuthor; readonly text: string } | null {
   const outgoing = conversation.outbox.at(-1);
-  if (outgoing !== undefined) return { fromBia: true, text: outgoing.text || "📷 Foto" };
+  if (outgoing !== undefined) return { from: "bia", text: outgoing.text || "📷 Foto" };
   const last = conversation.messages.at(-1);
   if (last === undefined) return null;
   return {
-    fromBia: last.role === "user",
+    from: authorOf(last),
     text: last.text.trim() || (last.attachments.length > 0 ? "📷 Foto" : "…"),
   };
 }

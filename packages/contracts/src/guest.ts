@@ -55,6 +55,11 @@ export type GuestBotSummary = typeof GuestBotSummary.Type;
 
 export const GuestBotsResponse = Schema.Struct({
   guest: Schema.Struct({ id: GuestId, name: Schema.String }),
+  /**
+   * The server owner's name (`T3CODE_OWNER_NAME`), shown on the messages they send to a bot they
+   * share with the guest; absent when not configured.
+   */
+  ownerName: Schema.optionalKey(Schema.String),
   bots: Schema.Array(GuestBotSummary),
 });
 export type GuestBotsResponse = typeof GuestBotsResponse.Type;
@@ -69,6 +74,11 @@ export type GuestAttachment = typeof GuestAttachment.Type;
 export const GuestMessage = Schema.Struct({
   id: MessageId,
   role: Schema.Literals(["user", "assistant"]),
+  /**
+   * Who wrote a user message: the guest, or the server owner on a bot both use. Absent on
+   * assistant messages.
+   */
+  sender: Schema.optionalKey(Schema.Literals(["guest", "owner"])),
   text: Schema.String,
   attachments: Schema.Array(GuestAttachment),
   /** True while the bot is still writing this reply. */

@@ -121,8 +121,15 @@ and caps effort (`T3CODE_GUEST_ANTHROPIC_MAX_EFFORT`). Whatever the bot does ins
 sandbox, it cannot use the credential elsewhere or pick another model. Guest text that would act on
 Claude Code (a leading `/`, "ultrathink") reaches the bot defused. Conversations live in the
 guest's volume, so stopping the container loses nothing. `T3CODE_GUEST_IDLE_MS` (default 10 minutes) stops an idle guest bot's container through
-the same release as Restart session. Guest bots push only to the guest's phones, with a visible
-FCM notification (the bot name and a reply preview). Claude replies reach the app per completed text block, as on every T3 surface,
+the same release as Restart session. A guest's bot can also be one the owner uses: the owner writes from T3, the guest from the
+app, and both see the whole conversation. Every turn on such a bot's thread runs on the bot's own
+model, whoever sends it (`GuestModelPin`, applied by the Orchestrator to every command), so an owner
+message never moves the conversation out of the sandbox. The guest's messages reach the bot as
+`<guest name>: <text>`, and the guest API marks each user message `guest` or `owner`
+(`T3CODE_OWNER_NAME` names the owner in the app). A reply pushes to every party: the owner's usual
+T3 push, and the guest's visible FCM notification (the bot name and a reply preview). With
+`lurian-bot.token` in the guest's secrets, the proxy forwards `LURIAN_BOT_API_URL`
+(`http://egress:8081/api/bot/v1`) to Lurian's Bot API with the token; no other path gets it. Claude replies reach the app per completed text block, as on every T3 surface,
 not per token.
 
 ## State and rollback

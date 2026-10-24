@@ -60,6 +60,12 @@ import { isTerminalRunStatus } from "../../orchestration-v2/ThreadManagementServ
 import * as ServerSettings from "../../serverSettings.ts";
 import { BotsService } from "../BotsService.ts";
 import { BotsStore } from "../BotsStore.ts";
+import {
+  fromGuest,
+  GUEST_MESSAGE_ID_PREFIX,
+  ownerName,
+  withoutGuestPrefix,
+} from "./guestSender.ts";
 import { hashGuestToken } from "./guestToken.ts";
 import { type GuestRecord, GuestStore } from "./GuestStore.ts";
 import { isSandboxedFor } from "./sandboxInstance.ts";
@@ -131,9 +137,23 @@ const isGuestVisible = (message: OrchestrationV2ConversationMessage) =>
   message.senderThreadId === undefined &&
   (message.role === "assistant" || (message.role === "user" && message.createdBy === "user"));
 
-const toGuestMessage = (message: OrchestrationV2ConversationMessage): GuestMessage => ({
+/** Assistant replies as they are; user messages marked guest or owner, the guest's unprefixed. */
+const toGuestMessage = (
+  guest: Pick<GuestRecord, "name">,
+  message: OrchestrationV2ConversationMessage,
+): GuestMessage => {
+  if (message.role === "assistant") return { ...baseMessage(message), role: "assistant" };
+  const byGuest = message.id.startsWith(GUEST_MESSAGE_ID_PREFIX);
+  return {
+    ...baseMessage(message),
+    role: "user",
+    sender: byGuest ? "guest" : "owner",
+    text: byGuest ? withoutGuestPrefix(guest.name, message.text) : message.text,
+  };
+};
+
+const baseMessage = (message: OrchestrationV2ConversationMessage) => ({
   id: message.id,
-  role: message.role === "assistant" ? "assistant" : "user",
   text: message.text,
   attachments: message.attachments.flatMap((attachment) =>
     attachment.type === "image"
@@ -178,6 +198,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
+  const owner = yield* ownerName;
   const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
 
   const authenticate = Effect.fn("GuestService.authenticate")(function* (
@@ -248,6 +269,7 @@ const make = Effect.gen(function* () {
     );
     return {
       guest: { id: guest.id, name: guest.name },
+      ...(Option.isSome(owner) ? { ownerName: owner.value } : {}),
       bots: owned.flatMap((bot) =>
         Option.isSome(bot) ? [{ id: bot.value.id, name: bot.value.name }] : [],
       ),
@@ -264,7 +286,7 @@ const make = Effect.gen(function* () {
     const visible = messages.filter(isGuestVisible);
     const count = Math.min(Math.max(1, Math.trunc(limit)), GUEST_LIMITS.historyMax);
     return {
-      messages: visible.slice(-count).map(toGuestMessage),
+      messages: visible.slice(-count).map((message) => toGuestMessage(guest, message)),
       working: runs.some(isWorking),
     } satisfies GuestHistoryResponse;
   });
@@ -354,7 +376,7 @@ const make = Effect.gen(function* () {
     }
     const threadId = threadOf(bot);
     const id = yield* randomUuidV4;
-    const messageId = MessageId.make(`guest:${id}`);
+    const messageId = MessageId.make(`${GUEST_MESSAGE_ID_PREFIX}${id}`);
     const attachments = yield* persistImages(threadId, messageId, uploads);
     yield* engine
       .dispatch({
@@ -362,7 +384,8 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`guest:${guest.id}:${id}`),
         threadId,
         messageId,
-        text: asPlainText(input.text),
+        // The bot (and the owner, in T3) tells the guest from the owner by this prefix.
+        text: fromGuest(guest.name, asPlainText(input.text)),
         attachments,
         // The bot definition decides the model and effort; the guest never does.
         modelSelection: bot.model,
@@ -416,7 +439,7 @@ const make = Effect.gen(function* () {
     const changes = (event: OrchestrationV2DomainEvent): GuestStreamEvent[] => {
       if (event.type === "message.updated") {
         return isGuestVisible(event.payload)
-          ? [{ type: "message", message: toGuestMessage(event.payload) }]
+          ? [{ type: "message", message: toGuestMessage(guest, event.payload) }]
           : [];
       }
       if (event.type !== "run.updated") return [];

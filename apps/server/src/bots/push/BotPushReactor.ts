@@ -24,7 +24,14 @@ import { forkParked } from "../../serverActivation.ts";
 import { BotsStore } from "../BotsStore.ts";
 import { GuestStore } from "../guest/GuestStore.ts";
 import * as BotPushDelivery from "./BotPushDelivery.ts";
-import { botPushData, botPushNotice, guestPushData, type BotPushChange } from "./botPushNotice.ts";
+import type { BotPushData } from "./BotPushDelivery.ts";
+import {
+  botPushData,
+  botPushNotice,
+  guestPushData,
+  type BotPushChange,
+  type BotPushNotice,
+} from "./botPushNotice.ts";
 
 /** Keys remembered so a repeated event never pushes twice; old ones are long settled. */
 const MAX_SENT_KEYS = 512;
@@ -38,23 +45,42 @@ export class BotPushReactor extends Context.Service<
   }
 >()("t3/bots/push/BotPushReactor") {}
 
-/** Keeps guest pushes and rejected-token cleanup in the guest's device registry. */
-export function audienceFor(
+/** One push to send: its payload and the phones it goes to. */
+export interface BotPushSend {
+  readonly data: BotPushData;
+  readonly audience: BotPushDelivery.BotPushAudience;
+}
+
+/**
+ * Every party to the bot gets the push: the owner always (T3's data-only push, on the owner's
+ * phones), and the guest the bot is shared with, if any (a minimal payload with a visible
+ * notification, on the guest's phones). Rejected tokens are dropped from their own registry.
+ */
+export function pushesFor(
   bot: Pick<Bot, "name">,
   guestId: Option.Option<GuestId>,
-  body: string,
+  notice: BotPushNotice,
+  ownerData: BotPushData,
   store: Pick<BotsStore["Service"], "listPushDevices" | "deletePushDevice">,
   guests: Pick<GuestStore["Service"], "listPushDevices" | "deletePushDevice">,
-): BotPushDelivery.BotPushAudience {
-  if (Option.isSome(guestId)) {
-    const id = guestId.value;
-    return {
-      devices: guests.listPushDevices(id),
-      drop: (token) => guests.deletePushDevice(id, token),
-      notification: { title: bot.name, body },
-    };
-  }
-  return { devices: store.listPushDevices, drop: store.deletePushDevice };
+): ReadonlyArray<BotPushSend> {
+  const owner: BotPushSend = {
+    data: ownerData,
+    audience: { devices: store.listPushDevices, drop: store.deletePushDevice },
+  };
+  if (Option.isNone(guestId)) return [owner];
+  const id = guestId.value;
+  return [
+    owner,
+    {
+      data: guestPushData(notice),
+      audience: {
+        devices: guests.listPushDevices(id),
+        drop: (token) => guests.deletePushDevice(id, token),
+        notification: { title: bot.name, body: notice.body },
+      },
+    },
+  ];
 }
 
 const make = Effect.gen(function* () {
@@ -107,16 +133,15 @@ const make = Effect.gen(function* () {
       const notice = botPushNotice(event.threadId, bot, change);
       if (notice === null || bot === undefined || sent.has(notice.key)) return;
       remember(notice.key);
+      const ownerData = botPushData(notice, {
+        botName: bot.name,
+        environmentId,
+        sentAt: yield* Clock.currentTimeMillis,
+      });
       const guestId = yield* guests.guestOfBot(bot.id);
-      const data = Option.isSome(guestId)
-        ? guestPushData(notice)
-        : botPushData(notice, {
-            botName: bot.name,
-            environmentId,
-            sentAt: yield* Clock.currentTimeMillis,
-          });
-      const audience = audienceFor(bot, guestId, notice.body, store, guests);
-      yield* Effect.forkIn(delivery.deliver(data, audience), scope);
+      for (const push of pushesFor(bot, guestId, notice, ownerData, store, guests)) {
+        yield* Effect.forkIn(delivery.deliver(push.data, push.audience), scope);
+      }
     },
     (effect, event) =>
       effect.pipe(

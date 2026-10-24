@@ -5,9 +5,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { BotId } from "./api";
 import { BotFace } from "./BotFace";
-import { lastMessagePreview } from "./conversation";
+import { lastMessagePreview, OWNER_FALLBACK, type MessageAuthor } from "./conversation";
 import { useSessionState, type Session } from "./session";
 import { colors, fontSize } from "./theme";
+
+function previewLabel(from: MessageAuthor, ownerName: string | null) {
+  if (from === "bia") return "Você: ";
+  if (from === "owner") return `${ownerName ?? OWNER_FALLBACK}: `;
+  return "";
+}
 
 function BotCard(props: {
   readonly session: Session;
@@ -15,12 +21,13 @@ function BotCard(props: {
   readonly onOpen: (botId: BotId) => void;
 }) {
   const conversation = useSessionState(props.session, (state) => state.conversations[props.bot.id]);
+  const ownerName = useSessionState(props.session, (state) => state.ownerName);
   const preview = conversation === undefined ? null : lastMessagePreview(conversation);
   const subtitle = conversation?.working
     ? "digitando…"
     : preview === null
       ? "Toque para conversar"
-      : `${preview.fromBia ? "Você: " : ""}${preview.text}`;
+      : `${previewLabel(preview.from, ownerName)}${preview.text}`;
 
   return (
     <Pressable

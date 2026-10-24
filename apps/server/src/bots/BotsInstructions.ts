@@ -25,6 +25,7 @@ import {
 
 import { BOT_SENDER_PREFIX } from "./botSender.ts";
 import { BotsStore } from "./BotsStore.ts";
+import { ownerName } from "./guest/guestSender.ts";
 import { GuestStore } from "./guest/GuestStore.ts";
 
 /** Section texts never exceed this, so adapters can deliver each section on its own. */
@@ -45,6 +46,8 @@ export interface GuestBotInstructionInput {
   readonly memories: ReadonlyArray<BotMemory>;
   /** The guest's display name. */
   readonly guestName: string;
+  /** The server owner's display name (`T3CODE_OWNER_NAME`), when configured. */
+  readonly ownerName?: string | undefined;
 }
 
 // Guest bots run in a Docker sandbox with no T3 MCP tools, so they get none of the owner's tool
@@ -137,6 +140,19 @@ export function buildBotInstructions(input: BotInstructionInput): AppInstruction
   return { fingerprint: fingerprintOf(sections), sections };
 }
 
+/**
+ * A guest's bot may be shared with the owner, who writes from T3. The guest's messages arrive as
+ * `<guest>: <text>` (guestSender.fromGuest); the owner's arrive as they typed them.
+ */
+const peopleText = (input: GuestBotInstructionInput) => {
+  const owner = input.ownerName ?? "the person who set you up for them";
+  return [
+    `Two people may write in this conversation: ${input.guestName} and ${owner}.`,
+    `A message that starts with "${input.guestName}:" comes from ${input.guestName}; that prefix is added by the app, not typed. Any other message from the user comes from ${owner}.`,
+    "Both see the whole conversation. When it matters, say whom you are answering, and keep track of what each of them asked for.",
+  ].join("\n\n");
+};
+
 /** Pure. Identity and role, read-only memories, and the sandbox the bot works in. */
 export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppInstructions {
   const { bot, memories } = input;
@@ -157,6 +173,7 @@ export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppI
           },
         ]
       : []),
+    { key: "people", title: "Who is talking", text: peopleText(input) },
     { key: "workspace", title: "Where you work", text: GUEST_WORKSPACE_TEXT },
   ].flatMap(splitSection);
   return { fingerprint: fingerprintOf(sections), sections };
@@ -217,6 +234,7 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
   Effect.gen(function* () {
     const store = yield* BotsStore;
     const guests = yield* GuestStore;
+    const owner = Option.getOrUndefined(yield* ownerName);
     return BotsInstructions.of({
       forThread: Effect.fn("BotsInstructions.forThread")(function* (threadId: ThreadId) {
         const parsed = parseBotThreadId(threadId);
@@ -234,6 +252,7 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
             bot: bot.value,
             memories,
             guestName: Option.isSome(guest) ? guest.value.name : guestId,
+            ownerName: owner,
           });
         }
         const aboutMe = yield* store.getAboutMe;

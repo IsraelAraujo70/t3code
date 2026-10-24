@@ -24,7 +24,7 @@ RUN curl -fsSL https://api.github.com/meta \
 RUN usermod -l guest -d /home/guest -m node && groupmod -n guest node
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/t3-guest-entrypoint
-COPY proxy-main.mjs egress-proxy.mjs api-forward.mjs fake-anthropic.mjs /opt/t3-guest/
+COPY proxy-main.mjs egress-proxy.mjs api-forward.mjs lurian-forward.mjs fake-anthropic.mjs /opt/t3-guest/
 
 ENV HOME=/home/guest \
     DISABLE_AUTOUPDATER=1 \

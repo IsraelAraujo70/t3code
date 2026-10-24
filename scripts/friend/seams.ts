@@ -125,6 +125,11 @@ export const SEAMS: readonly Seam[] = [
     why: "name the bot that sent a message; read a reply aloud",
   },
   {
+    file: "apps/server/src/orchestration-v2/Orchestrator.ts",
+    markers: 3,
+    why: "pin a guest bot's thread to its sandboxed model",
+  },
+  {
     file: "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
     markers: 4,
     why: "idle-only release for restarting a bot's session; no MCP credential for guest sandboxes",
