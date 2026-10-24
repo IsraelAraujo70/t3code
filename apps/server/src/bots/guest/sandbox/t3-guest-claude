@@ -90,8 +90,9 @@ ensure_infra() {
     docker network create --ipv6=false --label t3.guest=egress "$egress_network" >/dev/null
 
   local proxy_mounts=("${credential[@]}") config
-  # A changed limit, key file or mode recreates the proxy; the key's content is read per request.
-  config="$(printf '%s|' "$image" "$models" "$max_effort" "$fake" "${proxy_mounts[*]:-}" | sha256sum | cut -c1-16)"
+  # A rebuilt image, changed limit, credential file or mode recreates the proxy; the credential's
+  # content is read per request.
+  config="$(printf '%s|' "$(docker image inspect -f '{{.Id}}' "$image")" "$models" "$max_effort" "$fake" "${proxy_mounts[*]:-}" | sha256sum | cut -c1-16)"
   if [[ "$(docker container inspect -f '{{.State.Running}} {{index .Config.Labels "t3.guest.config"}}' "$proxy" 2>/dev/null)" != "true $config" ]]; then
     docker rm -f "$proxy" >/dev/null 2>&1 || true
     docker run -d --name "$proxy" --restart unless-stopped --network "$egress_network" \
