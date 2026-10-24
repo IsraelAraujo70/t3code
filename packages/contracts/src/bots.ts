@@ -481,8 +481,8 @@ export const VoiceSessionEvent = Schema.Union([
   /** First, exactly once. */
   VoiceSessionAnswer,
   /**
-   * Conversations only, on every change: whether the thread's agent has work (a run, a queued
-   * message, or an utterance being relayed).
+   * On every change: whether the thread's agent has work (a run, a queued message, or an utterance
+   * being relayed), or, in a read, whether parts of the reply have yet to start being spoken.
    */
   Schema.Struct({ type: Schema.Literal("bot"), working: Schema.Boolean }),
   /** Conversations whose client sent `liveVoiceChange`: reconnect to hear the new voice. */

@@ -39,7 +39,10 @@ const messageId = MessageId.make("reply");
 const read: VoiceSessionInput = { threadId, mode: { type: "read", messageId }, sdp: "offer" };
 const conversation: VoiceSessionInput = { threadId, mode: { type: "conversation" }, sdp: "offer" };
 
-const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {}) {
+const setup = Effect.fn("test.setup")(function* (
+  env: Record<string, string> = {},
+  reply = "full reply",
+) {
   const realtimeEvents = yield* Queue.unbounded<CodexRealtime.RealtimeEvent>();
   const activity = yield* Queue.unbounded<VoiceSession.ThreadActivity, BotsError>();
   const spoken: string[] = [];
@@ -72,7 +75,7 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
               Effect.suspend(() => {
                 lookups.push([thread, message]);
                 return message === messageId
-                  ? Effect.succeed("full reply")
+                  ? Effect.succeed(reply)
                   : Effect.fail(new BotsError({ message: "This message is not in that thread." }));
               }),
             post: (_thread, text) =>
@@ -173,6 +176,66 @@ const setup = Effect.fn("test.setup")(function* (env: Record<string, string> = {
 
 const turnWindow = Duration.millis(VoiceSession.DEFAULT_TURN_SILENCE_MS);
 
+const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+const wordsOf = (text: string) => text.split(/\s+/u).filter((word) => word !== "");
+/** About 5,800 bytes: eight paragraphs of twelve sentences. */
+const longReply = Array.from({ length: 8 }, (_, paragraph) =>
+  Array.from(
+    { length: 12 },
+    (_, sentence) =>
+      `Frase ${paragraph}.${sentence} fala do assunto número ${paragraph} com calma.`,
+  ).join(" "),
+).join("\n\n");
+
+/** The fake voice says each appended speech: it starts, then finishes its turn. */
+const sayNext = Effect.fn("test.sayNext")(function* (
+  realtimeEvents: Queue.Queue<CodexRealtime.RealtimeEvent>,
+) {
+  yield* Queue.offerAll(realtimeEvents, [
+    { type: "transcript", delta: "Parte" },
+    { type: "transcript-done", text: "Parte" },
+  ]);
+  yield* Effect.yieldNow;
+});
+
+describe("speechParts", () => {
+  it("keeps every word of a long reply in parts no longer than the limit", () => {
+    const parts = VoiceSession.speechParts(longReply);
+    assert.isAbove(parts.length, 2);
+    for (const part of parts) assert.isAtMost(bytes(part), VoiceSession.SPEECH_PART_BYTES);
+    assert.deepStrictEqual(wordsOf(parts.join(" ")), wordsOf(longReply));
+    assert.deepStrictEqual(VoiceSession.speechParts("Curta.\n\nOutra."), ["Curta.\n\nOutra."]);
+  });
+
+  it("splits a paragraph longer than the limit between sentences", () => {
+    const paragraph = longReply.replaceAll("\n\n", " ");
+    const parts = VoiceSession.speechParts(paragraph);
+    assert.isAbove(parts.length, 2);
+    for (const part of parts) assert.match(part, /\.$/u);
+    assert.deepStrictEqual(wordsOf(parts.join(" ")), wordsOf(paragraph));
+  });
+
+  it("keeps a code block whole, shortening one longer than a part", () => {
+    const code = "```ts\nconst ttl = 1;\n\nawait set(ttl);\n```";
+    assert.deepStrictEqual(VoiceSession.speechParts(`Antes.\n\n${code}\n\nDepois.`), [
+      `Antes.\n\n${code}\n\nDepois.`,
+    ]);
+    const [long] = VoiceSession.speechParts(`\`\`\`\n${"x = 1\n".repeat(1_000)}\`\`\``);
+    assert.isAtMost(bytes(long!), VoiceSession.SPEECH_PART_BYTES);
+    assert.match(long!, /^```[\s\S]*```$/u);
+  });
+
+  it("never appends more than Codex speaks whole, even retried", () => {
+    // Multibyte text, one unbroken word, and a paragraph without sentence ends.
+    const reply = `${"ação ".repeat(4_000)}\n\n${"x".repeat(9_000)}\n\n${"palavra ".repeat(2_000)}`;
+    for (const speech of [
+      ...VoiceSession.voiceReaderSpeeches(reply),
+      ...VoiceSession.voiceReplySpeeches(reply),
+    ])
+      assert.isAtMost(bytes(VoiceSession.retrySpeech(speech)), VoiceSession.CODEX_SPEECH_MAX_BYTES);
+  });
+});
+
 const failureMessage = (exit: Exit.Exit<void, BotsError>) =>
   Exit.isFailure(exit) && exit.cause.reasons[0]?._tag === "Fail"
     ? exit.cause.reasons[0].error.message
@@ -187,7 +250,7 @@ describe("VoiceSessions read", () => {
       assert.deepStrictEqual(h.lookups, [[threadId, messageId]]);
       assert.deepStrictEqual(h.spoken, []);
       yield* h.service.ready(ref);
-      assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReaderSpeech("full reply")]);
+      assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReaderSpeeches("full reply")[0]!]);
       assert.deepStrictEqual(h.starts, [
         { prompt: VoiceSession.VOICE_READER_PROMPT, voice: "cove", delegationAckFiller: false },
       ]);
@@ -202,6 +265,31 @@ describe("VoiceSessions read", () => {
     }),
   );
 
+  it.effect("reads a long reply whole, part by part, and ends only after the last part", () =>
+    Effect.gen(function* () {
+      const h = yield* setup({}, longReply);
+      const speeches = VoiceSession.voiceReaderSpeeches(longReply);
+      assert.isAbove(speeches.length, 2);
+      const { ref, events, fiber } = yield* h.open(read);
+      yield* h.service.ready(ref);
+      assert.deepStrictEqual(h.spoken, speeches.slice(0, 1));
+      assert.deepStrictEqual(yield* Queue.take(events), { type: "bot", working: true });
+      for (let next = 1; next < speeches.length; next++) {
+        yield* sayNext(h.realtimeEvents);
+        assert.deepStrictEqual(h.spoken, speeches.slice(0, next + 1));
+      }
+      // The last part started: nothing is left, which the client waits for to finish.
+      yield* Queue.offer(h.realtimeEvents, { type: "transcript", delta: "Última" });
+      assert.deepStrictEqual(yield* Queue.take(events), { type: "bot", working: false });
+      // A part's end with more to say does not start the grace.
+      yield* TestClock.adjust(VoiceSession.SPEECH_END_GRACE);
+      assert.isUndefined(fiber.pollUnsafe());
+      yield* Queue.offer(h.realtimeEvents, { type: "transcript-done", text: "Última" });
+      yield* TestClock.adjust(VoiceSession.SPEECH_END_GRACE);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(fiber)));
+    }),
+  );
+
   it.effect("fails a read the voice never starts saying", () =>
     Effect.gen(function* () {
       const h = yield* setup();
@@ -209,8 +297,8 @@ describe("VoiceSessions read", () => {
       yield* h.service.ready(ref);
       yield* TestClock.adjust(VoiceSession.SPEECH_START_TIMEOUT);
       assert.deepStrictEqual(h.spoken, [
-        VoiceSession.voiceReaderSpeech("full reply"),
-        VoiceSession.retrySpeech(VoiceSession.voiceReaderSpeech("full reply")),
+        VoiceSession.voiceReaderSpeeches("full reply")[0]!,
+        VoiceSession.retrySpeech(VoiceSession.voiceReaderSpeeches("full reply")[0]!),
       ]);
       yield* TestClock.adjust(VoiceSession.SPEECH_START_TIMEOUT);
       assert.strictEqual(
@@ -357,14 +445,14 @@ describe("VoiceSessions conversation", () => {
       ]);
       yield* Effect.yieldNow;
       // The notice waits until the voice has finished speaking the reply.
-      assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReplySpeech("56.")]);
+      assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReplySpeeches("56.")[0]!]);
       yield* Queue.offerAll(h.realtimeEvents, [
         { type: "transcript", delta: "Cinquenta" },
         { type: "transcript-done", text: "Cinquenta" },
       ]);
       yield* Effect.yieldNow;
       assert.deepStrictEqual(h.spoken, [
-        VoiceSession.voiceReplySpeech("56."),
+        VoiceSession.voiceReplySpeeches("56.")[0]!,
         VoiceSession.WAITING_ON_USER_SPEECH,
       ]);
       // The agent's work lasts until the voice starts speaking the last of it.
@@ -378,6 +466,28 @@ describe("VoiceSessions conversation", () => {
         ],
       );
       assert.strictEqual(yield* Queue.size(events), 0);
+    }),
+  );
+
+  it.effect("speaks a long reply whole, one part after another", () =>
+    Effect.gen(function* () {
+      const h = yield* setup();
+      const speeches = VoiceSession.voiceReplySpeeches(longReply);
+      assert.isAbove(speeches.length, 2);
+      const { ref } = yield* h.open(conversation);
+      yield* h.service.ready(ref);
+      yield* Effect.yieldNow;
+      yield* Queue.offerAll(h.activity, [
+        { type: "working", working: true },
+        { type: "reply", text: longReply },
+        { type: "working", working: false },
+        { type: "waiting-on-user" },
+      ]);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(h.spoken, speeches.slice(0, 1));
+      for (let next = 1; next < speeches.length; next++) yield* sayNext(h.realtimeEvents);
+      yield* sayNext(h.realtimeEvents);
+      assert.deepStrictEqual(h.spoken, [...speeches, VoiceSession.WAITING_ON_USER_SPEECH]);
     }),
   );
 
@@ -397,8 +507,8 @@ describe("VoiceSessions conversation", () => {
       yield* TestClock.adjust(VoiceSession.SPEECH_START_TIMEOUT);
       assert.deepStrictEqual(yield* Queue.take(events), { type: "bot", working: false });
       assert.deepStrictEqual(h.spoken, [
-        VoiceSession.voiceReplySpeech("56."),
-        VoiceSession.retrySpeech(VoiceSession.voiceReplySpeech("56.")),
+        VoiceSession.voiceReplySpeeches("56.")[0]!,
+        VoiceSession.retrySpeech(VoiceSession.voiceReplySpeeches("56.")[0]!),
       ]);
     }),
   );
@@ -461,7 +571,7 @@ describe("VoiceSessions voice change", () => {
         yield* Effect.yieldNow;
         assert.deepStrictEqual(h.spoken, []);
         yield* h.service.ready(h.ref);
-        assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReplySpeech("56.")]);
+        assert.deepStrictEqual(h.spoken, [VoiceSession.voiceReplySpeeches("56.")[0]!]);
         assert.strictEqual(
           (yield* h.service.ready(h.ref).pipe(Effect.flip)).message,
           "This voice session is already live.",
