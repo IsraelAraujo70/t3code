@@ -23,7 +23,7 @@ export function botBubbleCorners(placement: BubblePlacement): ViewStyle {
 
 /** Bottom margin of a bubble row: bubbles of one group sit close together. */
 export const botBubbleSpacingClass = (placement: BubblePlacement) =>
-  placement.joinsNext ? "mb-1" : "mb-5";
+  placement.joinsNext ? "mb-1" : "mb-3";
 
 /**
  * A bot reply's bubble. `width` pins the bubble to its maximum for content that cannot size
@@ -63,7 +63,7 @@ export function BotTurnFold(props: {
       hitSlop={8}
       className="mb-1 self-start px-1 py-1"
     >
-      <Text className="font-t3-medium text-xs tabular-nums text-foreground-muted opacity-70">
+      <Text className="font-t3-medium text-xs tabular-nums text-foreground-muted">
         {props.label}
         {props.expanded ? " · hide details" : ""}
       </Text>

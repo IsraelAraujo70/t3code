@@ -23,7 +23,7 @@ export function botBubbleShapeClass(placement: BubblePlacement): string {
 
 /** Bottom spacing of a bubble row: bubbles of one group sit close together. */
 export function botBubbleRowSpacingClass(placement: BubblePlacement): string {
-  return placement.joinsNext ? "pb-1" : "pb-4";
+  return placement.joinsNext ? "pb-1" : "pb-2";
 }
 
 /**
@@ -53,7 +53,7 @@ export function BotTurnFold({
       aria-expanded={expanded}
       data-scroll-anchor-ignore
       onClick={onToggle}
-      className="mb-1 rounded-md px-1 text-2xs text-muted-foreground/70 tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="mb-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
     >
       {label}
       {expanded ? " · hide details" : ""}

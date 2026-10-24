@@ -190,6 +190,8 @@ describe("reply style", () => {
       assert.include(style.text, "Short never means vague.");
       assert.include(style.text, "what is done, what failed, what is still open");
       assert.include(style.text, "not your tool calls or their output");
+      // Coding-agent config on the host asks for a closing DONE; a chat reply never has one.
+      assert.include(style.text, "status label meant for coding reports such as DONE");
     }
     // Only the owner's bots can hand long material to a T3 thread.
     assert.include(owner.sections.at(-1)!.text, "a file or a T3 thread");
