@@ -1,4 +1,4 @@
-import { createContext, type ReactNode } from "react";
+import { createContext } from "react";
 
 import { cn } from "../lib/utils";
 import type { BubblePlacement } from "@t3tools/client-runtime/bot-chat";
@@ -26,28 +26,14 @@ export function botBubbleRowSpacingClass(placement: BubblePlacement): string {
   return placement.joinsNext ? "pb-1" : "pb-4";
 }
 
-/** A bot reply as a start-aligned bubble, with its action row (copy, listen, time) below it. */
-export function BotAssistantBubble({
-  placement,
-  meta,
-  children,
-}: {
-  readonly placement: BubblePlacement;
-  readonly meta: ReactNode;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1" data-bot-bubble="bot">
-      <div
-        className={cn(
-          "relative min-w-0 max-w-[85%] border border-border/70 bg-card px-3.5 py-2.5 text-card-foreground",
-          botBubbleShapeClass(placement),
-        )}
-      >
-        {children}
-      </div>
-      {meta === null ? null : <div className="ps-1">{meta}</div>}
-    </div>
+/**
+ * A bot reply's bubble, start-aligned and as wide as its content up to a limit. Its action row
+ * (copy, listen, time) renders below it.
+ */
+export function botAssistantBubbleClass(placement: BubblePlacement): string {
+  return cn(
+    "w-fit max-w-[85%] border border-border/70 bg-card px-3.5 py-2.5 text-card-foreground",
+    botBubbleShapeClass(placement),
   );
 }
 

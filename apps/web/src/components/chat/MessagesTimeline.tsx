@@ -42,9 +42,9 @@ import { environmentThreadDetails } from "../../state/threads";
 import { useBotSender } from "../../bots/useBotSender";
 import { VoiceReaderMessageButton } from "../../bots/VoiceReaderMessageButton";
 import {
-  BotAssistantBubble,
   BotChatRowCtx,
   BotTurnFold,
+  botAssistantBubbleClass,
   botBubbleRowSpacingClass,
   botBubbleShapeClass,
 } from "../../bots/BotChatBubble";
@@ -1983,7 +1983,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.kind === "work-live" ||
     row.kind === "work-toggle" ||
     row.kind === "thinking";
-  // Fork (friend): bubbles of one group sit close together.
+  // Fork (friend): bubbles of one group sit close together (cn lets the later padding win).
   const bubble = use(BotChatRowCtx)?.bubble;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
@@ -1992,22 +1992,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   return (
     <div
       className={cn(
-        bubble
-          ? botBubbleRowSpacingClass(bubble)
-          : isWorkLogRow || isSubagentGroup
-            ? undefined
-            : row.kind === "turn-fold" || row.kind === "working"
-              ? "pb-1.5"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "worktree-setup" ||
-                  row.kind === "event" ||
-                  row.kind === "attempt-fold" ||
-                  row.kind === "html-render" ||
-                  row.kind === "mcp-app"
-                ? "pb-2"
-                : "pb-4",
+        isWorkLogRow || isSubagentGroup
+          ? undefined
+          : row.kind === "turn-fold" || row.kind === "working"
+            ? "pb-1.5"
+            : (row.kind === "message" &&
+                  row.message.role === "assistant" &&
+                  !row.showAssistantMeta) ||
+                row.kind === "worktree-setup" ||
+                row.kind === "event" ||
+                row.kind === "attempt-fold" ||
+                row.kind === "html-render" ||
+                row.kind === "mcp-app"
+              ? "pb-2"
+              : "pb-4",
+        bubble && botBubbleRowSpacingClass(bubble),
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
@@ -2709,63 +2708,63 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
-  const meta = row.showAssistantMeta ? (
-    <AssistantMessageMeta
-      className="mt-1.5"
-      projectedItem={row.projectedItem}
-      message={row.message}
-      showCopyButton={row.showAssistantCopyButton}
-      copyStreaming={row.assistantCopyStreaming}
-    />
-  ) : null;
-  const content = (
-    <>
-      <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-      <div data-thread-find-text="true">
-        <AssistantCitationSource
-          messageId={row.message.id}
-          {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-          itemKey={row.id}
-          request={ctx.citationRequest}
-          listRef={ctx.listRef}
-        >
-          <ChatMarkdown
-            text={messageText}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            isStreaming={Boolean(row.message.streaming)}
-            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-            skills={ctx.skills}
-            headingLevelOffset={MESSAGE_HEADING_LEVEL}
-            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-            onRunShellCommand={ctx.onRunShellCommand}
-            onImageExpand={ctx.onImageExpand}
-          />
-        </AssistantCitationSource>
-      </div>
-      <AssistantChangedFilesSection
-        turnSummary={row.assistantTurnDiffSummary}
-        routeThreadKey={ctx.routeThreadKey}
-        resolvedTheme={ctx.resolvedTheme}
-        onOpenTurnDiff={ctx.onOpenTurnDiff}
-      />
-    </>
-  );
-  // Fork (friend): a bot's reply is a bubble with its action row below.
+  // Fork (friend): a bot's reply is a bubble, with its action row below it.
   const bubble = use(BotChatRowCtx)?.bubble;
-  if (bubble) {
-    return (
-      <BotAssistantBubble placement={bubble} meta={meta}>
-        {content}
-      </BotAssistantBubble>
-    );
-  }
 
   return (
-    <div className="relative min-w-0 px-1 py-0.5">
-      {content}
-      {meta}
-    </div>
+    <>
+      <div
+        className={cn("relative min-w-0 px-1 py-0.5", bubble && botAssistantBubbleClass(bubble))}
+      >
+        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+        <div data-thread-find-text="true">
+          <AssistantCitationSource
+            messageId={row.message.id}
+            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+            itemKey={row.id}
+            request={ctx.citationRequest}
+            listRef={ctx.listRef}
+          >
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onRunShellCommand={ctx.onRunShellCommand}
+              onImageExpand={ctx.onImageExpand}
+            />
+          </AssistantCitationSource>
+        </div>
+        <AssistantChangedFilesSection
+          turnSummary={row.assistantTurnDiffSummary}
+          routeThreadKey={ctx.routeThreadKey}
+          resolvedTheme={ctx.resolvedTheme}
+          onOpenTurnDiff={ctx.onOpenTurnDiff}
+        />
+        {row.showAssistantMeta && !bubble ? (
+          <AssistantMessageMeta
+            className="mt-1.5"
+            projectedItem={row.projectedItem}
+            message={row.message}
+            showCopyButton={row.showAssistantCopyButton}
+            copyStreaming={row.assistantCopyStreaming}
+          />
+        ) : null}
+      </div>
+      {row.showAssistantMeta && bubble ? (
+        <AssistantMessageMeta
+          className="mt-1 ps-1"
+          projectedItem={row.projectedItem}
+          message={row.message}
+          showCopyButton={row.showAssistantCopyButton}
+          copyStreaming={row.assistantCopyStreaming}
+        />
+      ) : null}
+    </>
   );
 }
 
