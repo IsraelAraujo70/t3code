@@ -86,6 +86,22 @@ is experimental in Codex. See [`apps/server/src/bots/voice/`](apps/server/src/bo
 and `VoiceSessionRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts). On
 Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
 
+## Bot conversations as chat
+
+Web, desktop and mobile show a bot thread (any `bot:<id>:<n>` id) as chat bubbles: the user's
+messages on one side, the bot's replies on the other, adjacent messages of one side grouped. Tool
+calls, the work log and progress rows stay out of the timeline. While the bot works, web shows a
+"<bot> is working…" bubble above the composer and mobile its usual floating working pill. A settled
+turn keeps a small "Worked for …" toggle that shows that turn's work. Failures, interrupts and
+secret requests stay visible, since they need the user. The rules both clients share live in
+[`packages/client-runtime/src/botChat.ts`](packages/client-runtime/src/botChat.ts).
+
+Because the user no longer sees tool output, every bot's instructions end with "How to reply":
+short, chat-style answers that still carry the result, numbers, paths, failures, open items and
+the decision the bot needs (`replyStyleText` in
+[`apps/server/src/bots/BotsInstructions.ts`](apps/server/src/bots/BotsInstructions.ts)). A bot's
+own role wins when it asks for another format.
+
 ## Restarting a bot's session
 
 "Restart session" (the bot's menu in the sidebar, or Settings → Bots) stops the bot's idle provider
