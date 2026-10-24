@@ -6,7 +6,14 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { expect, it } from "vite-plus/test";
 
-import { capEffort, createApiForwarder, isAllowedModel } from "./api-forward.mjs";
+import {
+  capEffort,
+  createApiForwarder,
+  isAllowedModel,
+  OAUTH_BETA,
+  withBeta,
+  type ForwardCredential,
+} from "./api-forward.mjs";
 import { createFakeAnthropic } from "./fake-anthropic.mjs";
 
 async function listen(server: NodeNet.Server) {
@@ -68,7 +75,7 @@ it("adds the real key, drops the client's, and forwards the capped body", async 
   const upstream = recordingUpstream();
   const forwarder = createApiForwarder({
     upstream: await listen(upstream.server),
-    readKey: () => "sk-real",
+    readCredential: () => ({ kind: "apiKey", value: "sk-real" }),
     allowedModels: ["claude-sonnet-5-5"],
     maxEffort: "high",
     log: () => {},
@@ -95,10 +102,10 @@ it("adds the real key, drops the client's, and forwards the capped body", async 
 
 it("refuses other models, other routes and a missing key before reaching upstream", async () => {
   const upstream = recordingUpstream();
-  let key: string | null = "sk-real";
+  let key: ForwardCredential | null = { kind: "apiKey", value: "sk-real" };
   const forwarder = createApiForwarder({
     upstream: await listen(upstream.server),
-    readKey: () => key,
+    readCredential: () => key,
     allowedModels: ["claude-sonnet-5-5"],
     maxEffort: "high",
     log: () => {},
@@ -124,7 +131,7 @@ it("streams the upstream's server-sent events through", async () => {
   const fake = createFakeAnthropic({ chunkDelayMs: 1, expectKey: "sk-real" });
   const forwarder = createApiForwarder({
     upstream: await listen(fake),
-    readKey: () => "sk-real",
+    readCredential: () => ({ kind: "apiKey", value: "sk-real" }),
     allowedModels: ["claude-sonnet-5-5"],
     log: () => {},
   });
@@ -140,6 +147,73 @@ it("streams the upstream's server-sent events through", async () => {
     const text = await response.text();
     expect(text).toContain("event: message_start");
     expect(text).toContain("event: message_stop");
+  } finally {
+    await close(forwarder);
+    await close(fake);
+  }
+});
+
+it("adds the OAuth beta once and keeps the client's betas in order", () => {
+  expect(withBeta("claude-code-20250219,effort-2025-11-24", OAUTH_BETA)).toBe(
+    `claude-code-20250219,effort-2025-11-24,${OAUTH_BETA}`,
+  );
+  expect(withBeta(`claude-code-20250219, ${OAUTH_BETA}`, OAUTH_BETA)).toBe(
+    `claude-code-20250219,${OAUTH_BETA}`,
+  );
+  expect(withBeta(undefined, OAUTH_BETA)).toBe(OAUTH_BETA);
+});
+
+it("sends a subscription token as a bearer with the OAuth beta, dropping the client's credentials", async () => {
+  const upstream = recordingUpstream();
+  const forwarder = createApiForwarder({
+    upstream: await listen(upstream.server),
+    readCredential: () => ({ kind: "oauth", value: "sk-ant-oat01-real" }),
+    allowedModels: ["claude-sonnet-5-5"],
+    log: () => {},
+  });
+  try {
+    const origin = await listen(forwarder);
+    const response = await post(
+      origin,
+      "/v1/messages?beta=true",
+      { model: "claude-sonnet-5-5", messages: [] },
+      {
+        "x-api-key": "sk-placeholder",
+        authorization: "Bearer sk-ant-oat01-guest-sandbox-placeholder",
+        "anthropic-beta": "claude-code-20250219,extended-cache-ttl-2025-04-11",
+      },
+    );
+    expect(response.status).toBe(200);
+    const [seen] = upstream.seen;
+    expect(seen?.headers.authorization).toBe("Bearer sk-ant-oat01-real");
+    expect(seen?.headers["x-api-key"]).toBeUndefined();
+    expect(seen?.headers["anthropic-beta"]).toBe(
+      `claude-code-20250219,extended-cache-ttl-2025-04-11,${OAUTH_BETA}`,
+    );
+  } finally {
+    await close(forwarder);
+    await close(upstream.server);
+  }
+});
+
+it("works end to end against an upstream that demands the bearer and the beta", async () => {
+  const fake = createFakeAnthropic({ chunkDelayMs: 1, expectBearer: "sk-ant-oat01-real" });
+  const forwarder = createApiForwarder({
+    upstream: await listen(fake),
+    readCredential: () => ({ kind: "oauth", value: "sk-ant-oat01-real" }),
+    allowedModels: ["claude-sonnet-5-5"],
+    log: () => {},
+  });
+  try {
+    const origin = await listen(forwarder);
+    const response = await post(origin, "/v1/messages", {
+      model: "claude-sonnet-5-5",
+      messages: [{ role: "user", content: "oi" }],
+    });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { content: Array<{ text: string }> }).content[0]?.text).toBe(
+      "Eco #1: oi",
+    );
   } finally {
     await close(forwarder);
     await close(fake);

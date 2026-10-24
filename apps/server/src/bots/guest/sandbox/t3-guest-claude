@@ -12,10 +12,12 @@
 # - Only the guest's volume (/home/guest) and the read-only git deploy key are mounted.
 # - Its network is `--internal`: no route to the host, the LAN, the tailnet or the internet.
 #   The only way out is the guest's proxy container, which refuses every non-public address.
-# - The Anthropic key is mounted only in that proxy container. The bot calls the API through the
-#   proxy's forwarder (http://egress:8080) with a placeholder key; the forwarder adds the real key
-#   and enforces the guest's allowed models and maximum effort (T3CODE_GUEST_ANTHROPIC_MODELS,
-#   T3CODE_GUEST_ANTHROPIC_MAX_EFFORT).
+# - The Anthropic credential is mounted only in that proxy container: a Claude subscription OAuth
+#   token (`claude-oauth.token`, from `claude setup-token`) when present, otherwise an API key
+#   (`anthropic.key`). The bot calls the API through the proxy's forwarder (http://egress:8080)
+#   with a placeholder of the same kind, so its Claude Code runs as a subscription client or an
+#   API client; the forwarder adds the real credential and enforces the guest's allowed models and
+#   maximum effort (T3CODE_GUEST_ANTHROPIC_MODELS, T3CODE_GUEST_ANTHROPIC_MAX_EFFORT).
 # - Non-root, all capabilities dropped, no-new-privileges, read-only root, memory/CPU/pids caps.
 # - No variable of the T3 server process is forwarded, except the SDK's own two identifiers.
 set -euo pipefail
@@ -31,6 +33,18 @@ guest="${T3CODE_GUEST_ID:-}"
 image="${T3CODE_GUEST_IMAGE:-t3-guest-sandbox:latest}"
 secrets_dir="${T3CODE_GUEST_SECRETS_DIR:-$HOME/.config/t3-$guest}"
 anthropic_key="${T3CODE_GUEST_ANTHROPIC_KEY_FILE:-$secrets_dir/anthropic.key}"
+oauth_token="${T3CODE_GUEST_CLAUDE_OAUTH_TOKEN_FILE:-$secrets_dir/claude-oauth.token}"
+# The subscription token takes precedence; only the credential in use is mounted.
+if [[ -r "$oauth_token" ]]; then
+  credential=(--mount "type=bind,src=$oauth_token,dst=/run/secrets/claude-oauth.token,readonly")
+  placeholder=(-e CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-guest-sandbox-placeholder)
+elif [[ -r "$anthropic_key" ]]; then
+  credential=(--mount "type=bind,src=$anthropic_key,dst=/run/secrets/anthropic.key,readonly")
+  placeholder=(-e ANTHROPIC_API_KEY=sk-guest-sandbox-placeholder)
+else
+  credential=()
+  placeholder=(-e ANTHROPIC_API_KEY=sk-guest-sandbox-placeholder)
+fi
 git_key="${T3CODE_GUEST_GIT_KEY_FILE:-$secrets_dir/git_deploy_key}"
 memory="${T3CODE_GUEST_MEMORY:-2g}"
 cpus="${T3CODE_GUEST_CPUS:-2}"
@@ -75,9 +89,7 @@ ensure_infra() {
   docker network inspect "$egress_network" >/dev/null 2>&1 ||
     docker network create --ipv6=false --label t3.guest=egress "$egress_network" >/dev/null
 
-  local proxy_mounts=() config
-  [[ -r "$anthropic_key" ]] &&
-    proxy_mounts+=(--mount "type=bind,src=$anthropic_key,dst=/run/secrets/anthropic.key,readonly")
+  local proxy_mounts=("${credential[@]}") config
   # A changed limit, key file or mode recreates the proxy; the key's content is read per request.
   config="$(printf '%s|' "$image" "$models" "$max_effort" "$fake" "${proxy_mounts[*]:-}" | sha256sum | cut -c1-16)"
   if [[ "$(docker container inspect -f '{{.State.Running}} {{index .Config.Labels "t3.guest.config"}}' "$proxy" 2>/dev/null)" != "true $config" ]]; then
@@ -140,7 +152,7 @@ env=(
   -e HTTP_PROXY=http://egress:3128 -e http_proxy=http://egress:3128
   -e NO_PROXY=localhost,127.0.0.1,egress -e no_proxy=localhost,127.0.0.1,egress
   -e ANTHROPIC_BASE_URL=http://egress:8080
-  -e ANTHROPIC_API_KEY=sk-guest-sandbox-placeholder
+  "${placeholder[@]}"
   -e "T3_GUEST_ID=$guest"
   -e "T3_GUEST_GIT_NAME=${T3CODE_GUEST_GIT_NAME:-}"
   -e "T3_GUEST_GIT_EMAIL=${T3CODE_GUEST_GIT_EMAIL:-}"

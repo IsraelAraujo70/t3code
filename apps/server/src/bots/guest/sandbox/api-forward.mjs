@@ -1,6 +1,7 @@
 // The guest's only way to the Anthropic API. It runs in the egress proxy container, never in the
-// bot's, so the bot never holds the API key: it talks to http://egress:8080 with a placeholder key
-// and this forwarder adds the real one. It is also where the guest's limits hold no matter what
+// bot's, so the bot never holds the credential: it talks to http://egress:8080 with a placeholder
+// and this forwarder adds the real one, either an API key or a Claude subscription's OAuth token
+// (`claude setup-token`), sent the way Claude Code's own subscription login sends it. It is also where the guest's limits hold no matter what
 // the bot does inside its sandbox (a subagent on another model, a settings file it wrote):
 // - only the Messages API routes the CLI needs;
 // - only the allowed models;
@@ -12,6 +13,8 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const ROUTES = new Set(["POST /v1/messages", "POST /v1/messages/count_tokens", "GET /v1/models"]);
 /** Images travel inline as base64, so a request can be large, but never unbounded. */
 const MAX_BODY_BYTES = 48 * 1024 * 1024;
+/** The beta Claude Code adds when it signs in with a subscription; the API requires it for OAuth. */
+export const OAUTH_BETA = "oauth-2025-04-20";
 /** Hop-by-hop headers and every credential the client sends; the forwarder sets its own key. */
 const DROPPED_HEADERS = new Set([
   "authorization",
@@ -32,6 +35,15 @@ const DROPPED_HEADERS = new Set([
 export function isAllowedModel(model, allowedModels) {
   if (typeof model !== "string") return false;
   return allowedModels.some((allowed) => model === allowed || model.startsWith(`${allowed}-`));
+}
+
+/** Pure. The `anthropic-beta` value with `beta` added once, keeping the client's betas in order. */
+export function withBeta(header, beta) {
+  const betas = (Array.isArray(header) ? header.join(",") : (header ?? ""))
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value !== "");
+  return (betas.includes(beta) ? betas : [...betas, beta]).join(",");
 }
 
 /** Pure. The request body with its effort lowered to `maxEffort` when it asks for more. */
@@ -55,12 +67,14 @@ function refuse(response, status, message) {
 }
 
 /**
- * An unbound HTTP server forwarding to `upstream`. `readKey` runs per request, so a rotated key
- * file takes effect without a restart; it returns null when no key is configured.
+ * An unbound HTTP server forwarding to `upstream`. `readCredential` runs per request, so a rotated
+ * credential file takes effect without a restart; it returns null when none is configured.
+ * `{ kind: "oauth" }` is sent as `Authorization: Bearer` with the OAuth beta, `{ kind: "apiKey" }`
+ * as `x-api-key`. Whatever credential the client sent is dropped either way.
  */
 export function createApiForwarder({
   upstream = "https://api.anthropic.com",
-  readKey,
+  readCredential,
   allowedModels,
   maxEffort,
   log = (line) => process.stderr.write(`${line}\n`),
@@ -108,15 +122,20 @@ export function createApiForwarder({
         }
         body = Buffer.from(JSON.stringify(capEffort(parsed, maxEffort)));
       }
-      const key = readKey();
-      if (key === null || key === "") {
-        return refuse(response, 503, "No Anthropic key is configured for this guest.");
+      const credential = readCredential();
+      if (credential === null || credential.value === "") {
+        return refuse(response, 503, "No Anthropic credential is configured for this guest.");
       }
       const headers = {};
       for (const [name, value] of Object.entries(request.headers)) {
         if (!DROPPED_HEADERS.has(name.toLowerCase()) && value !== undefined) headers[name] = value;
       }
-      headers["x-api-key"] = key;
+      if (credential.kind === "oauth") {
+        headers.authorization = `Bearer ${credential.value}`;
+        headers["anthropic-beta"] = withBeta(request.headers["anthropic-beta"], OAUTH_BETA);
+      } else {
+        headers["x-api-key"] = credential.value;
+      }
       headers["content-length"] = String(body.length);
       const outgoing = send(
         new URL(`${target.pathname.replace(/\/$/, "")}${url.pathname}${url.search}`, target),

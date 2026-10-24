@@ -46,7 +46,7 @@ function error(response, status, type, message) {
 }
 
 /** Creates a standalone echo API; conversation history is supplied by the caller. */
-export function createFakeAnthropic({ chunkDelayMs = 25, expectKey } = {}) {
+export function createFakeAnthropic({ chunkDelayMs = 25, expectKey, expectBearer } = {}) {
   let counter = 0;
   return NodeHttp.createServer(async (request, response) => {
     const path = new URL(request.url, "http://localhost").pathname;
@@ -54,6 +54,18 @@ export function createFakeAnthropic({ chunkDelayMs = 25, expectKey } = {}) {
     // Behind the guest's API forwarder, only the key the forwarder injects is accepted.
     if (expectKey !== undefined && request.headers["x-api-key"] !== expectKey) {
       error(response, 401, "authentication_error", "invalid x-api-key");
+      return;
+    }
+    // Like the real API for a subscription token: the bearer and the OAuth beta, and no API key.
+    if (
+      expectBearer !== undefined &&
+      (request.headers.authorization !== `Bearer ${expectBearer}` ||
+        request.headers["x-api-key"] !== undefined ||
+        !String(request.headers["anthropic-beta"] ?? "")
+          .split(",")
+          .includes("oauth-2025-04-20"))
+    ) {
+      error(response, 401, "authentication_error", "invalid bearer token");
       return;
     }
     if (request.method === "GET" && path === "/v1/models") {

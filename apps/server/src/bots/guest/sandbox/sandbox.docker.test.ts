@@ -153,6 +153,47 @@ describe.skipIf(!enabled)("guest sandbox (docker)", () => {
     expect(inProxy.trim()).toBe("sk-ant-test-not-real");
   });
 
+  it("prefers a subscription token, held only by the proxy, and signs in the bot as a subscriber", () => {
+    const secrets = NodePath.join(scratch, "secrets-oauth");
+    NodeFS.mkdirSync(secrets, { recursive: true, mode: 0o700 });
+    for (const [file, value] of [
+      ["anthropic.key", "sk-ant-api-test-not-real"],
+      ["claude-oauth.token", "sk-ant-oat01-test-not-real"],
+    ] as const) {
+      NodeFS.writeFileSync(NodePath.join(secrets, file), `${value}\n`, { mode: 0o600 });
+    }
+    const env = { T3CODE_GUEST_SECRETS_DIR: secrets, T3CODE_GUEST_FAKE_ANTHROPIC: "1" };
+    const probe = fields(
+      sandboxBash(
+        `
+        echo "files=$(ls /run/secrets 2>/dev/null | tr '\n' ' ')"
+        echo "oauth=$CLAUDE_CODE_OAUTH_TOKEN"
+        echo "apikey=\${ANTHROPIC_API_KEY:-unset}"
+        echo "grep=$(grep -rs not-real /run /home/guest /proc/self/environ >/dev/null && echo found || echo none)"
+        `,
+        env,
+      ),
+    );
+    expect(probe).toEqual({
+      files: "",
+      oauth: "sk-ant-oat01-guest-sandbox-placeholder",
+      apikey: "unset",
+      grep: "none",
+    });
+    const proxy = `t3-guest-${guest}-egress`;
+    const inProxy = NodeChildProcess.execFileSync("docker", ["exec", proxy, "ls", "/run/secrets"], {
+      encoding: "utf8",
+    });
+    // Only the credential in use is mounted.
+    expect(inProxy.trim()).toBe("claude-oauth.token");
+    // The fake upstream answers only `Bearer <token>` with the OAuth beta and no API key, so a
+    // finished turn proves the forwarder swapped the bot's placeholder for the real token.
+    const turn = JSON.parse(
+      launcher(["-p", "oi", "--model", "claude-sonnet-5-5", "--output-format", "json"], env),
+    ) as { result: string; is_error: boolean };
+    expect(turn).toMatchObject({ result: "Eco #1: oi", is_error: false });
+  });
+
   it("runs bots only on an internal network, apart from the shared egress bridge", () => {
     const inspect = (name: string) =>
       NodeChildProcess.execFileSync(

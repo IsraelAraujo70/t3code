@@ -113,10 +113,12 @@ names the guest with `T3CODE_GUEST_ID`. The guest API refuses to send to a bot w
 not exactly that, and such an instance never gets a T3 MCP credential, because the token would
 grant the host's orchestration tools. Each provider session is one `docker run --rm` on an
 `--internal` network. The only way out is the guest's proxy container. Its CONNECT proxy refuses
-every non-public address, and its Anthropic forwarder holds the API key: the bot only has a
-placeholder, and the forwarder allows only the guest's models (`T3CODE_GUEST_ANTHROPIC_MODELS`)
+every non-public address, and its Anthropic forwarder holds the credential: a Claude subscription OAuth token
+(`claude-oauth.token`, from `claude setup-token`) when present, otherwise an API key. The bot only
+has a placeholder of the same kind, so its Claude Code signs in as a subscriber or as an API
+client, and the forwarder allows only the guest's models (`T3CODE_GUEST_ANTHROPIC_MODELS`)
 and caps effort (`T3CODE_GUEST_ANTHROPIC_MAX_EFFORT`). Whatever the bot does inside its
-sandbox, it cannot use the key elsewhere or pick another model. Guest text that would act on
+sandbox, it cannot use the credential elsewhere or pick another model. Guest text that would act on
 Claude Code (a leading `/`, "ultrathink") reaches the bot defused. Conversations live in the
 guest's volume, so stopping the container loses nothing. `T3CODE_GUEST_IDLE_MS` (default 10 minutes) stops an idle guest bot's container through
 the same release as Restart session. Guest bots push only to the guest's phones, with a visible
