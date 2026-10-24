@@ -1,6 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { isBotChatThread } from "./botChatBubbles.logic";
+import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
 import { useBotSender } from "./useBotSender";
 import { useVoiceSnapshot } from "./voiceController";
 

@@ -1,7 +1,9 @@
 import { createContext, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
-import type { BotChatRowLayout, BubblePlacement } from "./botChatBubbles.logic";
+import type { BubblePlacement } from "@t3tools/client-runtime/bot-chat";
+
+import type { BotChatRowLayout } from "./botChatBubbles.logic";
 
 /**
  * The bot-conversation layout of the timeline row being rendered. Null outside bot conversations,

@@ -101,6 +101,11 @@ export const SEAMS: readonly Seam[] = [
     contains: '"./voice"',
     why: "export the voice session controller",
   },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./bot-chat"',
+    why: "export the bot chat layout rules",
+  },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
   {
@@ -298,6 +303,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/bia/",
   "packages/client-runtime/src/state/bots.ts",
   "packages/client-runtime/src/voice.",
+  "packages/client-runtime/src/botChat.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",

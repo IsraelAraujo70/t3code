@@ -76,9 +76,9 @@ describe("botChatRows", () => {
       hiddenCount: 3,
       expanded: false,
       summary: "3 tools",
-      summaryKind: "tools",
+      summaryKind: "dynamic-tool",
       hasFailure: false,
-    } as MessagesTimelineRow,
+    },
     { kind: "working", id: "working", createdAt: at },
   ];
 
@@ -109,15 +109,16 @@ describe("botChatRows", () => {
     ]);
   });
 
-  it("keeps failures and interrupts visible, and hides other events", () => {
+  it("keeps failures, interrupts and secret requests visible, and hides other events", () => {
     const rows = [
       message("u1", "user"),
       event("todo", "todo_list", "completed", run1),
       event("failed", "error", "failed", run1),
       event("recovered", "error", "completed", run1),
       event("stopped", "run_interrupt_result", "completed", run1),
+      event("secret", "secret_request", "running", run1),
     ];
-    expect(ids(botChatRows(BOT_THREAD, rows))).toEqual(["u1", "failed", "stopped"]);
+    expect(ids(botChatRows(BOT_THREAD, rows))).toEqual(["u1", "failed", "stopped", "secret"]);
   });
 });
 

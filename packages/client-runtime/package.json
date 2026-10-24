@@ -11,6 +11,10 @@
       "types": "./src/voice.ts",
       "default": "./src/voice.ts"
     },
+    "./bot-chat": {
+      "types": "./src/botChat.ts",
+      "default": "./src/botChat.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
