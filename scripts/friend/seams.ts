@@ -126,8 +126,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/threads/ThreadFeed.tsx",
-    markers: 3,
-    why: "name the bot that sent a message; read a reply aloud",
+    markers: 7,
+    why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles",
   },
   {
     file: "apps/server/src/orchestration-v2/Orchestrator.ts",

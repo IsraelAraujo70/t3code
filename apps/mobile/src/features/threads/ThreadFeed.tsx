@@ -1,6 +1,15 @@
-// Fork (friend): name the bot that sent a message; read a reply aloud.
+// Fork (friend): name the bot that sent a message; read a reply aloud; bot chats use bubbles.
 import { useBotSender } from "../../bots/useBotSender";
 import { VoiceReaderMessageButton } from "../../bots/VoiceReaderMessageButton";
+import {
+  BOT_BUBBLE_HORIZONTAL_INSET,
+  BotAssistantBubble,
+  BotTurnFold,
+  botBubbleCorners,
+  botBubbleSpacingClass,
+} from "../../bots/BotChatBubble";
+import { botChatFeed, botFeedBubbles } from "../../bots/botChat.logic";
+import type { BubbleLayout } from "@t3tools/client-runtime/bot-chat";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -1014,10 +1023,23 @@ function renderFeedEntry(
     readonly contentWidth: number;
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
+    readonly botBubbles: BubbleLayout | null;
   },
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+  // Fork (friend): bot conversations show bubbles and a small fold instead of the work log.
+  const botBubble = props.botBubbles?.byId.get(entry.id);
+
+  if (entry.type === "run-fold" && props.botBubbles !== null) {
+    return (
+      <BotTurnFold
+        label={entry.label}
+        expanded={entry.expanded}
+        onToggle={() => props.onToggleTurnFold(entry.runId)}
+      />
+    );
+  }
 
   if (entry.type === "run-fold") {
     return (
@@ -1189,7 +1211,7 @@ function renderFeedEntry(
       );
       return (
         <Animated.View
-          className="mb-5 items-end"
+          className={cn(botBubble ? botBubbleSpacingClass(botBubble) : "mb-5", "items-end")}
           {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
         >
           {presentation.attribution === "automation" ? (
@@ -1209,6 +1231,7 @@ function renderFeedEntry(
           <View
             className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"
             style={{
+              ...(botBubble ? botBubbleCorners(botBubble) : null),
               backgroundColor: userBubbleColor,
               maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
               ...(hasReviewCommentContext
@@ -1372,18 +1395,14 @@ function renderFeedEntry(
     }
 
     const enterAnimated = isFreshTimestamp(message.createdAt);
-    return (
-      <Animated.View
-        className={cn(
-          showAssistantMeta && !(message.runId && props.failedRunIds.has(message.runId))
-            ? "mb-5 px-1"
-            : "mb-1 px-1",
-          hasWideBlock && "w-full",
-        )}
-        {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
-      >
+    // Fork (friend): a bot's reply is a bubble, with its action row below it.
+    const assistantMarkdownWidth = botBubble
+      ? Math.max(0, props.userBubbleMaxWidth - BOT_BUBBLE_HORIZONTAL_INSET * 2)
+      : props.markdownContentWidth;
+    const assistantBody = (
+      <>
         {renderedText.trim().length > 0 ? (
-          <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+          <MarkdownImageAvailableWidthContext value={assistantMarkdownWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}
@@ -1418,6 +1437,10 @@ function renderFeedEntry(
             <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
           );
         })}
+      </>
+    );
+    const assistantMeta = (
+      <>
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
@@ -1447,6 +1470,37 @@ function renderFeedEntry(
             </Text>
           </View>
         ) : null}
+      </>
+    );
+    if (botBubble) {
+      return (
+        <Animated.View
+          className={cn(botBubbleSpacingClass(botBubble), "px-1")}
+          {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
+        >
+          <BotAssistantBubble
+            placement={botBubble}
+            maxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+            pinWidth={hasWideBlock}
+          >
+            {assistantBody}
+          </BotAssistantBubble>
+          {assistantMeta}
+        </Animated.View>
+      );
+    }
+    return (
+      <Animated.View
+        className={cn(
+          showAssistantMeta && !(message.runId && props.failedRunIds.has(message.runId))
+            ? "mb-5 px-1"
+            : "mb-1 px-1",
+          hasWideBlock && "w-full",
+        )}
+        {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
+      >
+        {assistantBody}
+        {assistantMeta}
       </Animated.View>
     );
   }
@@ -2161,23 +2215,32 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportHeaderMaterialVisibility(false);
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
-  const presentedFeed = appendPendingThreadMessages(
-    deriveThreadFeedPresentation(
-      props.feed,
-      props.latestRun,
-      expandedTurnIds,
-      new Set(
-        Object.entries(expandedWorkGroups)
-          .filter(([, expanded]) => expanded)
-          .map(([groupId]) => groupId),
+  // Fork (friend): a bot conversation hides its work log and lays messages out as bubbles.
+  const presentedFeed = botChatFeed(
+    props.threadId,
+    appendPendingThreadMessages(
+      deriveThreadFeedPresentation(
+        props.feed,
+        props.latestRun,
+        expandedTurnIds,
+        new Set(
+          Object.entries(expandedWorkGroups)
+            .filter(([, expanded]) => expanded)
+            .map(([groupId]) => groupId),
+        ),
+        props.activeWorkStartedAt,
+        props.runlessWorkActive ?? false,
+        feedCache,
       ),
-      props.activeWorkStartedAt,
-      props.runlessWorkActive ?? false,
-      feedCache,
+      props.feed,
+      props.queuedMessages,
     ),
-    props.feed,
-    props.queuedMessages,
   );
+  const botBubbles = botFeedBubbles(props.threadId, presentedFeed);
+  // A new message regroups the bubble before it, so the rows that stay must re-render.
+  const botBubbleKey = botBubbles?.key;
+  const listExtraData =
+    botBubbleKey === undefined ? listAppearanceData : { ...listAppearanceData, botBubbleKey };
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
@@ -2478,6 +2541,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
             workflowOpening,
+            botBubbles,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
@@ -2577,7 +2641,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               endFollowEnabled && !disclosureToggleSettling ? false : maintainVisibleContentPosition
             }
             data={presentedFeed}
-            extraData={listAppearanceData}
+            // Fork (friend): bot bubble groups are list appearance too.
+            extraData={listExtraData}
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
