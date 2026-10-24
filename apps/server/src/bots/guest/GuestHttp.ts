@@ -23,6 +23,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ByteSize from "effect/ByteSize";
@@ -243,7 +244,6 @@ export const layerListener = Layer.unwrap(
       yield* Effect.logWarning(`Guest API is off: ${GUEST_LISTEN_ENV} must be host:port.`);
       return Layer.empty;
     }
-    yield* Effect.logInfo("Guest API listening", address);
     // A router of its own, never HttpRouter.serve: that one reuses the main listener's memoized
     // router, which would expose every T3 route on this port.
     const router = yield* HttpRouter.make;
@@ -251,8 +251,23 @@ export const layerListener = Layer.unwrap(
     // Handlers turn their own failures into answers, so what reaches here is an unknown route.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the router's own signature.
     const app = router.asHttpEffect().pipe(Effect.orElseSucceed(() => errorResponse(notFound())));
-    return HttpServer.serve(app).pipe(
+    const listener = HttpServer.serve(app).pipe(
       Layer.provide(NodeHttpServer.layer(() => NodeHttp.createServer(), address)),
+      Layer.tap(() => Effect.logInfo("Guest API listening", address)),
+    );
+    // Production binds the tailnet address, which may not exist yet when the server starts. The
+    // listener retries beside the server instead of failing (and restart-looping) all of T3.
+    return Layer.effectDiscard(
+      Layer.launch(listener).pipe(
+        Effect.tapCause((cause) =>
+          Effect.logWarning("Guest API could not listen; retrying in 30 seconds", {
+            ...address,
+            cause,
+          }),
+        ),
+        Effect.retry(Schedule.spaced("30 seconds")),
+        Effect.forkScoped,
+      ),
     );
   }),
 );
