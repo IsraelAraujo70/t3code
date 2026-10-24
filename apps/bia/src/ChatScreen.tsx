@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { BotId } from "./api";
+import { BotFace } from "./BotFace";
 import { Composer, type Draft } from "./Composer";
 import { EMPTY_CONVERSATION } from "./conversation";
 import { MessageBubble, type ChatItem, type ImageSource } from "./MessageBubble";
@@ -127,6 +128,9 @@ export function ChatScreen(props: {
         <Pressable accessibilityLabel="Voltar" hitSlop={12} onPress={onBack} style={styles.back}>
           <Text style={styles.backText}>‹</Text>
         </Pressable>
+        <View style={styles.headerFace}>
+          <BotFace botId={botId} size={34} />
+        </View>
         <View style={styles.headerText}>
           <Text style={styles.title} numberOfLines={1}>
             {bot?.name ?? ""}
@@ -184,6 +188,15 @@ const styles = StyleSheet.create({
   },
   back: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   backText: { fontSize: 40, lineHeight: 44, color: colors.primary },
+  headerFace: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    marginRight: 10,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   headerText: { flex: 1 },
   title: { fontSize: fontSize.large, fontWeight: "700", color: colors.text },
   subtitle: { fontSize: fontSize.small, color: colors.primary },

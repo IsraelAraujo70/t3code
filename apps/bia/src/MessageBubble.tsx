@@ -4,6 +4,7 @@ import { memo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { attachmentSource, type BotId } from "./api";
+import { BotFace } from "./BotFace";
 import type { OutgoingMessage } from "./conversation";
 import type { Pairing } from "./pairing";
 import { colors, fontSize } from "./theme";
@@ -61,6 +62,11 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubblePro
 
   return (
     <View style={[styles.row, fromBia ? styles.rowRight : styles.rowLeft]}>
+      {fromBia ? null : (
+        <View style={styles.face}>
+          <BotFace botId={props.botId} size={26} />
+        </View>
+      )}
       <View
         style={[
           styles.bubble,
@@ -83,9 +89,10 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubblePro
 
 const styles = StyleSheet.create({
   row: { paddingHorizontal: 12, paddingVertical: 4, flexDirection: "row" },
-  rowLeft: { justifyContent: "flex-start" },
+  rowLeft: { justifyContent: "flex-start", alignItems: "flex-end", gap: 6 },
+  face: { marginBottom: 2 },
   rowRight: { justifyContent: "flex-end" },
-  bubble: { maxWidth: "85%", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, gap: 8 },
+  bubble: { maxWidth: "80%", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, gap: 8 },
   botBubble: {
     backgroundColor: colors.card,
     borderWidth: 1,

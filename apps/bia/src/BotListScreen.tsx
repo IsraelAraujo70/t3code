@@ -4,6 +4,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "rea
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { BotId } from "./api";
+import { BotFace } from "./BotFace";
 import { lastMessagePreview } from "./conversation";
 import { useSessionState, type Session } from "./session";
 import { colors, fontSize } from "./theme";
@@ -27,9 +28,7 @@ function BotCard(props: {
       onPress={() => props.onOpen(props.bot.id)}
     >
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>
-          {props.bot.name.trim().charAt(0).toUpperCase() || "?"}
-        </Text>
+        <BotFace botId={props.bot.id} size={44} />
       </View>
       <View style={styles.cardText}>
         <Text style={styles.name} numberOfLines={1}>
@@ -143,7 +142,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontSize: 24, fontWeight: "700", color: colors.primary },
   cardText: { flex: 1, gap: 2 },
   name: { fontSize: fontSize.large, fontWeight: "700", color: colors.text },
   preview: { fontSize: fontSize.small, lineHeight: 21, color: colors.muted },
