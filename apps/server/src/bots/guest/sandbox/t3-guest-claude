@@ -21,6 +21,10 @@
 # - The same holds for Lurian's Bot API token (`lurian-bot.token`): the proxy forwards
 #   LURIAN_BOT_API_URL (http://egress:8081/api/bot/v1) to Lurian with the token added, and
 #   nothing else on that host gets it.
+# - And for the guest's own Google account (`google/credentials.json`, written by
+#   `cli.ts google-login`): the proxy forwards GOOGLE_API_URL (http://egress:8082) to the Gmail,
+#   Sheets, Calendar and Drive APIs with a fresh access token. /opt/t3-guest/google-apis.md shows
+#   the bot how to use it.
 # - Non-root, all capabilities dropped, no-new-privileges, read-only root, memory/CPU/pids caps.
 # - No variable of the T3 server process is forwarded, except the SDK's own two identifiers.
 set -euo pipefail
@@ -48,6 +52,11 @@ else
   credential=()
   placeholder=(-e ANTHROPIC_API_KEY=sk-guest-sandbox-placeholder)
 fi
+google_dir="${T3CODE_GUEST_GOOGLE_DIR:-$secrets_dir/google}"
+# The folder, not the file: a new login replaces the file, and a file mount would keep the old one.
+[[ -d "$google_dir" ]] &&
+  credential+=(--mount "type=bind,src=$google_dir,dst=/run/secrets/google,readonly")
+placeholder+=(-e GOOGLE_API_URL=http://egress:8082 -e GOOGLE_APIS_DOC=/opt/t3-guest/google-apis.md)
 lurian_token="${T3CODE_GUEST_LURIAN_TOKEN_FILE:-$secrets_dir/lurian-bot.token}"
 if [[ -r "$lurian_token" ]]; then
   credential+=(--mount "type=bind,src=$lurian_token,dst=/run/secrets/lurian-bot.token,readonly")

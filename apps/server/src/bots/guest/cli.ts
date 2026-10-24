@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- random identifiers for offline administration.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -20,6 +21,7 @@ import * as ServerConfig from "../../config.ts";
 import * as BotsDb from "../BotsDb.ts";
 import * as Bots from "../BotsStore.ts";
 import * as Guests from "./GuestStore.ts";
+import { parseGoogleClient, runGoogleLogin } from "./googleLogin.ts";
 import { generateGuestToken, hashGuestToken } from "./guestToken.ts";
 import { GUEST_ID_ENV, SANDBOX_LAUNCHER_PATH, sandboxBinaryFor } from "./sandboxInstance.ts";
 
@@ -304,8 +306,71 @@ const list = Command.make(
     );
   }),
 );
+/**
+ * Connects the guest's own Google account for their bots. The guest signs in in a browser on this
+ * machine; the credential lands in `<secrets>/google/credentials.json`, read only by their proxy.
+ */
+const googleLogin = Command.make(
+  "google-login",
+  {
+    guestId,
+    clientFile: Flag.String("client-file"),
+    secretsDir: optional("secrets-dir"),
+    port: Flag.Int("port").pipe(Flag.optional),
+    open: Flag.Boolean("open").pipe(Flag.withDefault(false)),
+  },
+  Effect.fn("GuestCli.googleLogin")(function* (args) {
+    const guest = yield* withStores(
+      Effect.gen(function* () {
+        return yield* (yield* Guests.GuestStore).getGuest(args.guestId);
+      }),
+    );
+    if (Option.isNone(guest)) {
+      return yield* new GuestCliError({ message: `Guest ${args.guestId} does not exist` });
+    }
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const client = parseGoogleClient(yield* fs.readFileString(args.clientFile));
+    if (client === null) {
+      return yield* new GuestCliError({
+        message: `${args.clientFile} has no OAuth client_id and client_secret`,
+      });
+    }
+    const secretsDir = Option.getOrElse(args.secretsDir, () =>
+      path.join(process.env.HOME ?? "", ".config", `t3-${args.guestId}`),
+    );
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        runGoogleLogin({
+          client,
+          secretsDir,
+          ...(Option.isSome(args.port) ? { port: args.port.value } : {}),
+          onAuthUrl: (url) => {
+            process.stdout.write(
+              `Open this link on this computer and sign in with ${guest.value.name}'s Google account:\n\n${url}\n\nWaiting for Google (10 minutes)...\n`,
+            );
+            if (args.open) {
+              NodeChildProcess.spawn("xdg-open", [url], {
+                stdio: "ignore",
+                detached: true,
+              }).unref();
+            }
+          },
+        }),
+      catch: (cause) =>
+        new GuestCliError({ message: cause instanceof Error ? cause.message : String(cause) }),
+    });
+    yield* Console.log(`Google connected for ${args.guestId}: ${result.credentialFile}`);
+    if (result.missingScopes.length > 0) {
+      yield* Console.error(
+        `Warning: these permissions were not granted, so the bots cannot use them: ${result.missingScopes.join(", ")}. Run google-login again and leave every box checked.`,
+      );
+    }
+  }),
+);
+
 const command = root.pipe(
-  Command.withSubcommands([create, mint, revoke, assign, unassign, botCreate, list]),
+  Command.withSubcommands([create, mint, revoke, assign, unassign, botCreate, list, googleLogin]),
 );
 
 /** Runs guest administration with argv excluding the executable and script paths. */

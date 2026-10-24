@@ -6,3 +6,5 @@
 !proxy-main.mjs
 !api-forward.mjs
 !lurian-forward.mjs
+!google-forward.mjs
+!google-apis.md

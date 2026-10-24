@@ -223,6 +223,54 @@ describe.skipIf(!enabled)("guest sandbox (docker)", () => {
     });
   });
 
+  it("reaches the guest's own Google APIs through the proxy, with a credential only it holds", () => {
+    const secrets = NodePath.join(scratch, "secrets-google");
+    NodeFS.mkdirSync(NodePath.join(secrets, "google"), { recursive: true, mode: 0o700 });
+    NodeFS.writeFileSync(
+      NodePath.join(secrets, "google", "credentials.json"),
+      JSON.stringify({
+        type: "authorized_user",
+        client_id: "client-test",
+        client_secret: "secret-test-not-real",
+        refresh_token: "refresh-test-not-real",
+      }),
+      { mode: 0o600 },
+    );
+    const env = { T3CODE_GUEST_SECRETS_DIR: secrets, T3CODE_GUEST_FAKE_ANTHROPIC: "1" };
+    // The fake Google in the proxy issues its access token only for that refresh token, and its
+    // APIs report whether that access token came back.
+    const probe = fields(
+      sandboxBash(
+        `
+        echo "url=$GOOGLE_API_URL"
+        echo "doc=$(test -s "$GOOGLE_APIS_DOC" && echo present || echo missing)"
+        echo "gmail=$(curl -s -H 'Authorization: Bearer forged' "$GOOGLE_API_URL/gmail/v1/users/me/messages?q=is:unread")"
+        echo "token=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GOOGLE_API_URL/token")"
+        echo "dots=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "$GOOGLE_API_URL/drive/v3/../../token")"
+        echo "grep=$(grep -rs not-real /run /home/guest /proc/self/environ >/dev/null && echo found || echo none)"
+        `,
+        env,
+      ),
+    );
+    expect(probe).toEqual({
+      url: "http://egress:8082",
+      doc: "present",
+      gmail: JSON.stringify({
+        path: "/gmail.googleapis.com/gmail/v1/users/me/messages?q=is:unread",
+        authorized: true,
+      }),
+      token: "403",
+      dots: "403",
+      grep: "none",
+    });
+    // Without a login the forwarder says so instead of failing obscurely.
+    const missing = sandboxBash(`curl -s "$GOOGLE_API_URL/calendar/v3/calendars/primary/events"`, {
+      T3CODE_GUEST_SECRETS_DIR: NodePath.join(scratch, "no-google"),
+      T3CODE_GUEST_FAKE_ANTHROPIC: "1",
+    });
+    expect(missing).toContain("Google não configurado");
+  });
+
   it("runs bots only on an internal network, apart from the shared egress bridge", () => {
     const inspect = (name: string) =>
       NodeChildProcess.execFileSync(

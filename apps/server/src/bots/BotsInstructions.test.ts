@@ -204,6 +204,8 @@ describe("buildGuestBotInstructions", () => {
     assert.strictEqual(sections[1]!.text, "- Pays rent on the 5th");
     assert.include(sections[2]!.text, 'starts with "Bia:" comes from Bia');
     assert.include(sections[3]!.text, "/home/guest");
+    assert.include(sections[3]!.text, "$GOOGLE_API_URL");
+    assert.include(sections[3]!.text, "$GOOGLE_APIS_DOC");
     const all = sections.map((section) => section.text).join("\n");
     for (const ownerOnly of ["memory_save", "t3_thread_launch", "delegate_task", "bot_create"]) {
       assert.notInclude(all, ownerOnly);

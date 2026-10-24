@@ -129,7 +129,12 @@ message never moves the conversation out of the sandbox. The guest's messages re
 (`T3CODE_OWNER_NAME` names the owner in the app). A reply pushes to every party: the owner's usual
 T3 push, and the guest's visible FCM notification (the bot name and a reply preview). With
 `lurian-bot.token` in the guest's secrets, the proxy forwards `LURIAN_BOT_API_URL`
-(`http://egress:8081/api/bot/v1`) to Lurian's Bot API with the token; no other path gets it. Claude replies reach the app per completed text block, as on every T3 surface,
+(`http://egress:8081/api/bot/v1`) to Lurian's Bot API with the token; no other path gets it.
+The guest's own Google account works the same way: `cli.ts google-login <guest> --client-file …`
+runs the OAuth flow on the host (the guest signs in in a browser there) and writes
+`google/credentials.json` in the guest's secrets folder. The proxy refreshes access tokens from it
+and forwards `GOOGLE_API_URL` (`http://egress:8082`) to the Gmail, Sheets, Calendar and Drive
+APIs only; the image's `/opt/t3-guest/google-apis.md` tells the bot how to call them. Claude replies reach the app per completed text block, as on every T3 surface,
 not per token.
 
 ## State and rollback

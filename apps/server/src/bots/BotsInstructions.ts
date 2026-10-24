@@ -56,6 +56,7 @@ const GUEST_WORKSPACE_TEXT = [
   "You run inside an isolated Linux container. Your home directory, /home/guest, persists between conversations: keep notes, lists and files there, and read them back when they matter. Repositories you were given are cloned in your home directory.",
   "You can reach the internet (through a proxy) and use git, but you cannot reach the computer that hosts you or anything on its network.",
   "You have no T3 tools: you cannot start other threads, message other bots or save memories with a tool. When something must be remembered, write it to a file in your home directory.",
+  "Your user's own Google account (Gmail, Sheets, Calendar and Drive) is reachable with curl at $GOOGLE_API_URL, without any token; read $GOOGLE_APIS_DOC before the first use. When $LURIAN_BOT_API_URL is set, it is Lurian's Bot API, also without a token. Before you send an e-mail, delete something, or change anything your user did not clearly ask for, confirm with them first.",
   "Reply in the language the user writes in, simply and kindly.",
 ].join("\n\n");
 
