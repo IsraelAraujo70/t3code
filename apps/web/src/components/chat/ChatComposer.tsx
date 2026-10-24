@@ -6605,7 +6605,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         <BotWorkingIndicator
           environmentId={environmentId}
           threadId={activeThreadId}
-          working={phase === "running"}
+          working={phase === "running" || canInterrupt || isSendBusy || isConnecting}
         />
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
