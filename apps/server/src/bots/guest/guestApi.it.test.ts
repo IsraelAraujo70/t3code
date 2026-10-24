@@ -21,6 +21,7 @@ import * as NodeSqlite from "node:sqlite";
 import type { GuestBotsResponse, GuestHistoryResponse, GuestStreamEvent } from "@t3tools/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
+import { asPlainText } from "./GuestService.ts";
 import { GUEST_ID_ENV, SANDBOX_LAUNCHER_PATH } from "./sandboxInstance.ts";
 
 const enabled = process.env.T3CODE_GUEST_IT === "1";
@@ -508,20 +509,28 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
       expect(finalReply(resumed, "Eco #2: de novo")).toBe(true);
     }, 240_000);
 
-    it("passes guest commands and skill names to the bot as plain text", async () => {
-      for (const text of ["/model claude-opus-5-5", "olha $t3it-skill isso"]) {
+    it("passes guest commands, skill names and reasoning keywords to the bot as plain text", async () => {
+      for (const text of [
+        "/model claude-opus-5-5",
+        "olha $t3it-skill isso",
+        "UltraThink: quanto sobrou do mês?",
+      ]) {
+        // The bot sees asPlainText's output; a leading zero-width space may be dropped on the way.
+        const expected = new RegExp(
+          `^Eco #\\d+: ${escape(asPlainText(text)).replace(/^\u200b/, "\u200b?")}$`,
+        );
         const events = await readEvents(
           biaToken,
           finance,
-          (seen) => finalReply(seen, new RegExp(`^Eco #\\d+: \\u200b?${escape(text)}$`)),
+          (seen) => finalReply(seen, expected),
           60_000,
           async () => {
             expect((await send(biaToken, finance, { text })).status).toBe(202);
           },
         );
-        expect(finalReply(events, new RegExp(`^Eco #\\d+: \\u200b?${escape(text)}$`))).toBe(true);
+        expect(finalReply(events, expected)).toBe(true);
       }
-    }, 150_000);
+    }, 200_000);
 
     it("delivers a photo to the bot and serves it back to its owner only", async () => {
       // The image reaches Claude inline; T3 also appends a path hint, which the echo repeats.

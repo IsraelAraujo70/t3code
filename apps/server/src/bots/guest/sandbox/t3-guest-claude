@@ -9,9 +9,13 @@
 # volume, so the next session resumes them.
 #
 # The container never sees the host's environment, files or keys:
-# - Only the guest's volume (/home/guest) and two read-only secret files are mounted.
+# - Only the guest's volume (/home/guest) and the read-only git deploy key are mounted.
 # - Its network is `--internal`: no route to the host, the LAN, the tailnet or the internet.
-#   The only way out is the guest's egress proxy, which refuses every non-public address.
+#   The only way out is the guest's proxy container, which refuses every non-public address.
+# - The Anthropic key is mounted only in that proxy container. The bot calls the API through the
+#   proxy's forwarder (http://egress:8080) with a placeholder key; the forwarder adds the real key
+#   and enforces the guest's allowed models and maximum effort (T3CODE_GUEST_ANTHROPIC_MODELS,
+#   T3CODE_GUEST_ANTHROPIC_MAX_EFFORT).
 # - Non-root, all capabilities dropped, no-new-privileges, read-only root, memory/CPU/pids caps.
 # - No variable of the T3 server process is forwarded, except the SDK's own two identifiers.
 set -euo pipefail
@@ -31,9 +35,13 @@ git_key="${T3CODE_GUEST_GIT_KEY_FILE:-$secrets_dir/git_deploy_key}"
 memory="${T3CODE_GUEST_MEMORY:-2g}"
 cpus="${T3CODE_GUEST_CPUS:-2}"
 pids="${T3CODE_GUEST_PIDS:-512}"
+models="${T3CODE_GUEST_ANTHROPIC_MODELS:-claude-sonnet-5-5,claude-haiku-5-5}"
+max_effort="${T3CODE_GUEST_ANTHROPIC_MAX_EFFORT:-high}"
+fake="${T3CODE_GUEST_FAKE_ANTHROPIC:-}"
 
 network="t3-guest-$guest"
-egress_network="t3-guest-egress"
+# Outside the `t3-guest-<id>` names, so no guest id can ever name the routed bridge.
+egress_network="t3-guests_egress"
 proxy="t3-guest-$guest-egress"
 volume="t3-guest-$guest-home"
 # The image's `guest` user; secret files must be readable by this uid.
@@ -60,14 +68,28 @@ hardening=(
 # the same network or proxy.
 ensure_infra() {
   docker network inspect "$network" >/dev/null 2>&1 ||
-    docker network create --internal --label "t3.guest=$guest" "$network" >/dev/null
+    docker network create --internal --ipv6=false --label "t3.guest=$guest" "$network" >/dev/null
+  # Never run a bot on a network with a route out, whoever created it.
+  [[ "$(docker network inspect -f '{{.Internal}}' "$network")" == "true" ]] ||
+    die "network $network exists but is not --internal; remove it and retry."
   docker network inspect "$egress_network" >/dev/null 2>&1 ||
-    docker network create --label t3.guest=egress "$egress_network" >/dev/null
-  if [[ "$(docker container inspect -f '{{.State.Running}}' "$proxy" 2>/dev/null)" != "true" ]]; then
+    docker network create --ipv6=false --label t3.guest=egress "$egress_network" >/dev/null
+
+  local proxy_mounts=() config
+  [[ -r "$anthropic_key" ]] &&
+    proxy_mounts+=(--mount "type=bind,src=$anthropic_key,dst=/run/secrets/anthropic.key,readonly")
+  # A changed limit, key file or mode recreates the proxy; the key's content is read per request.
+  config="$(printf '%s|' "$image" "$models" "$max_effort" "$fake" "${proxy_mounts[*]:-}" | sha256sum | cut -c1-16)"
+  if [[ "$(docker container inspect -f '{{.State.Running}} {{index .Config.Labels "t3.guest.config"}}' "$proxy" 2>/dev/null)" != "true $config" ]]; then
     docker rm -f "$proxy" >/dev/null 2>&1 || true
     docker run -d --name "$proxy" --restart unless-stopped --network "$egress_network" \
-      "${hardening[@]}" --memory 128m --cpus 0.5 --pids-limit 64 \
-      "$image" node /opt/t3-guest/egress-proxy.mjs >/dev/null
+      "${hardening[@]}" --label "t3.guest.config=$config" \
+      --memory 256m --cpus 0.5 --pids-limit 64 \
+      "${proxy_mounts[@]}" \
+      -e "T3_GUEST_ANTHROPIC_MODELS=$models" \
+      -e "T3_GUEST_ANTHROPIC_MAX_EFFORT=$max_effort" \
+      -e "T3_GUEST_FAKE_ANTHROPIC=$fake" \
+      "$image" node /opt/t3-guest/proxy-main.mjs >/dev/null
   fi
   if ! docker container inspect -f '{{json .NetworkSettings.Networks}}' "$proxy" |
     grep -q "\"$network\""; then
@@ -110,21 +132,20 @@ while ((${#command[@]})) && (($#)); do
 done
 
 mounts=(--mount "type=volume,src=$volume,dst=/home/guest")
-[[ -r "$anthropic_key" ]] &&
-  mounts+=(--mount "type=bind,src=$anthropic_key,dst=/run/secrets/anthropic.key,readonly")
 [[ -r "$git_key" ]] &&
   mounts+=(--mount "type=bind,src=$git_key,dst=/run/secrets/git_deploy_key,readonly")
 
 env=(
   -e HTTPS_PROXY=http://egress:3128 -e https_proxy=http://egress:3128
   -e HTTP_PROXY=http://egress:3128 -e http_proxy=http://egress:3128
-  -e NO_PROXY=localhost,127.0.0.1 -e no_proxy=localhost,127.0.0.1
+  -e NO_PROXY=localhost,127.0.0.1,egress -e no_proxy=localhost,127.0.0.1,egress
+  -e ANTHROPIC_BASE_URL=http://egress:8080
+  -e ANTHROPIC_API_KEY=sk-guest-sandbox-placeholder
   -e "T3_GUEST_ID=$guest"
   -e "T3_GUEST_GIT_NAME=${T3CODE_GUEST_GIT_NAME:-}"
   -e "T3_GUEST_GIT_EMAIL=${T3CODE_GUEST_GIT_EMAIL:-}"
   -e "T3_GUEST_GIT_REMOTE=${T3CODE_GUEST_GIT_REMOTE:-}"
   -e "T3_GUEST_GIT_DIR=${T3CODE_GUEST_GIT_DIR:-}"
-  -e "T3_GUEST_FAKE_ANTHROPIC=${T3CODE_GUEST_FAKE_ANTHROPIC:-}"
 )
 for name in CLAUDE_CODE_ENTRYPOINT CLAUDE_AGENT_SDK_VERSION; do
   [[ -n "${!name:-}" ]] && env+=(-e "$name")
@@ -132,7 +153,7 @@ done
 
 exec docker run --rm -i --init \
   --name "t3-guest-$guest-$(date +%s)-$$" \
-  --network "$network" \
+  --network "$network" --dns-search . \
   "${hardening[@]}" \
   --memory "$memory" --memory-swap "$memory" --cpus "$cpus" --pids-limit "$pids" \
   "${mounts[@]}" \

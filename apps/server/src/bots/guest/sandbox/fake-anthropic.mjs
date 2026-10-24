@@ -46,11 +46,16 @@ function error(response, status, type, message) {
 }
 
 /** Creates a standalone echo API; conversation history is supplied by the caller. */
-export function createFakeAnthropic({ chunkDelayMs = 25 } = {}) {
+export function createFakeAnthropic({ chunkDelayMs = 25, expectKey } = {}) {
   let counter = 0;
   return NodeHttp.createServer(async (request, response) => {
     const path = new URL(request.url, "http://localhost").pathname;
     if (process.env.FAKE_ANTHROPIC_DEBUG) console.error(request.method, path);
+    // Behind the guest's API forwarder, only the key the forwarder injects is accepted.
+    if (expectKey !== undefined && request.headers["x-api-key"] !== expectKey) {
+      error(response, 401, "authentication_error", "invalid x-api-key");
+      return;
+    }
     if (request.method === "GET" && path === "/v1/models") {
       const id = "claude-sonnet-5-5";
       json(response, 200, {

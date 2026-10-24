@@ -132,41 +132,52 @@ it.effect(
     ),
 );
 
-it.effect("moves push tokens while preserving creation time and deletes only owned tokens", () =>
-  withStore((store) =>
-    Effect.gen(function* () {
-      const bia = GuestId.make("bia");
-      const ana = GuestId.make("ana");
-      yield* store.insertGuest(guest("bia"));
-      yield* store.insertGuest(guest("ana"));
-      const device = { token: "phone", guestId: bia, label: null, createdAt: at, updatedAt: at };
-      yield* store.upsertPushDevice(device);
-      yield* store.upsertPushDevice({
-        ...device,
-        guestId: ana,
-        label: "New",
-        createdAt: later,
-        updatedAt: later,
-      });
-      assert.deepStrictEqual(yield* store.listPushDevices(bia), []);
-      yield* store.deletePushDevice(bia, "phone");
-      assert.deepStrictEqual(yield* store.listPushDevices(ana), [
-        { ...device, guestId: ana, label: "New", updatedAt: later },
-      ]);
-      yield* store.upsertPushDevice({ ...device, token: "z", guestId: ana, createdAt: later });
-      yield* store.upsertPushDevice({ ...device, token: "a", guestId: ana });
-      assert.deepStrictEqual(
-        (yield* store.listPushDevices(ana)).map((row) => row.token),
-        ["a", "phone", "z"],
-      );
-      yield* store.deletePushDevice(ana, "phone");
-      yield* store.deletePushDevice(ana, "phone");
-      assert.deepStrictEqual(
-        (yield* store.listPushDevices(ana)).map((row) => row.token),
-        ["a", "z"],
-      );
-    }),
-  ),
+it.effect(
+  "refreshes a guest's own push token, never takes another's, and deletes only owned ones",
+  () =>
+    withStore((store) =>
+      Effect.gen(function* () {
+        const bia = GuestId.make("bia");
+        const ana = GuestId.make("ana");
+        yield* store.insertGuest(guest("bia"));
+        yield* store.insertGuest(guest("ana"));
+        const device = { token: "phone", guestId: bia, label: null, createdAt: at, updatedAt: at };
+        yield* store.upsertPushDevice(device);
+        // Another guest registering the same token leaves it with its owner.
+        yield* store.upsertPushDevice({
+          ...device,
+          guestId: ana,
+          label: "Taken",
+          updatedAt: later,
+        });
+        assert.deepStrictEqual(yield* store.listPushDevices(ana), []);
+        assert.deepStrictEqual(yield* store.listPushDevices(bia), [device]);
+        // The owner re-registering refreshes the label and updatedAt, keeping createdAt.
+        yield* store.upsertPushDevice({
+          ...device,
+          label: "New",
+          createdAt: later,
+          updatedAt: later,
+        });
+        assert.deepStrictEqual(yield* store.listPushDevices(bia), [
+          { ...device, label: "New", updatedAt: later },
+        ]);
+        yield* store.deletePushDevice(ana, "phone");
+        assert.strictEqual((yield* store.listPushDevices(bia)).length, 1);
+        yield* store.upsertPushDevice({ ...device, token: "z", createdAt: later });
+        yield* store.upsertPushDevice({ ...device, token: "a" });
+        assert.deepStrictEqual(
+          (yield* store.listPushDevices(bia)).map((row) => row.token),
+          ["a", "phone", "z"],
+        );
+        yield* store.deletePushDevice(bia, "phone");
+        yield* store.deletePushDevice(bia, "phone");
+        assert.deepStrictEqual(
+          (yield* store.listPushDevices(bia)).map((row) => row.token),
+          ["a", "z"],
+        );
+      }),
+    ),
 );
 
 it.effect(

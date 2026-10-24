@@ -76,8 +76,9 @@ export class GuestStore extends Context.Service<
     /** Missing assignments succeed. */
     readonly unassignBot: (botId: BotId) => Effect.Effect<void, BotsError>;
     /**
-     * Inserts the device, or moves an existing token to this guest and refreshes its label and
-     * updatedAt, keeping its createdAt.
+     * Inserts the device, or refreshes the label and updatedAt of this guest's own token, keeping
+     * its createdAt. A token another guest registered stays theirs, so knowing a phone's token
+     * never redirects its pushes.
      */
     readonly upsertPushDevice: (device: GuestPushDevice) => Effect.Effect<void, BotsError>;
     /** Deletes the token only when it belongs to this guest; anything else succeeds silently. */
@@ -201,8 +202,8 @@ const make = Effect.gen(function* () {
       sql`
         INSERT INTO guest_push_devices (token, guest_id, label, created_at, updated_at)
         VALUES (${device.token}, ${device.guestId}, ${device.label}, ${device.createdAt}, ${device.updatedAt})
-        ON CONFLICT (token) DO UPDATE SET guest_id = excluded.guest_id,
-          label = excluded.label, updated_at = excluded.updated_at
+        ON CONFLICT (token) DO UPDATE SET label = excluded.label, updated_at = excluded.updated_at
+        WHERE guest_push_devices.guest_id = excluded.guest_id
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not register the guest push device"))),
     deletePushDevice: (guestId, token) =>
       sql`

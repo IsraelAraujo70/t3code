@@ -122,6 +122,67 @@ describe.skipIf(!enabled)("guest sandbox (docker)", () => {
     }
   });
 
+  it("keeps the Anthropic key in the proxy container, never in the bot's", () => {
+    const secrets = NodePath.join(scratch, "secrets");
+    NodeFS.mkdirSync(secrets, { recursive: true, mode: 0o700 });
+    NodeFS.writeFileSync(NodePath.join(secrets, "anthropic.key"), "sk-ant-test-not-real\n", {
+      mode: 0o600,
+    });
+    const probe = fields(
+      sandboxBash(
+        `
+        echo "file=$(test -e /run/secrets/anthropic.key && echo present || echo absent)"
+        echo "env=$ANTHROPIC_API_KEY"
+        echo "base=$ANTHROPIC_BASE_URL"
+        echo "grep=$(grep -rs sk-ant-test-not-real /run /home/guest /proc/self/environ >/dev/null && echo found || echo none)"
+        `,
+        { T3CODE_GUEST_SECRETS_DIR: secrets },
+      ),
+    );
+    expect(probe).toEqual({
+      file: "absent",
+      env: "sk-guest-sandbox-placeholder",
+      base: "http://egress:8080",
+      grep: "none",
+    });
+    const inProxy = NodeChildProcess.execFileSync(
+      "docker",
+      ["exec", `t3-guest-${guest}-egress`, "cat", "/run/secrets/anthropic.key"],
+      { encoding: "utf8" },
+    );
+    expect(inProxy.trim()).toBe("sk-ant-test-not-real");
+  });
+
+  it("runs bots only on an internal network, apart from the shared egress bridge", () => {
+    const inspect = (name: string) =>
+      NodeChildProcess.execFileSync(
+        "docker",
+        ["network", "inspect", "-f", "{{.Internal}} {{.EnableIPv6}}", name],
+        { encoding: "utf8" },
+      ).trim();
+    expect(inspect(`t3-guest-${guest}`)).toBe("true false");
+    expect(inspect("t3-guests_egress")).toBe("false false");
+  });
+
+  it("lets the bot reach only the allowed models and routes of the Anthropic API", () => {
+    const fake = { T3CODE_GUEST_FAKE_ANTHROPIC: "1" };
+    const output = sandboxBash(
+      `
+      echo "route=$(curl -s -o /dev/null -w '%{http_code}' http://egress:8080/v1/files)"
+      echo "opus=$(curl -s -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
+        -d '{"model":"claude-opus-5-5","max_tokens":10,"messages":[{"role":"user","content":"oi"}]}' \
+        http://egress:8080/v1/messages)"
+      echo "sonnet=$(curl -s -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
+        -d '{"model":"claude-sonnet-5-5","max_tokens":10,"messages":[{"role":"user","content":"oi"}]}' \
+        http://egress:8080/v1/messages)"
+      `,
+      fake,
+    );
+    // 200 for Sonnet also proves the forwarder replaced the bot's placeholder key: the fake
+    // upstream accepts only the key the forwarder injects.
+    expect(fields(output)).toEqual({ route: "403", opus: "403", sonnet: "200" });
+  });
+
   it("fetches public HTTPS through the proxy", () => {
     const status = sandboxBash(
       "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://example.com/",
@@ -173,13 +234,18 @@ describe.skipIf(!enabled)("guest sandbox (docker)", () => {
 
   it("runs the real Claude CLI and resumes its conversation in a new container", () => {
     const fake = { T3CODE_GUEST_FAKE_ANTHROPIC: "1" };
-    const first = JSON.parse(launcher(["-p", "oi", "--output-format", "json"], fake)) as {
+    // T3 always passes the bot's model; the forwarder refuses the CLI's own default (Opus).
+    const model = ["--model", "claude-sonnet-5-5"];
+    const first = JSON.parse(launcher(["-p", "oi", ...model, "--output-format", "json"], fake)) as {
       result: string;
       session_id: string;
     };
     expect(first.result).toBe("Eco #1: oi");
     const second = JSON.parse(
-      launcher(["-p", "tudo bem?", "--output-format", "json", "--resume", first.session_id], fake),
+      launcher(
+        ["-p", "tudo bem?", ...model, "--output-format", "json", "--resume", first.session_id],
+        fake,
+      ),
     ) as { result: string };
     expect(second.result).toBe("Eco #2: tudo bem?");
     const running = NodeChildProcess.execFileSync(

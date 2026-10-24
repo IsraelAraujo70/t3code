@@ -1,5 +1,6 @@
-# The guest sandbox (friend fork): Claude Code, git and SSH for a guest's bots, plus the egress
-# proxy that is the container network's only way out. Build from this directory:
+# The guest sandbox (friend fork): Claude Code, git and SSH for a guest's bots, plus the proxy
+# container's egress proxy and Anthropic API forwarder, the bot network's only way out.
+# Build from this directory:
 #   docker build -t t3-guest-sandbox:latest apps/server/src/bots/guest/sandbox
 FROM node:24-bookworm-slim
 
@@ -23,7 +24,7 @@ RUN curl -fsSL https://api.github.com/meta \
 RUN usermod -l guest -d /home/guest -m node && groupmod -n guest node
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/t3-guest-entrypoint
-COPY egress-proxy.mjs fake-anthropic.mjs /opt/t3-guest/
+COPY proxy-main.mjs egress-proxy.mjs api-forward.mjs fake-anthropic.mjs /opt/t3-guest/
 
 ENV HOME=/home/guest \
     DISABLE_AUTOUPDATER=1 \

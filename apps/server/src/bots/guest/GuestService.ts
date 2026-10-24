@@ -144,11 +144,19 @@ const toGuestMessage = (message: OrchestrationV2ConversationMessage): GuestMessa
   createdAt: DateTime.formatIso(message.createdAt),
 });
 
+/** Breaks "ultrathink", which Claude Code reads anywhere as a request for deeper reasoning. */
+const withoutKeywords = (text: string) =>
+  text.replace(/ultrathink/gi, (word) => `${word.slice(0, 5)}\u200b${word.slice(5)}`);
+
 /**
- * Claude Code runs a message that starts with "/" as one of its commands, and `/model` would
- * switch the bot's model. A leading zero-width space keeps it plain text for the bot.
+ * Guest text as plain text for the bot, so nothing in it changes how the bot runs. Claude Code
+ * runs a message that starts with "/" as one of its commands (`/model` would switch the bot's
+ * model), and raises reasoning depth for "ultrathink". Zero-width spaces defuse both.
  */
-export const asPlainText = (text: string) => (/^\s*\//.test(text) ? `\u200b${text}` : text);
+export const asPlainText = (text: string) => {
+  const plain = withoutKeywords(text);
+  return /^\s*\//.test(plain) ? `\u200b${plain}` : plain;
+};
 
 /** Live streams one guest may hold open at once (a phone keeps one per bot). */
 const MAX_STREAMS_PER_GUEST = 8;
@@ -298,7 +306,8 @@ const make = Effect.gen(function* () {
         const attachment: ChatImageAttachment = {
           type: "image",
           id: ChatAttachmentId.make(rawId),
-          name: upload.name,
+          // The adapter quotes the name in the prompt.
+          name: withoutKeywords(upload.name),
           mimeType: upload.mimeType,
           sizeBytes: bytes.byteLength,
         };

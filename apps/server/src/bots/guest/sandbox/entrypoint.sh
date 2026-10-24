@@ -7,19 +7,6 @@ exec 3>&1 1>&2
 cd "$HOME"
 mkdir -p work
 
-if [[ "${T3_GUEST_FAKE_ANTHROPIC:-}" == "1" ]]; then
-  # Keyless end-to-end tests: the real CLI talks to a local echo of the Messages API.
-  node /opt/t3-guest/fake-anthropic.mjs &
-  export ANTHROPIC_BASE_URL=http://127.0.0.1:8099 ANTHROPIC_API_KEY=sk-fake-sandbox
-  for _ in $(seq 50); do
-    (exec 4<>/dev/tcp/127.0.0.1/8099) 2>/dev/null && break
-    sleep 0.1
-  done
-elif [[ -r /run/secrets/anthropic.key ]]; then
-  ANTHROPIC_API_KEY="$(tr -d '\r\n' </run/secrets/anthropic.key)"
-  export ANTHROPIC_API_KEY
-fi
-
 if [[ -n "${T3_GUEST_GIT_NAME:-}" ]]; then
   git config --global user.name "$T3_GUEST_GIT_NAME"
   git config --global user.email "${T3_GUEST_GIT_EMAIL:-$T3_GUEST_ID@guest.invalid}"
