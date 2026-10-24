@@ -58,7 +58,7 @@ describe("buildBotInstructions", () => {
     });
     assert.deepStrictEqual(
       full.sections.map((section) => section.key),
-      ["bot", "owner", "memories", "memory-tools", "work-tools"],
+      ["bot", "owner", "memories", "memory-tools", "work-tools", "reply-style"],
     );
     assert.strictEqual(
       full.sections[0]!.text,
@@ -78,7 +78,7 @@ describe("buildBotInstructions", () => {
     const bare = buildBotInstructions({ bot, memories: [], aboutMe: "  ", peers: [] });
     assert.deepStrictEqual(
       bare.sections.map((section) => section.key),
-      ["bot", "memory-tools", "work-tools"],
+      ["bot", "memory-tools", "work-tools", "reply-style"],
     );
   });
 
@@ -91,7 +91,7 @@ describe("buildBotInstructions", () => {
     });
     assert.deepStrictEqual(
       manager.sections.map((section) => section.key),
-      ["bot", "memory-tools", "work-tools", "manage-bots"],
+      ["bot", "memory-tools", "work-tools", "manage-bots", "reply-style"],
     );
     assert.include(manager.sections[3]!.text, "bot_create");
   });
@@ -177,6 +177,26 @@ describe("buildBotInstructions", () => {
   });
 });
 
+describe("reply style", () => {
+  it("tells every bot to reply like a chat without dropping the specifics", () => {
+    const owner = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [] });
+    const guest = buildGuestBotInstructions({ bot, memories: [], guestName: "Bia" });
+    for (const { sections } of [owner, guest]) {
+      // Last, so it is the freshest guidance; the role still wins on format.
+      const style = sections.at(-1)!;
+      assert.strictEqual(style.key, "reply-style");
+      assert.include(style.text, "one to four short sentences");
+      assert.include(style.text, "When your role asks for a different format, follow your role.");
+      assert.include(style.text, "Short never means vague.");
+      assert.include(style.text, "what is done, what failed, what is still open");
+      assert.include(style.text, "not your tool calls or their output");
+    }
+    // Only the owner's bots can hand long material to a T3 thread.
+    assert.include(owner.sections.at(-1)!.text, "a file or a T3 thread");
+    assert.notInclude(guest.sections.at(-1)!.text, "T3");
+  });
+});
+
 describe("buildGuestBotInstructions", () => {
   it("names the guest and the sandbox, and carries none of the owner's tools or profile", () => {
     const { sections } = buildGuestBotInstructions({
@@ -186,7 +206,7 @@ describe("buildGuestBotInstructions", () => {
     });
     assert.deepStrictEqual(
       sections.map((section) => section.key),
-      ["bot", "memories", "people", "workspace"],
+      ["bot", "memories", "people", "workspace", "reply-style"],
     );
     const shared = buildGuestBotInstructions({
       bot,
