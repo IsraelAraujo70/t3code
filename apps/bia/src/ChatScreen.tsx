@@ -1,10 +1,8 @@
-import { Image } from "expo-image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -18,7 +16,8 @@ import type { BotId } from "./api";
 import { BotFace } from "./BotFace";
 import { Composer, type Draft } from "./Composer";
 import { EMPTY_CONVERSATION } from "./conversation";
-import { MessageBubble, type ChatItem, type ImageSource } from "./MessageBubble";
+import { ImageViewer } from "./ImageViewer";
+import { MessageBubble, type ChatItem, type OpenImage } from "./MessageBubble";
 import { useSessionState, type Session } from "./session";
 import { colors, fontSize } from "./theme";
 
@@ -52,7 +51,7 @@ export function ChatScreen(props: {
   const conversation =
     useSessionState(session, (state) => state.conversations[botId]) ?? EMPTY_CONVERSATION;
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [openImage, setOpenImage] = useState<ImageSource | null>(null);
+  const [openImage, setOpenImage] = useState<OpenImage | null>(null);
   const listRef = useRef<FlatList<ChatItem>>(null);
   const atBottom = useRef(true);
   const scrolledOnce = useRef(false);
@@ -166,13 +165,7 @@ export function ChatScreen(props: {
 
       <Composer bottomInset={keyboardVisible ? 0 : insets.bottom} onSend={onSend} />
 
-      <Modal visible={openImage !== null} transparent onRequestClose={() => setOpenImage(null)}>
-        <Pressable style={styles.viewer} onPress={() => setOpenImage(null)}>
-          {openImage !== null ? (
-            <Image source={openImage} style={styles.viewerImage} contentFit="contain" />
-          ) : null}
-        </Pressable>
-      </Modal>
+      <ImageViewer image={openImage} onClose={() => setOpenImage(null)} />
     </KeyboardAvoidingView>
   );
 }
@@ -213,6 +206,4 @@ const styles = StyleSheet.create({
     color: colors.danger,
     backgroundColor: colors.primarySoft,
   },
-  viewer: { flex: 1, backgroundColor: colors.overlay, justifyContent: "center" },
-  viewerImage: { width: "100%", height: "80%" },
 });

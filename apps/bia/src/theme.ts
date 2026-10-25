@@ -10,6 +10,8 @@ export const colors = {
   userText: "#FFFFFF",
   danger: "#B3261E",
   overlay: "rgba(20, 10, 14, 0.92)",
+  codeBackground: "#FBF4F6",
+  codeText: "#24292E",
 } as const;
 
 export const fontSize = {

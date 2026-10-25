@@ -19,6 +19,7 @@ const ROUTES = {
   messages: "/guest/v1/bots/:botId/messages",
   events: "/guest/v1/bots/:botId/events",
   attachment: "/guest/v1/bots/:botId/attachments/:attachmentId",
+  html: "/guest/v1/bots/:botId/html/:attachmentId",
   pushRegister: "/guest/v1/push-devices",
   pushUnregister: "/guest/v1/push-devices/unregister",
 } as const satisfies typeof GUEST_API_ROUTES;
@@ -94,6 +95,23 @@ export function attachmentSource(
     uri:
       pairing.server +
       botPath(ROUTES.attachment, botId).replace(":attachmentId", encodeURIComponent(attachmentId)),
+    headers: { Authorization: authorizationHeader(pairing) },
+  };
+}
+
+/**
+ * A WebView source for a page the bot published. The server sends it under a sandbox CSP, so the
+ * page runs with an opaque origin: the token goes only with this one request.
+ */
+export function htmlSource(
+  pairing: Pairing,
+  botId: BotId,
+  attachmentId: string,
+): { readonly uri: string; readonly headers: Record<string, string> } {
+  return {
+    uri:
+      pairing.server +
+      botPath(ROUTES.html, botId).replace(":attachmentId", encodeURIComponent(attachmentId)),
     headers: { Authorization: authorizationHeader(pairing) },
   };
 }

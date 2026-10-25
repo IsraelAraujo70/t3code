@@ -87,12 +87,21 @@ export function reduceConversation(state: Conversation, action: ConversationActi
   }
 }
 
-/** True when `next` is an assistant reply that just finished; `previous` is the same id before. */
+/**
+ * True when `next` is an assistant reply that just finished; `previous` is the same id before.
+ * What the bot's tools made (an image, a page) comes without text and is not a reply: the reply
+ * that follows it is announced instead.
+ */
 export function isNewlyFinishedReply(
   previous: GuestMessage | undefined,
   next: GuestMessage,
 ): boolean {
-  return next.role === "assistant" && !next.streaming && (previous?.streaming ?? true);
+  return (
+    next.role === "assistant" &&
+    !next.streaming &&
+    next.text.trim() !== "" &&
+    (previous?.streaming ?? true)
+  );
 }
 
 /** The text of the latest message, for the bot list. */
@@ -115,6 +124,14 @@ export function lastMessagePreview(
   if (last === undefined) return null;
   return {
     from: authorOf(last),
-    text: last.text.trim() || (last.attachments.length > 0 ? "📷 Foto" : "…"),
+    text:
+      last.text.trim() ||
+      (last.html !== undefined
+        ? `📄 ${last.html.title}`
+        : last.attachments.length > 0
+          ? last.role === "assistant"
+            ? "🖼️ Imagem"
+            : "📷 Foto"
+          : "…"),
   };
 }
