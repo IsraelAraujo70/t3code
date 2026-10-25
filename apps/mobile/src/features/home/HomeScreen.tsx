@@ -87,9 +87,8 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
-// Fork (friend): Bots section above the thread list.
-import { BotsHomeSection } from "../../bots/BotsHomeSection";
-import { useBotsEnvironmentId } from "../../bots/state";
+// Fork (friend): Bots section above the thread list on iOS; Android has a Bots tab.
+import { BotsHomeSection, useThreadListBotsEnvironmentId } from "../../bots/BotsHomeSection";
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -713,7 +712,7 @@ export function HomeScreen(props: HomeScreenProps) {
   };
 
   // Fork (friend): with a bots host the list stays up so the Bots section shows above its empty state.
-  const botsEnvironmentId = useBotsEnvironmentId();
+  const botsEnvironmentId = useThreadListBotsEnvironmentId();
   const hasAnyThreads =
     botsEnvironmentId !== null ||
     props.threads.some((thread) => thread.archivedAt === null) ||

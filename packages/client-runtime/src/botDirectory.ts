@@ -1,5 +1,7 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+/**
+ * Shared rules for listing bots on web and mobile: each bot's status from its main thread, the
+ * line under its name, the user's sections in order, and arranging bots and sections.
+ */
 import type {
   BotDirectoryEntry,
   BotId,
@@ -10,8 +12,9 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
-import { hasUnseenCompletion, resolveSidebarThreadStatus } from "../components/Sidebar.logic";
-import type { SidebarThreadSummary } from "../types";
+import { scopeThreadRef } from "./environment/index.ts";
+import type { EnvironmentThreadShell } from "./state/models.ts";
+import { isThreadWorking } from "./state/threadInbox.ts";
 
 /**
  * Where a bot stands, as in the Threads inbox: it needs the user, it is working, or the user (or
@@ -25,7 +28,7 @@ export type BotStatus =
 
 /** The parts of a thread shell a bot row reads. */
 export type BotThreadShell = Pick<
-  SidebarThreadSummary,
+  EnvironmentThreadShell,
   | "environmentId"
   | "id"
   | "hasActionableProposedPlan"
@@ -52,20 +55,29 @@ export interface BotRowModel {
 
 const QUIET: BotStatus = { kind: "needs-you", attention: null };
 
-/** The request the bot is waiting on, if any. */
+/**
+ * The request the bot is waiting on, if any. Same order as the thread lists' status: approvals,
+ * then questions, then a failed runtime.
+ */
 function pendingRequest(shell: BotThreadShell): string | null {
-  switch (resolveSidebarThreadStatus(shell)) {
-    case "approval":
-      return "Needs approval";
-    case "input":
-      return "Waiting for your answer";
-    case "failed":
-      return "Failed";
-    case "limited":
-      return "Usage limit";
-    default:
-      return null;
+  if (shell.hasPendingApprovals || shell.pendingSubagentRequest === "approval") {
+    return "Needs approval";
   }
+  if (shell.hasPendingUserInput || shell.pendingSubagentRequest === "user_input") {
+    return "Waiting for your answer";
+  }
+  if (shell.runtime?.status === "failed") {
+    return shell.runtime.lastErrorClass === "usage_limit" ? "Usage limit" : "Failed";
+  }
+  return null;
+}
+
+/** A run that finished after the user last opened the thread; never-opened threads have none. */
+function hasUnseenCompletion(shell: BotThreadShell): boolean {
+  const completedAt = Date.parse(shell.latestRun?.completedAt ?? "");
+  if (Number.isNaN(completedAt) || !shell.lastVisitedAt) return false;
+  const lastVisitedAt = Date.parse(shell.lastVisitedAt);
+  return Number.isNaN(lastVisitedAt) || completedAt > lastVisitedAt;
 }
 
 /**
@@ -149,6 +161,12 @@ export interface BotGroup {
   readonly rows: ReadonlyArray<BotRowModel>;
 }
 
+/** The default list's key wherever groups are keyed (collapse state, drop targets). */
+export const DEFAULT_BOT_GROUP = "default";
+
+/** A group's stable key: its section id, or DEFAULT_BOT_GROUP for the default list. */
+export const botGroupKey = (section: BotSection | null): string => section?.id ?? DEFAULT_BOT_GROUP;
+
 /**
  * The user's sections in order, then the default list of bots in no section. Inside a group,
  * bots that need the user come first, then working ones, then settled ones; each keeps the
@@ -160,15 +178,17 @@ export function groupBotRows(
   rows: ReadonlyArray<BotRowModel>,
 ): BotGroup[] {
   const known = new Set<string>(sections.map((section) => section.id));
+  // `filter` already copies, and a stable sort keeps the user's order within a status. Not
+  // `toSorted`: the phone's Hermes engine lacks it.
   const byStatus = (a: BotRowModel, b: BotRowModel) =>
     STATUS_RANK[a.status.kind] - STATUS_RANK[b.status.kind];
   const groups: BotGroup[] = sections.map((section) => ({
     section,
-    rows: rows.filter((row) => row.bot.sectionId === section.id).toSorted(byStatus),
+    rows: rows.filter((row) => row.bot.sectionId === section.id).sort(byStatus),
   }));
   const rest = rows
     .filter((row) => row.bot.sectionId === null || !known.has(row.bot.sectionId))
-    .toSorted(byStatus);
+    .sort(byStatus);
   if (rest.length > 0 || sections.length === 0) groups.push({ section: null, rows: rest });
   return groups;
 }

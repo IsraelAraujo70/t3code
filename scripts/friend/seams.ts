@@ -21,8 +21,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/persistence/mobile-preferences.ts",
-    markers: 3,
-    why: "persist bot notification preference",
+    markers: 6,
+    why: "persist bot notification preference and folded Bots tab sections",
   },
   {
     file: "apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx",
@@ -105,6 +105,11 @@ export const SEAMS: readonly Seam[] = [
     file: "packages/client-runtime/package.json",
     contains: '"./bot-chat"',
     why: "export the bot chat layout rules",
+  },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./bot-directory"',
+    why: "export the bot list rules shared by the sidebar and the mobile Bots tab",
   },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
@@ -282,7 +287,42 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/features/home/HomeScreen.tsx",
     markers: 4,
-    why: "Bots section above the mobile home list",
+    why: "Bots section above the iOS home list",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/workspace-tabs-state.ts",
+    markers: 2,
+    why: "Bots workspace tab",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.tsx",
+    markers: 1,
+    why: "Bots tab title",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/WorkspaceTabsContext.tsx",
+    markers: 1,
+    why: "Bots tab scroll offset",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/useAndroidWorkspaceSelection.ts",
+    markers: 2,
+    why: "bot conversations open from the Bots tab",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.android.tsx",
+    markers: 4,
+    why: "Bots tab pane on Android",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/AndroidWorkspaceSidebar.android.tsx",
+    markers: 3,
+    why: "Bots tab in the Android split sidebar",
+  },
+  {
+    file: "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
+    markers: 3,
+    why: "Bots item in the Android navigation bar and rail",
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
@@ -295,6 +335,7 @@ export const SEAMS: readonly Seam[] = [
 export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/bots/",
   "apps/mobile/src/bots/",
+  "apps/mobile/modules/t3-native-controls/android/src/main/res/drawable/t3_bots.xml",
   "apps/mobile/plugins/withFriendVoiceReaderWebrtc",
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",
@@ -304,6 +345,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/state/bots.ts",
   "packages/client-runtime/src/voice.",
   "packages/client-runtime/src/botChat.",
+  "packages/client-runtime/src/botDirectory.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",

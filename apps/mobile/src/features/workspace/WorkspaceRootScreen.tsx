@@ -31,6 +31,8 @@ import { useSidebarWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWo
 const TAB_TITLES = {
   threads: "Threads",
   pullRequests: "Pull requests",
+  // Fork (friend): only Android shows the Bots tab; iOS lists bots above its threads.
+  bots: "Bots",
 };
 
 function WorkspaceRootTitle(props: {

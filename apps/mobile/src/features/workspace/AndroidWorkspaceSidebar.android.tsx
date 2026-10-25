@@ -6,6 +6,8 @@ import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
+// Fork (friend): the Bots tab.
+import { BotsTabScreen } from "../../bots/BotsTabScreen";
 
 export function AndroidWorkspaceSidebar(props: {
   readonly children: ReactNode;
@@ -16,11 +18,19 @@ export function AndroidWorkspaceSidebar(props: {
   const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
   return (
     <WorkspaceTabPanes
-      tabs={["threads", "pullRequests"]}
+      // Fork (friend): the Bots tab.
+      tabs={["threads", "bots", "pullRequests"]}
       selected={workspace.state.selectedTab}
       renderTab={(tab) =>
         tab === "threads" ? (
           props.children
+        ) : tab === "bots" ? (
+          // Fork (friend): the Bots tab lists its bots in the sidebar.
+          <WorkspaceTabsContext value={context}>
+            <View className="flex-1 bg-header">
+              <BotsTabScreen sidebar />
+            </View>
+          </WorkspaceTabsContext>
         ) : (
           <WorkspaceTabsContext value={context}>
             <PullRequestFilterMenuProvider>

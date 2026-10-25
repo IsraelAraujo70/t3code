@@ -24,7 +24,7 @@ import {
   type BotRowModel,
   type BotStatus,
   type BotThreadShell,
-} from "./BotsSidebarSection.logic";
+} from "./botDirectory.ts";
 
 const environmentId = EnvironmentId.make("env-primary");
 const otherEnvironmentId = EnvironmentId.make("env-remote");
@@ -196,6 +196,10 @@ describe("resolveBotRows", () => {
       resolveBotRows([only], environmentId, [shell({ id: only.homeThreadId, ...overrides })])[0]!
         .preview;
     expect(preview({ hasPendingUserInput: true })).toBe("Waiting for your answer");
+    expect(preview({ pendingSubagentRequest: "approval", runtime })).toBe("Needs approval");
+    const failed = { ...runtime, status: "failed" as const, activeRunId: null, lastError: "boom" };
+    expect(preview({ runtime: failed })).toBe("Failed");
+    expect(preview({ runtime: { ...failed, lastErrorClass: "usage_limit" } })).toBe("Usage limit");
     expect(preview({ latestRun: completedRun, lastVisitedAt: "2026-10-19T09:59:00.000Z" })).toBe(
       "New reply",
     );

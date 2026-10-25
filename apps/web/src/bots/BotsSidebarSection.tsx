@@ -38,7 +38,9 @@ import { cn } from "~/lib/utils";
 import { BotAvatar } from "./BotAvatar";
 import {
   applyArrangement,
+  botGroupKey,
   countBotsNeedingYou,
+  DEFAULT_BOT_GROUP,
   currentArrangement,
   groupBotRows,
   moveBot,
@@ -47,7 +49,7 @@ import {
   type BotGroup,
   type BotRowModel,
   type BotThreadShell,
-} from "./BotsSidebarSection.logic";
+} from "@t3tools/client-runtime/bot-directory";
 import { confirmDestructive, useRestartBotSession } from "./botsSettingsShared";
 
 const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
@@ -56,10 +58,6 @@ const COLLAPSED_GROUPS_KEY = "t3code:bots:collapsed-groups";
 const SidebarBotsTab = Schema.Literals(["bots", "threads"]);
 type SidebarBotsTab = typeof SidebarBotsTab.Type;
 const CollapsedGroups = Schema.Array(Schema.String);
-
-/** The default list's key wherever groups are keyed (collapse state, drop targets). */
-const DEFAULT_GROUP = "default";
-const groupKey = (section: BotSection | null) => section?.id ?? DEFAULT_GROUP;
 
 /** A bot's main conversation is a `bot:<botId>:<generation>` thread; thread lists skip it. */
 export function isBotThreadId(threadId: string): boolean {
@@ -252,7 +250,7 @@ function GroupHeader(props: {
 }) {
   const { section } = props.group;
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
-    id: `section:${groupKey(section)}`,
+    id: `section:${botGroupKey(section)}`,
     disabled: !props.draggable || section === null,
   });
   return (
@@ -298,7 +296,7 @@ function GroupHeader(props: {
 
 /** The rows of one group, droppable as a whole so an empty or collapsed group takes a bot. */
 function GroupBody(props: { group: BotGroup; collapsed: boolean; children: ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `group:${groupKey(props.group.section)}` });
+  const { setNodeRef, isOver } = useDroppable({ id: `group:${botGroupKey(props.group.section)}` });
   return (
     <ul
       ref={setNodeRef}
@@ -403,7 +401,7 @@ export function BotsSidebarSection(props: {
     const overSection: BotSectionId | null =
       overKind === "bot"
         ? sectionOfBot(overId)
-        : overId === DEFAULT_GROUP
+        : overId === DEFAULT_BOT_GROUP
           ? null
           : BotSectionId.make(overId);
     if (activeKind === "section") {
@@ -449,7 +447,7 @@ export function BotsSidebarSection(props: {
     const current = row.bot.sectionId;
     const targets = [
       ...shown.sections.map((section) => ({ id: section.id as string, label: section.name })),
-      { id: DEFAULT_GROUP, label: "Bots (no section)" },
+      { id: DEFAULT_BOT_GROUP, label: "Bots (no section)" },
     ];
     const clicked = await api.contextMenu.show(
       [
@@ -470,7 +468,7 @@ export function BotsSidebarSection(props: {
             ...targets.map((target) => ({
               id: `move:${target.id}`,
               label: target.label,
-              checked: (current ?? DEFAULT_GROUP) === target.id,
+              checked: (current ?? DEFAULT_BOT_GROUP) === target.id,
             })),
             {
               id: "move:new",
@@ -493,7 +491,7 @@ export function BotsSidebarSection(props: {
       const target = clicked.slice("move:".length);
       const base = baseArrangement();
       if (base === null) return;
-      const sectionId = target === DEFAULT_GROUP ? null : BotSectionId.make(target);
+      const sectionId = target === DEFAULT_BOT_GROUP ? null : BotSectionId.make(target);
       if (sectionId !== current) void applyMove(moveBot(base, row.bot.id, sectionId, null));
     }
   };
@@ -581,12 +579,12 @@ export function BotsSidebarSection(props: {
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext
-            items={groups.map((group) => `section:${groupKey(group.section)}`)}
+            items={groups.map((group) => `section:${botGroupKey(group.section)}`)}
             strategy={verticalListSortingStrategy}
           >
             <div className="flex flex-col gap-1.5">
               {groups.map((group) => {
-                const key = groupKey(group.section);
+                const key = botGroupKey(group.section);
                 const collapsed = showGroupHeaders && collapsedGroups.includes(key);
                 return (
                   <div key={key} className="flex flex-col gap-px">

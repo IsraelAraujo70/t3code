@@ -6,6 +6,8 @@ import {
   type AndroidWorkspaceDestination,
 } from "../../lib/android-workspace-navigation";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+// Fork (friend): bot conversations open from the Bots tab.
+import { workspaceTabForThread } from "../../bots/bots.logic";
 
 export function useAndroidWorkspaceSelection() {
   const navigation = useNavigation();
@@ -18,7 +20,11 @@ export function useAndroidWorkspaceSelection() {
       Keyboard.dismiss();
       dispatch?.({
         type: "select",
-        tab: destination.name === "Thread" ? "threads" : "pullRequests",
+        // Fork (friend): a bot's conversation belongs to the Bots tab, so Back returns there.
+        tab:
+          destination.name === "Thread"
+            ? workspaceTabForThread(destination.params.threadId)
+            : "pullRequests",
       });
       resetAndroidWorkspace(navigation, destination, reviewers);
     },

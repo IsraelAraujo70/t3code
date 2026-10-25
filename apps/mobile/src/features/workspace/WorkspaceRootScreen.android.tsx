@@ -15,8 +15,11 @@ import { AndroidWorkspaceNavigation } from "./AndroidWorkspaceNavigation";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
+// Fork (friend): the Bots tab.
+import { BotsTabDetailPlaceholder, BotsTabScreen } from "../../bots/BotsTabScreen";
 
-const TABS: readonly WorkspaceTab[] = ["threads", "pullRequests"];
+// Fork (friend): the Bots tab, next to Chats as in the navigation bar.
+const TABS: readonly WorkspaceTab[] = ["threads", "bots", "pullRequests"];
 
 export function WorkspaceRootScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -43,14 +46,21 @@ export function WorkspaceRootScreen() {
           ) : (
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
-              <AndroidScreenHeader title="Pull requests" />
-              <View className="flex-1 items-center justify-center px-10">
-                <EmptyState
-                  title="Select a pull request"
-                  detail="Choose a pull request from the sidebar to review it."
-                  variant="plain"
-                />
-              </View>
+              {/* Fork (friend): the Bots tab's detail pane waits for a bot like PRs wait for a PR. */}
+              {tab === "bots" ? (
+                <BotsTabDetailPlaceholder />
+              ) : (
+                <>
+                  <AndroidScreenHeader title="Pull requests" />
+                  <View className="flex-1 items-center justify-center px-10">
+                    <EmptyState
+                      title="Select a pull request"
+                      detail="Choose a pull request from the sidebar to review it."
+                      variant="plain"
+                    />
+                  </View>
+                </>
+              )}
             </>
           )
         }
@@ -69,6 +79,9 @@ export function WorkspaceRootScreen() {
             renderTab={(tab) =>
               tab === "threads" ? (
                 <HomeRouteScreen />
+              ) : tab === "bots" ? (
+                // Fork (friend): the Bots tab.
+                <BotsTabScreen />
               ) : (
                 <PullRequestFilterMenuProvider>
                   <PullRequestToolbar />

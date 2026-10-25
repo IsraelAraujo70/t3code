@@ -1,9 +1,25 @@
-import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import { groupBotRows, resolveBotRows } from "@t3tools/client-runtime/bot-directory";
+import {
+  BotId,
+  BotSectionId,
+  botThreadId,
+  EnvironmentId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type BotDirectoryEntry,
+  type BotSection,
+} from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../test-fixtures";
-import { botActivityAt, botStatusFromShell, withoutBotThreads } from "./bots.logic";
+import {
+  botsTabGroups,
+  toggleCollapsedKey,
+  withoutBotThreads,
+  workspaceTabForThread,
+} from "./bots.logic";
 
 const environmentId = EnvironmentId.make("bots-host");
 const NOW = "2026-10-20T12:00:00.000Z";
@@ -42,63 +58,6 @@ const completedRun = {
   assistantMessageId: null,
 } as const;
 
-describe("botStatusFromShell", () => {
-  it("is idle before the bot's conversation has loaded", () => {
-    expect(botStatusFromShell(null)).toEqual({ kind: "idle", detail: null });
-  });
-
-  it("needs the user for approvals, questions, failures and usage limits", () => {
-    expect(botStatusFromShell(botShell({ hasPendingApprovals: true }))).toEqual({
-      kind: "needs-you",
-      detail: "Needs approval",
-    });
-    expect(botStatusFromShell(botShell({ hasPendingUserInput: true }))).toEqual({
-      kind: "needs-you",
-      detail: "Waiting for your answer",
-    });
-    expect(botStatusFromShell(botShell({ runtime: runtime("failed") }))).toEqual({
-      kind: "needs-you",
-      detail: "Failed",
-    });
-    expect(botStatusFromShell(botShell({ runtime: runtime("failed", "usage_limit") }))).toEqual({
-      kind: "needs-you",
-      detail: "Usage limit",
-    });
-  });
-
-  it("is working while a run is in progress", () => {
-    expect(
-      botStatusFromShell(
-        botShell({
-          runtime: runtime("running"),
-          latestRun: { ...completedRun, status: "running" },
-        }),
-      ),
-    ).toEqual({ kind: "working", detail: "Working" });
-  });
-
-  it("needs the user once for a finished run they have not opened", () => {
-    const finished = botShell({
-      runtime: runtime("completed"),
-      latestRun: completedRun,
-      lastVisitedAt: "2026-10-20T11:05:00.000Z",
-    });
-    expect(botStatusFromShell(finished)).toEqual({ kind: "needs-you", detail: "Finished" });
-    expect(botStatusFromShell({ ...finished, lastVisitedAt: "2026-10-20T11:20:00.000Z" })).toEqual({
-      kind: "idle",
-      detail: null,
-    });
-  });
-});
-
-describe("botActivityAt", () => {
-  it("prefers the latest run's completion over the thread's last update", () => {
-    expect(botActivityAt(null)).toBeNull();
-    expect(botActivityAt(botShell())).toBe(NOW);
-    expect(botActivityAt(botShell({ latestRun: completedRun }))).toBe(completedRun.completedAt);
-  });
-});
-
 describe("withoutBotThreads", () => {
   it("drops every generation of bot conversations and keeps ordinary threads in order", () => {
     const threads = [
@@ -117,5 +76,93 @@ describe("withoutBotThreads", () => {
       botShell({ id: ThreadId.make("robot:writer:1") }),
     ];
     expect(withoutBotThreads(threads)).toBe(threads);
+  });
+});
+
+describe("workspaceTabForThread", () => {
+  it("sends bot conversations to the Bots tab and everything else to Chats", () => {
+    expect(workspaceTabForThread("bot:writer:3")).toBe("bots");
+    expect(workspaceTabForThread("thread-a")).toBe("threads");
+    expect(workspaceTabForThread("robot:writer:1")).toBe("threads");
+  });
+});
+
+function bot(id: string, sectionId: string | null): BotDirectoryEntry {
+  const botId = BotId.make(id);
+  return {
+    id: botId,
+    name: id,
+    sectionId: sectionId === null ? null : BotSectionId.make(sectionId),
+    role: "",
+    model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+    homeGeneration: 1,
+    position: 0,
+    canManageBots: false,
+    createdAt: NOW,
+    updatedAt: NOW,
+    homeThreadId: botThreadId(botId, 1),
+    memories: [],
+  };
+}
+
+function section(id: string, name: string): BotSection {
+  return { id: BotSectionId.make(id), name, position: 0, createdAt: NOW, updatedAt: NOW };
+}
+
+describe("botsTabGroups", () => {
+  const casa = section("s_casa", "Casa");
+  const codigo = section("s_codigo", "Codigo");
+  const bots = [
+    bot("secretario", "s_casa"),
+    bot("linkedin", null),
+    bot("father", "s_codigo"),
+    bot("reviewer", "s_codigo"),
+  ];
+  const shells = [
+    // The reviewer is working, so it leads its section; the father's reply is unread.
+    botShell({ id: bots[3]!.homeThreadId, runtime: runtime("running") }),
+    botShell({
+      id: bots[2]!.homeThreadId,
+      latestRun: completedRun,
+      lastVisitedAt: "2026-10-20T11:05:00.000Z",
+    }),
+    botShell({ id: bots[0]!.homeThreadId, settledOverride: "settled" }),
+  ];
+  const rows = resolveBotRows(bots, environmentId, shells);
+
+  it("shows the sidebar's sections, order and status from the phone's thread shells", () => {
+    const groups = botsTabGroups(groupBotRows([codigo, casa], rows), []);
+    expect(groups.map((group) => [group.title, group.rows.map((row) => row.bot.id)])).toEqual([
+      ["Codigo", ["father", "reviewer"]],
+      ["Casa", ["secretario"]],
+      ["Bots", ["linkedin"]],
+    ]);
+    const codigoRows = groups[0]!.rows;
+    expect(codigoRows.map((row) => row.preview)).toEqual(["New reply", "Working…"]);
+    expect(groups[1]!.rows[0]!.status).toEqual({ kind: "settled" });
+  });
+
+  it("folds the sections the user folded, keyed by section id or the default list", () => {
+    const groups = botsTabGroups(groupBotRows([codigo, casa], rows), ["s_casa", "default"]);
+    expect(groups.map((group) => [group.key, group.collapsed])).toEqual([
+      ["s_codigo", false],
+      ["s_casa", true],
+      ["default", true],
+    ]);
+  });
+
+  it("shows no headers and folds nothing without sections, like the sidebar", () => {
+    const groups = botsTabGroups(groupBotRows([], rows), ["default"]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.title).toBeNull();
+    expect(groups[0]!.collapsed).toBe(false);
+    expect(groups[0]!.rows).toHaveLength(4);
+  });
+});
+
+describe("toggleCollapsedKey", () => {
+  it("folds an open section and opens a folded one", () => {
+    expect(toggleCollapsedKey([], "s_casa")).toEqual(["s_casa"]);
+    expect(toggleCollapsedKey(["default", "s_casa"], "s_casa")).toEqual(["default"]);
   });
 });

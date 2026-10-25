@@ -63,7 +63,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 
-private val TABS = listOf("threads", "pullRequests", "settings")
+// Fork (friend): Bots sits next to Chats.
+private val TABS = listOf("threads", "bots", "pullRequests", "settings")
 
 class T3WorkspaceNavigationModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -356,6 +357,8 @@ class T3WorkspaceNavigationView(
 
   private fun tabTitle(tab: String) = when (tab) {
     "threads" -> "Chats"
+    // Fork (friend): the Bots tab.
+    "bots" -> "Bots"
     "pullRequests" -> "PRs"
     else -> "Settings"
   }
@@ -367,6 +370,8 @@ class T3WorkspaceNavigationView(
   private fun tabIconPainter(tab: String) = painterResource(
     when (tab) {
       "threads" -> R.drawable.t3_chats
+      // Fork (friend): the Bots tab.
+      "bots" -> R.drawable.t3_bots
       "pullRequests" -> R.drawable.t3_pull_requests
       else -> R.drawable.t3_settings
     }

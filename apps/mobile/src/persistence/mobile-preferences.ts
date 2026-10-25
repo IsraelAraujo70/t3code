@@ -68,6 +68,8 @@ export interface Preferences {
   readonly mathRenderingEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  // Fork (friend): Bots tab sections the user folded (section ids, "default" for unsorted bots).
+  readonly collapsedBotGroups?: readonly string[];
   /** Environments whose "reclaim database space" notice was dismissed. */
   readonly dismissedDatabaseStorageNotices?: readonly string[];
   /** What the Return key does in the composer on a hardware keyboard. iOS only. */
@@ -145,6 +147,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     mathRenderingEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    // Fork (friend): folded Bots tab sections.
+    collapsedBotGroups?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
@@ -225,6 +229,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (Array.isArray(parsed.collapsedProjectGroups)) {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
+      (key): key is string => typeof key === "string",
+    );
+  }
+  // Fork (friend): keep only the string keys of folded Bots tab sections.
+  if (Array.isArray(parsed.collapsedBotGroups)) {
+    preferences.collapsedBotGroups = parsed.collapsedBotGroups.filter(
       (key): key is string => typeof key === "string",
     );
   }

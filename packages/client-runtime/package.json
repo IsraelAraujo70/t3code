@@ -15,6 +15,10 @@
       "types": "./src/botChat.ts",
       "default": "./src/botChat.ts"
     },
+    "./bot-directory": {
+      "types": "./src/botDirectory.ts",
+      "default": "./src/botDirectory.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

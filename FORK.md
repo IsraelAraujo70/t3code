@@ -95,6 +95,15 @@ is experimental in Codex. See [`apps/server/src/bots/voice/`](apps/server/src/bo
 and `VoiceSessionRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts). On
 Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
 
+## Where bots are listed
+
+The desktop sidebar (its Bots tab or Bots block) and the Android Bots tab list bots the same way:
+the user's sections in their order, foldable, bots inside by status (needs you, working, settled)
+and then the user's order, with the same line under each name. Both read these rules from
+[`packages/client-runtime/src/botDirectory.ts`](packages/client-runtime/src/botDirectory.ts). The
+phone only reads: sections and bot moves are edited on desktop. Android's Chats tab shows only
+threads; iOS has no Bots tab yet and keeps the bots above its thread list.
+
 ## Bot conversations as chat
 
 Web, desktop and mobile show a bot thread (any `bot:<id>:<n>` id) as chat bubbles: the user's

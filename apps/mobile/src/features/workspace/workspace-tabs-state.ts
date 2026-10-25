@@ -1,4 +1,5 @@
-export type WorkspaceTab = "threads" | "pullRequests";
+// Fork (friend): Android lists the bots host's bots in their own tab.
+export type WorkspaceTab = "threads" | "pullRequests" | "bots";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
 export interface WorkspaceTabState {
@@ -22,7 +23,8 @@ export function initialWorkspaceTabsState(): WorkspaceTabsState {
   return {
     selectedTab: "threads",
     selectionRevision: 0,
-    tabs: { threads: emptyTab(), pullRequests: emptyTab() },
+    // Fork (friend): the Bots tab.
+    tabs: { threads: emptyTab(), pullRequests: emptyTab(), bots: emptyTab() },
   };
 }
 
