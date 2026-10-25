@@ -6,6 +6,8 @@ import { Platform, View } from "react-native";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+// Fork (friend): the friend APK's update section.
+import { SelfUpdateSettingsSection } from "../../bots/SelfUpdateViews";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -214,12 +216,13 @@ function SettingsIndexSections() {
         />
       </SettingsSection>
 
-      {/* Fork (friend): local-only Android installs can configure bot notifications. */}
+      {/* Fork (friend): local-only Android installs can configure bot notifications; the friend APK updates itself. */}
       {Platform.OS === "android" && !hasCloudPublicConfig() ? (
         <SettingsSection title="Notifications">
           <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
         </SettingsSection>
       ) : null}
+      <SelfUpdateSettingsSection />
 
       <SettingsSection title="App">
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />

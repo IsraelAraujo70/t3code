@@ -11,8 +11,9 @@ import { createStaticNavigation } from "@react-navigation/native";
 import { RegistryContext } from "@effect/atom-react";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
 import * as Dialog from "./components/ui/Dialog";
-// Fork (friend): direct bot registration also runs in local-only builds.
+// Fork (friend): direct bot registration also runs in local-only builds; the APK updates itself.
 import { BotPushRegistration } from "./bots/pushRegistration";
+import { SelfUpdateNotice } from "./bots/SelfUpdateViews";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
@@ -117,6 +118,8 @@ function AppContent() {
               {/* Anchored-menu overlays render here — in-window, so the
                 keyboard stays up while a dropdown is open. */}
               <OverlayPortalHost />
+              {/* Fork (friend): "update available" for the friend APK. */}
+              <SelfUpdateNotice />
             </VoiceInputProvider>
           </SafeAreaProvider>
         </KeyboardProvider>
