@@ -1,5 +1,7 @@
 import type { ExpoConfig } from "expo/config";
 
+import { readFriendBuildInfo } from "../../scripts/friend/mobileBuildInfo.ts";
+
 const PINK = "#F27896";
 const googleServicesFile = process.env.BIA_ANDROID_GOOGLE_SERVICES_FILE?.trim();
 
@@ -15,6 +17,8 @@ const config: ExpoConfig = {
   icon: "./assets/icon.png",
   android: {
     package: "com.israelaraujo.bia",
+    // The app opens the system installer for its own updates (src/appUpdateDevice.ts).
+    permissions: ["android.permission.REQUEST_INSTALL_PACKAGES"],
     ...(googleServicesFile ? { googleServicesFile } : {}),
     adaptiveIcon: {
       backgroundColor: PINK,
@@ -25,6 +29,8 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: "com.israelaraujo.bia",
   },
+  // The commit this APK is built from, compared with the update the guest API publishes.
+  extra: { friendBuild: readFriendBuildInfo() },
   plugins: [
     "expo-secure-store",
     [

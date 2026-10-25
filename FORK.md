@@ -171,6 +171,15 @@ and forwards `GOOGLE_API_URL` (`http://egress:8082`) to the Gmail, Sheets, Calen
 APIs only; the image's `/opt/t3-guest/google-apis.md` tells the bot how to call them. Claude replies reach the app per completed text block, as on every T3 surface,
 not per token.
 
+The guest app updates itself like the owner's Android app, through the guest API: `app-update`
+answers the newest published build and `app-update/apk` sends it, both behind the guest's token.
+Each guest has their own folder, `<T3CODE_GUEST_APP_UPDATE_DIR>/<guest id>` (default
+`~/.t3-friend/android/bia` for Bia), holding the APK and `latest.json`; the folder comes from the
+token, so a guest only reaches their own app. The app checks on start and when it returns to the
+foreground, and installs only an APK whose sha256 and size match the manifest. See
+[`GuestAppUpdate.ts`](apps/server/src/bots/guest/GuestAppUpdate.ts) and
+[`appSelfUpdate.ts`](packages/client-runtime/src/appSelfUpdate.ts), shared with the owner's app.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
