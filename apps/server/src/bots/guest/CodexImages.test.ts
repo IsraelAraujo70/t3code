@@ -24,7 +24,10 @@ const completed = (threadId = "t1") => ({
 });
 
 const run = (notifications: ReadonlyArray<{ method: string; params?: unknown }>) =>
-  notifications.reduce((state, notification) => stepImageTurn(state, "t1", notification), running);
+  notifications.reduce<ImageTurnState>(
+    (state, notification) => stepImageTurn(state, "t1", notification),
+    running,
+  );
 
 describe("stepImageTurn", () => {
   it("returns the image once the turn completes", () => {
