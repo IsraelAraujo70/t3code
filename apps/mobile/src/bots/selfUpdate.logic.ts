@@ -60,6 +60,11 @@ export interface SelfUpdateDeps {
   readonly fetchInfo: () => Promise<MobileUpdateInfo | null>;
   /** Whether to go ahead with an install the user asked for (Android's first-time warning). */
   readonly confirmInstall: () => Promise<boolean>;
+  /**
+   * Where an earlier download of `build` still sits, if any. Android 8+ asks once for permission
+   * to install apps and then drops the install, so the user taps again; that tap reuses the file.
+   */
+  readonly downloaded: (build: MobileUpdateBuild) => Promise<string | null>;
   /** Downloads `build`'s APK and returns its local path. */
   readonly download: (
     build: MobileUpdateBuild,
@@ -124,15 +129,22 @@ export function createSelfUpdate(deps: SelfUpdateDeps) {
     const build = snapshot.latest;
     if (!isUpdateAvailable(snapshot.embedded, build) || snapshot.phase.type !== "idle") return;
     if (!(await deps.confirmInstall())) return;
-    set({ phase: { type: "downloading", fraction: null }, error: null });
-    try {
-      const path = await deps.download(build, (fraction) =>
-        set({ phase: { type: "downloading", fraction } }),
-      );
+    const matches = async (path: string) => {
       set({ phase: { type: "verifying" } });
       const file = await deps.inspect(path);
-      if (file.sha256 !== build.sha256 || file.size !== build.size) {
-        throw new Error("o APK baixado não confere com o publicado. Nada foi instalado.");
+      return file.sha256 === build.sha256 && file.size === build.size;
+    };
+    set({ phase: { type: "verifying" }, error: null });
+    try {
+      let path = await deps.downloaded(build);
+      if (path === null || !(await matches(path))) {
+        set({ phase: { type: "downloading", fraction: null } });
+        path = await deps.download(build, (fraction) =>
+          set({ phase: { type: "downloading", fraction } }),
+        );
+        if (!(await matches(path))) {
+          throw new Error("o APK baixado não confere com o publicado. Nada foi instalado.");
+        }
       }
       set({ phase: { type: "installing" } });
       await deps.install(path);

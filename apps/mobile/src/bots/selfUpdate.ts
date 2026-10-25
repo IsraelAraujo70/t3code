@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   MOBILE_UPDATE_APK_PATH,
   MOBILE_UPDATE_PATH,
+  type MobileUpdateBuild,
   MobileUpdateInfo,
 } from "@t3tools/contracts";
 import Constants from "expo-constants";
@@ -30,6 +31,8 @@ const APK_MIME = "application/vnd.android.package-archive";
 const DOWNLOAD_DIR = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/friend-update`;
 const INSTALL_HINT_KEY = "t3code.friend.self-update.install-hint.v1";
 const decodeInfo = Schema.decodeUnknownPromise(MobileUpdateInfo);
+
+const apkPath = (build: MobileUpdateBuild) => `${DOWNLOAD_DIR}/t3code-friend-${build.commit}.apk`;
 
 /** The bots host publishes the APK; set while its connection is up. */
 let target: EnvironmentId | null = null;
@@ -72,7 +75,7 @@ async function confirmFirstInstall(): Promise<boolean> {
   const proceed = await new Promise<boolean>((resolve) =>
     Dialog.alert(
       "Instalar a atualização",
-      'Na primeira vez o Android pede para permitir que o T3 Code instale apps. Toque em Configurações, ative "Permitir desta fonte" e volte: o instalador continua de onde parou.',
+      'Na primeira vez o Android pede para permitir que o T3 Code instale apps. Toque em Configurações, ative "Permitir desta fonte" e volte. Se o instalador não reaparecer, toque em Atualizar de novo: o APK já baixado é aproveitado.',
       [
         { text: "Agora não", style: "cancel", onPress: () => resolve(false) },
         { text: "Continuar", onPress: () => resolve(true) },
@@ -96,6 +99,10 @@ export const selfUpdate = createSelfUpdate({
     return decodeInfo(await response.json());
   },
   confirmInstall: confirmFirstInstall,
+  downloaded: async (build) => {
+    const path = apkPath(build);
+    return (await ReactNativeBlobUtil.fs.exists(path)) ? path : null;
+  },
   download: async (build, onProgress) => {
     if (target === null) throw new Error("o servidor do T3 não está conectado.");
     const url = await updateUrl(target, MOBILE_UPDATE_APK_PATH, { commit: build.commit });
@@ -104,7 +111,7 @@ export const selfUpdate = createSelfUpdate({
       await ReactNativeBlobUtil.fs.unlink(DOWNLOAD_DIR);
     }
     await ReactNativeBlobUtil.fs.mkdir(DOWNLOAD_DIR);
-    const path = `${DOWNLOAD_DIR}/t3code-friend-${build.shortCommit}.apk`;
+    const path = apkPath(build);
     const response = await ReactNativeBlobUtil.config({ path, overwrite: true })
       .fetch("GET", url)
       .progress({ interval: 250 }, (received, total) =>

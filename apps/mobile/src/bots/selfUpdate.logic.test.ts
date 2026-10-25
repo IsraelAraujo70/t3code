@@ -26,6 +26,7 @@ function setup(embedded: typeof running | null = running) {
       latest: published,
     })),
     confirmInstall: vi.fn(async () => true),
+    downloaded: vi.fn(async (): Promise<string | null> => null),
     download: vi.fn(async () => "/cache/friend-update/t3code-friend-bbbbbbbbbb.apk"),
     inspect: vi.fn(async () => ({ sha256: published.sha256, size: published.size })),
     install: vi.fn(async () => {}),
@@ -113,6 +114,20 @@ describe("createSelfUpdate", () => {
     await update.install();
     expect(deps.install).toHaveBeenCalledTimes(1);
     expect(update.getSnapshot().error).toContain("não confere");
+  });
+
+  it("reuses an earlier download only while it still matches", async () => {
+    const { deps, update } = setup();
+    await update.check("launch");
+    deps.downloaded.mockResolvedValue("/cache/friend-update/t3code-friend-bbbbbbbbbb.apk");
+    await update.install();
+    expect(deps.download).not.toHaveBeenCalled();
+    expect(deps.install).toHaveBeenCalledTimes(1);
+
+    deps.inspect.mockResolvedValueOnce({ sha256: "d".repeat(64), size: 7 });
+    await update.install();
+    expect(deps.download).toHaveBeenCalledTimes(1);
+    expect(deps.install).toHaveBeenCalledTimes(2);
   });
 
   it("downloads nothing when the user backs out of the first-install warning", async () => {
