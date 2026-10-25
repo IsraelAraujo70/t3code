@@ -70,9 +70,14 @@ const makeHandler = (publish: "nothing" | "valid" | "short-apk" | "garbage") =>
     }
     const app = yield* makeApp.pipe(
       // The listener also serves voice, which these requests never reach.
-      Effect.provide(Layer.merge(guestServiceLayer, Layer.mock(GuestVoice, {}))),
       Effect.provide(
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { [GUEST_APP_UPDATE_DIR_ENV]: base } })),
+        Layer.merge(guestServiceLayer, Layer.mock(GuestVoice, {})).pipe(
+          Layer.provideMerge(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { [GUEST_APP_UPDATE_DIR_ENV]: base } }),
+            ),
+          ),
+        ),
       ),
     );
     return HttpEffect.toWebHandler(app);

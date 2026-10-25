@@ -189,7 +189,7 @@ const withRuntime = <A, E>(
   use: (input: {
     readonly config: { mcpServers: ReadonlyArray<string> };
     readonly restarts: BotSessionRestart.BotSessionRestart["Service"];
-    readonly send: (thread: ThreadId, text: string) => Effect.Effect<void, unknown, Scope.Scope>;
+    readonly send: (thread: ThreadId, text: string) => Effect.Effect<void, never, Scope.Scope>;
     readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
   }) => Effect.Effect<A, E, Scope.Scope>,
 ) =>
@@ -263,7 +263,7 @@ const withRuntime = <A, E>(
           yield* worker.drain();
           yield* Fiber.join(settled);
           yield* worker.drain();
-        });
+        }).pipe(Effect.orDie);
       return yield* use({ config, restarts, send, orchestrator });
     }).pipe(Effect.provide(Layer.provideMerge(restartLayer, runtime)));
     return { result, seen };

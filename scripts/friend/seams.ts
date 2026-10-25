@@ -135,8 +135,18 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.tsx",
-    markers: 9,
-    why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles",
+    markers: 5,
+    why: "bot chats as bubbles: rows, bubble context, spacing, turn fold",
+  },
+  {
+    file: "apps/web/src/components/chat/TimelineUserMessageRow.tsx",
+    markers: 2,
+    why: "name the bot that sent a message; user bubble shape",
+  },
+  {
+    file: "apps/web/src/components/chat/TimelineAssistantRows.tsx",
+    markers: 3,
+    why: "bot reply bubble with its action row below; read a reply aloud",
   },
   {
     file: "apps/mobile/src/features/threads/ThreadFeed.tsx",
@@ -187,11 +197,6 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/server/src/mcp/McpHttpServer.ts",
     markers: 2,
     why: "register bots memory, bot management and thread watch tools",
-  },
-  {
-    file: "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
-    markers: 3,
-    why: "stub BotsService and ThreadWatchStore for the MCP layer",
   },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
@@ -265,7 +270,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/ChatView.tsx",
-    markers: 2,
+    markers: 1,
     why: "open the Computer surface from the launchers",
   },
   {

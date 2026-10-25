@@ -130,27 +130,25 @@ const guarded = <A>(
   ) => Effect.Effect<A, GuestApiError>,
   respond: (value: A) => HttpServerResponse.HttpServerResponse,
 ) =>
-  Effect.fn("GuestHttp.request")(
-    function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const params = yield* HttpRouter.params;
-      return respond(yield* handler(request, params));
-    },
-    (effect) =>
-      effect.pipe(
-        Effect.catchTags({ GuestApiError: (error) => Effect.succeed(errorResponse(error)) }),
-        Effect.catchDefect((defect) =>
-          Effect.logError("Guest request failed", { defect }).pipe(
-            Effect.as(
-              HttpServerResponse.jsonUnsafe(
-                { error: "O servidor teve um probleminha. Tente de novo." },
-                { status: 500 },
-              ),
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const params = yield* HttpRouter.params;
+    return respond(yield* handler(request, params));
+  }).pipe(Effect.withSpan("GuestHttp.request"), (effect) =>
+    effect.pipe(
+      Effect.catchTags({ GuestApiError: (error) => Effect.succeed(errorResponse(error)) }),
+      Effect.catchDefect((defect) =>
+        Effect.logError("Guest request failed", { defect }).pipe(
+          Effect.as(
+            HttpServerResponse.jsonUnsafe(
+              { error: "O servidor teve um probleminha. Tente de novo." },
+              { status: 500 },
             ),
           ),
         ),
       ),
-  )();
+    ),
+  );
 
 const ok = (body: unknown) => HttpServerResponse.jsonUnsafe(body);
 

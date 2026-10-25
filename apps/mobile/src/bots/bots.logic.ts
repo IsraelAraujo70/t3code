@@ -18,9 +18,12 @@ export function withoutBotThreads<T extends Pick<EnvironmentThreadShell, "id">>(
   return kept.length === threads.length ? threads : kept;
 }
 
-/** The workspace tab a thread belongs to: a bot's conversation opens from the Bots tab. */
-export function workspaceTabForThread(threadId: string): "bots" | "threads" {
-  return isBotChatThread(threadId) ? "bots" : "threads";
+/**
+ * The workspace tab a thread belongs to: a bot's conversation opens from the Bots tab. A draft
+ * route has no thread id yet and belongs to Threads.
+ */
+export function workspaceTabForThread(threadId: string | undefined): "bots" | "threads" {
+  return threadId !== undefined && isBotChatThread(threadId) ? "bots" : "threads";
 }
 
 /** One group of the Bots tab as it renders. */

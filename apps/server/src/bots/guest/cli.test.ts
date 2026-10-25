@@ -44,9 +44,11 @@ it.effect(
           return yield* (yield* Guests.GuestStore).getGuestByTokenHash(hash);
         }).pipe(
           Effect.provide(
-            Guests.layer.pipe(Layer.provide(ServerConfig.layerTest(baseDir, baseDir))),
+            Guests.layer.pipe(
+              Layer.provide(ServerConfig.layerTest(baseDir, baseDir)),
+              Layer.provideMerge(NodeServices.layer),
+            ),
           ),
-          Effect.provide(NodeServices.layer),
         );
       try {
         expect(
