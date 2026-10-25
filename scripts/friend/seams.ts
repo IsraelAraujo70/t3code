@@ -13,7 +13,11 @@ export type Seam =
   | { readonly file: string; readonly contains: string; readonly why: string };
 
 export const SEAMS: readonly Seam[] = [
-  { file: "apps/mobile/src/App.tsx", markers: 2, why: "mount direct bot push registration" },
+  {
+    file: "apps/mobile/src/App.tsx",
+    markers: 3,
+    why: "mount direct bot push registration and the self-update notice",
+  },
   {
     file: "apps/mobile/src/features/agent-awareness/androidNotifications.ts",
     markers: 2,
@@ -31,8 +35,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/settings/SettingsRouteScreen.tsx",
-    markers: 1,
-    why: "local-only notification settings",
+    markers: 2,
+    why: "local-only notification settings; the friend APK's update section",
   },
   {
     file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
@@ -192,7 +196,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/src/server.ts",
     markers: 5,
-    why: "bots layers and the Computer stream route",
+    why: "bots layers, the Computer stream and mobile update routes",
   },
   {
     file: "apps/web/src/components/Sidebar.tsx",
@@ -226,8 +230,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/app.config.ts",
-    markers: 4,
-    why: "Android records audio for dictation; the voice reader's WebRTC plugin",
+    markers: 7,
+    why: "Android records audio for dictation; the voice reader's WebRTC plugin; the preview APK's self-update",
   },
   {
     file: "apps/mobile/src/features/threads/ThreadComposer.tsx",

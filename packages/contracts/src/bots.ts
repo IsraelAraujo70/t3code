@@ -15,6 +15,7 @@ import {
 import {
   IsoDateTime,
   MessageId,
+  NonNegativeInt,
   PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
@@ -724,3 +725,35 @@ export type ComputerStreamInput = typeof ComputerStreamInput.Type;
 /** Everything a viewer sends. */
 export const ComputerStreamClientMessage = Schema.Union([ComputerStreamAck, ComputerStreamInput]);
 export type ComputerStreamClientMessage = typeof ComputerStreamClientMessage.Type;
+
+/**
+ * The friend Android app (the `preview` variant) updates itself from the bots host. A build
+ * publishes its APK and a `latest.json` manifest into the server's update directory;
+ * `GET MOBILE_UPDATE_PATH` answers `MobileUpdateInfo`, whose `latest` is null while nothing valid
+ * is published, and `GET MOBILE_UPDATE_APK_PATH` sends that APK. With `?commit=<sha>` the APK route
+ * answers 409 when another build has been published since the client checked. Both need
+ * `orchestration:read`, from a header or a `wsTicket` query like the other media routes, because
+ * the app downloads with a plain GET.
+ */
+export const MOBILE_UPDATE_PATH = "/api/friend/mobile-update";
+export const MOBILE_UPDATE_APK_PATH = "/api/friend/mobile-update/apk";
+
+const GitCommitSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
+const Sha256Hex = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/));
+
+export const MobileUpdateBuild = Schema.Struct({
+  /** Full sha of the commit the APK was built from. */
+  commit: GitCommitSha,
+  shortCommit: TrimmedNonEmptyString,
+  /** Committer date of `commit`. */
+  commitDate: IsoDateTime,
+  builtAt: IsoDateTime,
+  /** APK size in bytes. */
+  size: NonNegativeInt,
+  /** Lowercase hex sha256 of the APK. */
+  sha256: Sha256Hex,
+});
+export type MobileUpdateBuild = typeof MobileUpdateBuild.Type;
+
+export const MobileUpdateInfo = Schema.Struct({ latest: Schema.NullOr(MobileUpdateBuild) });
+export type MobileUpdateInfo = typeof MobileUpdateInfo.Type;

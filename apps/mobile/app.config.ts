@@ -2,6 +2,8 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+// Fork (friend): the preview APK carries its commit so it can update itself from the server.
+import { readFriendBuildInfo } from "../../scripts/friend/mobileBuildInfo.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -311,6 +313,10 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
+    // Fork (friend): the preview APK opens the system installer for its own updates.
+    ...(APP_VARIANT === "preview"
+      ? { permissions: ["android.permission.REQUEST_INSTALL_PACKAGES"] }
+      : {}),
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -475,6 +481,8 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    // Fork (friend): compared with the server's published build (src/bots/selfUpdate).
+    friendBuild: APP_VARIANT === "preview" ? readFriendBuildInfo() : null,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
