@@ -69,11 +69,20 @@ export class VoiceThreads extends Context.Service<
   }
 >()("t3/bots/voice/VoiceSession/VoiceThreads") {}
 
+/** How one session reaches its thread, when not the way `VoiceThreads` does. */
+export interface VoiceSessionOptions {
+  /** Posts what the user said instead of `VoiceThreads.post`, e.g. as a guest of the bots host. */
+  readonly post?: (text: string) => Effect.Effect<void, BotsError>;
+}
+
 export class VoiceSessions extends Context.Service<
   VoiceSessions,
   {
     /** The answer once realtime is ready, then agent activity until the session ends. */
-    readonly session: (input: VoiceSessionInput) => Stream.Stream<VoiceSessionEvent, BotsError>;
+    readonly session: (
+      input: VoiceSessionInput,
+      options?: VoiceSessionOptions,
+    ) => Stream.Stream<VoiceSessionEvent, BotsError>;
     readonly ready: (input: VoiceSessionRef) => Effect.Effect<VoiceSessionRef, BotsError>;
     /** A live conversation's realtime session, replaced with one in the current voice. */
     readonly reconnect: (
@@ -450,7 +459,7 @@ export const layer = Layer.effect(
       Effect.orElseSucceed(() => envVoice),
     );
     return VoiceSessions.of({
-      session: ({ threadId, mode, sdp, liveVoiceChange }) =>
+      session: ({ threadId, mode, sdp, liveVoiceChange }, options = {}) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const scope = yield* Effect.scope;
@@ -483,8 +492,8 @@ export const layer = Layer.effect(
             let handoff = idleHandoff;
             let reported: boolean | null = null;
             let silenceTimer: Fiber.Fiber<void> | null = null;
-            const postTurn = (turn: string) =>
-              threads.post(threadId, `${VOICE_MESSAGE_PREFIX}${turn}`);
+            const postText = options.post ?? ((text: string) => threads.post(threadId, text));
+            const postTurn = (turn: string) => postText(`${VOICE_MESSAGE_PREFIX}${turn}`);
             const step = (input: HandoffInput): Effect.Effect<void> =>
               Effect.suspend(() => {
                 const next = handoffReducer(handoff, input);

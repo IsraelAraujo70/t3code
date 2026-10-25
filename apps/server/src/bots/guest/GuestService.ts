@@ -82,6 +82,15 @@ export interface GuestAttachmentFile {
   readonly mimeType: string;
 }
 
+/** A guest's voice session on one of their bots, everything it reaches through GuestService. */
+export interface GuestVoiceConversation {
+  readonly threadId: ThreadId;
+  /** Sends text exactly as `send` does: ownership and sandbox checked again, as the guest. */
+  readonly post: (text: string) => Effect.Effect<void, GuestApiError>;
+  /** Completes once the guest's token is revoked or the bot stops being theirs. */
+  readonly revoked: Effect.Effect<void>;
+}
+
 export class GuestService extends Context.Service<
   GuestService,
   {
@@ -110,6 +119,11 @@ export class GuestService extends Context.Service<
       botId: string,
       attachmentId: string,
     ) => Effect.Effect<GuestAttachmentFile, GuestApiError>;
+    /** The bot's conversation for voice; refused like `send` for a bot outside the sandbox. */
+    readonly voiceConversation: (
+      guest: GuestRecord,
+      botId: string,
+    ) => Effect.Effect<GuestVoiceConversation, GuestApiError>;
     readonly registerPushDevice: (
       guest: GuestRecord,
       input: GuestPushDeviceInput,
@@ -341,19 +355,11 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const send = Effect.fn("GuestService.send")(function* (
+  /** Fails closed unless the bot runs in this guest's sandbox. */
+  const requireSandbox = Effect.fn("GuestService.requireSandbox")(function* (
     guest: GuestRecord,
-    botId: string,
-    input: GuestSendInput,
+    bot: Bot,
   ) {
-    const bot = yield* ownedConversation(guest, botId);
-    const uploads = input.attachments ?? [];
-    if (input.text.trim() === "" && uploads.length === 0) {
-      return yield* new GuestApiError({
-        status: 400,
-        message: "Escreva uma mensagem ou escolha uma foto.",
-      });
-    }
     const { providerInstances } = yield* settings.getSettings.pipe(
       Effect.mapError(internal("O servidor teve um probleminha. Tente de novo.")),
     );
@@ -374,6 +380,22 @@ const make = Effect.gen(function* () {
         message: "Este assistente ainda não está pronto. Peça para o Israel dar uma olhada.",
       });
     }
+  });
+
+  const send = Effect.fn("GuestService.send")(function* (
+    guest: GuestRecord,
+    botId: string,
+    input: GuestSendInput,
+  ) {
+    const bot = yield* ownedConversation(guest, botId);
+    const uploads = input.attachments ?? [];
+    if (input.text.trim() === "" && uploads.length === 0) {
+      return yield* new GuestApiError({
+        status: 400,
+        message: "Escreva uma mensagem ou escolha uma foto.",
+      });
+    }
+    yield* requireSandbox(guest, bot);
     const threadId = threadOf(bot);
     const id = yield* randomUuidV4;
     const messageId = MessageId.make(`${GUEST_MESSAGE_ID_PREFIX}${id}`);
@@ -506,6 +528,19 @@ const make = Effect.gen(function* () {
     return { bytes, mimeType: found.mimeType } satisfies GuestAttachmentFile;
   });
 
+  const voiceConversation = Effect.fn("GuestService.voiceConversation")(function* (
+    guest: GuestRecord,
+    botId: string,
+  ) {
+    const bot = yield* ownedConversation(guest, botId);
+    yield* requireSandbox(guest, bot);
+    return {
+      threadId: threadOf(bot),
+      post: (text: string) => send(guest, bot.id, { text }).pipe(Effect.asVoid),
+      revoked: revoked(guest, bot),
+    } satisfies GuestVoiceConversation;
+  });
+
   const registerPushDevice = Effect.fn("GuestService.registerPushDevice")(function* (
     guest: GuestRecord,
     input: GuestPushDeviceInput,
@@ -540,6 +575,7 @@ const make = Effect.gen(function* () {
     send,
     events,
     attachment,
+    voiceConversation,
     registerPushDevice,
     unregisterPushDevice,
   });

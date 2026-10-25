@@ -9,7 +9,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { BotId } from "./bots.ts";
+import { BotId, VoiceSessionAnswer, VoiceSessionInput } from "./bots.ts";
 import { IsoDateTime, MessageId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const GUEST_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -36,6 +36,12 @@ export const GUEST_API_ROUTES = {
   pushRegister: `${GUEST_API_PREFIX}/push-devices`,
   /** POST GuestPushDeviceRef → GuestPushDeviceRef */
   pushUnregister: `${GUEST_API_PREFIX}/push-devices/unregister`,
+  /** POST GuestVoiceInput → text/event-stream of GuestVoiceEvent */
+  voice: `${GUEST_API_PREFIX}/bots/:botId/voice`,
+  /** POST VoiceSessionRef → VoiceSessionRef */
+  voiceReady: `${GUEST_API_PREFIX}/voice/ready`,
+  /** POST VoiceReportInput → `{}` */
+  voiceReport: `${GUEST_API_PREFIX}/voice/report`,
 } as const;
 
 export const GUEST_LIMITS = {
@@ -140,6 +146,29 @@ export const GuestPushDeviceInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
 });
 export type GuestPushDeviceInput = typeof GuestPushDeviceInput.Type;
+
+/**
+ * Voice on one of the guest's bots: the main T3 `VoiceSessionRpc`, carried over HTTP. The thread is
+ * always the bot's current conversation, so the input names no thread, and it cannot ask for live
+ * voice changes. What the guest says reaches the bot exactly like a message they typed. A guest has
+ * one voice session at a time: opening another ends the previous one.
+ */
+export const GuestVoiceInput = Schema.Struct({
+  mode: VoiceSessionInput.fields.mode,
+  sdp: VoiceSessionInput.fields.sdp,
+});
+export type GuestVoiceInput = typeof GuestVoiceInput.Type;
+
+/**
+ * The voice stream: `answer` once, then `bot` on every change, as in `VoiceSessionEvent`. It ends
+ * when the session does; `error` comes last when it failed.
+ */
+export const GuestVoiceEvent = Schema.Union([
+  VoiceSessionAnswer,
+  Schema.Struct({ type: Schema.Literal("bot"), working: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
+]);
+export type GuestVoiceEvent = typeof GuestVoiceEvent.Type;
 
 /** Every non-2xx answer of the guest listener. Messages are in Portuguese, ready to show the guest. */
 export const GuestErrorBody = Schema.Struct({ error: Schema.String });

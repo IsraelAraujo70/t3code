@@ -733,6 +733,40 @@ describe("VoiceSessions conversation turns", () => {
     }),
   );
 
+  it.effect("posts through the session's own post when it has one, never the thread's", () =>
+    Effect.gen(function* () {
+      const h = yield* setup();
+      const own: string[] = [];
+      const events = yield* Queue.unbounded<VoiceSessionEvent>();
+      const fiber = yield* Effect.forkScoped(
+        Stream.runForEach(
+          h.service.session(conversation, {
+            post: (text) =>
+              Effect.sync(() => {
+                own.push(text);
+              }),
+          }),
+          (event) => Queue.offer(events, event),
+        ),
+      );
+      const answer = yield* Queue.take(events);
+      assert.strictEqual(answer.type, "answer");
+      if (answer.type !== "answer") return;
+      yield* h.service.ready({ sessionId: answer.sessionId });
+      yield* Queue.offerAll(h.realtimeEvents, [
+        { type: "user-transcript-delta", delta: "Oi" },
+        { type: "user-transcript", text: "Oi" },
+      ]);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(turnWindow);
+      yield* Queue.offer(h.realtimeEvents, { type: "user-transcript", text: "Tchau" });
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(fiber);
+      assert.deepStrictEqual(own, ["🎙️ Oi", "🎙️ Tchau"]);
+      assert.deepStrictEqual(h.posted, []);
+    }),
+  );
+
   it.effect("reads the window from the environment, else the default", () =>
     Effect.gen(function* () {
       for (const [value, ms] of [

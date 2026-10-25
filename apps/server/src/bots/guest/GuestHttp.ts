@@ -5,7 +5,7 @@
  *
  * The router holds only GUEST_API_ROUTES, so every other path, the T3 RPC WebSocket included,
  * answers 404 here by construction. Each handler authenticates the bearer token before reading
- * anything else, decodes its input strictly, and calls one GuestService method.
+ * anything else, decodes its input strictly, and calls one GuestService or GuestVoice method.
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the listener's own Node server.
 import * as NodeHttp from "node:http";
@@ -17,7 +17,9 @@ import {
   GuestPushDeviceInput,
   GuestPushDeviceRef,
   GuestSendInput,
-  type GuestStreamEvent,
+  GuestVoiceInput,
+  VoiceReportInput,
+  VoiceSessionRef,
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import {
 } from "effect/http";
 
 import { GuestApiError, GuestService } from "./GuestService.ts";
+import { GuestVoice } from "./GuestVoice.ts";
 
 export const GUEST_LISTEN_ENV = "T3CODE_GUEST_LISTEN";
 
@@ -88,8 +91,13 @@ const decodeBody = <S extends Schema.Top & { readonly DecodingServices: never }>
 const decodeSend = decodeBody(GuestSendInput, SEND_BODY_LIMIT);
 const decodePushRegister = decodeBody(GuestPushDeviceInput, SMALL_BODY_LIMIT);
 const decodePushRef = decodeBody(GuestPushDeviceRef, SMALL_BODY_LIMIT);
+// An SDP offer is a few KB; the contract caps it at 64 KiB.
+const decodeVoice = decodeBody(GuestVoiceInput, ByteSize.kibibytes(80));
+const decodeVoiceRef = decodeBody(VoiceSessionRef, SMALL_BODY_LIMIT);
+const decodeVoiceReport = decodeBody(VoiceReportInput, ByteSize.mebibytes(1));
 
-const sse = (events: Stream.Stream<GuestStreamEvent>) =>
+/** One JSON object per `data:` line, with keep-alives; ends when `events` does. */
+const sse = <A>(events: Stream.Stream<A>) =>
   HttpServerResponse.stream(
     Stream.merge(
       events.pipe(Stream.map((event) => `data: ${JSON.stringify(event)}\n\n`)),
@@ -146,6 +154,7 @@ const historyLimit = (url: string) => {
 /** Every route of the guest listener; nothing else is registered on its router. */
 const addRoutes = Effect.fn("GuestHttp.addRoutes")(function* (router: HttpRouter.HttpRouter) {
   const service = yield* GuestService;
+  const voice = yield* GuestVoice;
   const auth = (request: HttpServerRequest.HttpServerRequest) =>
     service.authenticate(request.headers["authorization"]);
 
@@ -229,9 +238,48 @@ const addRoutes = Effect.fn("GuestHttp.addRoutes")(function* (router: HttpRouter
       ok,
     ),
   );
+  yield* router.add(
+    "POST",
+    GUEST_API_ROUTES.voice,
+    guarded(
+      (request, params) =>
+        Effect.gen(function* () {
+          const guest = yield* auth(request);
+          return yield* voice.session(guest, params.botId ?? "", yield* decodeVoice(request));
+        }),
+      sse,
+    ),
+  );
+  yield* router.add(
+    "POST",
+    GUEST_API_ROUTES.voiceReady,
+    guarded(
+      (request) =>
+        Effect.gen(function* () {
+          const guest = yield* auth(request);
+          return yield* voice.ready(guest, yield* decodeVoiceRef(request));
+        }),
+      ok,
+    ),
+  );
+  yield* router.add(
+    "POST",
+    GUEST_API_ROUTES.voiceReport,
+    guarded(
+      (request) =>
+        Effect.gen(function* () {
+          const guest = yield* auth(request);
+          return yield* voice.report(guest, yield* decodeVoiceReport(request));
+        }),
+      () => ok({}),
+    ),
+  );
 });
 
-/** The guest listener when `T3CODE_GUEST_LISTEN` is set; nothing otherwise. Needs GuestService. */
+/**
+ * The guest listener when `T3CODE_GUEST_LISTEN` is set; nothing otherwise. Needs GuestService and
+ * GuestVoice.
+ */
 export const layerListener = Layer.unwrap(
   Effect.gen(function* () {
     const raw = yield* Config.String(GUEST_LISTEN_ENV).pipe(

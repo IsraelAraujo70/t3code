@@ -20,11 +20,13 @@ import * as GuestIdle from "./guest/GuestIdle.ts";
 import * as GuestModelPin from "./guest/GuestModelPin.ts";
 import * as GuestService from "./guest/GuestService.ts";
 import * as GuestStore from "./guest/GuestStore.ts";
+import * as GuestVoice from "./guest/GuestVoice.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
 import * as BotQueueReactor from "./queue/BotQueueReactor.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
+import * as VoiceSession from "./voice/VoiceSession.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE }));
@@ -146,9 +148,12 @@ export const layerCore = Layer.unwrap(
   ),
 );
 
-/** The guest listener and the idle stop of guest sandboxes. */
+/** The guest listener (voice included) and the idle stop of guest sandboxes. */
 const layerGuests = Layer.merge(
-  GuestHttp.layerListener.pipe(Layer.provide(GuestService.layer)),
+  GuestHttp.layerListener.pipe(
+    Layer.provide(GuestVoice.layer.pipe(Layer.provide(VoiceSession.layerLive))),
+    Layer.provide(GuestService.layer),
+  ),
   GuestIdle.layerStart.pipe(Layer.provide(BotSessionRestart.layerLive)),
 ).pipe(Layer.provide(ProjectionStore.layer));
 

@@ -411,6 +411,56 @@ describe.skipIf(!enabled)("guest API on a real server", () => {
     expect(response.status).toBe(409);
   });
 
+  it("opens voice only on the guest's own sandboxed bot, and only its conversation", async () => {
+    const voice = (token: string | null, botId: string, body: unknown) =>
+      api(`/guest/v1/bots/${botId}/voice`, {
+        token,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const conversation = { mode: { type: "conversation" }, sdp: "v=0" };
+    expect((await voice(null, finance, conversation)).status).toBe(401);
+    expect((await voice("nope", finance, conversation)).status).toBe(401);
+    for (const botId of [anaBot, "b_doesnotexist"])
+      expect((await voice(biaToken, botId, conversation)).status, botId).toBe(404);
+    // Ana's bot does not run in her sandbox: no voice either.
+    expect((await voice(anaToken, anaBot, conversation)).status).toBe(409);
+    // The thread is always the bot's conversation; nothing else can be asked for.
+    for (const extra of [
+      { threadId: "bot:b_other:1" },
+      { liveVoiceChange: true },
+      { modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } },
+    ]) {
+      const response = await voice(biaToken, finance, { ...conversation, ...extra });
+      expect(response.status, JSON.stringify(extra)).toBe(400);
+    }
+    expect((await api(`/guest/v1/bots/${finance}/voice`, { token: biaToken })).status).toBe(404);
+
+    // Her own bot opens the stream; a reply that is not in its thread ends it before Codex starts.
+    const read = await voice(biaToken, finance, {
+      mode: { type: "read", messageId: "not-in-this-thread" },
+      sdp: "v=0",
+    });
+    expect(read.status).toBe(200);
+    expect(read.headers.get("content-type")).toContain("text/event-stream");
+    expect(await read.text()).toContain('"type":"error"');
+
+    const post = (path: string, token: string | null, body: unknown) =>
+      api(path, {
+        token,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const ref = { sessionId: "someone-elses-session" };
+    expect((await post("/guest/v1/voice/ready", null, ref)).status).toBe(401);
+    expect((await post("/guest/v1/voice/ready", biaToken, ref)).status).toBe(404);
+    expect(
+      (await post("/guest/v1/voice/report", biaToken, { ...ref, entries: [{ t: 1 }] })).status,
+    ).toBe(404);
+  });
+
   it("answers 404 for everything outside the guest routes, the T3 RPC socket included", async () => {
     const paths = [
       "/",
