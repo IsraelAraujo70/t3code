@@ -51,7 +51,6 @@ import { FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react
 import {
   useEffect,
   useLayoutEffect,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -372,13 +371,10 @@ function useSidebarThreads(input: {
   // Fork (friend): bot conversations live in the Bots block unless the layout mixes them in.
   const botsLayout = useClientSettings((s) => s.sidebarBotsLayout);
   const quietThreads = useQuietThreadShells();
-  const threads = useMemo(
-    () =>
-      botsLayout === "mixed"
-        ? quietThreads
-        : quietThreads.filter((thread) => !isBotThreadId(thread.id)),
-    [botsLayout, quietThreads],
-  );
+  const threads =
+    botsLayout === "mixed"
+      ? quietThreads
+      : quietThreads.filter((thread) => !isBotThreadId(thread.id));
   const routeRowThreadKey =
     routeThreadRef === null
       ? null

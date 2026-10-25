@@ -6,6 +6,7 @@
  * Anthropic API, so no key is spent.
  */
 // Plain-Node integration test: it drives real processes, sockets and Docker from outside Effect.
+/* oxlint-disable t3code/no-test-timeout-or-unreasoned-skip, t3code/no-real-time-wait-in-tests -- opt-in run against a separate server process and Docker containers; nothing in-process marks their milestones, so it polls them under its own budgets. */
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalRandom:off
 // @effect-diagnostics globalFetch:off
