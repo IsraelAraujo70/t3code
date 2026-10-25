@@ -185,6 +185,15 @@ tools made is recorded in `bots.sqlite` (`guest_artifacts`): the bot's own tool 
 its sandbox and can be forged, so the guest API serves only recorded artifacts. They appear in the
 guest's history as assistant messages without text, before the reply.
 
+The guest app updates itself like the owner's Android app, through the guest API: `app-update`
+answers the newest published build and `app-update/apk` sends it, both behind the guest's token.
+Each guest has their own folder, `<T3CODE_GUEST_APP_UPDATE_DIR>/<guest id>` (default
+`~/.t3-friend/android/bia` for Bia), holding the APK and `latest.json`; the folder comes from the
+token, so a guest only reaches their own app. The app checks on start and when it returns to the
+foreground, and installs only an APK whose sha256 and size match the manifest. See
+[`GuestAppUpdate.ts`](apps/server/src/bots/guest/GuestAppUpdate.ts) and
+[`appSelfUpdate.ts`](packages/client-runtime/src/appSelfUpdate.ts), shared with the owner's app.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork

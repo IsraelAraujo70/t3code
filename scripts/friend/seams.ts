@@ -115,6 +115,11 @@ export const SEAMS: readonly Seam[] = [
     contains: '"./bot-directory"',
     why: "export the bot list rules shared by the sidebar and the mobile Bots tab",
   },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./app-self-update"',
+    why: "export the Android apps' self-update shared by the friend APK and the guest app",
+  },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
   {
@@ -350,6 +355,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/voice.",
   "packages/client-runtime/src/botChat.",
   "packages/client-runtime/src/botDirectory.",
+  "packages/client-runtime/src/appSelfUpdate.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",

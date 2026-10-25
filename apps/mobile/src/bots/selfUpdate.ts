@@ -24,7 +24,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentSession } from "../state/session";
 import { useRemoteEnvironmentRuntime } from "../state/use-remote-environment-registry";
-import { createSelfUpdate, readEmbeddedBuild } from "./selfUpdate.logic";
+import { createSelfUpdate, readEmbeddedBuild } from "@t3tools/client-runtime/app-self-update";
 import { useBotsEnvironmentId } from "./state";
 
 const APK_MIME = "application/vnd.android.package-archive";
@@ -90,6 +90,7 @@ async function confirmFirstInstall(): Promise<boolean> {
 /** The app's single self-update (friend preview APK on Android). */
 export const selfUpdate = createSelfUpdate({
   embedded: Platform.OS === "android" ? readEmbeddedBuild(Constants.expoConfig?.extra) : null,
+  notConnectedMessage: "O servidor do T3 não está conectado.",
   fetchInfo: async () => {
     if (target === null) return null;
     const response = await fetch(await updateUrl(target, MOBILE_UPDATE_PATH), {

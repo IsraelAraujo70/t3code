@@ -19,6 +19,10 @@
       "types": "./src/botDirectory.ts",
       "default": "./src/botDirectory.ts"
     },
+    "./app-self-update": {
+      "types": "./src/appSelfUpdate.ts",
+      "default": "./src/appSelfUpdate.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

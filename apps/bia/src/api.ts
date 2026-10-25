@@ -22,6 +22,9 @@ const ROUTES = {
   html: "/guest/v1/bots/:botId/html/:attachmentId",
   pushRegister: "/guest/v1/push-devices",
   pushUnregister: "/guest/v1/push-devices/unregister",
+  // The app update's own copies live in appUpdate.ts.
+  appUpdate: "/guest/v1/app-update",
+  appUpdateApk: "/guest/v1/app-update/apk",
 } as const satisfies typeof GUEST_API_ROUTES;
 
 export const ERROR_MESSAGES = {
