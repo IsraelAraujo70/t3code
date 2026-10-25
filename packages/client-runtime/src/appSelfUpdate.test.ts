@@ -6,7 +6,7 @@ import {
   createSelfUpdate,
   isUpdateAvailable,
   readEmbeddedBuild,
-} from "./selfUpdate.logic";
+} from "./appSelfUpdate.ts";
 
 const running = { commit: "a".repeat(40), commitDate: "2026-10-24T10:00:00-03:00" };
 const published: MobileUpdateBuild = {
@@ -22,6 +22,7 @@ function setup(embedded: typeof running | null = running) {
   let now = 1_000_000;
   const deps = {
     embedded,
+    notConnectedMessage: "O servidor do T3 não está conectado.",
     fetchInfo: vi.fn(async (): Promise<{ latest: MobileUpdateBuild | null } | null> => ({
       latest: published,
     })),
