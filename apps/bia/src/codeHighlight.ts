@@ -27,12 +27,13 @@ const MAX_HIGHLIGHT_CHARS = 20_000;
 let highlighter: HighlighterCore | null = null;
 
 // The JavaScript regex engine, as in apps/mobile: no native Oniguruma to build. Created on the
-// first code block, so a chat without code never pays for the grammars.
+// first code block, so a chat without code never pays for the grammars. Hermes has no RegExp `v`
+// or `d` flag, so the grammars compile to ES2018, skipping the few patterns that cannot.
 function getHighlighter(): HighlighterCore {
   highlighter ??= createHighlighterCoreSync({
     themes: [githubLight],
     langs: [bash, css, html, javascript, json, jsx, python, sql, tsx, typescript, yaml],
-    engine: createJavaScriptRegexEngine(),
+    engine: createJavaScriptRegexEngine({ target: "ES2018", forgiving: true }),
   });
   return highlighter;
 }
@@ -49,7 +50,8 @@ export function highlightCode(
     return getHighlighter()
       .codeToTokensBase(code, { lang: language, theme: THEME })
       .map((line) => line.map((token) => ({ content: token.content, color: token.color })));
-  } catch {
+  } catch (error) {
+    console.warn("Code highlighting failed", error);
     return code.split("\n").map((line) => [{ content: line, color: undefined }]);
   }
 }
