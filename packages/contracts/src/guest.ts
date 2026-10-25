@@ -9,7 +9,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { BotId } from "./bots.ts";
+import { BotId, MobileUpdateInfo } from "./bots.ts";
 import { IsoDateTime, MessageId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const GUEST_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -36,6 +36,13 @@ export const GUEST_API_ROUTES = {
   pushRegister: `${GUEST_API_PREFIX}/push-devices`,
   /** POST GuestPushDeviceRef → GuestPushDeviceRef */
   pushUnregister: `${GUEST_API_PREFIX}/push-devices/unregister`,
+  /** GET → GuestAppUpdateInfo */
+  appUpdate: `${GUEST_API_PREFIX}/app-update`,
+  /**
+   * GET ?commit= → the published APK; 404 while nothing is published, 409 when `commit` is not
+   * the published build anymore.
+   */
+  appUpdateApk: `${GUEST_API_PREFIX}/app-update/apk`,
 } as const;
 
 export const GUEST_LIMITS = {
@@ -140,6 +147,14 @@ export const GuestPushDeviceInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
 });
 export type GuestPushDeviceInput = typeof GuestPushDeviceInput.Type;
+
+/**
+ * The guest app's own update, published per guest (the owner's build script writes it): `latest` is
+ * the newest build of this guest's app, null while none is published. Same shape as the owner's
+ * app update (MobileUpdateInfo).
+ */
+export const GuestAppUpdateInfo = MobileUpdateInfo;
+export type GuestAppUpdateInfo = typeof GuestAppUpdateInfo.Type;
 
 /** Every non-2xx answer of the guest listener. Messages are in Portuguese, ready to show the guest. */
 export const GuestErrorBody = Schema.Struct({ error: Schema.String });
