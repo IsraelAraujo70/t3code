@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useServerConfigs } from "../state/entities";
 import { createVoiceTransport } from "@t3tools/client-runtime/state/bots";
-import { createVoiceController } from "@t3tools/client-runtime/voice";
+import { createVoiceController, sameVoiceTarget } from "@t3tools/client-runtime/voice";
 
 import { toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -13,6 +13,7 @@ import { openBrowserVoicePeer } from "./voicePeer";
 export const voiceController = createVoiceController({
   openPeer: openBrowserVoicePeer,
   transport: createVoiceTransport(appAtomRegistry, botsEnvironment),
+  sameTarget: sameVoiceTarget,
   onError: (description) => toastManager.add({ type: "error", title: "Voice failed", description }),
 });
 

@@ -1,11 +1,12 @@
 // @effect-diagnostics globalTimers:off - The shared controller runs without an Effect runtime.
 // @effect-diagnostics globalDate:off - Diagnostics carry client wall-clock times for the server log.
 /**
- * Voice sessions (friend fork), shared by web and mobile: a live conversation with a thread, or
- * one assistant reply read aloud. Each platform supplies `openPeer` (DOM `RTCPeerConnection` on
- * web, `react-native-webrtc` on mobile); this module owns the session's state machine, the audio
- * gate and the order offer → answer → ready → end, and never touches a platform API. See
- * `VoiceSessionRpc` in the contracts for the server's half.
+ * Voice sessions (friend fork), shared by web, mobile and the guest app: a live conversation with a
+ * thread, or one assistant reply read aloud. Each platform supplies `openPeer` (DOM
+ * `RTCPeerConnection` on web, `react-native-webrtc` on mobile and in the guest app) and a transport
+ * for its target; this module owns the session's state machine, the audio gate and the order
+ * offer → answer → ready → end, and never touches a platform API. See `VoiceSessionRpc` in the
+ * contracts for the server's half.
  */
 import type {
   EnvironmentId,
@@ -374,15 +375,19 @@ export function readVoiceStats(report: VoiceStatsReport): VoiceSample {
   };
 }
 
-/** A session's thread on its server, and what the session does there. */
-export interface VoiceTarget {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
+/** What every session target says: what the session does. Its transport knows where. */
+export interface VoiceTargetBase {
   readonly mode: VoiceSessionMode;
 }
 
-/** The signaling RPCs. */
-export interface VoiceTransport {
+/** A session's thread on its server, and what the session does there. */
+export interface VoiceTarget extends VoiceTargetBase {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}
+
+/** The signaling RPCs for one kind of target. */
+export interface VoiceTransport<Target extends VoiceTargetBase = VoiceTarget> {
   /**
    * Opens the session stream. `onAnswer` fires once; `onBot` on each change of the agent's
    * activity; `onVoiceChange` when the server's voice setting changed, asking for `reconnect`;
@@ -390,7 +395,7 @@ export interface VoiceTransport {
    * read). The returned function ends the stream early, after which none fires.
    */
   readonly session: (
-    target: VoiceTarget,
+    target: Target,
     sdp: string,
     handlers: {
       readonly onAnswer: (answer: VoiceSessionAnswer) => void;
@@ -400,37 +405,33 @@ export interface VoiceTransport {
     },
   ) => () => void;
   /** Rejects on failure. */
-  readonly ready: (environmentId: EnvironmentId, sessionId: VoiceSessionId) => Promise<void>;
+  readonly ready: (target: Target, sessionId: VoiceSessionId) => Promise<void>;
   /** A new peer's offer for a live session; resolves with its answer SDP, rejects on failure. */
-  readonly reconnect: (
-    environmentId: EnvironmentId,
-    sessionId: VoiceSessionId,
-    sdp: string,
-  ) => Promise<string>;
+  readonly reconnect: (target: Target, sessionId: VoiceSessionId, sdp: string) => Promise<string>;
   /** Sends diagnostics to the server log. Rejects on failure; the controller ignores that. */
   readonly report: (
-    environmentId: EnvironmentId,
+    target: Target,
     sessionId: VoiceSessionId,
     entries: ReadonlyArray<VoiceDiagnosticEntry>,
   ) => Promise<void>;
 }
 
-export interface VoiceSnapshot {
-  readonly target: VoiceTarget;
+export interface VoiceSnapshot<Target extends VoiceTargetBase = VoiceTarget> {
+  readonly target: Target;
   readonly phase: VoicePhase;
   readonly muted: boolean;
 }
 
-export interface VoiceController {
+export interface VoiceController<Target extends VoiceTargetBase = VoiceTarget> {
   /** Starts `target`; any other session ends first. */
-  readonly start: (target: VoiceTarget) => void;
+  readonly start: (target: Target) => void;
   /** Starts `target`, or ends it when it is the current session. */
-  readonly toggle: (target: VoiceTarget) => void;
+  readonly toggle: (target: Target) => void;
   readonly stop: () => void;
   /** Turns the user's microphone off or on; conversations only. */
   readonly setMuted: (muted: boolean) => void;
   /** The current session; a new object on every change. */
-  readonly getSnapshot: () => VoiceSnapshot | null;
+  readonly getSnapshot: () => VoiceSnapshot<Target> | null;
   readonly subscribe: (listener: () => void) => () => void;
   /**
    * Polled while a session is live when `liveStats` is on; zeros otherwise. A new object on every
@@ -440,10 +441,12 @@ export interface VoiceController {
   readonly subscribeLevels: (listener: () => void) => () => void;
 }
 
-export interface VoiceControllerOptions {
+export interface VoiceControllerOptions<Target extends VoiceTargetBase = VoiceTarget> {
   /** Acquires the microphone (prompting the first time) and builds the peer. */
   readonly openPeer: () => Promise<VoicePeer>;
-  readonly transport: VoiceTransport;
+  readonly transport: VoiceTransport<Target>;
+  /** Whether two targets are the same session, which `toggle` ends. `sameVoiceTarget` for threads. */
+  readonly sameTarget: (a: Target, b: Target) => boolean;
   /** A session that failed; the controller has already released it. */
   readonly onError: (message: string) => void;
   /**
@@ -508,11 +511,13 @@ export function voiceReadPhaseOf(
  * One session at a time for the whole client. Ending a session, for any reason, closes its peer
  * and its stream; a step that resolves after its session ended does nothing.
  */
-export function createVoiceController(options: VoiceControllerOptions): VoiceController {
+export function createVoiceController<Target extends VoiceTargetBase = VoiceTarget>(
+  options: VoiceControllerOptions<Target>,
+): VoiceController<Target> {
   type Session = {
-    readonly target: VoiceTarget;
+    readonly target: Target;
     state: VoiceState;
-    snapshot: VoiceSnapshot;
+    snapshot: VoiceSnapshot<Target>;
     /** The peer the session hears and plays; null while a reconnect replaces it. */
     peer: VoicePeer | null;
     /** The peer a reconnect is replacing, closed once the server has let it go. */
@@ -543,9 +548,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
     if (session.sessionId === null || session.diagnostics.length === 0) return;
     session.reportedAt = Date.now();
     const entries = session.diagnostics.splice(0);
-    void options.transport
-      .report(session.target.environmentId, session.sessionId, entries)
-      .catch(() => {});
+    void options.transport.report(session.target, session.sessionId, entries).catch(() => {});
   };
   const note = (session: Session, entry: VoiceDiagnosticEntry) => {
     session.diagnostics.push({ t: Date.now(), ...entry });
@@ -665,7 +668,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       next.setVoiceAudible(false);
       hear(session, next);
       const answer = await options.transport.reconnect(
-        session.target.environmentId,
+        session.target,
         sessionId,
         await next.createOffer(),
       );
@@ -675,7 +678,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       session.peer = next;
       await next.accept(answer);
       if (!live()) return;
-      await options.transport.ready(session.target.environmentId, sessionId);
+      await options.transport.ready(session.target, sessionId);
       if (!live()) return;
       session.swapping = false;
       note(session, { voice: "swapped" });
@@ -763,7 +766,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
       if (!live()) return;
       await peer.accept(answer.sdp);
       if (!live()) return;
-      await options.transport.ready(session.target.environmentId, answer.sessionId);
+      await options.transport.ready(session.target, answer.sessionId);
       if (!live()) return;
       if (options.liveStats !== false) pollLevels(session);
       apply(session, { type: "connected" });
@@ -774,7 +777,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
   const stop = () => {
     if (current !== null) finish(current, null);
   };
-  const start = (target: VoiceTarget) => {
+  const start = (target: Target) => {
     stop();
     const state = initialVoiceState(target.mode.type);
     const session: Session = {
@@ -799,7 +802,7 @@ export function createVoiceController(options: VoiceControllerOptions): VoiceCon
   return {
     start,
     toggle(target) {
-      if (current !== null && sameVoiceTarget(current.target, target)) stop();
+      if (current !== null && options.sameTarget(current.target, target)) stop();
       else start(target);
     },
     stop,

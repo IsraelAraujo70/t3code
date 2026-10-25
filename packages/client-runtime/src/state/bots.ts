@@ -194,7 +194,7 @@ export function createVoiceTransport(
         unsubscribe();
       };
     },
-    ready: async (environmentId, sessionId) => {
+    ready: async ({ environmentId }, sessionId) => {
       const result = await runAtomCommand(registry, bots.voiceReady, {
         environmentId,
         input: { sessionId },
@@ -204,7 +204,7 @@ export function createVoiceTransport(
           failureMessage(squashAtomCommandFailure(result)) ?? "The voice session failed.",
         );
     },
-    reconnect: async (environmentId, sessionId, sdp) => {
+    reconnect: async ({ environmentId }, sessionId, sdp) => {
       const result = await runAtomCommand(registry, bots.voiceReconnect, {
         environmentId,
         input: { sessionId, sdp },
@@ -215,7 +215,7 @@ export function createVoiceTransport(
         );
       return result.value.sdp;
     },
-    report: async (environmentId, sessionId, entries) => {
+    report: async ({ environmentId }, sessionId, entries) => {
       const result = await runAtomCommand(registry, bots.voiceReport, {
         environmentId,
         input: { sessionId, entries },

@@ -7,6 +7,7 @@ import {
   readVoiceStats,
   voiceAudible,
   voicePhase,
+  sameVoiceTarget,
   voiceReadPhaseOf,
   voiceReducer,
   VOICE_PLAYOUT_GRACE_MS,
@@ -227,23 +228,29 @@ function setup(overrides: { readonly liveStats?: boolean } = {}) {
         return ended;
       },
     ),
-    ready: vi.fn(async (_environmentId: string, sessionId: string) => {
+    ready: vi.fn(async (_target: VoiceTarget, sessionId: string) => {
       calls.push(`ready:${sessionId}`);
     }),
-    reconnect: vi.fn(async (_environmentId: string, sessionId: string, sdp: string) => {
+    reconnect: vi.fn(async (_target: VoiceTarget, sessionId: string, sdp: string) => {
       calls.push(`reconnect:${sessionId}:${sdp}`);
       return "new-answer-sdp";
     }),
     report: vi.fn(
       async (
-        _environmentId: string,
+        _target: VoiceTarget,
         _sessionId: string,
         _entries: ReadonlyArray<Readonly<Record<string, unknown>>>,
       ) => {},
     ),
   };
   const onError = vi.fn();
-  const controller = createVoiceController({ openPeer, transport, onError, ...overrides });
+  const controller = createVoiceController({
+    openPeer,
+    transport,
+    sameTarget: sameVoiceTarget,
+    onError,
+    ...overrides,
+  });
   return { controller, peers, sessions, openPeer, transport, onError, calls, makePeer };
 }
 
@@ -593,8 +600,8 @@ describe("voice diagnostics", () => {
     peer.send("voiceStarted");
     await vi.advanceTimersByTimeAsync(VOICE_REPORT_INTERVAL_MS);
     expect(t.transport.report).toHaveBeenCalledTimes(1);
-    const [environmentId, sessionId, first] = t.transport.report.mock.calls[0]!;
-    expect([environmentId, sessionId]).toEqual(["env", "s1"]);
+    const [target, sessionId, first] = t.transport.report.mock.calls[0]!;
+    expect([target.environmentId, sessionId]).toEqual(["env", "s1"]);
     const keyed = (key: string) => first.filter((entry) => key in entry);
     expect(keyed("channel").map((entry) => entry.channel)).toEqual([
       "session.context.appended",
