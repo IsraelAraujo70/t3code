@@ -21,6 +21,10 @@ import { EMPTY_CONVERSATION } from "./conversation";
 import { MessageBubble, type ChatItem, type ImageSource } from "./MessageBubble";
 import { useSessionState, type Session } from "./session";
 import { colors, fontSize } from "./theme";
+import { stopVoiceFor } from "./voice/controller";
+import { ListenButton } from "./voice/ListenButton";
+import { VoiceControls } from "./voice/VoiceControls";
+import { VoiceOrb } from "./voice/VoiceOrb";
 
 /** How close to the end still counts as "reading the latest", in points. */
 const STICK_TO_BOTTOM_PX = 80;
@@ -64,6 +68,9 @@ export function ChatScreen(props: {
         setLoadError(error instanceof Error ? error.message : "Não consegui carregar a conversa."),
     );
   }, [session, botId]);
+
+  // The voice talks to the open chat; leaving it hangs up.
+  useEffect(() => () => stopVoiceFor(botId), [botId]);
 
   // A notification can point at a bot that is no longer hers.
   useEffect(() => {
@@ -113,13 +120,16 @@ export function ChatScreen(props: {
 
   const renderItem = useCallback(
     ({ item }: { item: ChatItem }) => (
-      <MessageBubble
-        item={item}
-        pairing={session.pairing}
-        botId={botId}
-        ownerName={ownerName}
-        onOpenImage={setOpenImage}
-      />
+      <>
+        <MessageBubble
+          item={item}
+          pairing={session.pairing}
+          botId={botId}
+          ownerName={ownerName}
+          onOpenImage={setOpenImage}
+        />
+        <ListenButton item={item} pairing={session.pairing} botId={botId} />
+      </>
     ),
     [session.pairing, botId, ownerName],
   );
@@ -141,30 +151,36 @@ export function ChatScreen(props: {
         </View>
       </View>
 
-      <FlatList
-        ref={listRef}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        data={items}
-        keyExtractor={(item) => item.key}
-        renderItem={renderItem}
-        onScroll={onScroll}
-        scrollEventThrottle={100}
-        onContentSizeChange={onContentSizeChange}
-        keyboardShouldPersistTaps="handled"
-        ListEmptyComponent={
-          conversation.loaded ? (
-            <Text style={styles.empty}>Mande um oi para começar a conversa 😊</Text>
-          ) : undefined
-        }
-        ListFooterComponent={
-          conversation.working ? <Text style={styles.typing}>● ● ● digitando…</Text> : undefined
-        }
-      />
+      <VoiceOrb botId={botId}>
+        <FlatList
+          ref={listRef}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          data={items}
+          keyExtractor={(item) => item.key}
+          renderItem={renderItem}
+          onScroll={onScroll}
+          scrollEventThrottle={100}
+          onContentSizeChange={onContentSizeChange}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            conversation.loaded ? (
+              <Text style={styles.empty}>Mande um oi para começar a conversa 😊</Text>
+            ) : undefined
+          }
+          ListFooterComponent={
+            conversation.working ? <Text style={styles.typing}>● ● ● digitando…</Text> : undefined
+          }
+        />
+      </VoiceOrb>
 
       {loadError !== null ? <Text style={styles.error}>{loadError}</Text> : null}
 
-      <Composer bottomInset={keyboardVisible ? 0 : insets.bottom} onSend={onSend} />
+      <Composer
+        bottomInset={keyboardVisible ? 0 : insets.bottom}
+        onSend={onSend}
+        voice={<VoiceControls pairing={session.pairing} botId={botId} />}
+      />
 
       <Modal visible={openImage !== null} transparent onRequestClose={() => setOpenImage(null)}>
         <Pressable style={styles.viewer} onPress={() => setOpenImage(null)}>

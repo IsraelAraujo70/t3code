@@ -1,7 +1,7 @@
 import type { GuestImageUpload } from "@t3tools/contracts";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -53,6 +53,8 @@ function toPicked(assets: readonly ImagePicker.ImagePickerAsset[], offset: numbe
 export function Composer(props: {
   readonly bottomInset: number;
   readonly onSend: (draft: Draft) => Promise<void>;
+  /** Shown before the send button: the voice controls. */
+  readonly voice?: ReactNode;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<readonly PickedImage[]>([]);
@@ -157,6 +159,7 @@ export function Composer(props: {
           maxLength={LIMITS.text}
           editable={!sending}
         />
+        {props.voice}
         <Pressable
           accessibilityLabel="Enviar"
           style={[styles.send, !canSend && styles.sendDisabled]}

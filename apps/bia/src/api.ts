@@ -7,6 +7,8 @@ import type {
   GuestPushDeviceRef,
   GuestSendInput,
   GuestSendResult,
+  VoiceReportInput,
+  VoiceSessionRef,
 } from "@t3tools/contracts";
 
 import type { Pairing } from "./pairing";
@@ -21,6 +23,9 @@ const ROUTES = {
   attachment: "/guest/v1/bots/:botId/attachments/:attachmentId",
   pushRegister: "/guest/v1/push-devices",
   pushUnregister: "/guest/v1/push-devices/unregister",
+  voice: "/guest/v1/bots/:botId/voice",
+  voiceReady: "/guest/v1/voice/ready",
+  voiceReport: "/guest/v1/voice/report",
 } as const satisfies typeof GUEST_API_ROUTES;
 
 export const ERROR_MESSAGES = {
@@ -82,6 +87,10 @@ export function authorizationHeader(pairing: Pairing): string {
 
 export function eventsUrl(pairing: Pairing, botId: BotId): string {
   return pairing.server + botPath(ROUTES.events, botId);
+}
+
+export function voiceUrl(pairing: Pairing, botId: BotId): string {
+  return pairing.server + botPath(ROUTES.voice, botId);
 }
 
 /** An expo-image source for an attachment; images need the same bearer token as the API. */
@@ -169,4 +178,12 @@ export function unregisterPushDevice(
   ref: GuestPushDeviceRef,
 ): Promise<GuestPushDeviceRef> {
   return request(pairing, ROUTES.pushUnregister, { body: { token: ref.token } });
+}
+
+export function voiceReady(pairing: Pairing, ref: VoiceSessionRef): Promise<VoiceSessionRef> {
+  return request(pairing, ROUTES.voiceReady, { body: { sessionId: ref.sessionId } });
+}
+
+export function voiceReport(pairing: Pairing, input: VoiceReportInput): Promise<unknown> {
+  return request(pairing, ROUTES.voiceReport, { body: input });
 }

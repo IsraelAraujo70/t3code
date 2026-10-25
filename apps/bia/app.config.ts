@@ -41,7 +41,8 @@ const config: ExpoConfig = {
       {
         photosPermission: "Permita o acesso às fotos para enviar imagens aos seus assistentes.",
         cameraPermission: "Permita o acesso à câmera para ler o QR code e tirar fotos.",
-        microphonePermission: false,
+        // A string, not `false`: `false` blocks RECORD_AUDIO, which the voice conversation needs.
+        microphonePermission: "Permita o acesso ao microfone para conversar por voz.",
       },
     ],
     [
@@ -52,6 +53,8 @@ const config: ExpoConfig = {
         defaultChannel: "respostas",
       },
     ],
+    // The voice plays as media (loudspeaker, media volume), with the same setup as T3's app.
+    "../mobile/plugins/withFriendVoiceReaderWebrtc.cjs",
     [
       "expo-build-properties",
       {
