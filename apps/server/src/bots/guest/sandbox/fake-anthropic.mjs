@@ -36,6 +36,52 @@ function echo(messages) {
   return `Eco #${count}: ${text}${images ? ` (+${images} ${images === 1 ? "imagem" : "imagens"})` : ""}`;
 }
 
+const SCRIPT_PREFIX = "fake-tools:";
+const FAKE_TOOL_ID = "toolu_fake_";
+
+/**
+ * Scripted tool calls, so a test can drive the real CLI through tools (a subagent, a command).
+ * Looking back from the last message to the assistant's latest reply: results of the tools it
+ * called are quoted back; otherwise a user line `fake-tools: [{"name","input"}…]` makes the reply call those
+ * tools.
+ */
+function scripted(messages) {
+  const pending = [];
+  for (const message of Array.isArray(messages) ? messages.toReversed() : []) {
+    // The CLI may end the list with a system message after the user's.
+    if (message?.role === "system") continue;
+    if (message?.role !== "user") break;
+    const content = message.content;
+    pending.unshift(...(typeof content === "string" ? [{ type: "text", text: content }] : content));
+  }
+  const results = pending.filter(
+    (block) => block?.type === "tool_result" && String(block.tool_use_id).startsWith(FAKE_TOOL_ID),
+  );
+  if (results.length > 0) {
+    const quoted = results.map((block) =>
+      typeof block.content === "string"
+        ? block.content
+        : (Array.isArray(block.content) ? block.content : [])
+            .map((part) => (typeof part?.text === "string" ? part.text : ""))
+            .join("\n"),
+    );
+    return [{ type: "text", text: `Resultado: ${quoted.join("\n---\n").slice(0, 4000)}` }];
+  }
+  for (const block of pending.toReversed()) {
+    if (block?.type !== "text" || typeof block.text !== "string") continue;
+    const line = block.text.split("\n").find((each) => each.trim().startsWith(SCRIPT_PREFIX));
+    if (line === undefined) continue;
+    const calls = JSON.parse(line.trim().slice(SCRIPT_PREFIX.length));
+    return calls.map((call, index) => ({
+      type: "tool_use",
+      id: `${FAKE_TOOL_ID}${Date.now()}_${index}`,
+      name: call.name,
+      input: call.input,
+    }));
+  }
+  return null;
+}
+
 function json(response, status, body) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
@@ -108,15 +154,22 @@ export function createFakeAnthropic({ chunkDelayMs = 25, expectKey, expectBearer
       json(response, 200, { input_tokens });
       return;
     }
-    const text = echo(body.messages);
-    const output_tokens = Math.ceil(text.length / 4);
+    let content;
+    try {
+      content = scripted(body.messages) ?? [{ type: "text", text: echo(body.messages) }];
+    } catch {
+      error(response, 400, "invalid_request_error", `Unreadable ${SCRIPT_PREFIX} line`);
+      return;
+    }
+    const stopReason = content.some((block) => block.type === "tool_use") ? "tool_use" : "end_turn";
+    const output_tokens = Math.ceil(JSON.stringify(content).length / 4);
     const message = {
       id: `msg_fake_${++counter}`,
       type: "message",
       role: "assistant",
       model: body.model,
-      content: [{ type: "text", text }],
-      stop_reason: "end_turn",
+      content,
+      stop_reason: stopReason,
       stop_sequence: null,
       usage: {
         input_tokens,
@@ -140,19 +193,30 @@ export function createFakeAnthropic({ chunkDelayMs = 25, expectKey, expectBearer
         usage: { ...message.usage, output_tokens: 1 },
       },
     });
-    event("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
-    const chunks = text.match(/(?:\S+\s*){1,4}/g) ?? [text];
-    for (let index = 0; index < chunks.length; index++) {
-      if (index > 0) await NodeTimersPromises.setTimeout(chunkDelayMs);
-      if (response.destroyed) return;
-      event("content_block_delta", {
-        index: 0,
-        delta: { type: "text_delta", text: chunks[index] },
-      });
+    for (const [index, block] of content.entries()) {
+      if (block.type === "tool_use") {
+        event("content_block_start", { index, content_block: { ...block, input: {} } });
+        event("content_block_delta", {
+          index,
+          delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) },
+        });
+        event("content_block_stop", { index });
+        continue;
+      }
+      event("content_block_start", { index, content_block: { type: "text", text: "" } });
+      const chunks = block.text.match(/(?:\S+\s*){1,4}/g) ?? [block.text];
+      for (let chunk = 0; chunk < chunks.length; chunk++) {
+        if (chunk > 0) await NodeTimersPromises.setTimeout(chunkDelayMs);
+        if (response.destroyed) return;
+        event("content_block_delta", {
+          index,
+          delta: { type: "text_delta", text: chunks[chunk] },
+        });
+      }
+      event("content_block_stop", { index });
     }
-    event("content_block_stop", { index: 0 });
     event("message_delta", {
-      delta: { stop_reason: "end_turn", stop_sequence: null },
+      delta: { stop_reason: stopReason, stop_sequence: null },
       usage: { output_tokens },
     });
     event("message_stop", {});

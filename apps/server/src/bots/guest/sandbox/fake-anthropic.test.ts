@@ -139,3 +139,51 @@ it("counts tokens, lists models, and returns structured errors", async () => {
     });
   });
 });
+
+it("calls the scripted tools, streamed or not, and quotes back only their results", async () => {
+  await withServer(async (url) => {
+    const script = `fake-tools: ${JSON.stringify([{ name: "Bash", input: { command: "id" } }])}`;
+    const asked = [
+      { role: "user", content: [{ type: "text", text: `Do it.\n${script}` }] },
+      { role: "system", content: "environment" },
+    ];
+    const called = (await (await post(url, asked)).json()) as {
+      content: Array<{ type: string; id: string }>;
+    };
+    expect(called).toMatchObject({
+      content: [{ type: "tool_use", name: "Bash", input: { command: "id" } }],
+      stop_reason: "tool_use",
+    });
+
+    const streamed = await (await post(url, asked, { stream: true })).text();
+    const deltas = streamed
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice(6)));
+    expect(deltas.find((event) => event.type === "content_block_start")).toMatchObject({
+      content_block: { type: "tool_use", name: "Bash" },
+    });
+    expect(deltas.find((event) => event.delta?.type === "input_json_delta")).toMatchObject({
+      delta: { partial_json: '{"command":"id"}' },
+    });
+    expect(deltas.find((event) => event.type === "message_delta")).toMatchObject({
+      delta: { stop_reason: "tool_use" },
+    });
+
+    const answered = await post(url, [
+      ...asked,
+      { role: "assistant", content: called.content },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: called.content[0]!.id, content: "uid=1000" },
+          { type: "tool_result", tool_use_id: "toolu_real", content: "not ours" },
+        ],
+      },
+    ]);
+    expect(await answered.json()).toMatchObject({
+      content: [{ type: "text", text: "Resultado: uid=1000" }],
+      stop_reason: "end_turn",
+    });
+  });
+});

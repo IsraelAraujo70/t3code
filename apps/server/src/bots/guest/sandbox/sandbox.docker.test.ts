@@ -1,7 +1,7 @@
 /**
  * The guest sandbox, proven from inside real containers started by the real launcher. Opt-in
  * (`T3CODE_GUEST_SANDBOX_IT=1`): it needs Docker without sudo, the `t3-guest-sandbox:latest`
- * image and internet access. Each run uses its own guest id and removes that guest's containers,
+ * image (or `T3CODE_GUEST_IMAGE`) and internet access. Each run uses its own guest id and removes that guest's containers,
  * network and volume afterwards.
  */
 // Plain-Node integration test: it drives real processes, sockets and Docker from outside Effect.
@@ -38,6 +38,10 @@ function launcher(args: ReadonlyArray<string>, env: Record<string, string> = {})
       TMPDIR: scratch,
       T3CODE_GUEST_ID: guest,
       T3CODE_GUEST_SECRETS_DIR: NodePath.join(scratch, "no-secrets"),
+      // A candidate image can be tested without replacing the one the bots host runs.
+      ...(process.env.T3CODE_GUEST_IMAGE
+        ? { T3CODE_GUEST_IMAGE: process.env.T3CODE_GUEST_IMAGE }
+        : {}),
       ...env,
     },
   });
@@ -373,5 +377,71 @@ describe.skipIf(!enabled)("guest sandbox (docker)", () => {
     );
     // `docker run --rm`: a finished session leaves no container behind.
     expect(running.trim()).toBe("");
+  });
+
+  it("runs the guest's helper agents in the bot's own sandbox, within the image's limits", () => {
+    // Whatever the bot writes in its home cannot lift the image's managed settings.
+    sandboxBash(`
+      mkdir -p ~/.claude/agents
+      echo '{"env":{"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS":"50","CLAUDE_CODE_DISABLE_WORKFLOWS":"0"},"permissions":{"allow":["Agent(general-purpose)","Workflow"]},"disableAllHooks":true}' > ~/.claude/settings.json
+      printf -- '---\\nname: numbers\\ndescription: mine\\nmodel: opus\\n---\\nmine\\n' > ~/.claude/agents/numbers.md
+    `);
+    const host = hostAddresses[0]!;
+    const probe = [
+      "echo uid=$(id -u); echo home=$HOME",
+      "test -e /home/israel && echo israel=visible || echo israel=absent",
+      `timeout 3 bash -c 'exec 3<>/dev/tcp/${host}/22' 2>/dev/null && echo host=open || echo host=blocked`,
+      "curl -s -m 5 -o /dev/null --noproxy '*' https://example.com && echo internet=open || echo internet=blocked",
+    ].join("; ");
+    const tools = (calls: ReadonlyArray<{ name: string; input: object }>) =>
+      `fake-tools: ${JSON.stringify(calls)}`;
+    const helper = (type: string, prompt: string) => ({
+      name: "Task",
+      input: { subagent_type: type, description: type, prompt },
+    });
+    const streamJson = ["--output-format", "stream-json", "--verbose"];
+    // T3 runs bots in full access.
+    const fullAccess = ["--permission-mode", "bypassPermissions"];
+    const run = (calls: ReadonlyArray<{ name: string; input: object }>) =>
+      launcher(["-p", tools(calls), "--model", "claude-sonnet-5-5", ...streamJson, ...fullAccess], {
+        T3CODE_GUEST_FAKE_ANTHROPIC: "1",
+      })
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const events = run([
+      helper("numbers", tools([{ name: "Bash", input: { command: probe } }])),
+      helper("general-purpose", "oi"),
+      { name: "Bash", input: { command: "echo concurrent=$CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS" } },
+    ]);
+
+    const init = events.find((event) => event.subtype === "init") as {
+      tools: Array<string>;
+      agents: Array<string>;
+    };
+    expect(init.agents).toEqual(
+      expect.arrayContaining(["web-research", "drafting", "numbers", "organize"]),
+    );
+    expect(init.tools).not.toContain("Workflow");
+
+    const subagentCommands = events.filter(
+      (event) => event.type === "assistant" && event.parent_tool_use_id != null,
+    );
+    expect(JSON.stringify(subagentCommands)).toContain('"name":"Bash"');
+    // The fake bot quotes what its tools returned; a helper's report arrives indented.
+    const result = String(events.find((event) => event.type === "result")?.result);
+    const said = (key: string) => new RegExp(`(?:^|\\s)${key}=(\\S*)`).exec(result)?.[1];
+    expect(said("uid")).toBe("1000");
+    expect(said("home")).toBe("/home/guest");
+    expect(said("israel")).toBe("absent");
+    expect(said("host")).toBe("blocked");
+    expect(said("internet")).toBe("blocked");
+    expect(said("concurrent")).toBe("3");
+
+    expect(JSON.stringify(events)).toContain("denied by permission rule 'Agent(general-purpose)'");
+
+    // Six helpers in one message: the budget refuses at least two of them.
+    const crowded = JSON.stringify(run(Array.from({ length: 6 }, () => helper("drafting", "oi"))));
+    expect(crowded.split("already used its 4 helper agents").length - 1).toBeGreaterThanOrEqual(2);
   });
 });

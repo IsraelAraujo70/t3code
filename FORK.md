@@ -194,6 +194,18 @@ foreground, and installs only an APK whose sha256 and size match the manifest. S
 [`GuestAppUpdate.ts`](apps/server/src/bots/guest/GuestAppUpdate.ts) and
 [`appSelfUpdate.ts`](packages/client-runtime/src/appSelfUpdate.ts), shared with the owner's app.
 
+A guest's bot can hand work to helper agents (Claude Code subagents), never to T3's `delegate_task`.
+A subagent runs inside the bot's own Claude process, so it has the same container, network,
+forwarders and credentials and nothing more. The image defines the helpers and their limits as
+Claude Code managed settings in [`sandbox/claude/`](apps/server/src/bots/guest/sandbox/claude/),
+which outrank anything the bot writes in its home: `web-research` (Haiku), `drafting` (Sonnet, low
+effort), `numbers` (Sonnet, medium) and `organize` (Haiku), each with a turn cap, plus the
+read-only built-in Explore. Up to 3 run at once and none can start another. The other built-in agents
+and Workflow are off, and helpers never run in the background, so each one finishes within its
+turn. [`subagent-budget.mjs`](apps/server/src/bots/guest/sandbox/subagent-budget.mjs) allows 4 per
+user message. The forwarder's model and effort limits apply to helpers as to the bot. Changes take
+effect when the image is rebuilt.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
