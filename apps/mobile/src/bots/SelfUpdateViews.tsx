@@ -12,7 +12,7 @@ import {
   isUpdateAvailable,
   type SelfUpdatePhase,
   type SelfUpdateSnapshot,
-} from "./selfUpdate.logic";
+} from "@t3tools/client-runtime/app-self-update";
 import { selfUpdate, useSelfUpdate, useSelfUpdateChecks } from "./selfUpdate";
 
 const short = (commit: string) => commit.slice(0, 10);

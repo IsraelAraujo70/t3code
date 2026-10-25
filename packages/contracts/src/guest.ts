@@ -9,7 +9,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { BotId, VoiceSessionAnswer, VoiceSessionInput } from "./bots.ts";
+import { BotId, MobileUpdateInfo, VoiceSessionAnswer, VoiceSessionInput } from "./bots.ts";
 import { IsoDateTime, MessageId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const GUEST_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -47,6 +47,13 @@ export const GUEST_API_ROUTES = {
   voiceReady: `${GUEST_API_PREFIX}/voice/ready`,
   /** POST VoiceReportInput → `{}` */
   voiceReport: `${GUEST_API_PREFIX}/voice/report`,
+  /** GET → GuestAppUpdateInfo */
+  appUpdate: `${GUEST_API_PREFIX}/app-update`,
+  /**
+   * GET ?commit= → the published APK; 404 while nothing is published, 409 when `commit` is not
+   * the published build anymore.
+   */
+  appUpdateApk: `${GUEST_API_PREFIX}/app-update/apk`,
 } as const;
 
 export const GUEST_LIMITS = {
@@ -189,6 +196,14 @@ export const GuestVoiceEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type GuestVoiceEvent = typeof GuestVoiceEvent.Type;
+
+/**
+ * The guest app's own update, published per guest (the owner's build script writes it): `latest` is
+ * the newest build of this guest's app, null while none is published. Same shape as the owner's
+ * app update (MobileUpdateInfo).
+ */
+export const GuestAppUpdateInfo = MobileUpdateInfo;
+export type GuestAppUpdateInfo = typeof GuestAppUpdateInfo.Type;
 
 /** Every non-2xx answer of the guest listener. Messages are in Portuguese, ready to show the guest. */
 export const GuestErrorBody = Schema.Struct({ error: Schema.String });

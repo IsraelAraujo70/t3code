@@ -60,6 +60,13 @@ const GUEST_WORKSPACE_TEXT = [
   "Reply in the language the user writes in, simply and kindly.",
 ].join("\n\n");
 
+// The helpers are defined in the sandbox image (sandbox/claude/agents), and the limits named here
+// are enforced there (sandbox/claude/managed-settings.json, sandbox/subagent-budget.mjs).
+const GUEST_HELPERS_TEXT = [
+  "For work that takes many steps, start a helper with the Task tool: web-research (several searches, with sources), drafting (a longer text or several versions), numbers (totals, budgets, spreadsheets and Lurian's data, computed exactly) or organize (tidying notes and files). A helper runs in this same container with your access, knows only the brief you write, and returns one report. Put everything it needs in the brief (the question, the data, the tone, the limits), and check its report before you relay it. Do quick things yourself.",
+  "Helpers spend your user's quota: start at most 4 per message and at most 3 at once; they cannot start helpers of their own. A helper cannot ask anyone anything, so confirm a send, a deletion or a change with your user before you ask a helper to do it.",
+].join("\n\n");
+
 // Roles and memories imported from the old friend app still name its tools; this overrides them.
 const WORK_TOOLS_TEXT = [
   "Code changes never happen in this thread. Find the project with t3_project_list, start a thread for the task with t3_thread_launch in its own worktree, and make the first message a self-contained brief: goal, scope, limits, and when it is done. Then call watch_thread on it and end your turn: T3 wakes you when its run ends or it waits on a question or an approval, so never keep a turn or a background agent open just to wait. When woken, read it with t3_thread_read, answer what it is missing with t3_thread_send or t3_pending_request_respond, and once the work is done, report back and call unwatch_thread.",
@@ -174,7 +181,10 @@ const peopleText = (input: GuestBotInstructionInput) => {
   ].join("\n\n");
 };
 
-/** Pure. Identity and role, read-only memories, the sandbox the bot works in, and how to reply. */
+/**
+ * Pure. Identity and role, read-only memories, the sandbox the bot works in, its helper agents,
+ * and how to reply.
+ */
 export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppInstructions {
   const { bot, memories } = input;
   const identity = `You are ${bot.name}, ${input.guestName}'s assistant. This thread is your ongoing conversation with ${input.guestName}.`;
@@ -196,6 +206,7 @@ export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppI
       : []),
     { key: "people", title: "Who is talking", text: peopleText(input) },
     { key: "workspace", title: "Where you work", text: GUEST_WORKSPACE_TEXT },
+    { key: "helpers", title: "Helpers", text: GUEST_HELPERS_TEXT },
     { key: "reply-style", title: "How to reply", text: GUEST_REPLY_STYLE_TEXT },
   ].flatMap(splitSection);
   return { fingerprint: fingerprintOf(sections), sections };

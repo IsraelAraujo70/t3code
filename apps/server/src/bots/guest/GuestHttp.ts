@@ -37,6 +37,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as GuestAppUpdate from "./GuestAppUpdate.ts";
 import { GuestApiError, GuestService } from "./GuestService.ts";
 import { GuestVoice } from "./GuestVoice.ts";
 
@@ -153,8 +154,11 @@ const guarded = <A>(
 
 const ok = (body: unknown) => HttpServerResponse.jsonUnsafe(body);
 
+const queryParam = (url: string, name: string) =>
+  new URL(url, "http://guest.invalid").searchParams.get(name);
+
 const historyLimit = (url: string) => {
-  const raw = new URL(url, "http://guest.invalid").searchParams.get("limit");
+  const raw = queryParam(url, "limit");
   const value = raw === null ? Number.NaN : Number(raw);
   return Number.isFinite(value) ? value : GUEST_LIMITS.historyDefault;
 };
@@ -163,6 +167,7 @@ const historyLimit = (url: string) => {
 const addRoutes = Effect.fn("GuestHttp.addRoutes")(function* (router: HttpRouter.HttpRouter) {
   const service = yield* GuestService;
   const voice = yield* GuestVoice;
+  const appUpdate = yield* GuestAppUpdate.make;
   const auth = (request: HttpServerRequest.HttpServerRequest) =>
     service.authenticate(request.headers["authorization"]);
 
@@ -303,6 +308,34 @@ const addRoutes = Effect.fn("GuestHttp.addRoutes")(function* (router: HttpRouter
       () => ok({}),
     ),
   );
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.appUpdate,
+    guarded((request) => auth(request).pipe(Effect.flatMap(appUpdate.info)), ok),
+  );
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.appUpdateApk,
+    guarded(
+      (request) =>
+        auth(request).pipe(
+          Effect.flatMap((guest) => appUpdate.apk(guest, queryParam(request.url, "commit"))),
+        ),
+      GuestAppUpdate.apkResponse,
+    ),
+  );
+});
+
+/**
+ * The guest listener's whole HTTP app. A router of its own, never HttpRouter.serve: that one reuses
+ * the main listener's memoized router, which would expose every T3 route on this port.
+ */
+export const makeApp = Effect.gen(function* () {
+  const router = yield* HttpRouter.make;
+  yield* addRoutes(router);
+  // Handlers turn their own failures into answers, so what reaches here is an unknown route.
+  // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the router's own signature.
+  return router.asHttpEffect().pipe(Effect.orElseSucceed(() => errorResponse(notFound())));
 });
 
 /**
@@ -321,13 +354,7 @@ export const layerListener = Layer.unwrap(
       yield* Effect.logWarning(`Guest API is off: ${GUEST_LISTEN_ENV} must be host:port.`);
       return Layer.empty;
     }
-    // A router of its own, never HttpRouter.serve: that one reuses the main listener's memoized
-    // router, which would expose every T3 route on this port.
-    const router = yield* HttpRouter.make;
-    yield* addRoutes(router);
-    // Handlers turn their own failures into answers, so what reaches here is an unknown route.
-    // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- the router's own signature.
-    const app = router.asHttpEffect().pipe(Effect.orElseSucceed(() => errorResponse(notFound())));
+    const app = yield* makeApp;
     const listener = HttpServer.serve(app).pipe(
       Layer.provide(NodeHttpServer.layer(() => NodeHttp.createServer(), address)),
       Layer.tap(() => Effect.logInfo("Guest API listening", address)),

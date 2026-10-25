@@ -14,6 +14,7 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ERROR_MESSAGES, type BotId } from "./api";
+import { useAppUpdateChecks } from "./appUpdateDevice";
 import { BotListScreen } from "./BotListScreen";
 import { ChatScreen } from "./ChatScreen";
 import {
@@ -28,6 +29,7 @@ import { PairingScreen } from "./PairingScreen";
 import { createSession, type FinishedReply, type Session } from "./session";
 import { clearStorage, loadPairing } from "./storage";
 import { colors, fontSize } from "./theme";
+import { UpdateNotice } from "./UpdateNotice";
 
 type Phase =
   | { readonly kind: "starting" }
@@ -147,6 +149,7 @@ function SessionApp(props: {
       ) : (
         <BotListScreen session={session} onOpen={openChat} onLogout={props.onLogout} />
       )}
+      {screen.name === "list" ? <UpdateNotice /> : null}
       {banner !== null ? (
         <ReplyBanner banner={banner} onPress={() => openChat(banner.botId)} />
       ) : null}
@@ -165,6 +168,7 @@ function PairedApp(props: {
   const activeBot = useRef<BotId | null>(null);
   // With push registered, the server's FCM message already notifies a backgrounded app.
   const pushRegistered = useRef(false);
+  useAppUpdateChecks(pairing);
 
   useEffect(() => {
     const created = createSession({

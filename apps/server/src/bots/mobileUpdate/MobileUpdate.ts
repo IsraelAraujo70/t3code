@@ -26,16 +26,19 @@ import { authenticateMediaRequest } from "../../auth/http.ts";
 
 export const MOBILE_UPDATE_DIR_ENV = "T3CODE_MOBILE_UPDATE_DIR";
 export const MANIFEST_FILE = "latest.json";
-const APK_CONTENT_TYPE = "application/vnd.android.package-archive";
+export const APK_CONTENT_TYPE = "application/vnd.android.package-archive";
 
-/** The update directory: `T3CODE_MOBILE_UPDATE_DIR`, or `~/.t3-friend/android`. Read at startup. */
-export const updateDir = Effect.gen(function* () {
+/** The directory named by `env`, or `~/.t3-friend/android`. Read at startup. */
+export const configuredDir = Effect.fn("MobileUpdate.configuredDir")(function* (env: string) {
   const fallback = (yield* Path.Path).join(NodeOS.homedir(), ".t3-friend", "android");
-  return yield* Config.String(MOBILE_UPDATE_DIR_ENV).pipe(
+  return yield* Config.String(env).pipe(
     Config.withDefault(fallback),
     Effect.orElseSucceed(() => fallback),
   );
 });
+
+/** The update directory: `T3CODE_MOBILE_UPDATE_DIR`, or `~/.t3-friend/android`. */
+export const updateDir = configuredDir(MOBILE_UPDATE_DIR_ENV);
 
 /** `latest.json`: the build plus the APK's file name inside the update directory. */
 const PublishedManifest = Schema.Struct({

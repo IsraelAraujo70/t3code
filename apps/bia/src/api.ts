@@ -27,6 +27,9 @@ const ROUTES = {
   voice: "/guest/v1/bots/:botId/voice",
   voiceReady: "/guest/v1/voice/ready",
   voiceReport: "/guest/v1/voice/report",
+  // The app update's own copies live in appUpdate.ts.
+  appUpdate: "/guest/v1/app-update",
+  appUpdateApk: "/guest/v1/app-update/apk",
 } as const satisfies typeof GUEST_API_ROUTES;
 
 export const ERROR_MESSAGES = {
