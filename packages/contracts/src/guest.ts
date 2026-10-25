@@ -32,6 +32,11 @@ export const GUEST_API_ROUTES = {
   events: `${GUEST_API_PREFIX}/bots/:botId/events`,
   /** GET → the image bytes of an attachment on one of the bot's messages */
   attachment: `${GUEST_API_PREFIX}/bots/:botId/attachments/:attachmentId`,
+  /**
+   * GET → a page the bot published (`GuestMessage.html`), as text/html under a sandbox CSP: the
+   * document gets an opaque origin, so it never reaches the guest API or the app's storage.
+   */
+  html: `${GUEST_API_PREFIX}/bots/:botId/html/:attachmentId`,
   /** POST GuestPushDeviceInput → GuestPushDeviceRef */
   pushRegister: `${GUEST_API_PREFIX}/push-devices`,
   /** POST GuestPushDeviceRef → GuestPushDeviceRef */
@@ -71,6 +76,16 @@ export const GuestAttachment = Schema.Struct({
 });
 export type GuestAttachment = typeof GuestAttachment.Type;
 
+/** A page the bot published with its `html_render` tool; the app shows it in a sandboxed frame. */
+export const GuestHtmlRender = Schema.Struct({
+  /** The `html` route's `:attachmentId`. */
+  id: TrimmedNonEmptyString,
+  title: Schema.String,
+  /** The height the bot asked for, in CSS pixels; the app fits the frame to the page it loads. */
+  height: Schema.Number,
+});
+export type GuestHtmlRender = typeof GuestHtmlRender.Type;
+
 export const GuestMessage = Schema.Struct({
   id: MessageId,
   role: Schema.Literals(["user", "assistant"]),
@@ -81,6 +96,11 @@ export const GuestMessage = Schema.Struct({
   sender: Schema.optionalKey(Schema.Literals(["guest", "owner"])),
   text: Schema.String,
   attachments: Schema.Array(GuestAttachment),
+  /**
+   * A page the bot published. The bot's own tools (an image it generated, a page) arrive as
+   * assistant messages of their own with empty text, placed before the reply that follows them.
+   */
+  html: Schema.optionalKey(GuestHtmlRender),
   /** True while the bot is still writing this reply. */
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,

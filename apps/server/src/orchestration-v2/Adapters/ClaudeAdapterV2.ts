@@ -124,7 +124,8 @@ import {
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
-// Fork (friend): guest sandboxes discover no host skills.
+// Fork (friend): guest sandboxes discover no host skills and get their AppTools.
+import { withClaudeAppTools } from "../../bots/guest/claudeAppTools.ts";
 import { isSandboxLauncher } from "../../bots/guest/sandboxInstance.ts";
 import {
   compileClaudeModelSelection,
@@ -9052,14 +9053,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
-          const mcpOverrides = claudeMcpQueryOverrides({
-            mcpSession: yield* mcpSessions.read(turnInput.threadId),
-            readOnlySandbox:
-              sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
-            ...(queryPolicy.allowedTools === undefined
-              ? {}
-              : { allowedTools: queryPolicy.allowedTools }),
-          });
+          // Fork (friend): a guest sandbox's AppTools run in this process, reached over the
+          // CLI's stdio; other instances never get them.
+          const mcpOverrides = withClaudeAppTools(
+            claudeMcpQueryOverrides({
+              mcpSession: yield* mcpSessions.read(turnInput.threadId),
+              readOnlySandbox:
+                sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
+              ...(queryPolicy.allowedTools === undefined
+                ? {}
+                : { allowedTools: queryPolicy.allowedTools }),
+            }),
+            isSandboxLauncher(adapterOptions.settings.binaryPath) ? turnInput.appTools : undefined,
+          );
           // Fork (friend): the system prompt is fixed when the query opens, so changed bot
           // instructions replace the query through the same path as a changed policy.
           const queryPolicyKey =

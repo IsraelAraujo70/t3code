@@ -72,8 +72,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "packages/provider-core/src/server/ProviderAdapter.ts",
-    markers: 1,
-    why: "appInstructions on the turn input",
+    markers: 2,
+    why: "appInstructions and appTools on the turn input",
   },
   {
     file: "packages/client-runtime/src/rpc/client.ts",
@@ -126,7 +126,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/src/orchestration-v2/RunExecutionService.ts",
     markers: 4,
-    why: "resolve bot instructions per turn",
+    why: "resolve bot instructions and guest tools per turn",
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.tsx",
@@ -155,8 +155,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
-    markers: 6,
-    why: "bot instructions in the system prompt; no host skills for guest sandboxes",
+    markers: 7,
+    why: "bot instructions in the system prompt; no host skills for guest sandboxes; guest app tools",
   },
   {
     file: "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
