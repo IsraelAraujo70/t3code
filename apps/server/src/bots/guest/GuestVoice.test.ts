@@ -10,6 +10,7 @@ import {
   type VoiceSessionInput,
   type VoiceSessionRef,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -48,7 +49,7 @@ const setup = Effect.fn("test.setup")(function* () {
   const readies: VoiceSessionRef[] = [];
   const reports: VoiceReportInput[] = [];
   /** Each opened session's events after its answer; failing one fails that session. */
-  const sessions: Array<Queue.Queue<VoiceSessionEvent, BotsError>> = [];
+  const sessions: Array<Queue.Queue<VoiceSessionEvent, BotsError | Cause.Done>> = [];
   const service = yield* GuestVoice.GuestVoice.pipe(
     Effect.provide(
       GuestVoice.layer.pipe(
@@ -76,7 +77,10 @@ const setup = Effect.fn("test.setup")(function* () {
             session: (input, options) =>
               Stream.unwrap(
                 Effect.gen(function* () {
-                  const events = yield* Queue.unbounded<VoiceSessionEvent, BotsError>();
+                  const events = yield* Queue.unbounded<
+                    VoiceSessionEvent,
+                    BotsError | Cause.Done
+                  >();
                   const sessionId = VoiceSessionId.make(`session-${opened.length + 1}`);
                   opened.push({ input, post: options?.post ?? (() => Effect.void) });
                   sessions.push(events);

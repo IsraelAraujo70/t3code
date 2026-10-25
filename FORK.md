@@ -171,6 +171,18 @@ and forwards `GOOGLE_API_URL` (`http://egress:8082`) to the Gmail, Sheets, Calen
 APIs only; the image's `/opt/t3-guest/google-apis.md` tells the bot how to call them. Claude replies reach the app per completed text block, as on every T3 surface,
 not per token.
 
+The guest app has voice as well: the composer's wave button, the orb, and a listen button under each
+reply, on client-runtime's voice controller. The guest listener carries the session
+(`POST /guest/v1/bots/:botId/voice` streams the answer and the bot's activity as SSE, then
+`/voice/ready` and `/voice/report`). The thread is always the bot's conversation, and what the guest
+says goes through the guest send rules (as the guest, on the bot's model, sandbox only), so the bot
+gets `<guest name>: 🎙️ …`. Realtime runs on the host with its ChatGPT login, and no credential
+reaches the app or the sandbox. A guest holds one voice session at a time, a revoked token ends it,
+and the voice does not change mid-call. See
+[`GuestVoice.ts`](apps/server/src/bots/guest/GuestVoice.ts);
+[`guestVoiceProbe.ts`](apps/server/src/bots/guest/guestVoiceProbe.ts) runs it against a server's
+real voice.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
