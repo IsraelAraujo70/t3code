@@ -63,11 +63,14 @@ import { BotsStore } from "../BotsStore.ts";
 import {
   fromGuest,
   GUEST_MESSAGE_ID_PREFIX,
+  isGuestVisible,
   ownerName,
   withoutGuestPrefix,
 } from "./guestSender.ts";
+import { type GuestArtifact, GuestArtifacts } from "./GuestArtifacts.ts";
 import { hashGuestToken } from "./guestToken.ts";
 import { type GuestRecord, GuestStore } from "./GuestStore.ts";
+import { conversationImages, imageRelativePath } from "./GuestTools.ts";
 import { isSandboxedFor } from "./sandboxInstance.ts";
 
 /** An answer for the guest: `status` is the HTTP status, `message` is shown to them, in Portuguese. */
@@ -89,6 +92,11 @@ export interface GuestVoiceConversation {
   readonly post: (text: string) => Effect.Effect<void, GuestApiError>;
   /** Completes once the guest's token is revoked or the bot stops being theirs. */
   readonly revoked: Effect.Effect<void>;
+}
+
+/** A page a guest bot published, ready to serve under the html route's sandbox CSP. */
+export interface GuestHtmlPage {
+  readonly html: string;
 }
 
 export class GuestService extends Context.Service<
@@ -114,6 +122,7 @@ export class GuestService extends Context.Service<
       guest: GuestRecord,
       botId: string,
     ) => Effect.Effect<Stream.Stream<GuestStreamEvent>, GuestApiError>;
+    /** An image a person sent in the conversation, or one the bot's tools generated there. */
     readonly attachment: (
       guest: GuestRecord,
       botId: string,
@@ -124,6 +133,12 @@ export class GuestService extends Context.Service<
       guest: GuestRecord,
       botId: string,
     ) => Effect.Effect<GuestVoiceConversation, GuestApiError>;
+    /** A page the bot published in the conversation; 404 for anything else. */
+    readonly html: (
+      guest: GuestRecord,
+      botId: string,
+      attachmentId: string,
+    ) => Effect.Effect<GuestHtmlPage, GuestApiError>;
     readonly registerPushDevice: (
       guest: GuestRecord,
       input: GuestPushDeviceInput,
@@ -145,11 +160,6 @@ const internal = (message: string) => (cause: unknown) =>
   new GuestApiError({ status: 500, message, cause });
 
 const isBotId = Schema.is(BotId);
-
-/** The messages a guest sees: what a person typed and what the bot answered. */
-const isGuestVisible = (message: OrchestrationV2ConversationMessage) =>
-  message.senderThreadId === undefined &&
-  (message.role === "assistant" || (message.role === "user" && message.createdBy === "user"));
 
 /** Assistant replies as they are; user messages marked guest or owner, the guest's unprefixed. */
 const toGuestMessage = (
@@ -178,6 +188,25 @@ const baseMessage = (message: OrchestrationV2ConversationMessage) => ({
   createdAt: DateTime.formatIso(message.createdAt),
 });
 
+/**
+ * What a bot's tool made, as an assistant message of its own: an image, or a page. Its id is
+ * derived from the artifact, so history and the live stream agree on it.
+ */
+export const artifactMessage = (artifact: GuestArtifact): GuestMessage => ({
+  id: MessageId.make(`artifact:${artifact.id}`),
+  role: "assistant",
+  text: "",
+  attachments:
+    artifact.kind === "image"
+      ? [{ id: artifact.id, name: artifact.name, mimeType: artifact.mimeType }]
+      : [],
+  ...(artifact.kind === "html"
+    ? { html: { id: artifact.id, title: artifact.name, height: artifact.height ?? 400 } }
+    : {}),
+  streaming: false,
+  createdAt: artifact.createdAt,
+});
+
 /** Breaks "ultrathink", which Claude Code reads anywhere as a request for deeper reasoning. */
 const withoutKeywords = (text: string) =>
   text.replace(/ultrathink/gi, (word) => `${word.slice(0, 5)}\u200b${word.slice(5)}`);
@@ -203,6 +232,7 @@ const isWorking = (run: Pick<OrchestrationV2Run, "status" | "queueHeld">) =>
 
 const make = Effect.gen(function* () {
   const guests = yield* GuestStore;
+  const artifacts = yield* GuestArtifacts;
   const bots = yield* BotsStore;
   const botsService = yield* BotsService;
   const engine = yield* Orchestrator.OrchestratorV2;
@@ -297,10 +327,16 @@ const make = Effect.gen(function* () {
   ) {
     const bot = yield* ownedConversation(guest, botId);
     const { messages, runs } = yield* readThread(threadOf(bot));
-    const visible = messages.filter(isGuestVisible);
+    const made = yield* artifacts
+      .listForThread(threadOf(bot))
+      .pipe(Effect.mapError(internal("Não consegui ler a conversa.")));
+    const all = [
+      ...messages.filter(isGuestVisible).map((message) => toGuestMessage(guest, message)),
+      ...made.map(artifactMessage),
+    ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
     const count = Math.min(Math.max(1, Math.trunc(limit)), GUEST_LIMITS.historyMax);
     return {
-      messages: visible.slice(-count).map((message) => toGuestMessage(guest, message)),
+      messages: all.slice(-count),
       working: runs.some(isWorking),
     } satisfies GuestHistoryResponse;
   });
@@ -472,16 +508,27 @@ const make = Effect.gen(function* () {
       return [{ type: "working", working }];
     };
     const initial: GuestStreamEvent = { type: "working", working };
+    const made = artifacts.recorded.pipe(
+      Stream.filter((artifact) => artifact.threadId === threadId),
+      Stream.map((artifact): GuestStreamEvent => ({
+        type: "message",
+        message: artifactMessage(artifact),
+      })),
+    );
     const live = Stream.make(initial).pipe(
       Stream.concat(
-        engine.streamStoredEventsFrom({ threadId, afterSequence }).pipe(
-          Stream.map((stored) => changes(stored.event)),
-          Stream.flattenIterable,
-          Stream.catchCause((cause) =>
-            Stream.fromEffect(
-              Effect.logWarning("A guest's live stream failed", { threadId, cause }),
-            ).pipe(Stream.drain),
+        Stream.merge(
+          engine.streamStoredEventsFrom({ threadId, afterSequence }).pipe(
+            Stream.map((stored) => changes(stored.event)),
+            Stream.flattenIterable,
+            Stream.catchCause((cause) =>
+              Stream.fromEffect(
+                Effect.logWarning("A guest's live stream failed", { threadId, cause }),
+              ).pipe(Stream.drain),
+            ),
           ),
+          made,
+          { haltStrategy: "left" },
         ),
       ),
       Stream.interruptWhen(revoked(guest, bot)),
@@ -510,11 +557,13 @@ const make = Effect.gen(function* () {
   ) {
     const bot = yield* ownedConversation(guest, botId);
     const { messages } = yield* readThread(threadOf(bot));
-    const found = messages
-      .filter(isGuestVisible)
-      .flatMap((message) => message.attachments)
-      .find((candidate) => candidate.type === "image" && candidate.id === attachmentId);
-    const relative = found === undefined ? null : attachmentRelativePath(found);
+    const made = yield* artifacts
+      .listForThread(threadOf(bot))
+      .pipe(Effect.mapError(internal("Não consegui ler a conversa.")));
+    const found = conversationImages(messages, made).find(
+      (candidate) => candidate.id === attachmentId,
+    );
+    const relative = found === undefined ? null : imageRelativePath(found);
     if (found === undefined || relative === null) {
       return yield* new GuestApiError({ status: 404, message: "Imagem não encontrada." });
     }
@@ -539,6 +588,23 @@ const make = Effect.gen(function* () {
       post: (text: string) => send(guest, bot.id, { text }).pipe(Effect.asVoid),
       revoked: revoked(guest, bot),
     } satisfies GuestVoiceConversation;
+  });
+
+  const html = Effect.fn("GuestService.html")(function* (
+    guest: GuestRecord,
+    botId: string,
+    attachmentId: string,
+  ) {
+    const bot = yield* ownedConversation(guest, botId);
+    const artifact = yield* artifacts
+      .get(threadOf(bot), attachmentId)
+      .pipe(Effect.mapError(internal("Não consegui abrir a página.")));
+    const notFound = new GuestApiError({ status: 404, message: "Página não encontrada." });
+    if (Option.isNone(artifact) || artifact.value.kind !== "html") return yield* notFound;
+    const page = yield* fs
+      .readFileString(path.join(config.attachmentsDir, `${artifact.value.id}.html`))
+      .pipe(Effect.mapError(() => notFound));
+    return { html: page } satisfies GuestHtmlPage;
   });
 
   const registerPushDevice = Effect.fn("GuestService.registerPushDevice")(function* (
@@ -576,6 +642,7 @@ const make = Effect.gen(function* () {
     events,
     attachment,
     voiceConversation,
+    html,
     registerPushDevice,
     unregisterPushDevice,
   });

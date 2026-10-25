@@ -15,12 +15,15 @@ import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
 import * as BotCompactionReactor from "./compaction/BotCompactionReactor.ts";
+import * as CodexImages from "./guest/CodexImages.ts";
+import * as GuestArtifacts from "./guest/GuestArtifacts.ts";
 import * as GuestHttp from "./guest/GuestHttp.ts";
 import * as GuestIdle from "./guest/GuestIdle.ts";
 import * as GuestModelPin from "./guest/GuestModelPin.ts";
 import * as GuestService from "./guest/GuestService.ts";
 import * as GuestStore from "./guest/GuestStore.ts";
 import * as GuestVoice from "./guest/GuestVoice.ts";
+import * as GuestTools from "./guest/GuestTools.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
 import * as BotQueueReactor from "./queue/BotQueueReactor.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
@@ -122,6 +125,17 @@ const layerGuestStoreOff = Layer.succeed(
   }),
 );
 
+const layerGuestArtifactsOff = Layer.succeed(
+  GuestArtifacts.GuestArtifacts,
+  GuestArtifacts.GuestArtifacts.of({
+    record: notHost,
+    listForThread: notHost,
+    get: notHost,
+    countImagesSince: notHost,
+    recorded: Stream.empty,
+  }),
+);
+
 /** Everything a server that is not the bots host provides instead of bots. */
 export const layerOff = Layer.mergeAll(
   layerStoreOff,
@@ -129,21 +143,31 @@ export const layerOff = Layer.mergeAll(
   layerServiceOff,
   layerThreadWatchOff,
   layerGuestStoreOff,
+  layerGuestArtifactsOff,
 );
 
 /**
- * BotsStore, GuestStore, BotsInstructions and GuestModelPin, for the orchestration runtime
- * (RunExecutionService, Orchestrator) and the bots layers above it.
+ * BotsStore, GuestStore, BotsInstructions, GuestModelPin, GuestTools and GuestArtifacts, for the
+ * orchestration runtime (RunExecutionService, Orchestrator) and the bots layers above it. Other
+ * servers provide no GuestTools, so their turns carry no app tools.
  */
 export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? Layer.merge(BotsInstructions.layer, GuestModelPin.layer).pipe(
+        ? Layer.mergeAll(BotsInstructions.layer, GuestModelPin.layer, GuestTools.layer).pipe(
+            Layer.provideMerge(GuestArtifacts.layer),
+            Layer.provide(CodexImages.layer),
+            Layer.provide(ProjectionStore.layer),
             Layer.provideMerge(BotsStore.layer),
             Layer.provideMerge(GuestStore.layer),
           )
-        : Layer.mergeAll(layerStoreOff, layerInstructionsOff, layerGuestStoreOff),
+        : Layer.mergeAll(
+            layerStoreOff,
+            layerInstructionsOff,
+            layerGuestStoreOff,
+            layerGuestArtifactsOff,
+          ),
     ),
   ),
 );

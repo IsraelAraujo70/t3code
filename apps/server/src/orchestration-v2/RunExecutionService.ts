@@ -40,6 +40,7 @@ import * as Stream from "effect/Stream";
 // Fork (friend): bot threads get their role and memories as trusted turn instructions.
 import * as Option from "effect/Option";
 import * as BotsInstructions from "../bots/BotsInstructions.ts";
+import * as GuestTools from "../bots/guest/GuestTools.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -616,6 +617,7 @@ export const layer: Layer.Layer<
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     // Fork (friend): optional, so runtimes and tests without bots keep the upstream behaviour.
     const botsInstructions = yield* Effect.serviceOption(BotsInstructions.BotsInstructions);
+    const guestTools = yield* Effect.serviceOption(GuestTools.GuestTools);
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1540,6 +1542,16 @@ export const layer: Layer.Layer<
                 }).pipe(Effect.as(undefined)),
               ),
             );
+        const appTools = Option.isNone(guestTools)
+          ? undefined
+          : yield* guestTools.value.forThread(input.run.threadId).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to read guest tools.", {
+                  threadId: input.run.threadId,
+                  cause,
+                }).pipe(Effect.as(undefined)),
+              ),
+            );
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
@@ -1561,8 +1573,9 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
-          // Fork (friend): only bot threads carry app instructions.
+          // Fork (friend): only bot threads carry app instructions, only guest bots app tools.
           ...(appInstructions === undefined ? {} : { appInstructions }),
+          ...(appTools === undefined ? {} : { appTools }),
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.

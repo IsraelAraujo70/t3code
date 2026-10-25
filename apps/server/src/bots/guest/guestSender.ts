@@ -4,6 +4,7 @@
  * reading the thread in T3) can tell the guest from the owner; the guest's app gets the text back
  * without the prefix.
  */
+import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -27,3 +28,10 @@ export const withoutGuestPrefix = (guestName: string, text: string) => {
   const prefix = `${guestName}:`;
   return text.startsWith(prefix) ? text.slice(prefix.length).trimStart() : text;
 };
+
+/** The messages a guest sees: what a person typed and what the bot answered. */
+export const isGuestVisible = (
+  message: Pick<OrchestrationV2ConversationMessage, "senderThreadId" | "role" | "createdBy">,
+) =>
+  message.senderThreadId === undefined &&
+  (message.role === "assistant" || (message.role === "user" && message.createdBy === "user"));

@@ -438,7 +438,35 @@ export interface ProviderAdapterV2TurnInput {
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
   // Fork (friend): standing instructions T3 owns for this thread (a bot's role, memories and
   // owner profile), resolved per turn. Adapters deliver them at system or developer level.
+  // `appTools` are tools T3 runs in its own process for this thread (a guest sandbox's tools);
+  // an adapter that cannot offer them leaves them out.
   readonly appInstructions?: AppInstructions;
+  readonly appTools?: AppTools;
+}
+
+/** Fork (friend): tools T3 runs for one thread, offered to the agent as one MCP server. */
+export interface AppTools {
+  /** The server name the agent sees. */
+  readonly server: string;
+  readonly tools: ReadonlyArray<AppTool>;
+}
+
+export interface AppTool {
+  readonly name: string;
+  readonly description: string;
+  /** JSON Schema of the arguments object. */
+  readonly inputSchema: {
+    readonly type: "object";
+    readonly properties: Readonly<Record<string, unknown>>;
+    readonly required?: ReadonlyArray<string>;
+  };
+  /** Never rejects: failures come back as `isError` results the agent reads. */
+  readonly run: (args: unknown) => Promise<AppToolResult>;
+}
+
+export interface AppToolResult {
+  readonly text: string;
+  readonly isError?: boolean;
 }
 
 /**

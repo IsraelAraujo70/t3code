@@ -183,6 +183,20 @@ and the voice does not change mid-call. See
 [`guestVoiceProbe.ts`](apps/server/src/bots/guest/guestVoiceProbe.ts) runs it against a server's
 real voice.
 
+A guest's bot also has three tools that run in the T3 server process
+([`GuestTools.ts`](apps/server/src/bots/guest/GuestTools.ts)): `generate_image`, `list_images` and
+`html_render`. They reach the sandboxed Claude Code as an in-process Agent SDK MCP server over the
+CLI's own stdin/stdout (the turn's `appTools`, attached only to sandbox instances), so no network
+route or credential enters the sandbox, and each tool is bound to the turn's thread. Images come from
+Codex with the `codex` instance's ChatGPT login: one ephemeral app-server thread per image with every
+MCP server, app, plugin and tool feature off, a read-only sandbox, and a guard that stops on any item
+but the image ([`CodexImages.ts`](apps/server/src/bots/guest/CodexImages.ts)); edits take only images
+of the same conversation. `T3CODE_GUEST_IMAGES_PER_DAY` (default 30) caps them per guest. A page is
+stored as given and never runs on the host; the guest API serves it under T3's sandbox CSP. What the
+tools made is recorded in `bots.sqlite` (`guest_artifacts`): the bot's own tool output passes through
+its sandbox and can be forged, so the guest API serves only recorded artifacts. They appear in the
+guest's history as assistant messages without text, before the reply.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork

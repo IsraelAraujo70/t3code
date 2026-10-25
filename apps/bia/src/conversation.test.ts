@@ -167,3 +167,27 @@ describe("lastMessagePreview", () => {
     expect(authorOf({ role: "assistant" })).toBe("bot");
   });
 });
+
+describe("what the bot's tools made", () => {
+  const image = message("artifact:img", "05", {
+    text: "",
+    attachments: [{ id: "img", name: "imagem.png", mimeType: "image/png" }],
+  });
+  const page = message("artifact:page", "06", {
+    text: "",
+    html: { id: "page", title: "Orçamento", height: 400 },
+  });
+
+  it("is not announced as a reply; the text reply after it is", () => {
+    expect(isNewlyFinishedReply(undefined, image)).toBe(false);
+    expect(isNewlyFinishedReply(undefined, page)).toBe(false);
+    expect(isNewlyFinishedReply(undefined, message("reply", "07"))).toBe(true);
+  });
+
+  it("previews as an image or the page's title in the bot list", () => {
+    const withImage = run([{ type: "history", history: { messages: [image], working: false } }]);
+    expect(lastMessagePreview(withImage)).toEqual({ from: "bot", text: "🖼️ Imagem" });
+    const withPage = run([{ type: "history", history: { messages: [page], working: false } }]);
+    expect(lastMessagePreview(withPage)).toEqual({ from: "bot", text: "📄 Orçamento" });
+  });
+});

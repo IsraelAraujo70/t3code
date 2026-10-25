@@ -11,24 +11,37 @@
     "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {
+    "@shikijs/core": "4.2.0",
+    "@shikijs/engine-javascript": "4.2.0",
+    "@shikijs/langs": "4.2.0",
+    "@shikijs/themes": "4.2.0",
     "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "expo": "58.0.14",
     "expo-build-properties": "~58.0.11",
     "expo-camera": "~58.0.10",
+    "expo-clipboard": "~58.0.3",
     "expo-device": "~58.0.5",
+    "expo-file-system": "~58.0.9",
     "expo-image": "~58.0.15",
     "expo-image-picker": "~58.0.10",
     "expo-notifications": "~58.1.5",
     "expo-secure-store": "~58.0.2",
+    "expo-sharing": "58.0.19",
     "react": "catalog:",
     "react-native": "0.88.0",
     "react-native-safe-area-context": "~5.10.1",
     "react-native-svg": "15.16.0",
-    "react-native-webrtc": "155.0.1"
+    "react-native-webrtc": "155.0.1",
+    "react-native-webview": "14.0.1",
+    "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
+    "unified": "catalog:"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@t3tools/contracts": "workspace:*",
+    "@types/mdast": "^4.0.4",
     "@types/react": "catalog:",
     "babel-preset-expo": "~58.0.17",
     "typescript": "catalog:"

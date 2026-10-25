@@ -246,9 +246,24 @@ importers:
 
   apps/bia:
     dependencies:
+      '@shikijs/core':
+        specifier: 4.2.0
+        version: 4.2.0
+      '@shikijs/engine-javascript':
+        specifier: 4.2.0
+        version: 4.2.0
+      '@shikijs/langs':
+        specifier: 4.2.0
+        version: 4.2.0
+      '@shikijs/themes':
+        specifier: 4.2.0
+        version: 4.2.0
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       expo:
         specifier: 58.0.14
         version: 58.0.14(1106b1d11fc0fad6d0556b6a93329d99)
@@ -258,9 +273,15 @@ importers:
       expo-camera:
         specifier: ~58.0.10
         version: 58.0.10(@types/emscripten@1.41.5)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+      expo-clipboard:
+        specifier: ~58.0.3
+        version: 58.0.3(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
       expo-device:
         specifier: ~58.0.5
         version: 58.0.5(expo@58.0.14)
+      expo-file-system:
+        specifier: ~58.0.9
+        version: 58.0.9(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))
       expo-image:
         specifier: ~58.0.15
         version: 58.0.15(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -273,6 +294,9 @@ importers:
       expo-secure-store:
         specifier: ~58.0.2
         version: 58.0.2(expo@58.0.14)
+      expo-sharing:
+        specifier: 58.0.19
+        version: 58.0.19(patch_hash=61a9741dc6166fdbb5baa2e489275a65dd21aa11d2c915f490a1b337a4468e76)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@7.0.2)
       react:
         specifier: 'catalog:'
         version: 19.3.0
@@ -288,6 +312,18 @@ importers:
       react-native-webrtc:
         specifier: 155.0.1
         version: 155.0.1(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))
+      react-native-webview:
+        specifier: 14.0.1
+        version: 14.0.1(patch_hash=81caa279ec3dc1f81209062133b66e8f824e13f106cca57f1fa732a72c2ab378)(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+      remark-gfm:
+        specifier: 'catalog:'
+        version: 4.0.1
+      remark-parse:
+        specifier: 'catalog:'
+        version: 11.0.0
+      unified:
+        specifier: 'catalog:'
+        version: 11.0.5
     devDependencies:
       '@babel/core':
         specifier: ^7.29.7
@@ -295,6 +331,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0

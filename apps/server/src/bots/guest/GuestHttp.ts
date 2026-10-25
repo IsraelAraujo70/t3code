@@ -43,6 +43,14 @@ import { GuestVoice } from "./GuestVoice.ts";
 export const GUEST_LISTEN_ENV = "T3CODE_GUEST_LISTEN";
 
 const KEEP_ALIVE = "25 seconds";
+
+/**
+ * T3's own policy for agent HTML (http.ts): the sandbox gives the page an opaque origin, so its
+ * scripts run but never reach this API with the guest's token, cookies or storage, and it raises
+ * no modal dialogs.
+ */
+export const GUEST_HTML_CONTENT_SECURITY_POLICY =
+  "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 const encoder = new TextEncoder();
 
 /** Pure. `127.0.0.1:3794`, `[::1]:3794`; null for anything else. */
@@ -211,6 +219,27 @@ const addRoutes = Effect.fn("GuestHttp.addRoutes")(function* (router: HttpRouter
         HttpServerResponse.uint8Array(file.bytes, {
           contentType: file.mimeType,
           headers: { "cache-control": "private, max-age=31536000, immutable" },
+        }),
+    ),
+  );
+  yield* router.add(
+    "GET",
+    GUEST_API_ROUTES.html,
+    guarded(
+      (request, params) =>
+        auth(request).pipe(
+          Effect.flatMap((guest) =>
+            service.html(guest, params.botId ?? "", params.attachmentId ?? ""),
+          ),
+        ),
+      (page) =>
+        HttpServerResponse.text(page.html, {
+          contentType: "text/html; charset=utf-8",
+          headers: {
+            "content-security-policy": GUEST_HTML_CONTENT_SECURITY_POLICY,
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, max-age=3600",
+          },
         }),
     ),
   );
