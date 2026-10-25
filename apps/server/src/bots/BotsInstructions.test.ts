@@ -208,7 +208,7 @@ describe("buildGuestBotInstructions", () => {
     });
     assert.deepStrictEqual(
       sections.map((section) => section.key),
-      ["bot", "memories", "people", "workspace", "reply-style"],
+      ["bot", "memories", "people", "workspace", "helpers", "reply-style"],
     );
     const shared = buildGuestBotInstructions({
       bot,
@@ -228,6 +228,9 @@ describe("buildGuestBotInstructions", () => {
     assert.include(sections[3]!.text, "/home/guest");
     assert.include(sections[3]!.text, "$GOOGLE_API_URL");
     assert.include(sections[3]!.text, "$GOOGLE_APIS_DOC");
+    for (const helper of ["Task tool", "web-research", "drafting", "numbers", "organize"]) {
+      assert.include(sections[4]!.text, helper);
+    }
     const all = sections.map((section) => section.text).join("\n");
     for (const ownerOnly of ["memory_save", "t3_thread_launch", "delegate_task", "bot_create"]) {
       assert.notInclude(all, ownerOnly);

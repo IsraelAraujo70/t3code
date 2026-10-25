@@ -25,7 +25,11 @@ RUN usermod -l guest -d /home/guest -m node && groupmod -n guest node
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/t3-guest-entrypoint
 COPY proxy-main.mjs egress-proxy.mjs api-forward.mjs lurian-forward.mjs google-forward.mjs \
-  fake-anthropic.mjs google-apis.md /opt/t3-guest/
+  fake-anthropic.mjs google-apis.md subagent-budget.mjs /opt/t3-guest/
+# Managed settings outrank anything the bot writes in its home: the helper agents it may start and
+# their limits (subagent-budget.mjs). Root-owned on a read-only root, so the bot cannot change them.
+COPY claude/managed-settings.json /etc/claude-code/managed-settings.json
+COPY claude/agents/ /etc/claude-code/.claude/agents/
 
 ENV HOME=/home/guest \
     DISABLE_AUTOUPDATER=1 \
