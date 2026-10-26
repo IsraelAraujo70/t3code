@@ -28,6 +28,8 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+// Fork (friend): the fork Mac app's self-update notice.
+import { DesktopSelfUpdateNotice } from "../../bots/DesktopSelfUpdateNotice";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
@@ -234,6 +236,8 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
+      {/* Fork (friend): the fork Mac app's "update available" line. */}
+      <DesktopSelfUpdateNotice />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

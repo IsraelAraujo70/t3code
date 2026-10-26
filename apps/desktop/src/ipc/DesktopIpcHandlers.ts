@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
+// Fork (friend): the Mac app updates itself from the bots host.
+import { installFriendSelfUpdate } from "../friend/FriendSelfUpdate.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
@@ -172,4 +174,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   }
   yield* ipc.handle(PreviewIpc.listBrowserImportSources);
   yield* ipc.handle(PreviewIpc.importBrowserCookies);
+  // Fork (friend): the Mac app's self-update IPC.
+  yield* installFriendSelfUpdate();
 });

@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - app.config runs this before any Effect runtime exists.
 /**
- * The commit a friend APK is built from, embedded as `extra.friendBuild` by `apps/mobile/app.config.ts`
- * so the app can compare itself with the build its server publishes. The build script refuses a
- * dirty checkout, so HEAD is what the APK contains.
+ * The commit a fork app is built from, so the app can compare itself with the build its server
+ * publishes: `extra.friendBuild` in the APK (`apps/mobile/app.config.ts`) and `friendBuild` in the
+ * Mac app's package.json (`scripts/build-desktop-artifact.ts`). The build scripts refuse a dirty
+ * checkout, so HEAD is what the app contains.
  */
 import * as NodeChildProcess from "node:child_process";
 

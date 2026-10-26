@@ -1,12 +1,13 @@
 /**
- * An Android app of the fork updating itself from a server: the owner's friend APK
- * (`apps/mobile`, from the bots host) and the guest app (`apps/bia`, from the guest API). Each app
- * supplies the network, file and installer steps; this decides when to check, what to offer, and
- * that nothing is installed unless its sha256 and size match the published build.
+ * An app of the fork updating itself from a server: the owner's friend APK (`apps/mobile`) and Mac
+ * app (`apps/web` in the desktop shell), both from the bots host, and the guest app (`apps/bia`,
+ * from the guest API). Each app supplies the network, file and installer steps; this decides when
+ * to check, what to offer, and that nothing is installed unless its sha256 and size match the
+ * published build.
  */
 import type { MobileUpdateBuild, MobileUpdateInfo } from "@t3tools/contracts";
 
-/** The commit this APK was built from (`extra.friendBuild`, written by app.config). */
+/** The commit this app was built from (`extra.friendBuild` on Android, written by app.config). */
 export interface EmbeddedBuild {
   readonly commit: string;
   readonly commitDate: string;
@@ -73,15 +74,15 @@ export interface SelfUpdateDeps {
    * to install apps and then drops the install, so the user taps again; that tap reuses the file.
    */
   readonly downloaded: (build: MobileUpdateBuild) => Promise<string | null>;
-  /** Downloads `build`'s APK and returns its local path. */
+  /** Downloads `build`'s file and returns its local path. */
   readonly download: (
     build: MobileUpdateBuild,
     onProgress: (fraction: number | null) => void,
   ) => Promise<string>;
   /** Lowercase hex sha256 and byte size of a local file. */
   readonly inspect: (path: string) => Promise<{ readonly sha256: string; readonly size: number }>;
-  /** Hands the APK to the system installer. */
-  readonly install: (path: string) => Promise<void>;
+  /** Hands the verified file to the installer (`build` is what it was verified against). */
+  readonly install: (path: string, build: MobileUpdateBuild) => Promise<void>;
   readonly now: () => number;
 }
 
@@ -89,7 +90,7 @@ export type CheckReason = "launch" | "foreground" | "manual";
 
 /**
  * The app's self-update: checks the server's published build, and on request downloads it,
- * checks its sha256 and size, and opens the system installer. One operation runs at a time.
+ * checks its sha256 and size, and hands it to the installer. One operation runs at a time.
  */
 export function createSelfUpdate(deps: SelfUpdateDeps) {
   let snapshot: SelfUpdateSnapshot = {
@@ -151,11 +152,11 @@ export function createSelfUpdate(deps: SelfUpdateDeps) {
           set({ phase: { type: "downloading", fraction } }),
         );
         if (!(await matches(path))) {
-          throw new Error("o APK baixado não confere com o publicado. Nada foi instalado.");
+          throw new Error("o arquivo baixado não confere com o publicado. Nada foi instalado.");
         }
       }
       set({ phase: { type: "installing" } });
-      await deps.install(path);
+      await deps.install(path, build);
       set({ phase: { type: "idle" } });
     } catch (error) {
       set({ phase: { type: "idle" }, error: `Atualização falhou: ${message(error)}` });

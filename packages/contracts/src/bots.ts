@@ -757,3 +757,32 @@ export type MobileUpdateBuild = typeof MobileUpdateBuild.Type;
 
 export const MobileUpdateInfo = Schema.Struct({ latest: Schema.NullOr(MobileUpdateBuild) });
 export type MobileUpdateInfo = typeof MobileUpdateInfo.Type;
+
+/**
+ * The fork's Mac app updates itself the same way: `GET DESKTOP_UPDATE_PATH` answers a
+ * `MobileUpdateInfo` (`size` and `sha256` describe the zip) and `GET DESKTOP_UPDATE_ZIP_PATH`
+ * sends the zipped `.app`, with the same `?commit=` check and the same auth.
+ */
+export const DESKTOP_UPDATE_PATH = "/api/friend/desktop-update";
+export const DESKTOP_UPDATE_ZIP_PATH = "/api/friend/desktop-update/zip";
+
+/**
+ * What the Mac app's preload exposes as `window.friendDesktopSelfUpdate` (only in a packaged Mac
+ * build without upstream's update feed). The renderer checks the bots host and asks for the
+ * update; the main process downloads, verifies, swaps the bundle and relaunches.
+ */
+export interface FriendDesktopSelfUpdateBridge {
+  /** The commit this app was built from. */
+  readonly embedded: { readonly commit: string; readonly commitDate: string };
+  /** Where an earlier download of `build` sits, if it is still there. */
+  readonly downloaded: (build: MobileUpdateBuild) => Promise<string | null>;
+  /** Downloads `url` (the zip route with a fresh ticket) and returns the local path. */
+  readonly download: (
+    build: MobileUpdateBuild,
+    url: string,
+    onProgress: (fraction: number | null) => void,
+  ) => Promise<string>;
+  readonly inspect: (path: string) => Promise<{ readonly sha256: string; readonly size: number }>;
+  /** Checks the zip against `build` again, installs it, and relaunches the app. */
+  readonly install: (path: string, build: MobileUpdateBuild) => Promise<void>;
+}

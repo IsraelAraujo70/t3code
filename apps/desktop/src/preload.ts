@@ -11,6 +11,8 @@ import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+// Fork (friend): the Mac app's self-update bridge (window.friendDesktopSelfUpdate).
+import { exposeFriendSelfUpdate } from "./friend/preload.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
@@ -31,6 +33,8 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
 }
 
 exposeClerkBridge({ passkeys: true });
+// Fork (friend): only a packaged fork Mac build without upstream's update feed gets it.
+exposeFriendSelfUpdate();
 
 // Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
 try {

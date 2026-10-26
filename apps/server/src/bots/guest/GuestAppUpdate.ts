@@ -1,7 +1,7 @@
 /**
  * The guest app's self-update (`GUEST_API_ROUTES.appUpdate`). Each guest's builds live in their own
  * folder, `<T3CODE_GUEST_APP_UPDATE_DIR>/<guest id>` (default `~/.t3-friend/android/<guest id>`),
- * published the same way as the owner's app (MobileUpdate: an APK plus an atomically replaced
+ * published the same way as the owner's app (AppUpdate: an APK plus an atomically replaced
  * `latest.json`). The folder comes from the authenticated guest, never from the request, so a
  * guest reaches only their own app's APK.
  */
@@ -14,7 +14,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { HttpServerResponse } from "effect/http";
 
-import { APK_CONTENT_TYPE, configuredDir, readPublished } from "../mobileUpdate/MobileUpdate.ts";
+import { APK_CONTENT_TYPE, configuredDir, readPublished } from "../appUpdate/AppUpdate.ts";
 import { GuestApiError } from "./GuestService.ts";
 import type { GuestRecord } from "./GuestStore.ts";
 

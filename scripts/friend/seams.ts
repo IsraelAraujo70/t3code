@@ -206,7 +206,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/src/server.ts",
     markers: 5,
-    why: "bots layers, the Computer stream and mobile update routes",
+    why: "bots layers, the Computer stream and the app update routes",
   },
   {
     file: "apps/web/src/components/Sidebar.tsx",
@@ -339,6 +339,18 @@ export const SEAMS: readonly Seam[] = [
     why: "Bots item in the Android navigation bar and rail",
   },
   {
+    file: "scripts/build-desktop-artifact.ts",
+    markers: 4,
+    why: "Mac build on Linux (no native rebuild) and friendBuild in the app's package.json",
+  },
+  { file: "apps/desktop/src/preload.ts", markers: 2, why: "Mac self-update bridge" },
+  { file: "apps/desktop/src/ipc/DesktopIpcHandlers.ts", markers: 2, why: "Mac self-update IPC" },
+  {
+    file: "apps/web/src/components/sidebar/SidebarChrome.tsx",
+    markers: 2,
+    why: "the Mac app's self-update notice in the sidebar footer",
+  },
+  {
     file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/settings.bots'",
     why: "generated route for the Bots settings page",
@@ -348,6 +360,7 @@ export const SEAMS: readonly Seam[] = [
 /** Paths the fork owns outright; markers there are allowed and not counted. */
 export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/bots/",
+  "apps/desktop/src/friend/",
   "apps/mobile/src/bots/",
   "apps/mobile/modules/t3-native-controls/android/src/main/res/drawable/t3_bots.xml",
   "apps/mobile/plugins/withFriendVoiceReaderWebrtc",

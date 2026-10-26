@@ -108,7 +108,10 @@ describe("createSelfUpdate", () => {
     await update.check("launch");
     await update.install();
     expect(deps.download).toHaveBeenCalledWith(published, expect.any(Function));
-    expect(deps.install).toHaveBeenCalledWith("/cache/friend-update/t3code-friend-bbbbbbbbbb.apk");
+    expect(deps.install).toHaveBeenCalledWith(
+      "/cache/friend-update/t3code-friend-bbbbbbbbbb.apk",
+      published,
+    );
     expect(update.getSnapshot()).toMatchObject({ phase: { type: "idle" }, error: null });
 
     deps.inspect.mockResolvedValueOnce({ sha256: "d".repeat(64), size: published.size });

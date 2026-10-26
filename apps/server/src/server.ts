@@ -60,7 +60,7 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 // Fork (friend): bots storage, per-turn instructions and management.
 import * as BotsLayer from "./bots/layer.ts";
-// Fork (friend): live view of the bots host screen and the Android app's self-update.
+// Fork (friend): live view of the bots host screen and the fork apps' self-update.
 import * as BotsHttpRoutes from "./bots/httpRoutes.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -713,7 +713,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
-    // Fork (friend): live view of the bots host screen and the Android app's self-update.
+    // Fork (friend): live view of the bots host screen and the fork apps' self-update.
     BotsHttpRoutes.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,

@@ -36,6 +36,8 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
+// Fork (friend): the commit the Mac app compares with the bots host's published build.
+import { type FriendBuildInfo, readFriendBuildInfo } from "./friend/mobileBuildInfo.ts";
 import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
@@ -964,6 +966,8 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  // Fork (friend): the full commit and its date, for the Mac app's self-update.
+  readonly friendBuild: FriendBuildInfo | null;
   readonly t3codeWebAuthn?: MacWebAuthnEntitlements;
   readonly private: true;
   readonly packageManager: string;
@@ -2880,6 +2884,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // Fork (friend): ~/.t3-friend/build-mac-app.sh builds the Mac app on Linux, where node-gyp
+    // cannot cross-compile; node-pty then loads its N-API darwin prebuild, as Windows does.
+    if ((yield* HostProcess.Platform) !== "darwin") buildConfig.npmRebuild = false;
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -3907,6 +3914,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    // Fork (friend): read by apps/desktop/src/friend/FriendSelfUpdate.ts.
+    friendBuild: readFriendBuildInfo(repoRoot),
     // Read by apps/desktop/src/preview/Passkeys.ts; must match the signed entitlements.
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
     private: true,

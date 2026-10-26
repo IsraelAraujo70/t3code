@@ -7,7 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { HttpEffect } from "effect/http";
 
-import { MANIFEST_FILE } from "../mobileUpdate/MobileUpdate.ts";
+import { MANIFEST_FILE } from "../appUpdate/AppUpdate.ts";
 import { GUEST_APP_UPDATE_DIR_ENV } from "./GuestAppUpdate.ts";
 import { makeApp } from "./GuestHttp.ts";
 import { GuestVoice } from "./GuestVoice.ts";

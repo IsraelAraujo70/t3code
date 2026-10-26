@@ -218,6 +218,30 @@ turn. [`subagent-budget.mjs`](apps/server/src/bots/guest/sandbox/subagent-budget
 user message. The forwarder's model and effort limits apply to helpers as to the bot. Changes take
 effect when the image is rebuilt.
 
+## The Mac app updates itself
+
+The owner's Mac app (unsigned, arm64) updates from the bots host like the Android app:
+`DESKTOP_UPDATE_PATH` answers the newest published build and `DESKTOP_UPDATE_ZIP_PATH` sends the
+zipped `.app`, both behind the owner's environment auth (the guest listener has no such route). The
+server reads `T3CODE_DESKTOP_UPDATE_DIR` (default `~/.t3-friend/desktop`), where
+`~/.t3-friend/build-mac-app.sh` builds on omarchy and `publish-mac-app.sh` replaces `latest.json`
+atomically. See [`AppUpdate.ts`](apps/server/src/bots/appUpdate/AppUpdate.ts).
+
+The zip is built on Linux. Off macOS, `scripts/build-desktop-artifact.ts` skips the native rebuild,
+so node-pty loads its N-API darwin prebuild. The two macOS image tools and the Rust resource monitor
+come from `~/.t3-friend/mac-build-tools`; the monitor is built on the Mac only when
+`native/resource-monitor` changes.
+
+Only a packaged Mac build that carries `friendBuild` (its commit, in the app's `package.json`) and no
+`app-update.yml` turns this on, so upstream's electron-updater never runs beside it. Squirrel.Mac
+cannot install an unsigned app, so the main process installs it
+([`apps/desktop/src/friend/`](apps/desktop/src/friend/)): it checks the zip's sha256 and size,
+extracts it with `ditto`, checks the bundle id and the embedded commit, removes any quarantine
+attribute, swaps the bundle with two renames (the old one stays as `~/t3-app-backup-<time>.app`, the
+newest two kept) and relaunches. The renderer checks when the bots host connects and when the window
+regains focus, at most every 15 minutes, and shows the offer in the sidebar footer. The Mac runs
+whatever the bots host publishes: writing that directory on omarchy is shipping code to the Mac.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
