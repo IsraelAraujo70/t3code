@@ -71,6 +71,8 @@ export interface AppBarProps {
   /** Android: one title row with the subtitle inline. iOS ignores it. */
   readonly compact?: boolean;
   readonly trailing?: ReactNode;
+  /** Fork (friend): Android, before the title (a bot's face). iOS ignores it. */
+  readonly avatar?: ReactNode;
   readonly matchSearchSurface?: boolean;
   readonly options?: AppNativeStackNavigationOptions;
   readonly optionsVersion?: unknown;

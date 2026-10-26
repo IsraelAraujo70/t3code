@@ -97,6 +97,9 @@ import {
   useAndroidWorkspaceBack,
   useWorkspaceBackNavigation,
 } from "../workspace/useAndroidWorkspaceNavigation";
+// Fork (friend): a bot conversation's header shows the bot's face.
+import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
+import { botHeaderAvatar } from "../../bots/BotHeaderAvatar";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -435,7 +438,8 @@ function ThreadRouteContent(
 
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
   const headerSubtitle = [
-    selectedThreadProject?.title ?? null,
+    // Fork (friend): bots always live in the "No project" folder, so their header leaves it out.
+    isBotChatThread(selectedThread?.id) ? null : (selectedThreadProject?.title ?? null),
     selectedEnvironmentConnection?.environmentLabel ?? null,
   ]
     .filter(Boolean)
@@ -902,6 +906,8 @@ function ThreadRouteContent(
           header={
             <ThreadHeader
               title={selectedThread.title}
+              // Fork (friend): a bot conversation's header shows the bot's face.
+              avatar={botHeaderAvatar(selectedThread.id)}
               subtitle={headerSubtitle}
               headerColor={headerColor}
               usesNativeHeaderGlass={usesNativeHeaderGlass}

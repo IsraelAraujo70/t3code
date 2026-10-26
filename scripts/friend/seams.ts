@@ -139,6 +139,31 @@ export const SEAMS: readonly Seam[] = [
     why: "bot chats as bubbles: rows, bubble context, spacing, turn fold",
   },
   {
+    file: "apps/mobile/src/components/ui/AppBar.types.ts",
+    markers: 1,
+    why: "Android app bar avatar slot for bot conversations",
+  },
+  {
+    file: "apps/mobile/src/components/ui/AppBar.android.tsx",
+    markers: 1,
+    why: "Android app bar avatar slot for bot conversations",
+  },
+  {
+    file: "apps/mobile/src/features/threads/ThreadHeader.tsx",
+    markers: 2,
+    why: "pass the bot's face to the app bar",
+  },
+  {
+    file: "apps/mobile/src/features/threads/ThreadRouteScreen.tsx",
+    markers: 3,
+    why: 'bot conversation header: the bot\'s face, no "No project" subtitle',
+  },
+  {
+    file: "apps/web/src/components/chat/ChatHeader.tsx",
+    markers: 2,
+    why: "bot conversation header shows the bot's face instead of the Scratch project",
+  },
+  {
     file: "apps/web/src/components/chat/TimelineUserMessageRow.tsx",
     markers: 2,
     why: "name the bot that sent a message; user bubble shape",

@@ -156,7 +156,15 @@ export function AppBar(props: AppBarProps) {
       title={props.title}
       subtitle={props.subtitle}
       onBack={props.onBack}
-      leading={props.sidebar !== false ? <AndroidWorkspaceSidebarButton /> : undefined}
+      leading={
+        // Fork (friend): a bot's face sits before the title.
+        props.sidebar !== false || props.avatar ? (
+          <>
+            {props.sidebar !== false ? <AndroidWorkspaceSidebarButton /> : null}
+            {props.avatar}
+          </>
+        ) : undefined
+      }
       hideBottomBorder={props.hideBottomBorder}
       compact={props.compact}
       actions={
