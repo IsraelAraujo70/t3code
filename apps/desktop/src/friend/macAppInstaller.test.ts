@@ -83,7 +83,7 @@ async function setup(options: { readonly zipCommit?: string; readonly zipId?: st
       stamp: "20261026093015",
       tools,
     });
-  return { root, home, currentApp, build, tools, marker, run };
+  return { root, home, currentApp, zip, build, tools, marker, run };
 }
 
 describe("install", () => {
@@ -94,6 +94,7 @@ describe("install", () => {
     expect(backup).toBe(NodePath.join(t.home, "t3-app-backup-20261026093015.app"));
     expect(await NodeFSP.readFile(NodePath.join(backup, "marker"), "utf8")).toBe("old");
     expect(t.tools.stripQuarantine).toHaveBeenCalledOnce();
+    expect(NodeFS.existsSync(t.zip)).toBe(false);
   });
 
   it.each([

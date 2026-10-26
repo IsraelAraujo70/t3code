@@ -261,6 +261,7 @@ export async function install(input: {
   }
   await swapBundle(currentApp, next, backup);
   await NodeFSP.rm(stage, { recursive: true, force: true });
+  await NodeFSP.rm(input.zip, { force: true });
   await pruneBackups(input.home).catch(() => undefined);
   return { backup };
 }

@@ -9,6 +9,13 @@ After each successful production deploy on omarchy, use this skill to bring the
 Mac desktop app to the same commit. This skill does not schedule or detect deploys.
 Run from this repository on omarchy. SSH host `mac` must be available.
 
+Once the installed app carries the self-updater (`apps/desktop/src/friend`), prefer
+publishing over ssh: `~/.t3-friend/build-mac-app.sh <clean checkout>` builds the
+zip on omarchy and publishes it, and the app offers the update itself (see
+`~/.t3-friend/RUNBOOK.md`). The Mac may be asleep. Use the script below for the
+first install, or when the installed app cannot update itself. A self-update does
+not write `~/.t3-mac-app-commit`, so after one the marker may name an older commit.
+
 ```bash
 scripts/friend/update-mac-app.sh [--dry-run] [ref]
 ```
