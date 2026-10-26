@@ -17,6 +17,8 @@ export function ThreadHeader(
     readonly onToggleInspector: () => void;
     readonly onOpenGitInspector: () => void;
     readonly onOpenFilesInspector: () => void;
+    /** Fork (friend): the bot's face before a bot conversation's title. */
+    readonly avatar?: import("react").ReactNode;
   },
 ) {
   const goBack = useWorkspaceBackNavigation("threads");
@@ -81,6 +83,8 @@ export function ThreadHeader(
       <AppBar
         title={props.title}
         subtitle={props.subtitle}
+        // Fork (friend): the bot's face before a bot conversation's title.
+        avatar={props.avatar}
         sidebar={native.sidebar}
         options={native.options}
         optionsVersion={native.optionsVersion}
