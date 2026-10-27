@@ -40,18 +40,21 @@ import { KanbanAvatar, KanbanPriorityIcon, KanbanStatusIcon } from "./KanbanPrim
 
 const isTitle = Schema.is(KanbanTicketTitle);
 
-type LoadedDetail = { readonly ticketId: KanbanTicketId; readonly state: DetailState };
+/** Which ticket a detail belongs to: the environment and the ticket id. */
+const detailKey = (environmentId: EnvironmentId, ticketId: KanbanTicketId) =>
+  `${environmentId}\u0000${ticketId}`;
+
+type LoadedDetail = { readonly key: string; readonly state: DetailState };
 
 /** What a detail read leaves on screen; an interrupted read keeps what was there. */
 function loadedFrom(
-  ticketId: KanbanTicketId,
+  key: string,
   result: AtomCommandResult<KanbanTicketDetail, unknown>,
   previous: LoadedDetail | null,
 ): LoadedDetail | null {
-  if (result._tag === "Success")
-    return { ticketId, state: { kind: "ready", detail: result.value } };
+  if (result._tag === "Success") return { key, state: { kind: "ready", detail: result.value } };
   const message = commandFailureMessage(result);
-  return message === null ? previous : { ticketId, state: { kind: "failed", message } };
+  return message === null ? previous : { key, state: { kind: "failed", message } };
 }
 
 type DetailState =
@@ -89,34 +92,36 @@ export function KanbanIssueView(props: {
   const deleteComment = useAtomCommand(botsEnvironment.kanbanDeleteComment, {
     label: "kanban delete comment",
   });
+  const key = detailKey(environmentId, ticket.id);
   const [loaded, setLoaded] = useState<LoadedDetail | null>(null);
   const state: DetailState =
-    loaded !== null && loaded.ticketId === ticket.id ? loaded.state : { kind: "loading" };
+    loaded !== null && loaded.key === key ? loaded.state : { kind: "loading" };
   const request = useRef(0);
+  // The ticket on screen; a write that finishes after a switch must not touch the next one's read.
+  const activeKey = useRef(key);
 
   const refetch = async () => {
+    if (activeKey.current !== key) return;
     const current = ++request.current;
-    const ticketId = ticket.id;
-    const result = await loadDetail({ environmentId, input: { ticketId } });
-    // A newer read (or another ticket) answered meanwhile.
-    if (current === request.current)
-      setLoaded((previous) => loadedFrom(ticketId, result, previous));
+    const result = await loadDetail({ environmentId, input: { ticketId: ticket.id } });
+    if (current === request.current && activeKey.current === key)
+      setLoaded((previous) => loadedFrom(key, result, previous));
   };
-  const readDetail = useEffectEvent((ticketId: KanbanTicketId) =>
-    loadDetail({ environmentId, input: { ticketId } }),
+  const readDetail = useEffectEvent(() =>
+    loadDetail({ environmentId, input: { ticketId: ticket.id } }),
   );
   const close = useEffectEvent(() => props.onClose());
 
   // oxlint-disable-next-line t3code/react-effect-budget -- reads the issue detail from the server when a ticket opens
   useEffect(() => {
+    activeKey.current = key;
     const current = ++request.current;
-    const ticketId = ticket.id;
-    void readDetail(ticketId).then((result) => {
+    void readDetail().then((result) => {
       if (current === request.current) {
-        setLoaded((previous) => loadedFrom(ticketId, result, previous));
+        setLoaded((previous) => loadedFrom(key, result, previous));
       }
     });
-  }, [ticket.id]);
+  }, [key]);
 
   // oxlint-disable-next-line t3code/react-effect-budget -- Esc anywhere outside a field or popup closes the issue
   useEffect(() => {

@@ -14,6 +14,7 @@ import {
   removeClause,
   setClauseOp,
   setDateClause,
+  setDateClauseAt,
   setFlag,
   setText,
   toggleClauseValue,
@@ -83,6 +84,26 @@ describe("setDateClause", () => {
   });
 });
 
+describe("setDateClauseAt", () => {
+  it("edits the date clause at the index, not the field's first", () => {
+    const after: KanbanFilterClause = {
+      kind: "date",
+      field: "createdAt",
+      op: "after",
+      value: "2026-10-01",
+    };
+    const before: KanbanFilterClause = { ...after, op: "before", value: "2026-10-20" };
+    expect(setDateClauseAt([after, before], 1, "before", "2026-10-25")).toEqual([
+      after,
+      { ...before, value: "2026-10-25" },
+    ]);
+    expect(setDateClauseAt([after, before], 0, "isSet", "ignored")).toEqual([
+      { ...after, op: "isSet", value: null },
+      before,
+    ]);
+  });
+});
+
 describe("setFlag", () => {
   it("replaces the flag's value instead of adding a second clause", () => {
     const yes = setFlag([], "isSubIssue", true);
@@ -112,6 +133,22 @@ describe("mergeClauses", () => {
       { ...assigneeMe, values: ["me", "owner"] },
       { kind: "flag", field: "hasThreads", value: false },
       { kind: "set", field: "assignee", op: "notIn", values: ["none"] },
+    ]);
+  });
+
+  it("keeps both bounds of a date range and replaces only the same field and op", () => {
+    const after: KanbanFilterClause = {
+      kind: "date",
+      field: "createdAt",
+      op: "after",
+      value: "2026-10-01",
+    };
+    const before: KanbanFilterClause = { ...after, op: "before", value: "2026-10-20" };
+    const range = mergeClauses([after], [before]);
+    expect(range).toEqual([after, before]);
+    expect(mergeClauses(range, [{ ...after, value: "2026-10-05" }])).toEqual([
+      { ...after, value: "2026-10-05" },
+      before,
     ]);
   });
 });

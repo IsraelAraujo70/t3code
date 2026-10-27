@@ -35,6 +35,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { botsEnvironment, useBotDirectory } from "../../state/bots";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { BotAvatar } from "../BotAvatar";
 import { reportCommandResult } from "../botsSettingsShared";
@@ -46,6 +47,7 @@ import {
   isOverdue,
   labelOptions,
   matchesQuery,
+  minuteEpoch,
   nextLabelColor,
   statusOptions,
   statusPresentation,
@@ -82,7 +84,7 @@ export function KanbanIssueProperties(props: {
   const synced = ticket.linear !== null;
   const { directory } = useBotDirectory(props.environmentId);
   const bots = directory?.bots ?? [];
-  const now = Date.parse(useNowMinute());
+  const now = minuteEpoch(useNowMinute());
 
   const status = statusPresentation(ticket.status, lookups.statesById);
   const assignee = ticket.assigneeId === null ? null : personDisplay(lookups, ticket.assigneeId);
@@ -277,6 +279,7 @@ export function KanbanIssueProperties(props: {
 
   const labels = (
     <LabelsField
+      key={`${props.environmentId}\u0000${ticket.id}`}
       environmentId={props.environmentId}
       ticket={ticket}
       snapshot={snapshot}
@@ -554,7 +557,8 @@ function DueDatePicker(props: {
 
 /**
  * The ticket's label pills and a multi-select to change them. Toggles made while earlier ones are
- * still saving build on a local draft, so quick clicks never undo each other.
+ * still saving build on a local draft, so quick clicks never undo each other. Keyed by ticket, so
+ * a draft never reaches another ticket.
  */
 function LabelsField(props: {
   readonly environmentId: EnvironmentId;
@@ -591,6 +595,10 @@ function LabelsField(props: {
         ? labelIds.filter((id) => id !== label.id)
         : [...labelIds, label.id],
     );
+  // Runs with the latest selection, so toggles made while the label was being created survive.
+  const addCreated = useStableCallback((id: string) =>
+    labelIds.includes(id) ? Promise.resolve() : save([...labelIds, id]),
+  );
   const create = async () => {
     const name = query.trim();
     const result = await createLabel({
@@ -600,7 +608,7 @@ function LabelsField(props: {
     if (!reportCommandResult("Could not create the label", result)) return;
     if (result._tag !== "Success") return;
     setQuery("");
-    await save([...labelIds, result.value.id]);
+    await addCreated(result.value.id);
   };
 
   const filtered = options.filter((label) => matchesQuery(label.name, query));

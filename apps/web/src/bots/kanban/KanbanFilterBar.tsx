@@ -62,6 +62,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { weekStartsOn } from "~/timestampFormat";
 
@@ -74,6 +75,7 @@ import {
   selectedSetValues,
   setClauseOp,
   setDateClause,
+  setDateClauseAt,
   setFlag,
   setText,
   toggleClauseValue,
@@ -201,12 +203,31 @@ const OPTION_SEARCH_MIN = 8;
 
 const matches = (text: string, needle: string) => text.toLowerCase().includes(needle);
 
+type OptionsFor = (field: KanbanSetFilterField) => ReadonlyArray<KanbanFilterOption>;
+
+/** A field's options are counted on first use and kept until the board scope changes. */
+function optionCache(
+  snapshot: KanbanSnapshot,
+  projectId: ProjectId | null,
+  context: Pick<KanbanViewContext, "personName">,
+): OptionsFor {
+  const cache = new Map<KanbanSetFilterField, ReadonlyArray<KanbanFilterOption>>();
+  return (field) => {
+    let options = cache.get(field);
+    if (options === undefined) {
+      options = filterOptions(snapshot, projectId, field, context);
+      cache.set(field, options);
+    }
+    return options;
+  };
+}
+
 /** What a set field's value menu needs: the board scope and how values draw. */
 interface OptionScope {
   readonly snapshot: KanbanSnapshot;
-  readonly projectId: ProjectId | null;
   readonly lookups: KanbanLookups;
   readonly context: Pick<KanbanViewContext, "personName">;
+  readonly optionsFor: OptionsFor;
 }
 
 function OptionCheckbox(props: {
@@ -240,7 +261,7 @@ function SetOptionItems(
   },
 ) {
   const [query, setQuery] = useState("");
-  const options = filterOptions(props.snapshot, props.projectId, props.field, props.context);
+  const options = props.optionsFor(props.field);
   const needle = query.trim().toLowerCase();
   const visible = needle ? options.filter((option) => matches(option.label, needle)) : options;
   const label = KANBAN_FILTER_FIELD_LABELS[props.field];
@@ -402,7 +423,7 @@ function SearchResults(
   const values: Array<{ field: KanbanSetFilterField; option: KanbanFilterOption }> = [];
   for (const entry of LEAF_ENTRIES) {
     if (entry.kind !== "set" || budget === 0) continue;
-    for (const option of filterOptions(props.snapshot, props.projectId, entry.field, props.context))
+    for (const option of props.optionsFor(entry.field))
       if (budget > 0 && matches(option.label, props.needle)) {
         values.push({ field: entry.field, option });
         budget -= 1;
@@ -437,15 +458,36 @@ const INPUT_PLACEHOLDERS: Record<InputMode, string> = {
   content: "Title, identifier or label contains…",
 };
 
-function AddFilterMenu(props: Omit<KanbanFilterBarProps, "search" | "onSearch">) {
+function AddFilterMenu(
+  props: Omit<KanbanFilterBarProps, "search" | "onSearch" | "projectId"> & {
+    readonly optionsFor: OptionsFor;
+  },
+) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<InputMode>("search");
   const [query, setQuery] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  // Bumped when an AI request is abandoned (menu closed, input changed, unmounted).
+  const aiRequest = useRef(0);
+  const abandonAi = () => {
+    aiRequest.current += 1;
+    setAiBusy(false);
+  };
+  // oxlint-disable-next-line t3code/react-effect-budget -- an AI answer that lands after unmount must not edit the filters.
+  useEffect(
+    () => () => {
+      aiRequest.current += 1;
+    },
+    [],
+  );
+  const applyAiFilters = useStableCallback((clauses: ReadonlyArray<KanbanFilterClause>) =>
+    props.onChange(mergeClauses(props.filters, clauses)),
+  );
   const onOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
+      abandonAi();
       setMode("search");
       setQuery("");
       setAiError(null);
@@ -453,6 +495,7 @@ function AddFilterMenu(props: Omit<KanbanFilterBarProps, "search" | "onSearch">)
   };
   const close = () => onOpenChange(false);
   const switchMode = (next: InputMode) => {
+    abandonAi();
     setMode(next);
     setQuery("");
     setAiError(null);
@@ -466,22 +509,30 @@ function AddFilterMenu(props: Omit<KanbanFilterBarProps, "search" | "onSearch">)
       return;
     }
     if (mode !== "ai" || text === "" || aiBusy) return;
+    const request = ++aiRequest.current;
     setAiBusy(true);
     setAiError(null);
-    const result = await props.onAiFilter(text);
-    setAiBusy(false);
-    if (result.ok) {
-      props.onChange(mergeClauses(props.filters, result.filters));
-      close();
-    } else setAiError(result.message);
+    try {
+      const result = await props.onAiFilter(text);
+      if (request !== aiRequest.current) return;
+      if (result.ok) {
+        applyAiFilters(result.filters);
+        close();
+      } else setAiError(result.message);
+    } catch (error) {
+      if (request === aiRequest.current)
+        setAiError(error instanceof Error ? error.message : "The AI filter failed.");
+    } finally {
+      if (request === aiRequest.current) setAiBusy(false);
+    }
   };
 
   const needle = mode === "search" ? query.trim().toLowerCase() : "";
   const fieldProps = {
     snapshot: props.snapshot,
-    projectId: props.projectId,
     lookups: props.lookups,
     context: props.context,
+    optionsFor: props.optionsFor,
     filters: props.filters,
     onChange: props.onChange,
     onContent: () => switchMode("content"),
@@ -501,7 +552,10 @@ function AddFilterMenu(props: Omit<KanbanFilterBarProps, "search" | "onSearch">)
           busy={aiBusy}
           value={query}
           maxLength={mode === "ai" ? KANBAN_LIMITS.aiFilterText : undefined}
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          onChange={(event) => {
+            if (aiBusy) abandonAi();
+            setQuery(event.currentTarget.value);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.nativeEvent.isComposing) void submit();
           }}
@@ -594,7 +648,7 @@ function ChipValueMenu(
           <DateItems
             field={clause.field}
             onPick={(op, next) => {
-              onChange(setDateClause(filters, clause.field, op, next));
+              onChange(setDateClauseAt(filters, index, op, next));
               setOpen(false);
             }}
           />
@@ -711,15 +765,12 @@ function IssueSearch(props: { readonly value: string; readonly onChange: (text: 
 }
 
 export function KanbanFilterBar(props: KanbanFilterBarProps) {
-  const scope = {
-    snapshot: props.snapshot,
-    projectId: props.projectId,
-    lookups: props.lookups,
-    context: props.context,
-  };
+  const { snapshot, projectId, context } = props;
+  const optionsFor = optionCache(snapshot, projectId, context);
+  const scope = { snapshot, lookups: props.lookups, context, optionsFor };
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <AddFilterMenu {...props} />
+      <AddFilterMenu {...props} optionsFor={optionsFor} />
       {props.filters.map((clause, index) => (
         <FilterChip
           // oxlint-disable-next-line react/no-array-index-key -- a clause has no id; its index is what every edit addresses.

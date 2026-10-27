@@ -49,6 +49,11 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
+/** The epoch ms of a `useNowMinute()` value, a UTC `YYYY-MM-DDTHH:mm` without its zone suffix. */
+export function minuteEpoch(minute: string): number {
+  return Date.parse(`${minute}:00Z`);
+}
+
 /** "now", "5m ago", "3h ago", "5d ago" within a month, then "Oct 21" ("Oct 21, 2025" in another year). */
 export function relativeTimeLabel(iso: string, now: number): string {
   const at = Date.parse(iso);

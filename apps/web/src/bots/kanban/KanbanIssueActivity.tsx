@@ -11,7 +11,7 @@ import ChatMarkdown from "../../components/ChatMarkdown";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
-import { issueTimeline, relativeTimeLabel } from "./kanbanIssue.logic";
+import { issueTimeline, minuteEpoch, relativeTimeLabel } from "./kanbanIssue.logic";
 import type { KanbanPersonDisplay } from "./kanbanLookups";
 import { KanbanAvatar } from "./KanbanPrimitives";
 
@@ -34,7 +34,7 @@ export function KanbanIssueActivity(props: {
   readonly onComment: (body: string) => Promise<boolean>;
   readonly onDeleteComment: (comment: KanbanComment) => void;
 }) {
-  const now = Date.parse(useNowMinute());
+  const now = minuteEpoch(useNowMinute());
   const timeline = issueTimeline(props.detail.activity, props.detail.comments);
   return (
     <section aria-label="Activity" className="flex flex-col gap-3">

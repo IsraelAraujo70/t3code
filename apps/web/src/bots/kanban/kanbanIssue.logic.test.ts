@@ -21,6 +21,7 @@ import {
   isOverdue,
   issueTimeline,
   labelOptions,
+  minuteEpoch,
   nextLabelColor,
   parsePullRequestUrl,
   relativeTimeLabel,
@@ -203,6 +204,15 @@ describe("relativeTimeLabel", () => {
   it("shows the date past a month, with the year when it differs", () => {
     expect(relativeTimeLabel("2026-08-21T12:00:00.000Z", NOW)).toBe("Aug 21");
     expect(relativeTimeLabel("2025-08-21T12:00:00.000Z", NOW)).toBe("Aug 21, 2025");
+  });
+});
+
+describe("minuteEpoch", () => {
+  it("reads the minute clock as UTC, whatever the local time zone", () => {
+    const minute = new Date(NOW + 5 * 60_000).toISOString().slice(0, 16);
+    expect(minute).toBe("2026-10-24T12:05");
+    expect(minuteEpoch(minute)).toBe(Date.UTC(2026, 9, 24, 12, 5));
+    expect(relativeTimeLabel("2026-10-24T12:00:00.000Z", minuteEpoch(minute))).toBe("5m ago");
   });
 });
 

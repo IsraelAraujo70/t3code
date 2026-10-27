@@ -91,6 +91,17 @@ export function setClauseOp(
   return clause?.kind === "set" ? replaceClause(filters, index, { ...clause, op }) : [...filters];
 }
 
+const dateClause = (
+  field: KanbanDateFilterField,
+  op: KanbanDateOp,
+  value: string | number | null,
+): DateClause => ({
+  kind: "date",
+  field,
+  op,
+  value: op === "isSet" || op === "isEmpty" ? null : value,
+});
+
 /** One date condition per field: replaces the field's date clause, or adds it. */
 export function setDateClause(
   filters: Filters,
@@ -98,13 +109,20 @@ export function setDateClause(
   op: KanbanDateOp,
   value: string | number | null,
 ): KanbanFilterClause[] {
-  const clause: DateClause = {
-    kind: "date",
-    field,
-    op,
-    value: op === "isSet" || op === "isEmpty" ? null : value,
-  };
-  return upsert(filters, "date", field, clause);
+  return upsert(filters, "date", field, dateClause(field, op, value));
+}
+
+/** Rewrites the date clause at `index` (a chip's own range); other kinds are left as they are. */
+export function setDateClauseAt(
+  filters: Filters,
+  index: number,
+  op: KanbanDateOp,
+  value: string | number | null,
+): KanbanFilterClause[] {
+  const clause = filters[index];
+  return clause?.kind === "date"
+    ? replaceClause(filters, index, dateClause(clause.field, op, value))
+    : [...filters];
 }
 
 export function setFlag(
@@ -123,12 +141,21 @@ export function setText(filters: Filters, text: string): KanbanFilterClause[] {
 }
 
 /**
- * Adds clauses (the AI filter's) to the current ones: a set clause joins the values of one with
- * the same field and op, and a date, flag or text clause replaces the field's own.
+ * Adds clauses (the AI filter's) to the current ones, all ANDed: a set clause joins the values of
+ * one with the same field and op, a date clause replaces only one with the same field and op (so
+ * an after and a before make a range), and a flag or text clause replaces the field's own.
  */
 export function mergeClauses(filters: Filters, incoming: Filters): KanbanFilterClause[] {
   let merged = [...filters];
   for (const clause of incoming) {
+    if (clause.kind === "date") {
+      const index = merged.findIndex(
+        (current) =>
+          current.kind === "date" && current.field === clause.field && current.op === clause.op,
+      );
+      merged = index === -1 ? append(merged, clause) : replaceClause(merged, index, clause);
+      continue;
+    }
     if (clause.kind !== "set") {
       merged = upsert(merged, clause.kind, clause.field, clause);
       continue;
