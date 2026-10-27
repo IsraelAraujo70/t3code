@@ -60,6 +60,7 @@ import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRout
 // Fork (friend): the bots host's live screen and kanban.
 import { BotsComputerRouteScreen } from "./bots/BotsComputerRouteScreen";
 import { BotsKanbanRouteScreen } from "./bots/BotsKanbanRouteScreen";
+import { KanbanIssueScreen } from "./bots/kanban/KanbanIssueScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -848,6 +849,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     BotsKanban: createNativeStackScreen({
       screen: BotsKanbanRouteScreen,
       linking: "bots/kanban/:environmentId",
+      options: { headerShown: false },
+    }),
+    BotsKanbanIssue: createNativeStackScreen({
+      screen: KanbanIssueScreen,
+      linking: "bots/kanban/:environmentId/issues/:ticketId",
       options: { headerShown: false },
     }),
     ThreadReview: createNativeStackScreen({

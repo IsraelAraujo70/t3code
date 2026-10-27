@@ -1,36 +1,32 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  buildBoard,
-  THREAD_CARD_STATUS_LABELS,
+  buildKanbanView,
+  filterOptions,
+  KANBAN_FILTER_FIELD_LABELS,
   threadCardStatus,
-  workspaceOf,
-  type KanbanBoard,
-  type KanbanFilter,
-  type ThreadCardStatus,
+  type KanbanFilterOption,
+  type KanbanGroup,
+  type KanbanViewContext,
 } from "@t3tools/client-runtime/kanban-board";
 import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import {
   EnvironmentId,
+  KANBAN_DEFAULT_VIEW_CONFIG,
+  KANBAN_LOCAL_STATES,
+  KANBAN_OWNER_PERSON_ID,
   KanbanTicketTitle,
-  type BotDirectoryEntry,
   type KanbanSnapshot,
   type KanbanTicket,
   type KanbanTicketStatus,
-  type KanbanWorkspaceId,
-  type LinearAccountId,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Schema } from "effect";
-import { useCallback, useState } from "react";
-import { Linking, Pressable, ScrollView, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { FlatList, Linking, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useResolveClassNames } from "uniwind";
 
 import { AppBar } from "../components/ui/AppBar";
 import { AppText as Text } from "../components/ui/AppText";
@@ -39,17 +35,32 @@ import { ControlPill } from "../components/ui/ControlPill";
 import * as Dialog from "../components/ui/Dialog";
 import { Menu } from "../components/ui/Menu";
 import { Notice } from "../components/ui/Notice";
-import { cn } from "../lib/cn";
 import { useProjects, useThreadShells } from "../state/entities";
 import { useAtomCommand } from "../state/use-atom-command";
-import { BotAvatar } from "./BotAvatar";
 import {
   moveTarget,
   parseTicketMenuChoice,
   shownColumnId,
+  statusGroupsOf,
   ticketMenuActions,
   type TicketMenuThread,
 } from "./kanban.logic";
+import { KanbanCard, type KanbanCardThread } from "./kanban/KanbanCard";
+import { buildKanbanLookups, type KanbanLookups } from "./kanban/kanbanDisplay.logic";
+import {
+  applyFilterOverlay,
+  filterChipLabel,
+  KANBAN_OVERLAY_FIELDS,
+  overlayValues,
+  scopeViews,
+  selectedView,
+  toggleOverlayValue,
+  type KanbanFilterOverlay,
+  type KanbanOverlayField,
+} from "./kanban/kanbanFilters.logic";
+import { KanbanGroupIconView, type KanbanGlyphColors } from "./kanban/KanbanGlyphs";
+import { responsibleBotIds } from "./kanban/kanbanIssue.logic";
+import { KanbanPickerSheet, reportKanbanResult } from "./kanban/KanbanPickerSheet";
 import { botsEnvironment, useBotDirectory, useKanbanSnapshot } from "./state";
 import type { ThreadReturnTab } from "./threadReturnTab";
 
@@ -60,24 +71,13 @@ type BotsKanbanRouteScreenProps = StaticScreenProps<{
 
 const ALL = "all";
 const isTitle = Schema.is(KanbanTicketTitle);
-const PRIORITY_LABELS = ["", "Urgent", "High", "Medium", "Low"];
+const VIEWS_NOTE = "Saved views are created and edited in T3 Code on your computer.";
 
-const STATUS_DOT: Record<ThreadCardStatus, string> = {
-  approval: "bg-amber-500",
-  input: "bg-indigo-500",
-  failed: "bg-red-500",
-  working: "bg-sky-500",
-  settled: "bg-emerald-500",
-};
-
-/** Reports a failed command in a dialog; returns whether it succeeded. */
-function reportResult(title: string, result: AtomCommandResult<unknown, unknown>): boolean {
-  if (result._tag === "Success") return true;
-  if (!isAtomCommandInterrupted(result)) {
-    const error = squashAtomCommandFailure(result);
-    Dialog.alert(title, error instanceof Error ? error.message : String(error));
-  }
-  return false;
+/** Glyph colors from the theme, read once per screen. */
+export function useKanbanGlyphColors(): KanbanGlyphColors {
+  const muted = useResolveClassNames("text-icon-muted").color ?? "gray";
+  const urgent = useResolveClassNames("text-warning-foreground").color ?? "orange";
+  return useMemo(() => ({ muted, urgent }), [muted, urgent]);
 }
 
 /** The header's "Sync with Linear now" button, once a project is linked to Linear. */
@@ -90,7 +90,7 @@ export function useKanbanSyncActions(
   const [syncing, setSyncing] = useState(false);
   const runSync = async () => {
     setSyncing(true);
-    reportResult("Could not sync with Linear", await sync({ environmentId, input: {} }));
+    reportKanbanResult("Could not sync with Linear", await sync({ environmentId, input: {} }));
     setSyncing(false);
   };
   return (snapshot?.links.length ?? 0) > 0
@@ -107,9 +107,10 @@ export function useKanbanSyncActions(
 }
 
 /**
- * The bots host's kanban on a phone, below its header. One column shows at a time, picked from a
- * row of chips, and a card moves through its menu (long-press or ⋯), since dragging across a phone
- * screen is clumsy. Linear accounts and project links are edited on the computer.
+ * The bots host's kanban on a phone, below its header. Saved views and filter chips narrow it,
+ * one column shows at a time, a tap opens the issue, and a card moves through its long-press
+ * menu, since dragging across a phone screen is clumsy. Linear accounts, project links and saved
+ * views are edited on the computer.
  */
 export function KanbanBoardContent(props: {
   readonly environmentId: EnvironmentId;
@@ -158,16 +159,14 @@ export function BotsKanbanRouteScreen({ route }: BotsKanbanRouteScreenProps) {
   );
 }
 
-function FilterChip(props: {
-  readonly label: string;
-  readonly value: string | null;
-  readonly allLabel: string;
-  readonly options: ReadonlyArray<{ readonly id: string; readonly label: string }>;
-  readonly onChange: (value: string | null) => void;
+function ProjectChip(props: {
+  readonly value: ProjectId | null;
+  readonly options: ReadonlyArray<{ readonly id: ProjectId; readonly label: string }>;
+  readonly onChange: (value: ProjectId | null) => void;
 }) {
   const current = props.options.find((option) => option.id === props.value);
   const actions: MenuAction[] = [
-    { id: ALL, title: props.allLabel, state: props.value === null ? "on" : "off" },
+    { id: ALL, title: "All projects", state: props.value === null ? "on" : "off" },
     ...props.options.map((option) => ({
       id: option.id,
       title: option.label,
@@ -177,23 +176,31 @@ function FilterChip(props: {
   return (
     <Menu
       accessible
-      accessibilityLabel={props.label}
+      accessibilityLabel="Project"
       accessibilityRole="button"
       actions={actions}
       onPressAction={({ nativeEvent }) =>
-        props.onChange(nativeEvent.event === ALL ? null : nativeEvent.event)
+        props.onChange(props.options.find((option) => option.id === nativeEvent.event)?.id ?? null)
       }
     >
       <Chip
         size="small"
-        label={current?.label ?? props.allLabel}
+        label={current?.label ?? "All projects"}
         selected={props.value !== null}
         trailingIcon="chevron.down"
-        accessibilityLabel={props.label}
+        accessibilityLabel="Project"
       />
     </Menu>
   );
 }
+
+type BoardSheet =
+  | { readonly kind: "filter"; readonly field: KanbanOverlayField }
+  | { readonly kind: "hidden" };
+
+type BoardRow =
+  | { readonly kind: "columns" }
+  | { readonly kind: "ticket"; readonly ticket: KanbanTicket };
 
 function KanbanBoardView(props: {
   readonly environmentId: EnvironmentId;
@@ -201,10 +208,11 @@ function KanbanBoardView(props: {
   readonly returnTab: ThreadReturnTab | undefined;
   readonly bottomPadding: number;
 }) {
-  const { environmentId, snapshot } = props;
+  const { environmentId, snapshot, returnTab } = props;
   const navigation = useNavigation();
+  const colors = useKanbanGlyphColors();
   const { directory } = useBotDirectory(environmentId);
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const allProjects = useProjects();
   const shells = useThreadShells();
   const move = useAtomCommand(botsEnvironment.kanbanMoveTicket, { label: "kanban move" });
   const create = useAtomCommand(botsEnvironment.kanbanCreateTicket, { label: "kanban create" });
@@ -212,75 +220,144 @@ function KanbanBoardView(props: {
   const link = useAtomCommand(botsEnvironment.kanbanLinkThread, { label: "kanban link" });
   const unlink = useAtomCommand(botsEnvironment.kanbanUnlinkThread, { label: "kanban unlink" });
   const canEdit = useAtomValue(botsEnvironment.kanbanMoveTicket.permissionAtom(environmentId));
-  const [filter, setFilter] = useState<KanbanFilter>({
-    projectId: null,
-    workspaceId: null,
-    accountId: null,
-  });
+  const [projectId, setProjectId] = useState<ProjectId | null>(null);
+  const [pickedViewId, setPickedViewId] = useState<string | null>(null);
+  const [overlay, setOverlay] = useState<KanbanFilterOverlay>({});
   const [pickedColumn, setPickedColumn] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<BoardSheet | null>(null);
+  // Date windows ("past week", "current cycle") use the time of the last board interaction.
+  const [now, setNow] = useState(Date.now);
   // A move shows at once and holds until the server answers.
   const [pending, setPending] = useState<ReadonlyMap<string, KanbanTicketStatus>>(new Map());
 
-  const shown: KanbanSnapshot =
-    pending.size === 0
-      ? snapshot
-      : {
-          ...snapshot,
-          tickets: snapshot.tickets.map((ticket) => {
-            const status = pending.get(ticket.id);
-            return status === undefined ? ticket : { ...ticket, status };
-          }),
-        };
-  const board = buildBoard(shown, filter);
-  const columnId = shownColumnId(board, pickedColumn);
-  const column = board.columns.find((candidate) => candidate.id === columnId) ?? null;
+  const projects = useMemo(
+    () => allProjects.filter((project) => project.environmentId === environmentId),
+    [allProjects, environmentId],
+  );
+  const bots = directory?.bots;
+  const lookups = useMemo(() => buildKanbanLookups(snapshot, bots ?? []), [snapshot, bots]);
+  const threadsById = useMemo(
+    () =>
+      new Map(
+        shells
+          .filter((shell) => shell.environmentId === environmentId && shell.archivedAt === null)
+          .map((shell) => [shell.id, shell]),
+      ),
+    [shells, environmentId],
+  );
 
-  const threadsById = new Map(
-    shells
-      .filter((shell) => shell.environmentId === environmentId && shell.archivedAt === null)
-      .map((shell) => [shell.id, shell]),
+  const shown = useMemo<KanbanSnapshot>(
+    () =>
+      pending.size === 0
+        ? snapshot
+        : {
+            ...snapshot,
+            tickets: snapshot.tickets.map((ticket) => {
+              const status = pending.get(ticket.id);
+              return status === undefined ? ticket : { ...ticket, status };
+            }),
+          },
+    [snapshot, pending],
   );
-  const botsById = new Map((directory?.bots ?? []).map((bot) => [bot.id, bot]));
-  const workspaceBots = new Map(
-    snapshot.workspaces.map((workspace) => [
-      workspace.id,
-      workspace.botIds.flatMap((botId) => {
-        const bot = botsById.get(botId);
-        return bot === undefined ? [] : [bot];
-      }),
-    ]),
+  const views = useMemo(() => scopeViews(snapshot.views, projectId), [snapshot.views, projectId]);
+  const view = selectedView(views, pickedViewId);
+  const baseConfig = view?.config ?? KANBAN_DEFAULT_VIEW_CONFIG;
+  const config = useMemo(() => applyFilterOverlay(baseConfig, overlay), [baseConfig, overlay]);
+  const context = useMemo<KanbanViewContext>(
+    () => ({
+      now,
+      threadStatus: (threadId: ThreadId) => {
+        const shell = threadsById.get(threadId);
+        return shell === undefined ? null : threadCardStatus(shell);
+      },
+      personName: (personId: string) =>
+        personId === KANBAN_OWNER_PERSON_ID
+          ? lookups.ownerName
+          : personId.startsWith("bot:")
+            ? (lookups.botsById.get(personId.slice("bot:".length))?.name ?? null)
+            : null,
+    }),
+    [now, threadsById, lookups],
   );
-  const projectTitles = new Map(projects.map((project) => [project.id, project.title]));
-  const projectLink = snapshot.links.find((candidate) => candidate.projectId === filter.projectId);
+  const result = useMemo(
+    () => buildKanbanView(shown, projectId, config, context),
+    [shown, projectId, config, context],
+  );
+  const statusGroups = useMemo(() => statusGroupsOf(shown, projectId), [shown, projectId]);
+  const optionsByField = useMemo(
+    () =>
+      new Map(
+        KANBAN_OVERLAY_FIELDS.map((field) => [
+          field,
+          filterOptions(snapshot, projectId, field, context),
+        ]),
+      ),
+    [snapshot, projectId, context],
+  );
+  const properties = useMemo(() => new Set(config.properties), [config.properties]);
+  const nowDate = useMemo(() => new Date(now), [now]);
+  const projectTitles = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.title])),
+    [projects],
+  );
+
+  const columnId = shownColumnId(result, pickedColumn);
+  const column: KanbanGroup | null =
+    [...result.columns, ...result.hiddenColumns].find((candidate) => candidate.id === columnId) ??
+    null;
+  const columnIsHidden = result.hiddenColumns.some((candidate) => candidate.id === columnId);
+  const projectLink = snapshot.links.find((candidate) => candidate.projectId === projectId);
+  const rows = useMemo<ReadonlyArray<BoardRow>>(
+    () => [
+      { kind: "columns" },
+      ...(column?.tickets ?? []).map((ticket) => ({ kind: "ticket" as const, ticket })),
+    ],
+    [column],
+  );
 
   const moveTicket = async (ticket: KanbanTicket, to: KanbanTicketStatus) => {
     setPending((current) => new Map(current).set(ticket.id, to));
-    const result = await move({ environmentId, input: { ticketId: ticket.id, to } });
+    const moved = await move({ environmentId, input: { ticketId: ticket.id, to } });
     setPending((current) => {
       const next = new Map(current);
       next.delete(ticket.id);
       return next;
     });
-    reportResult(`Could not move ${ticket.identifier}`, result);
+    reportKanbanResult(`Could not move ${ticket.identifier}`, moved);
   };
+
+  const openTicket = useCallback(
+    (ticket: KanbanTicket) =>
+      navigation.dispatch(
+        StackActions.push("BotsKanbanIssue", {
+          environmentId,
+          ticketId: ticket.id,
+          ...(returnTab === undefined ? {} : { returnTab }),
+        }),
+      ),
+    [navigation, environmentId, returnTab],
+  );
 
   const onChoice = async (ticket: KanbanTicket, id: string) => {
     const choice = parseTicketMenuChoice(id);
     if (choice === null) return;
     switch (choice.kind) {
+      case "open":
+        openTicket(ticket);
+        return;
       case "move": {
-        const to = moveTarget(shown, board, ticket, choice.columnId);
+        const to = moveTarget(shown, statusGroups, ticket, choice.columnId);
         if (to !== null) await moveTicket(ticket, to);
         return;
       }
       case "link":
-        reportResult(
+        reportKanbanResult(
           "Could not link the thread",
           await link({ environmentId, input: { ticketId: ticket.id, threadId: choice.threadId } }),
         );
         return;
       case "unlink":
-        reportResult(
+        reportKanbanResult(
           "Could not unlink the thread",
           await unlink({
             environmentId,
@@ -298,8 +375,8 @@ function KanbanBoardView(props: {
           confirmText: "Delete",
           destructive: true,
           onConfirm: () =>
-            void remove({ environmentId, input: { ticketId: ticket.id } }).then((result) =>
-              reportResult("Could not delete the ticket", result),
+            void remove({ environmentId, input: { ticketId: ticket.id } }).then((removed) =>
+              reportKanbanResult("Could not delete the ticket", removed),
             ),
         });
         return;
@@ -307,7 +384,6 @@ function KanbanBoardView(props: {
   };
 
   const newTicket = () => {
-    const projectId = filter.projectId;
     if (projectId === null) return;
     Dialog.prompt({
       title: "New ticket",
@@ -318,21 +394,22 @@ function KanbanBoardView(props: {
       onConfirm: (value) => {
         const title = value.trim();
         if (!isTitle(title)) return;
+        // A local ticket starts in the shown status column; Linear picks a new issue's column.
+        const state =
+          projectLink === undefined && config.groupBy === "status"
+            ? KANBAN_LOCAL_STATES.find((candidate) => candidate === column?.id)
+            : undefined;
         void create({
           environmentId,
-          input: {
-            projectId,
-            title,
-            ...(column?.kind === "local" ? { state: column.state } : {}),
-          },
-        }).then((result) => reportResult("Could not create the ticket", result));
+          input: { projectId, title, ...(state === undefined ? {} : { state }) },
+        }).then((created) => reportKanbanResult("Could not create the ticket", created));
       },
     });
   };
 
-  const menuThreads = (ids: ReadonlyArray<string>): TicketMenuThread[] =>
+  const menuThreads = (ids: ReadonlyArray<ThreadId>): TicketMenuThread[] =>
     ids.flatMap((id) => {
-      const shell = threadsById.get(id as EnvironmentThreadShell["id"]);
+      const shell = threadsById.get(id);
       return shell === undefined ? [] : [{ id: shell.id, title: shell.title }];
     });
   const linkableThreads = (ticket: KanbanTicket): TicketMenuThread[] =>
@@ -346,235 +423,274 @@ function KanbanBoardView(props: {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, 20)
       .map((shell) => ({ id: shell.id, title: shell.title }));
+  const cardThreads = (ticket: KanbanTicket): KanbanCardThread[] =>
+    ticket.threadIds.flatMap((id) => {
+      const shell = threadsById.get(id);
+      return shell === undefined ? [] : [{ id, status: threadCardStatus(shell) }];
+    });
 
-  return (
-    <ScrollView
-      contentContainerStyle={{ paddingBottom: props.bottomPadding + 24 }}
-      stickyHeaderIndices={[1]}
-    >
-      <View className="gap-2 px-4 pb-2">
-        {snapshot.accounts.length === 0 ? (
+  const fieldShown = (field: KanbanOverlayField) =>
+    field === "workspace"
+      ? snapshot.workspaces.length > 1
+      : field === "account"
+        ? snapshot.accounts.length > 0
+        : true;
+  const optionLabel = (field: KanbanOverlayField) => {
+    const labels = new Map(
+      (optionsByField.get(field) ?? []).map((option) => [option.value, option.label]),
+    );
+    return (value: string) => labels.get(value) ?? value;
+  };
+  const overlayActive = Object.keys(overlay).length > 0;
+
+  const header = (
+    <View className="gap-2 pb-2">
+      {snapshot.accounts.length === 0 ? (
+        <View className="px-4">
           <Notice
             icon="info.circle"
             message="No Linear account yet. Add one in T3 Code on your computer: Settings → Bots → Kanban & Linear. Local boards work without one."
           />
-        ) : null}
+        </View>
+      ) : null}
+      {views.length > 0 ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerClassName="gap-2"
+          contentContainerClassName="gap-2 px-4"
         >
-          <FilterChip
-            label="Project"
-            value={filter.projectId}
-            allLabel="All projects"
-            options={projects.map((project) => ({ id: project.id, label: project.title }))}
-            onChange={(value) => setFilter({ ...filter, projectId: value as ProjectId | null })}
-          />
-          <FilterChip
-            label="Workspace"
-            value={filter.workspaceId}
-            allLabel="All workspaces"
-            options={snapshot.workspaces.map((workspace) => ({
-              id: workspace.id,
-              label: workspace.name,
-            }))}
-            onChange={(value) =>
-              setFilter({ ...filter, workspaceId: value as KanbanWorkspaceId | null })
-            }
-          />
-          {snapshot.accounts.length > 0 ? (
-            <FilterChip
-              label="Linear account"
-              value={filter.accountId}
-              allLabel="All accounts"
-              options={snapshot.accounts.map((account) => ({
-                id: account.id,
-                label: account.name,
-              }))}
-              onChange={(value) =>
-                setFilter({ ...filter, accountId: value as LinearAccountId | null })
-              }
+          {views.map((candidate) => (
+            <Chip
+              key={candidate.id}
+              label={candidate.name}
+              selected={candidate.id === view?.id}
+              onPress={() => {
+                setPickedViewId(candidate.id);
+                setOverlay({});
+                setNow(Date.now());
+                setPickedColumn(null);
+              }}
+              accessibilityLabel={`View ${candidate.name}`}
             />
-          ) : null}
+          ))}
         </ScrollView>
-        {projectLink ? (
-          <Text className="text-xs text-foreground-muted">
-            {`${projectLink.teamName} on Linear${projectLink.syncError ? ` · sync failed: ${projectLink.syncError}` : ""}`}
-          </Text>
-        ) : filter.projectId !== null ? (
-          <Text className="text-xs text-foreground-muted">Local board</Text>
-        ) : null}
-      </View>
-      <ColumnPicker board={board} columnId={columnId} onPick={setPickedColumn} />
-      <View className="gap-2 px-4 pt-2">
-        {column === null || column.tickets.length === 0 ? (
-          <Text className="py-6 text-center text-sm text-foreground-muted">
-            No tickets in this column.
-          </Text>
-        ) : (
-          column.tickets.map((ticket) => (
-            <KanbanCard
-              key={ticket.id}
-              ticket={ticket}
-              projectTitle={
-                filter.projectId === null ? (projectTitles.get(ticket.projectId) ?? null) : null
-              }
-              bots={workspaceBots.get(workspaceOf(snapshot, ticket)) ?? []}
-              threads={ticket.threadIds.flatMap((id) => {
-                const shell = threadsById.get(id);
-                return shell === undefined ? [] : [shell];
-              })}
-              actions={ticketMenuActions({
-                snapshot: shown,
-                board,
-                ticket,
-                linkable: linkableThreads(ticket),
-                linked: menuThreads(ticket.threadIds),
-                canEdit,
-              })}
-              onChoice={(id) => void onChoice(ticket, id)}
-              onOpenThread={(threadId) =>
-                navigation.dispatch(
-                  StackActions.push("Thread", {
-                    environmentId,
-                    threadId,
-                    ...(props.returnTab === undefined ? {} : { returnTab: props.returnTab }),
-                  }),
-                )
-              }
-            />
-          ))
-        )}
-        {filter.projectId === null ? (
-          <Text className="pt-2 text-center text-xs text-foreground-muted">
-            Pick a project to add tickets.
-          </Text>
-        ) : canEdit ? (
-          <View className="items-start pt-1">
-            <ControlPill variant="pill" icon="plus" label="New ticket" onPress={newTicket} />
-          </View>
-        ) : null}
-      </View>
-    </ScrollView>
-  );
-}
-
-/** One chip per column, with its count; the board shows the picked column below. */
-function ColumnPicker(props: {
-  readonly board: KanbanBoard;
-  readonly columnId: string | null;
-  readonly onPick: (columnId: string) => void;
-}) {
-  return (
-    <View className="bg-screen py-2">
+      ) : null}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerClassName="gap-2 px-4"
       >
-        {props.board.columns.map((column) => (
+        <ProjectChip
+          value={projectId}
+          options={projects.map((project) => ({ id: project.id, label: project.title }))}
+          onChange={(value) => {
+            setProjectId(value);
+            setNow(Date.now());
+            setPickedColumn(null);
+          }}
+        />
+        {KANBAN_OVERLAY_FIELDS.filter(fieldShown).map((field) => {
+          const values = overlayValues(baseConfig, overlay, field);
+          const fieldLabel = KANBAN_FILTER_FIELD_LABELS[field];
+          return (
+            <Chip
+              key={field}
+              size="small"
+              label={filterChipLabel(fieldLabel, values, optionLabel(field))}
+              selected={values.length > 0}
+              trailingIcon="chevron.down"
+              onPress={() => setSheet({ kind: "filter", field })}
+              accessibilityLabel={`Filter by ${fieldLabel}`}
+            />
+          );
+        })}
+        {overlayActive ? (
           <Chip
-            key={column.id}
-            label={`${column.title} ${column.tickets.length}`}
-            selected={column.id === props.columnId}
-            onPress={() => props.onPick(column.id)}
-            accessibilityLabel={`${column.title}, ${column.tickets.length} tickets`}
+            size="small"
+            label="Clear"
+            icon="xmark"
+            onPress={() => {
+              setOverlay({});
+              setNow(Date.now());
+            }}
+            accessibilityLabel="Clear filters back to the view"
           />
-        ))}
+        ) : null}
       </ScrollView>
+      {projectLink ? (
+        <Text className="px-4 text-xs text-foreground-muted">
+          {`${projectLink.teamName} on Linear${projectLink.syncError ? ` · sync failed: ${projectLink.syncError}` : ""}`}
+        </Text>
+      ) : projectId !== null ? (
+        <Text className="px-4 text-xs text-foreground-muted">Local board</Text>
+      ) : null}
     </View>
+  );
+
+  const footer = (
+    <View className="gap-2 px-4 pt-2">
+      {column === null || column.tickets.length === 0 ? (
+        <Text className="py-6 text-center text-sm text-foreground-muted">
+          {result.total === 0 ? "No tickets match this view." : "No tickets in this column."}
+        </Text>
+      ) : null}
+      {projectId === null ? (
+        <Text className="pt-2 text-center text-xs text-foreground-muted">
+          Pick a project to add tickets.
+        </Text>
+      ) : canEdit ? (
+        <View className="items-start pt-1">
+          <ControlPill variant="pill" icon="plus" label="New ticket" onPress={newTicket} />
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const renderRow = ({ item }: { readonly item: BoardRow }) => {
+    if (item.kind === "columns") {
+      return (
+        <View className="bg-screen py-2">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerClassName="gap-2 px-4"
+          >
+            {result.columns.map((candidate) => (
+              <Chip
+                key={candidate.id}
+                label={`${candidate.title} ${candidate.tickets.length}`}
+                selected={candidate.id === columnId}
+                onPress={() => setPickedColumn(candidate.id)}
+                accessibilityLabel={`${candidate.title}, ${candidate.tickets.length} tickets`}
+              />
+            ))}
+            {result.hiddenColumns.length > 0 ? (
+              <Chip
+                label={
+                  columnIsHidden && column !== null
+                    ? `${column.title} ${column.tickets.length}`
+                    : `Hidden ${result.hiddenColumns.length}`
+                }
+                icon="eye.slash"
+                selected={columnIsHidden}
+                onPress={() => setSheet({ kind: "hidden" })}
+                accessibilityLabel={`${result.hiddenColumns.length} hidden columns`}
+              />
+            ) : null}
+          </ScrollView>
+        </View>
+      );
+    }
+    const { ticket } = item;
+    return (
+      <View className="px-4 pb-2">
+        <KanbanCard
+          ticket={ticket}
+          lookups={lookups}
+          colors={colors}
+          properties={properties}
+          bots={responsibleBotIds(snapshot, ticket).flatMap((botId) => {
+            const bot = lookups.botsById.get(botId);
+            return bot === undefined ? [] : [bot];
+          })}
+          threads={cardThreads(ticket)}
+          projectTitle={projectId === null ? (projectTitles.get(ticket.projectId) ?? null) : null}
+          now={nowDate}
+          actions={ticketMenuActions({
+            snapshot: shown,
+            statusGroups,
+            ticket,
+            linkable: linkableThreads(ticket),
+            linked: menuThreads(ticket.threadIds),
+            canEdit,
+          })}
+          onChoice={(choiceTicket, id) => void onChoice(choiceTicket, id)}
+          onOpen={openTicket}
+        />
+      </View>
+    );
+  };
+
+  return (
+    <>
+      <FlatList
+        data={rows}
+        keyExtractor={(row) => (row.kind === "columns" ? "columns" : row.ticket.id)}
+        renderItem={renderRow}
+        ListHeaderComponent={header}
+        ListFooterComponent={footer}
+        // The column chips (first row, after the header) stay on top while cards scroll.
+        stickyHeaderIndices={[1]}
+        contentContainerStyle={{ paddingBottom: props.bottomPadding + 24 }}
+        keyboardShouldPersistTaps="handled"
+      />
+      {sheet?.kind === "filter" ? (
+        <FilterSheet
+          field={sheet.field}
+          options={optionsByField.get(sheet.field) ?? []}
+          selected={overlayValues(baseConfig, overlay, sheet.field)}
+          lookups={lookups}
+          colors={colors}
+          onToggle={(value) => {
+            setOverlay((current) => toggleOverlayValue(baseConfig, current, sheet.field, value));
+            setNow(Date.now());
+          }}
+          onClose={() => setSheet(null)}
+        />
+      ) : sheet?.kind === "hidden" ? (
+        <KanbanPickerSheet
+          title="Hidden columns"
+          options={result.hiddenColumns.map((group) => ({
+            value: group.id,
+            label: group.title,
+            subtitle: `${group.tickets.length} ${group.tickets.length === 1 ? "ticket" : "tickets"}`,
+            leading: (
+              <KanbanGroupIconView icon={group.icon} lookups={lookups} colors={colors} size={18} />
+            ),
+          }))}
+          selected={columnIsHidden && columnId !== null ? [columnId] : []}
+          footer="Columns the view hides, and empty ones. Pick one to show its tickets."
+          onPick={(value) => {
+            setPickedColumn(value);
+            setSheet(null);
+          }}
+          onClose={() => setSheet(null)}
+        />
+      ) : null}
+    </>
   );
 }
 
-function KanbanCard(props: {
-  readonly ticket: KanbanTicket;
-  readonly projectTitle: string | null;
-  readonly bots: ReadonlyArray<BotDirectoryEntry>;
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly actions: MenuAction[];
-  readonly onChoice: (id: string) => void;
-  readonly onOpenThread: (threadId: EnvironmentThreadShell["id"]) => void;
+function FilterSheet(props: {
+  readonly field: KanbanOverlayField;
+  readonly options: ReadonlyArray<KanbanFilterOption>;
+  readonly selected: ReadonlyArray<string>;
+  readonly lookups: KanbanLookups;
+  readonly colors: KanbanGlyphColors;
+  readonly onToggle: (value: string) => void;
+  readonly onClose: () => void;
 }) {
-  const { ticket } = props;
-  const meta = [
-    ticket.priority > 0 ? PRIORITY_LABELS[ticket.priority] : null,
-    props.projectTitle,
-  ].filter((part) => part !== null);
   return (
-    <Menu
-      shouldOpenOnLongPress
-      actions={props.actions}
-      onPressAction={({ nativeEvent }) => props.onChoice(nativeEvent.event)}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${ticket.identifier}, ${ticket.title}`}
-        accessibilityHint="Long-press for move and link actions"
-        className="rounded-2xl border border-border bg-card p-3"
-      >
-        <View className="flex-row items-start gap-2">
-          <View className="min-w-0 flex-1">
-            <Text className="text-xs text-foreground-muted">
-              {[ticket.identifier, ...meta].join(" · ")}
-            </Text>
-            <Text className="mt-0.5 text-base text-foreground">{ticket.title}</Text>
-          </View>
-          {props.actions.length > 0 ? (
-            <Menu
-              accessible
-              accessibilityLabel={`Actions for ${ticket.identifier}`}
-              accessibilityRole="button"
-              actions={props.actions}
-              onPressAction={({ nativeEvent }) => props.onChoice(nativeEvent.event)}
-            >
-              <ControlPill
-                icon="ellipsis"
-                accessibilityLabel={`Actions for ${ticket.identifier}`}
-              />
-            </Menu>
-          ) : null}
-        </View>
-        {props.threads.length > 0 ? (
-          <View className="mt-2 gap-1">
-            {props.threads.map((thread) => {
-              const status = threadCardStatus(thread);
-              return (
-                <Pressable
-                  key={thread.id}
-                  accessibilityRole="link"
-                  accessibilityLabel={`${thread.title}, ${THREAD_CARD_STATUS_LABELS[status]}`}
-                  onPress={() => props.onOpenThread(thread.id)}
-                  className="flex-row items-center gap-2 rounded-lg bg-subtle px-2 py-1.5"
-                >
-                  <View className={cn("size-2 rounded-full", STATUS_DOT[status])} />
-                  <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
-                    {thread.title}
-                  </Text>
-                  <Text className="text-xs text-foreground-muted">
-                    {THREAD_CARD_STATUS_LABELS[status]}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-        {props.bots.length > 0 || ticket.assigneeName ? (
-          <View className="mt-2 flex-row items-center gap-2">
-            {props.bots.map((bot) => (
-              <View key={bot.id} className="flex-row items-center gap-1">
-                <BotAvatar botId={bot.id} size={16} />
-                <Text className="text-xs text-foreground-muted">{bot.name}</Text>
-              </View>
-            ))}
-            {ticket.assigneeName ? (
-              <Text className="ml-auto text-xs text-foreground-muted" numberOfLines={1}>
-                {ticket.assigneeName}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-      </Pressable>
-    </Menu>
+    <KanbanPickerSheet
+      title={KANBAN_FILTER_FIELD_LABELS[props.field]}
+      multi
+      options={props.options.map((option) => ({
+        value: option.value,
+        label: option.label,
+        subtitle: `${option.count} ${option.count === 1 ? "ticket" : "tickets"}`,
+        leading: (
+          <KanbanGroupIconView
+            icon={option.icon}
+            lookups={props.lookups}
+            colors={props.colors}
+            size={18}
+          />
+        ),
+      }))}
+      selected={props.selected}
+      footer={`Applies on this phone until you pick another view. ${VIEWS_NOTE}`}
+      onPick={props.onToggle}
+      onClose={props.onClose}
+    />
   );
 }

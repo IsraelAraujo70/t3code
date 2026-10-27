@@ -1,5 +1,6 @@
-import { buildBoard } from "@t3tools/client-runtime/kanban-board";
+import { buildKanbanView } from "@t3tools/client-runtime/kanban-board";
 import {
+  KANBAN_DEFAULT_VIEW_CONFIG,
   KanbanTicketId,
   LinearAccountId,
   ProjectId,
@@ -15,6 +16,7 @@ import {
   moveTarget,
   parseTicketMenuChoice,
   shownColumnId,
+  statusGroupsOf,
   ticketMenuActions,
 } from "./kanban.logic";
 
@@ -101,54 +103,68 @@ const moveTitles = (actions: ReturnType<typeof ticketMenuActions>) =>
   actions.find((action) => action.id === "move")?.subactions?.map((action) => action.title);
 
 describe("ticketMenuActions", () => {
-  const linkedBoard = buildBoard(snapshot, {
-    projectId: LINKED,
-    workspaceId: null,
-    accountId: null,
-  });
+  const linkedGroups = statusGroupsOf(snapshot, LINKED);
 
   it("offers every other state of the ticket's team, and Linear instead of delete", () => {
     const actions = ticketMenuActions({
       snapshot,
-      board: linkedBoard,
+      statusGroups: linkedGroups,
       ticket: issue,
       linkable: [],
       linked: [],
       canEdit: true,
     });
     expect(moveTitles(actions)).toEqual(["A Fazer", "Em Revisão", "Cancelado"]);
-    expect(actions.map((action) => action.id)).toEqual(["move", "open-linear"]);
+    expect(actions.map((action) => action.id)).toEqual(["open", "move", "open-linear"]);
   });
 
   it("offers only the local columns a local ticket can take, plus thread links and delete", () => {
-    const board = buildBoard(snapshot, { projectId: LOCAL, workspaceId: null, accountId: null });
     const actions = ticketMenuActions({
       snapshot,
-      board,
+      statusGroups: statusGroupsOf(snapshot, LOCAL),
       ticket: local,
       linkable: [{ id: ThreadId.make("thread-a"), title: "Thread A" }],
       linked: [{ id: ThreadId.make("thread-b"), title: "Thread B" }],
       canEdit: true,
     });
     expect(moveTitles(actions)).toEqual(["Backlog", "In progress", "In review", "Done"]);
-    expect(actions.map((action) => action.id)).toEqual(["move", "link", "unlink", "delete"]);
+    expect(actions.map((action) => action.id)).toEqual([
+      "open",
+      "move",
+      "link",
+      "unlink",
+      "delete",
+    ]);
+  });
+
+  it("does not offer the folded column a Linear ticket already sits in on the all-projects board", () => {
+    const actions = ticketMenuActions({
+      snapshot,
+      statusGroups: statusGroupsOf(snapshot, null),
+      ticket: issue,
+      linkable: [],
+      linked: [],
+      canEdit: true,
+    });
+    expect(moveTitles(actions)).toEqual(["Todo", "In review", "Canceled"]);
   });
 
   it("lets a reader only open the issue", () => {
     const actions = ticketMenuActions({
       snapshot,
-      board: linkedBoard,
+      statusGroups: linkedGroups,
       ticket: issue,
       linkable: [{ id: ThreadId.make("thread-a"), title: "Thread A" }],
       linked: [],
       canEdit: false,
     });
-    expect(actions.map((action) => action.id)).toEqual(["open-linear"]);
+    expect(actions.map((action) => action.id)).toEqual(["open", "open-linear"]);
   });
 });
 
 describe("menu choices", () => {
   it("round-trips through the menu ids", () => {
+    expect(parseTicketMenuChoice("open")).toEqual({ kind: "open" });
     expect(parseTicketMenuChoice("move:review")).toEqual({ kind: "move", columnId: "review" });
     expect(parseTicketMenuChoice("link:thread:project:1")).toEqual({
       kind: "link",
@@ -159,21 +175,26 @@ describe("menu choices", () => {
   });
 
   it("maps a move to the column's state", () => {
-    const board = buildBoard(snapshot, { projectId: LINKED, workspaceId: null, accountId: null });
-    expect(moveTarget(snapshot, board, issue, "review")).toEqual({
+    const groups = statusGroupsOf(snapshot, LINKED);
+    expect(moveTarget(snapshot, groups, issue, "review")).toEqual({
       kind: "linear",
       stateId: "review",
     });
-    expect(moveTarget(snapshot, board, issue, "missing")).toBeNull();
+    expect(moveTarget(snapshot, groups, issue, "doing")).toBeNull();
+    expect(moveTarget(snapshot, groups, issue, "missing")).toBeNull();
   });
 });
 
 describe("shownColumnId", () => {
-  const board = buildBoard(snapshot, { projectId: LINKED, workspaceId: null, accountId: null });
+  const view = buildKanbanView(snapshot, LINKED, KANBAN_DEFAULT_VIEW_CONFIG, {
+    now: Date.parse(at),
+    threadStatus: () => null,
+  });
 
-  it("keeps the picked column, else opens the first one with tickets", () => {
-    expect(shownColumnId(board, "review")).toBe("review");
-    expect(shownColumnId(board, "gone")).toBe("doing");
-    expect(shownColumnId(board, null)).toBe("doing");
+  it("keeps the picked column, hidden ones too, else opens the first one with tickets", () => {
+    expect(view.columns.map((column) => column.id)).toEqual(["doing"]);
+    expect(shownColumnId(view, "review")).toBe("review");
+    expect(shownColumnId(view, "gone")).toBe("doing");
+    expect(shownColumnId(view, null)).toBe("doing");
   });
 });
