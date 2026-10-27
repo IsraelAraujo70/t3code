@@ -30,6 +30,7 @@ import { KANBAN_LIST_DEFAULT, KANBAN_LIST_MAX, KanbanToolkit } from "./tools.ts"
 
 const MAX_BODY_CHARS = 4_000;
 const MAX_ENTRIES = 50;
+const MAX_CHOICES = 100;
 
 const kanbanFailure = (error: { readonly message: string }) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
@@ -149,7 +150,7 @@ const workspaceOfProject = (snapshot: KanbanSnapshot, projectId: ProjectId) => {
 };
 
 /** The labels a ticket can take (no label groups) and the people it can be assigned to. */
-const ticketChoices = (caller: CallerScope, ticket: KanbanTicket) => {
+const ticketChoices = (caller: CallerScope, ticket: KanbanTicket, trimmed: string[]) => {
   const { snapshot } = caller;
   const groups = new Set(snapshot.labels.flatMap((label) => label.parentId ?? []));
   const linear = ticket.linear;
@@ -172,13 +173,26 @@ const ticketChoices = (caller: CallerScope, ticket: KanbanTicket) => {
       : snapshot.people
           .filter((person) => person.active && person.organizationId === organizationId)
           .map((person) => ({ id: person.id, name: person.name }));
-  return { labels: labels.map((label) => ({ id: label.id, name: label.name })), assignees };
+  const capped = <A>(items: ReadonlyArray<A>, what: string) => {
+    if (items.length <= MAX_CHOICES) return items;
+    trimmed.push(`${what}: first ${MAX_CHOICES} of ${items.length}`);
+    return items.slice(0, MAX_CHOICES);
+  };
+  return {
+    labels: capped(
+      labels.map((label) => ({ id: label.id, name: label.name })),
+      "labels",
+    ),
+    assignees: capped(assignees, "assignees"),
+  };
 };
 
-const trimBody = (text: string, what: string, trimmed: string[]) => {
+export const trimBody = (text: string, what: string, trimmed: string[]) => {
   if (text.length <= MAX_BODY_CHARS) return text;
   trimmed.push(`${what}: first ${MAX_BODY_CHARS} of ${text.length} characters`);
-  return `${text.slice(0, MAX_BODY_CHARS)}…`;
+  const cut = text.slice(0, MAX_BODY_CHARS);
+  // Never end on half of a surrogate pair (an emoji cut in two).
+  return `${/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut}…`;
 };
 
 const newest = <A>(items: ReadonlyArray<A>, what: string, trimmed: string[]) => {
@@ -287,7 +301,7 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
           text: entry.text,
           createdAt: entry.createdAt,
         })),
-        ...ticketChoices(caller, ticket),
+        ...ticketChoices(caller, ticket, trimmed),
         trimmed,
       };
     }),

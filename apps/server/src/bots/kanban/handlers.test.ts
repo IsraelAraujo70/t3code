@@ -422,4 +422,11 @@ describe("kanban tools", () => {
       ]);
     }),
   );
+
+  it("never cuts an emoji in half when trimming", () => {
+    const trimmed: string[] = [];
+    const body = KanbanHandlers.trimBody(`${"x".repeat(3_999)}😀 and more`, "description", trimmed);
+    expect(body).toBe(`${"x".repeat(3_999)}…`);
+    expect(body.isWellFormed()).toBe(true);
+  });
 });
