@@ -807,8 +807,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         gestureEnabled: false,
       },
     }),
-    // Fork (friend): the bots host's live screen and kanban, opened from the Bots section. The
-    // kanban is a plain card so a thread opened from it stacks on top and Back returns to it.
+    // Fork (friend): the bots host's live screen and kanban, opened from the Bots section.
     BotsComputer: createNativeStackScreen({
       screen: BotsComputerRouteScreen,
       linking: "bots/computer/:environmentId",
