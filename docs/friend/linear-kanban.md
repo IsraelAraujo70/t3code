@@ -276,6 +276,11 @@ fall back to the newest update, as ordering by priority does. The status is the 
 of the threads, so a card moves when its thread changes, as the thread status filter does. It is
 not stored on the ticket, so dropping a card on a thread status group does nothing.
 
+Clients decode the kanban snapshot strictly, saved views included. A client built before thread
+status grouping (an older Android APK) fails to load the Kanban tab once any saved view uses it,
+and an older bots host refuses to save such a view. Update the phone app and the host before saving
+one. Desktop and web follow the server they connect to.
+
 ### Writes
 
 Status, priority, assignee, labels, due date, project, milestone, cycle, estimate, title and

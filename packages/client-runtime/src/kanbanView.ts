@@ -543,10 +543,8 @@ function fillByValue(
 
 /**
  * Groups for one grouping, in display order, including empty ones. Status: a linked project's
- * team states (its local tickets in the first state of their category); any other scope the five
- * local states plus `canceled` (Linear canceled and duplicate tickets). Priority and thread
- * status: their fixed rank, then none. Assignee/label/project/cycle: the values present plus
- * `none`, by name.
+ * team states, or the local states plus `canceled` elsewhere. Priority and thread status: their
+ * fixed rank, then none. Assignee/label/project/cycle: the values present plus `none`, by name.
  */
 export function groupTickets(
   snapshot: KanbanSnapshot,
