@@ -284,6 +284,20 @@ export function KanbanGroupIconView(props: {
       return (
         <SymbolView name="arrow.clockwise" size={size} tintColorClassName="accent-icon-muted" />
       );
+    case "threadStatus": {
+      const dot = Math.round(size * 0.55);
+      return (
+        <View
+          className={cn(
+            "rounded-full",
+            icon.status === null
+              ? "border border-foreground-muted"
+              : THREAD_STATUS_DOT[icon.status],
+          )}
+          style={{ width: dot, height: dot }}
+        />
+      );
+    }
     case "none":
       return null;
   }

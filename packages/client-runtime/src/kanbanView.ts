@@ -66,13 +66,15 @@ export type KanbanGroupIcon =
   | { readonly kind: "label"; readonly color: string | null }
   | { readonly kind: "project"; readonly color: string | null; readonly icon: string | null }
   | { readonly kind: "cycle" }
+  | { readonly kind: "threadStatus"; readonly status: ThreadCardStatus | null }
   | { readonly kind: "none" };
 
 /** One column (board), section (list) or swimlane. */
 export interface KanbanGroup {
   /**
    * Stable within a grouping: a state id or local state for status, a person id, "0".."4", a
-   * label/project/cycle id, or `none` for the tickets without one. `all` when grouping is `none`.
+   * label/project/cycle id, a thread status, or `none` for the tickets without one. `all` when
+   * grouping is `none`.
    */
   readonly id: string;
   readonly title: string;
@@ -154,6 +156,28 @@ const PULL_REQUEST_STATE_LABELS = {
 } as const;
 
 const PRIORITY_ORDER = [1, 2, 3, 4, 0] as const;
+
+/**
+ * Thread statuses, most urgent first. Grouping and ordering by thread status give a ticket its
+ * most urgent linked thread; tickets with no thread the client knows come after all of these.
+ * Documented in docs/friend/linear-kanban.md ("Grouping by thread status").
+ */
+export const THREAD_STATUS_RANK: ReadonlyArray<ThreadCardStatus> = [
+  "approval",
+  "input",
+  "failed",
+  "working",
+  "settled",
+];
+
+/** A ticket's most urgent linked thread status; null when it has no thread the client knows. */
+export function ticketThreadStatus(
+  ticket: Pick<KanbanTicket, "threadIds">,
+  threadStatus: KanbanViewContext["threadStatus"],
+): ThreadCardStatus | null {
+  const statuses = new Set(ticket.threadIds.map(threadStatus));
+  return THREAD_STATUS_RANK.find((status) => statuses.has(status)) ?? null;
+}
 
 const statesByIdOf = (snapshot: KanbanSnapshot) =>
   new Map(snapshot.states.map((state) => [state.id, state]));
@@ -359,15 +383,30 @@ export function viewTickets(
 
 /**
  * The view's order: `priority` (urgent first, none last, then newest update), `updated`,
- * `created` (newest first), `manual` (sortOrder), `dueDate` (soonest first, none last). With
+ * `created` (newest first), `manual` (sortOrder), `dueDate` (soonest first, none last),
+ * `threadStatus` (`THREAD_STATUS_RANK`, no thread last, then newest update). With
  * `completedByRecency`, closed tickets come after open ones, newest closed first.
  */
 export function sortViewTickets(
   tickets: ReadonlyArray<KanbanTicket>,
   config: Pick<KanbanViewConfig, "orderBy" | "completedByRecency">,
+  context?: Pick<KanbanViewContext, "threadStatus">,
 ): ReadonlyArray<KanbanTicket> {
   // Linear's 0 is "no priority"; it sorts after urgent (1) through low (4).
   const rank = (priority: number) => (priority === 0 ? 5 : priority);
+  const threadStatus = context?.threadStatus ?? (() => null);
+  const threadRanks = new Map(
+    config.orderBy === "threadStatus"
+      ? tickets.map((ticket) => {
+          const status = ticketThreadStatus(ticket, threadStatus);
+          return [
+            ticket.id,
+            status === null ? THREAD_STATUS_RANK.length : THREAD_STATUS_RANK.indexOf(status),
+          ];
+        })
+      : [],
+  );
+  const threadRank = (ticket: KanbanTicket) => threadRanks.get(ticket.id) ?? 0;
   const byOrdering = (a: KanbanTicket, b: KanbanTicket) => {
     switch (config.orderBy) {
       case "priority":
@@ -382,6 +421,8 @@ export function sortViewTickets(
         return a.dueDate === null || b.dueDate === null
           ? Number(a.dueDate === null) - Number(b.dueDate === null)
           : a.dueDate.localeCompare(b.dueDate);
+      case "threadStatus":
+        return threadRank(a) - threadRank(b) || b.updatedAt.localeCompare(a.updatedAt);
     }
   };
   return [...tickets].sort((a, b) => {
@@ -502,16 +543,15 @@ function fillByValue(
 
 /**
  * Groups for one grouping, in display order, including empty ones. Status: a linked project's
- * team states (its local tickets in the first state of their category); any other scope the five
- * local states plus `canceled` (Linear canceled and duplicate tickets). Priority: urgent … low,
- * then none. Assignee/label/project/cycle: the values present plus `none`, by name.
+ * team states, or the local states plus `canceled` elsewhere. Priority and thread status: their
+ * fixed rank, then none. Assignee/label/project/cycle: the values present plus `none`, by name.
  */
 export function groupTickets(
   snapshot: KanbanSnapshot,
   projectId: ProjectId | null,
   grouping: KanbanGrouping,
   tickets: ReadonlyArray<KanbanTicket>,
-  context?: Pick<KanbanViewContext, "personName">,
+  context?: Partial<Pick<KanbanViewContext, "personName" | "threadStatus">>,
 ): ReadonlyArray<KanbanGroup> {
   switch (grouping) {
     case "status": {
@@ -526,6 +566,19 @@ export function groupTickets(
         tickets,
         (ticket) => String(ticket.priority),
       );
+    case "threadStatus": {
+      const threadStatus = context?.threadStatus ?? (() => null);
+      return fillFixed(
+        [
+          ...THREAD_STATUS_RANK.map((status) =>
+            draft(status, THREAD_CARD_STATUS_LABELS[status], { kind: "threadStatus", status }),
+          ),
+          draft("none", "No thread", { kind: "threadStatus", status: null }),
+        ],
+        tickets,
+        (ticket) => ticketThreadStatus(ticket, threadStatus) ?? "none",
+      );
+    }
     case "none":
       return [{ id: "all", title: "All issues", icon: { kind: "none" }, tickets }];
     case "assignee": {
@@ -586,7 +639,11 @@ export function buildKanbanView(
   config: KanbanViewConfig,
   context: KanbanViewContext,
 ): KanbanViewResult {
-  const tickets = sortViewTickets(viewTickets(snapshot, projectId, config, context), config);
+  const tickets = sortViewTickets(
+    viewTickets(snapshot, projectId, config, context),
+    config,
+    context,
+  );
   const groups = groupTickets(snapshot, projectId, config.groupBy, tickets, context);
   const userHidden = new Set(config.hiddenColumns);
   const isHidden = (group: KanbanGroup) =>
@@ -651,8 +708,8 @@ function statusDropColumn(
 /**
  * What dropping `ticket` on a group of `grouping` does, or null when it cannot go there (a
  * Linear ticket on another team's state, a local ticket on `canceled`, a Linear ticket given a
- * local label, or the group it is already in). Labels: dropping adds that label (and on `none`
- * clears them).
+ * local label, a thread status, which follows the threads, or the group it is already in).
+ * Labels: dropping adds that label (and on `none` clears them).
  */
 export function dropActionFor(
   snapshot: KanbanSnapshot,
@@ -670,6 +727,7 @@ export function dropActionFor(
 
   switch (grouping) {
     case "none":
+    case "threadStatus":
       return null;
     case "status": {
       // Several states can fold into one column; dropping where it already sits is no move.
@@ -948,12 +1006,12 @@ function setFieldOptions(
     }
     case "threadStatus":
       return [
-        ...Object.entries(THREAD_CARD_STATUS_LABELS).map(([value, label]): OptionDraft => ({
-          value,
-          label,
-          icon: { kind: "none" },
+        ...THREAD_STATUS_RANK.map((status): OptionDraft => ({
+          value: status,
+          label: THREAD_CARD_STATUS_LABELS[status],
+          icon: { kind: "threadStatus", status },
         })),
-        none,
+        { ...none, icon: { kind: "threadStatus", status: null } },
       ];
     case "pullRequest":
       return [

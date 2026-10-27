@@ -316,6 +316,35 @@ describe("board drops", () => {
     ).toEqual([{ kind: "move", to: { kind: "local", state: "done" } }]);
   });
 
+  it("moves within a thread status lane and refuses changing the thread status", () => {
+    const statusByThread = { groupBy: "status", subGroupBy: "threadStatus" } as const;
+    expect(
+      cellDropActions(
+        board,
+        localTicket,
+        statusByThread,
+        group("done"),
+        group("none", [localTicket]),
+      ),
+    ).toEqual([{ kind: "move", to: { kind: "local", state: "done" } }]);
+    expect(
+      cellDropActions(board, localTicket, statusByThread, group("done"), group("working")),
+    ).toEqual([]);
+    const threadByAssignee = { groupBy: "threadStatus", subGroupBy: "assignee" } as const;
+    expect(
+      cellDropActions(board, localTicket, threadByAssignee, group("approval"), group("owner")),
+    ).toEqual([]);
+    expect(
+      cellDropActions(
+        board,
+        localTicket,
+        threadByAssignee,
+        group("none", [localTicket]),
+        group("owner"),
+      ),
+    ).toEqual([{ kind: "update", patch: { assigneeId: "owner" } }]);
+  });
+
   it("shows pending drops on the snapshot until they settle", () => {
     const shown = applyPendingDrops(
       board,

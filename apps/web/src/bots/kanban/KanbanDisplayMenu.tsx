@@ -42,6 +42,7 @@ const GROUPING_LABELS: Record<KanbanGrouping, string> = {
   label: "Label",
   project: "Project",
   cycle: "Cycle",
+  threadStatus: "Thread status",
   none: "No grouping",
 };
 
@@ -51,6 +52,7 @@ const ORDERING_LABELS: Record<KanbanOrdering, string> = {
   created: "Created",
   manual: "Manual",
   dueDate: "Due date",
+  threadStatus: "Thread status",
 };
 
 const COMPLETED_LABELS: Record<KanbanViewConfig["completed"], string> = {

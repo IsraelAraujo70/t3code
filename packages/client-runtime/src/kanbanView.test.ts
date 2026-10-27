@@ -2,6 +2,7 @@ import {
   BotId,
   KANBAN_DEFAULT_VIEW_CONFIG,
   KanbanTicketId,
+  KanbanViewConfig,
   LinearAccountId,
   linearWorkspaceId,
   LOCAL_KANBAN_WORKSPACE_ID,
@@ -11,9 +12,9 @@ import {
   type KanbanFilterClause,
   type KanbanSnapshot,
   type KanbanTicket,
-  type KanbanViewConfig,
   type LinearStateType,
 } from "@t3tools/contracts";
+import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -25,11 +26,14 @@ import {
   kanbanMeIds,
   kanbanStartProjectTarget,
   sortViewTickets,
+  THREAD_STATUS_RANK,
   ticketMatchesClause,
+  ticketThreadStatus,
   viewTickets,
   type KanbanGroup,
   type KanbanViewContext,
 } from "./kanbanView.ts";
+import type { ThreadCardStatus } from "./kanbanBoard.ts";
 
 const LINKED = ProjectId.make("linked");
 const ACCOUNT = LinearAccountId.make("la_1");
@@ -587,5 +591,152 @@ describe("kanbanStartProjectTarget", () => {
         ?.model,
     ).toBe("newest");
     expect(kanbanStartProjectTarget(null, [], parent)).toEqual({ kind: "project" });
+  });
+});
+
+describe("thread status grouping and ordering", () => {
+  const statuses = new Map<string, ThreadCardStatus>([
+    ["t-working", "working"],
+    ["t-approval", "approval"],
+    ["t-settled", "settled"],
+    ["t-input", "input"],
+    ["t-failed", "failed"],
+  ]);
+  const threadContext = (
+    overrides: ReadonlyMap<string, ThreadCardStatus> = statuses,
+  ): KanbanViewContext => ({
+    ...context,
+    threadStatus: (threadId) => overrides.get(threadId) ?? null,
+  });
+  const threads = (...threadIds: string[]) => threadIds.map((id) => ThreadId.make(id));
+  const noThread = ticket("10", { updatedAt: "2026-10-23T00:00:00.000Z" });
+  const unknownThread = ticket("11", { threadIds: threads("t-gone") });
+  const working = ticket("12", { threadIds: threads("t-working") });
+  const severalThreads = ticket("13", {
+    threadIds: threads("t-settled", "t-approval", "t-working"),
+  });
+  const settledOld = ticket("14", {
+    threadIds: threads("t-settled"),
+    updatedAt: "2026-10-20T00:00:00.000Z",
+  });
+  const settledNew = ticket("15", { threadIds: threads("t-settled") });
+  const failed = ticket("16", { threadIds: threads("t-failed", "t-settled") });
+
+  it("ranks needs approval, input, failed, working, settled", () => {
+    expect(THREAD_STATUS_RANK).toEqual(["approval", "input", "failed", "working", "settled"]);
+  });
+
+  it("gives a ticket its most urgent known thread, and none without one", () => {
+    const { threadStatus } = threadContext();
+    expect(ticketThreadStatus(noThread, threadStatus)).toBeNull();
+    expect(ticketThreadStatus(unknownThread, threadStatus)).toBeNull();
+    expect(ticketThreadStatus(working, threadStatus)).toBe("working");
+    expect(ticketThreadStatus(severalThreads, threadStatus)).toBe("approval");
+    expect(ticketThreadStatus(failed, threadStatus)).toBe("failed");
+  });
+
+  it("groups by rank with the thread-less tickets in a last No thread group", () => {
+    const groups = groupTickets(
+      snapshot,
+      null,
+      "threadStatus",
+      [noThread, unknownThread, working, severalThreads, settledNew, failed],
+      threadContext(),
+    );
+    expect(groups.map((entry) => [entry.id, entry.title])).toEqual([
+      ["approval", "Needs approval"],
+      ["input", "Waiting for answer"],
+      ["failed", "Failed"],
+      ["working", "Working"],
+      ["settled", "Settled"],
+      ["none", "No thread"],
+    ]);
+    const byId = new Map(groups.map((entry) => [entry.id, ids(entry.tickets)]));
+    expect(byId.get("approval")).toEqual(ids([severalThreads]));
+    expect(byId.get("input")).toEqual([]);
+    expect(byId.get("failed")).toEqual(ids([failed]));
+    expect(byId.get("working")).toEqual(ids([working]));
+    expect(byId.get("settled")).toEqual(ids([settledNew]));
+    expect(byId.get("none")).toEqual(ids([noThread, unknownThread]));
+    expect(groups[0]!.icon).toEqual({ kind: "threadStatus", status: "approval" });
+    expect(groups[5]!.icon).toEqual({ kind: "threadStatus", status: null });
+  });
+
+  it("orders by rank, no thread last, ties newest update first", () => {
+    expect(
+      ids(
+        sortViewTickets(
+          [noThread, settledOld, working, settledNew, severalThreads, failed],
+          config({ orderBy: "threadStatus" }),
+          threadContext(),
+        ),
+      ),
+    ).toEqual(ids([severalThreads, failed, working, settledNew, settledOld, noThread]));
+  });
+
+  it("moves a card when its thread's status changes", () => {
+    const board = { ...snapshot, tickets: [working, noThread] };
+    const shown = config({ groupBy: "threadStatus", showEmptyColumns: false });
+    const before = buildKanbanView(board, null, shown, threadContext());
+    expect(before.columns.map((column) => [column.id, ids(column.tickets)])).toEqual([
+      ["working", ids([working])],
+      ["none", ids([noThread])],
+    ]);
+    const after = buildKanbanView(
+      board,
+      null,
+      shown,
+      threadContext(new Map([["t-working", "input"]])),
+    );
+    expect(after.columns.map((column) => [column.id, ids(column.tickets)])).toEqual([
+      ["input", ids([working])],
+      ["none", ids([noThread])],
+    ]);
+  });
+
+  it("lays thread status swimlanes over status columns", () => {
+    const board = { ...snapshot, tickets: [working, severalThreads, noThread] };
+    const view = buildKanbanView(
+      board,
+      null,
+      config({ subGroupBy: "threadStatus" }),
+      threadContext(),
+    );
+    expect(view.swimlanes!.map((lane) => lane.id)).toEqual(["approval", "working", "none"]);
+  });
+
+  it("refuses drops on a thread status group", () => {
+    expect(dropActionFor(snapshot, working, "threadStatus", group("approval"))).toBeNull();
+  });
+});
+
+describe("view config decoding", () => {
+  const decode = Schema.decodeUnknownSync(KanbanViewConfig);
+  const saved = {
+    filters: [{ kind: "set", field: "threadStatus", op: "in", values: ["working"] }],
+    layout: "board",
+    groupBy: "status",
+    subGroupBy: "assignee",
+    orderBy: "priority",
+    completedByRecency: true,
+    completed: "pastMonth",
+    showSubIssues: true,
+    showEmptyColumns: false,
+    hiddenColumns: ["done"],
+    properties: ["id", "status", "threads"],
+  };
+
+  it("decodes a view saved before thread status grouping", () => {
+    expect(decode(saved)).toEqual(saved);
+  });
+
+  it("keeps thread status grouping and ordering", () => {
+    const next = {
+      ...saved,
+      groupBy: "threadStatus",
+      subGroupBy: "threadStatus",
+      orderBy: "threadStatus",
+    };
+    expect(decode(JSON.parse(JSON.stringify(next)))).toEqual(next);
   });
 });
