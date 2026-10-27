@@ -119,8 +119,8 @@ tab and the iOS Bots section share that list). It uses the same RPCs and the sam
 chips. A phone shows one column at a time, picked from a row of chips with counts. Dragging across a
 small screen is clumsy, so a card moves through its menu, opened by long-press or the ⋯ button:
 "Move to…" lists only the columns the ticket can take, and the same menu links and unlinks threads,
-opens the issue in Linear, or deletes a local ticket. Tapping a linked thread opens it, stacked on
-the board. "New ticket" asks for a title.
+opens the issue in Linear, or deletes a local ticket. Tapping a linked thread opens it; on Android, Back from
+the thread goes to the threads list, as for every thread. "New ticket" asks for a title.
 
 ### Bots
 
