@@ -166,3 +166,104 @@ On an isolated server (`~/.cache/friend-tmp/linear-kanban-home`, ports 14425/638
 - Two threads linked to BACK-204 with their status; clicking one opened it; bot "Moneria Ops" made
   responsible for Moneria and shown on the cards.
 - Local board on the unlinked `server` project: T-1 and T-2 created and moved between columns.
+
+## v2: Linear-grade board, filters, views and the issue view
+
+v2 keeps v1's model (accounts, project links, polling, local boards, thread links, responsible bots)
+and adds what a Linear user expects: dense cards, filters, display options, saved views, and an issue
+view that opens beside the board like a pull request does.
+
+### Data (`bots.sqlite`, migration `9_KanbanV2`)
+
+- `kanban_tickets` gains the fields cards and filters read: assignee and creator ids, estimate, due
+  date, label ids and attached GitHub PRs (JSON arrays), Linear project, milestone and cycle, parent
+  issue (id, identifier, title), sub-issue progress (total, closed), Linear's `sortOrder`, when it
+  closed, and whether Linear auto-closed it. `bot_id` (the ticket's own bot) and `description` (local
+  tickets) are T3-only: a sync never writes them.
+- Catalogs, replaced on each full sync: `linear_users` (people, with avatars), `kanban_labels`
+  (Linear labels of each workspace, and local labels), `linear_projects`, `linear_milestones`,
+  `linear_cycles` (per linked team, ending in the last 90 days or later).
+- `linear_accounts` gains the key owner's user id and avatar, which is who "me" is.
+- `kanban_views`: saved views (name, icon, JSON config, optional Linear custom view id, position).
+  The migration seeds Active, Backlog, All issues, Meus issues and Concluídas.
+- `kanban_local_comments` and `kanban_ticket_events` (history of local tickets).
+
+The migration clears every link's `last_full_sync_at`, so the first poll after the upgrade reads
+the new fields for every synced ticket.
+
+### Linear queries, measured
+
+Measured on Moneria with Linear's `x-complexity` response header (limit 10,000 per query):
+
+| Query                                                                                                    | Complexity         |
+| -------------------------------------------------------------------------------------------------------- | ------------------ |
+| Sync page: root `issues(first: 100)` with every card field, children (50), labels (50), attachments (25) | 17                 |
+| The same fields under `team { issues(first: 100) }`                                                      | 1,521              |
+| Issue view: description, parent, children (100), comments (100), history (100)                           | 2,011              |
+| `users(first: 250)`                                                                                      | 400                |
+| `issueLabels(first: 250)`                                                                                | 425                |
+| `projectMilestones(first: 250)`                                                                          | 350                |
+| `projects(first: 100)` with icon and color (with teams: 540)                                             | ~300               |
+| A team's `cycles(first: 50)`                                                                             | 126                |
+| `customViews(first: 50)`                                                                                 | 230                |
+| v1's `teams { projects(first: 100) }`                                                                    | refused (> 10,000) |
+
+Root `issues` is priced far below the same selection under a team, so the sync keeps it with a team
+filter. Every list is paginated. Description, comments and history are read only when an issue
+opens, never on the polling path; the poll still asks only for issues updated since the cursor.
+
+### Filters
+
+Filters run on the client over the snapshot (`@t3tools/client-runtime/kanban-board`, shared by web
+and mobile). A view keeps the tickets that match every clause. Clause kinds:
+
+- **Set** (`is`, `is not`, `is any of`, `is not any of`): status (a state id, or a local state),
+  status type, assignee and creator (a Linear user id, `owner`, `bot:<id>`, plus `me` and `none`),
+  priority (`0`–`4`), label (`none`), Linear project, milestone, cycle (`current` is the cycle
+  running now), responsible bot (the ticket's own bot, else its workspace's), thread status (any
+  linked thread; `none`), pull request state (`none`), workspace, Linear account (`local`), T3
+  project.
+- **Date** (`before`, `after`, in the past or next N days, set, empty): created, updated, due,
+  completed.
+- **Flag**: is a sub-issue, has sub-issues, has a linked thread, has a PR, auto-closed, has a due
+  date.
+- **Text**: identifier, title and label names contain the text. Descriptions are not on the board,
+  so they are not searched.
+
+"Me" is every Linear account's own user plus `owner` (the T3 user, assignee of local tickets).
+
+The AI filter turns a sentence into clauses with the OpenRouter key dictation already uses
+(`T3CODE_KANBAN_AI_FILTER_MODEL`, default `anthropic/claude-haiku-5.5`); every clause the model
+returns is decoded, and invalid ones are dropped. Without `OPENROUTER_API_KEY` the button says why.
+
+### Display and views
+
+A view stores its filters and display: board or list, columns and swimlanes grouped by status,
+assignee, priority, label, project or cycle, ordering (priority, updated, created, manual, due date),
+completed issues (all, past week, past month, none), closed tickets by recency, sub-issues, empty
+columns, hidden columns, and the card properties shown. Empty or hidden columns fold into a "Hidden
+columns" panel. Views are tabs; they can be saved, renamed, reordered and deleted, and live on the
+bots host, so every client sees the same ones. A view is on every board, or on one project's board.
+T3 has one owner per server, so views are the owner's.
+
+Linear's custom views can be imported once per account: the filters T3 can express (assignee is me
+or a person, state type or name, priority, labels by name, parent, children, project, cycle, due
+date set) become a T3 view; the rest are listed as skipped. Nothing is written to Linear.
+
+Manual order follows Linear's `sortOrder` (and a local ticket's own). Dragging to reorder inside a
+column is not offered for Linear tickets: the order is shared by the whole team in Linear.
+
+### Writes
+
+Status, priority, assignee, labels, due date, project, milestone, cycle, estimate, title and
+description go to Linear with `issueUpdate`, comments with `commentCreate`/`commentDelete`. As in
+v1, the board keeps Linear's answer, so a refused write changes nothing. A ticket's own bot is
+T3-only. Local tickets take priority, local labels, an assignee (the owner or a bot), a description,
+comments, and keep a history.
+
+### Starting work
+
+"Start thread" on an issue creates a thread in the ticket's T3 project with the project's default
+model (or one picked), in the project root, whose first message carries the issue: identifier,
+title, link and description. "Ask <bot>" sends the same message to a bot's conversation instead.
+Either way the thread is linked to the ticket. Nothing starts by itself.
