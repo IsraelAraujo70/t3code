@@ -126,8 +126,13 @@ function fieldClauses(
   const [key, operand] = onlyEntry(field, node);
   if (key === "and" || key === "or") {
     if (!Array.isArray(operand) || operand.length === 0) throw unsupported(field);
-    const branches = operand.flatMap((branch) => fieldClauses(field, branch, ctx));
-    return key === "and" ? branches : [mergeAlternatives(field, branches)];
+    if (key === "and") return operand.flatMap((branch) => fieldClauses(field, branch, ctx));
+    // Each alternative must be one clause: flattening an `and` inside an `or` would widen the view.
+    const alternatives = operand.map((branch) => fieldClauses(field, branch, ctx));
+    if (alternatives.some((clauses) => clauses.length !== 1)) {
+      throw unsupported(`${field} with "and" inside "or"`);
+    }
+    return [mergeAlternatives(field, alternatives.flat())];
   }
   switch (field) {
     case "assignee":

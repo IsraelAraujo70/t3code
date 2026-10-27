@@ -104,6 +104,17 @@ describe("linearFilterToClauses", () => {
     ["a comparison Linear has but T3 lacks", { title: { contains: "msk" } }],
     ["isMe false", { assignee: { isMe: { eq: false } } }],
     ["non-object filter data", null],
+    [
+      "an and inside an or, which a single any-of would widen",
+      {
+        labels: {
+          or: [
+            { and: [{ name: { eq: "Bug" } }, { name: { eq: "Bug" } }] },
+            { name: { eq: "Bug" } },
+          ],
+        },
+      },
+    ],
   ])("rejects %s", (_name, filterData) => {
     expect(imported(filterData)).toMatchObject({ ok: false });
   });
