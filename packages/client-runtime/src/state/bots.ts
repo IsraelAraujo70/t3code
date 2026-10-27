@@ -107,6 +107,10 @@ export function createBotsEnvironmentAtoms<R, E>(
     kanbanLinkProject: kanbanCommand("link-project", BOTS_WS_METHODS.kanbanProjectLink),
     kanbanUnlinkProject: kanbanCommand("unlink-project", BOTS_WS_METHODS.kanbanProjectUnlink),
     kanbanWorkspaceBots: kanbanCommand("workspace-bots", BOTS_WS_METHODS.kanbanWorkspaceBots),
+    kanbanBotAllWorkspaces: kanbanCommand(
+      "bot-all-workspaces",
+      BOTS_WS_METHODS.kanbanBotAllWorkspaces,
+    ),
     kanbanCreateTicket: kanbanCommand("create-ticket", BOTS_WS_METHODS.kanbanTicketCreate),
     kanbanMoveTicket: kanbanCommand("move-ticket", BOTS_WS_METHODS.kanbanTicketMove),
     kanbanDeleteTicket: kanbanCommand("delete-ticket", BOTS_WS_METHODS.kanbanTicketDelete),

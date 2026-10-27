@@ -53,6 +53,7 @@ const snapshot: KanbanSnapshot = {
   milestones: [],
   cycles: [],
   views: [],
+  allWorkspacesBotIds: [],
 };
 const lookups = buildKanbanLookups(snapshot, [], "Israel");
 

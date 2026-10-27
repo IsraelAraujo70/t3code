@@ -55,6 +55,7 @@ import {
   type KanbanTicketDetail,
   type KanbanTicketUpdateInput,
   type KanbanView,
+  type KanbanBotAllWorkspacesInput,
   type KanbanViewImportResult,
   type KanbanViewRef,
   type KanbanViewReorderInput,
@@ -137,6 +138,10 @@ export class KanbanService extends Context.Service<
     readonly setWorkspaceBots: (
       input: KanbanWorkspaceBotsInput,
     ) => Effect.Effect<KanbanWorkspaceBotsInput, KanbanError>;
+    /** On top of `setWorkspaceBots`: responsible for every workspace, present and future. */
+    readonly setBotAllWorkspaces: (
+      input: KanbanBotAllWorkspacesInput,
+    ) => Effect.Effect<KanbanBotAllWorkspacesInput, KanbanError>;
     /**
      * The writes below take the person a local ticket's history names (default `owner`); a bot's
      * MCP tools pass `bot:<id>`. Linear records its own actor, the account's user.
@@ -176,8 +181,20 @@ export class KanbanService extends Context.Service<
     readonly deleteComment: (
       input: KanbanTicketCommentRef,
     ) => Effect.Effect<KanbanTicketCommentRef, KanbanError>;
-    readonly saveView: (input: KanbanViewSaveInput) => Effect.Effect<KanbanView, KanbanError>;
-    readonly deleteView: (input: KanbanViewRef) => Effect.Effect<KanbanViewRef, KanbanError>;
+    /**
+     * Records `actor` (default `owner`) as the last editor, and as the creator of a new view. With
+     * `onBoard`, an edit applies only while the view is still on that board, as a bot's tools
+     * checked it; `deleteView` likewise.
+     */
+    readonly saveView: (
+      input: KanbanViewSaveInput,
+      actor?: KanbanPersonId,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<KanbanView, KanbanError>;
+    readonly deleteView: (
+      input: KanbanViewRef,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<KanbanViewRef, KanbanError>;
     readonly reorderViews: (
       input: KanbanViewReorderInput,
     ) => Effect.Effect<KanbanViewReorderInput, KanbanError>;
@@ -339,6 +356,7 @@ const make = Effect.gen(function* () {
       milestones,
       cycles,
       views,
+      allWorkspacesBotIds,
     ] = yield* Effect.all([
       store.listAccounts,
       store.listLinks,
@@ -351,6 +369,7 @@ const make = Effect.gen(function* () {
       store.listMilestones,
       store.listCycles,
       store.listViews,
+      store.listAllWorkspacesBots,
     ]);
     const workspaces: KanbanWorkspace[] = [
       {
@@ -387,6 +406,7 @@ const make = Effect.gen(function* () {
       milestones: milestones.filter((milestone) => projectIds.has(milestone.projectId)),
       cycles: cycles.filter((cycle) => linkedTeams.has(cycle.teamId)),
       views,
+      allWorkspacesBotIds,
     } satisfies KanbanSnapshot;
   });
 
@@ -798,6 +818,17 @@ const make = Effect.gen(function* () {
     yield* store.setWorkspaceBots(input.workspaceId, botIds);
     yield* publish;
     return { workspaceId: input.workspaceId, botIds };
+  });
+
+  const setBotAllWorkspaces = Effect.fn("KanbanService.setBotAllWorkspaces")(function* (
+    input: KanbanBotAllWorkspacesInput,
+  ) {
+    if (!(yield* listBots).some((bot) => bot.id === input.botId)) {
+      return yield* new KanbanError({ message: `Bot ${input.botId} does not exist.` });
+    }
+    yield* store.setBotAllWorkspaces(input.botId, input.allWorkspaces);
+    yield* publish;
+    return input;
   });
 
   const createTicket = Effect.fn("KanbanService.createTicket")(function* (
@@ -1274,21 +1305,34 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const viewMoved = (viewId: KanbanViewId) =>
+    Effect.fail(
+      new KanbanError({
+        message: `View ${viewId} moved to another board or was deleted meanwhile; nothing changed.`,
+      }),
+    );
+
   const newViewId = randomHex.pipe(Effect.map((hex) => KanbanViewId.make(`v_${hex}`)));
 
-  const saveView = Effect.fn("KanbanService.saveView")(function* (input: KanbanViewSaveInput) {
+  const saveView = Effect.fn("KanbanService.saveView")(function* (
+    input: KanbanViewSaveInput,
+    actor: KanbanPersonId = KANBAN_OWNER_PERSON_ID,
+    onBoard?: ProjectId | null,
+  ) {
     const now = yield* nowIso;
     const fields = {
       projectId: input.projectId,
       name: input.name,
       icon: input.icon,
       config: input.config,
+      updatedBy: actor,
       updatedAt: now,
     };
     if (input.id === undefined) {
       const view: KanbanView = {
         id: yield* newViewId,
         linearViewId: null,
+        createdBy: actor,
         createdAt: now,
         ...fields,
       };
@@ -1297,14 +1341,17 @@ const make = Effect.gen(function* () {
       return view;
     }
     const view: KanbanView = { ...(yield* requireView(input.id)), ...fields };
-    yield* store.updateView(view);
+    if (!(yield* store.updateView(view, onBoard))) return yield* viewMoved(input.id);
     yield* publish;
     return view;
   });
 
-  const deleteView = Effect.fn("KanbanService.deleteView")(function* (input: KanbanViewRef) {
+  const deleteView = Effect.fn("KanbanService.deleteView")(function* (
+    input: KanbanViewRef,
+    onBoard?: ProjectId | null,
+  ) {
     yield* requireView(input.viewId);
-    yield* store.deleteView(input.viewId);
+    if (!(yield* store.deleteView(input.viewId, onBoard))) return yield* viewMoved(input.viewId);
     yield* publish;
     return input;
   });
@@ -1418,6 +1465,8 @@ const make = Effect.gen(function* () {
         icon: custom.icon,
         config: { ...KANBAN_DEFAULT_VIEW_CONFIG, filters },
         linearViewId: custom.id,
+        createdBy: KANBAN_OWNER_PERSON_ID,
+        updatedBy: KANBAN_OWNER_PERSON_ID,
         createdAt: now,
         updatedAt: now,
       };
@@ -1476,6 +1525,7 @@ const make = Effect.gen(function* () {
     linkProject,
     unlinkProject,
     setWorkspaceBots,
+    setBotAllWorkspaces,
     createTicket,
     moveTicket,
     deleteTicket,

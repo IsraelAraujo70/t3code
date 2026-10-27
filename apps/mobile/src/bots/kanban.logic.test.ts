@@ -97,6 +97,7 @@ const snapshot: KanbanSnapshot = {
   milestones: [],
   cycles: [],
   views: [],
+  allWorkspacesBotIds: [],
 };
 
 const moveTitles = (actions: ReturnType<typeof ticketMenuActions>) =>

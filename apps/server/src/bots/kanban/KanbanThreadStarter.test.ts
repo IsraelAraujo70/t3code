@@ -136,6 +136,7 @@ const harness = (options: { readonly projectModel: typeof projectModel | null })
             milestones: [],
             cycles: [],
             views: [],
+            allWorkspacesBotIds: [],
           }),
           ticketDetail: () => Effect.fail(new KanbanError({ message: "Not implemented yet." })),
           linkThread: ({ threadId }) =>

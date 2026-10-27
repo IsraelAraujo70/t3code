@@ -610,6 +610,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.kanbanProjectLink]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanProjectUnlink]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanWorkspaceBots]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanBotAllWorkspaces]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanTicketCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanTicketMove]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanTicketDelete]: AuthOrchestrationOperateScope,

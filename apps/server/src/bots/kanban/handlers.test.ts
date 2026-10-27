@@ -4,13 +4,16 @@ import {
   BotId,
   botThreadId,
   EnvironmentId,
+  KANBAN_DEFAULT_VIEW_CONFIG,
   KanbanTicketId,
+  KanbanViewId,
   LinearAccountId,
   linearWorkspaceId,
   LOCAL_KANBAN_WORKSPACE_ID,
   parseBotThreadId,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type KanbanComment,
   type KanbanPersonId,
   type KanbanSnapshot,
@@ -18,7 +21,11 @@ import {
   type KanbanTicketCommentInput,
   type KanbanTicketMoveInput,
   type KanbanTicketThreadInput,
+  type KanbanTicketCreateInput,
   type KanbanTicketUpdateInput,
+  type KanbanView,
+  type KanbanViewRef,
+  type KanbanViewSaveInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -40,6 +47,8 @@ const idle = BotId.make("b_idle");
 const keeper = BotId.make("b_keeper");
 const ACCOUNT = LinearAccountId.make("la_1");
 const PROJECT = ProjectId.make("project-1");
+/** Linked to Moneria's team, so its board is in the Moneria workspace. */
+const MONERIA_PROJECT = ProjectId.make("project-moneria");
 
 const bot = (id: BotId): Bot => ({
   id,
@@ -86,6 +95,32 @@ const ticket = (id: string, linear: boolean, fields: Partial<KanbanTicket> = {})
   ...fields,
 });
 
+const view = (
+  id: string,
+  projectId: ProjectId | null,
+  fields: Partial<KanbanView> = {},
+): KanbanView => ({
+  id: KanbanViewId.make(id),
+  projectId,
+  name: id,
+  icon: null,
+  config: KANBAN_DEFAULT_VIEW_CONFIG,
+  linearViewId: null,
+  createdBy: "owner",
+  updatedBy: "owner",
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...fields,
+});
+
+/** A seeded every-board view, the owner's local view, and a Moneria view a bot made. */
+const everyBoardView = view("v_active", null);
+const localView = view("v_local", PROJECT);
+const moneriaView = view("v_moneria", MONERIA_PROJECT, {
+  createdBy: "bot:b_keeper",
+  updatedBy: "bot:b_keeper",
+});
+
 const linearTicket = ticket("t_linear", true);
 const localTicket = ticket("t_local", false);
 
@@ -110,7 +145,20 @@ const snapshot: KanbanSnapshot = {
     { id: LOCAL_KANBAN_WORKSPACE_ID, name: "Local", botIds: [keeper] },
     { id: linearWorkspaceId("org"), name: "Moneria", botIds: [ops] },
   ],
-  links: [],
+  links: [
+    {
+      projectId: MONERIA_PROJECT,
+      accountId: ACCOUNT,
+      teamId: "team",
+      teamKey: "BACK",
+      teamName: "Back-end",
+      linearProjectId: null,
+      linearProjectName: null,
+      lastSyncedAt: null,
+      syncError: null,
+      createdAt: NOW,
+    },
+  ],
   states: [
     {
       id: "s-todo",
@@ -145,15 +193,27 @@ const snapshot: KanbanSnapshot = {
   linearProjects: [],
   milestones: [],
   cycles: [],
-  views: [],
+  views: [everyBoardView, localView, moneriaView],
+  allWorkspacesBotIds: [],
 };
 
-function setup(tickets: ReadonlyArray<KanbanTicket> = [linearTicket, localTicket]) {
+function setup(
+  tickets: ReadonlyArray<KanbanTicket> = [linearTicket, localTicket],
+  allWorkspacesBotIds: ReadonlyArray<BotId> = [],
+) {
   const moves: KanbanTicketMoveInput[] = [];
   const links: KanbanTicketThreadInput[] = [];
   const updates: Array<{ input: KanbanTicketUpdateInput; actor: KanbanPersonId | undefined }> = [];
   const comments: Array<{ input: KanbanTicketCommentInput; actor: KanbanPersonId | undefined }> =
     [];
+  const creates: Array<{ input: KanbanTicketCreateInput; actor: KanbanPersonId | undefined }> = [];
+  const unlinks: KanbanTicketThreadInput[] = [];
+  const savedViews: Array<{
+    input: KanbanViewSaveInput;
+    actor: KanbanPersonId | undefined;
+    onBoard?: ProjectId | null | undefined;
+  }> = [];
+  const deletedViews: Array<{ input: KanbanViewRef; onBoard: ProjectId | null | undefined }> = [];
   const bots = Layer.mock(BotsService.BotsService)({
     botForThread: (threadId) => {
       const parsed = parseBotThreadId(threadId);
@@ -165,7 +225,34 @@ function setup(tickets: ReadonlyArray<KanbanTicket> = [linearTicket, localTicket
     },
   });
   const kanban = Layer.mock(KanbanService)({
-    readSnapshot: Effect.succeed({ ...snapshot, tickets }),
+    readSnapshot: Effect.succeed({ ...snapshot, tickets, allWorkspacesBotIds }),
+    createTicket: (input, actor) =>
+      Effect.sync(() => {
+        creates.push({ input, actor });
+        return { ...localTicket, projectId: input.projectId, title: input.title };
+      }),
+    unlinkThread: (input) =>
+      Effect.sync(() => {
+        unlinks.push(input);
+        return localTicket;
+      }),
+    saveView: (input, actor, onBoard) =>
+      Effect.sync(() => {
+        savedViews.push({ input, actor, ...(onBoard === undefined ? {} : { onBoard }) });
+        const existing = snapshot.views.find((candidate) => candidate.id === input.id);
+        return view(input.id ?? "v_new", input.projectId, {
+          name: input.name,
+          icon: input.icon,
+          config: input.config,
+          createdBy: existing?.createdBy ?? actor ?? "owner",
+          updatedBy: actor ?? "owner",
+        });
+      }),
+    deleteView: (input, onBoard) =>
+      Effect.sync(() => {
+        deletedViews.push({ input, onBoard });
+        return input;
+      }),
     moveTicket: (input) =>
       Effect.sync(() => {
         moves.push(input);
@@ -218,7 +305,17 @@ function setup(tickets: ReadonlyArray<KanbanTicket> = [linearTicket, localTicket
         fetchedAt: NOW,
       }),
   });
-  return { moves, links, updates, comments, layer: Layer.merge(bots, kanban) };
+  return {
+    moves,
+    links,
+    updates,
+    comments,
+    creates,
+    unlinks,
+    savedViews,
+    deletedViews,
+    layer: Layer.merge(bots, kanban),
+  };
 }
 
 const scopeOf = (botId: BotId): McpInvocationContext.McpInvocationScope => ({
@@ -274,6 +371,17 @@ const kanbanTools = (
         run(toolkit.handle("kanban_move", { ticketId, localState: "done" })),
       linkSelf: (ticketId: KanbanTicketId) =>
         run(toolkit.handle("kanban_link_thread", { ticketId })),
+      unlink: (ticketId: KanbanTicketId, threadId: ThreadId) =>
+        run(toolkit.handle("kanban_unlink_thread", { ticketId, threadId })),
+      create: (projectId: ProjectId, title: string) =>
+        run(toolkit.handle("kanban_create", { projectId, title })),
+      views: () => run(toolkit.handle("kanban_view_list", {})),
+      saveView: (params: ToolParams<"kanban_view_save">) =>
+        run(toolkit.handle("kanban_view_save", params)),
+      /** Arguments the model sent, before the tool's schema checks them. */
+      saveViewRaw: (params: unknown) =>
+        run(toolkit.handle("kanban_view_save", params as ToolParams<"kanban_view_save">)),
+      deleteView: (viewId: KanbanViewId) => run(toolkit.handle("kanban_view_delete", { viewId })),
     };
   });
 
@@ -429,4 +537,185 @@ describe("kanban tools", () => {
     expect(body).toBe(`${"x".repeat(3_999)}…`);
     expect(body.isWellFormed()).toBe(true);
   });
+
+  it.effect("a bot responsible for every workspace reads and writes where it is not listed", () =>
+    Effect.gen(function* () {
+      const { layer, moves, updates, comments, creates, links, unlinks } = setup(undefined, [idle]);
+      const tools = yield* kanbanTools(layer, scopeOf(idle));
+      expect(yield* tools.list()).toMatchObject({
+        workspaces: [{ id: LOCAL_KANBAN_WORKSPACE_ID }, { id: linearWorkspaceId("org") }],
+        tickets: [{ id: linearTicket.id }, { id: localTicket.id }],
+      });
+      expect(yield* tools.get(localTicket.id)).toMatchObject({ ticket: { id: localTicket.id } });
+      yield* tools.move(linearTicket.id, "s-done");
+      yield* tools.update({ ticketId: localTicket.id, priority: 1 });
+      yield* tools.comment(linearTicket.id, "On it.");
+      yield* tools.create(PROJECT, "Local work");
+      yield* tools.create(MONERIA_PROJECT, "Linear work");
+      yield* tools.linkSelf(localTicket.id);
+      yield* tools.unlink(localTicket.id, botThreadId(idle, 1));
+      expect(moves).toHaveLength(1);
+      expect(updates.map((update) => update.actor)).toEqual(["bot:b_idle"]);
+      expect(comments).toHaveLength(1);
+      expect(creates.map((create) => create.input.projectId)).toEqual([PROJECT, MONERIA_PROJECT]);
+      expect(links).toHaveLength(1);
+      expect(unlinks).toHaveLength(1);
+    }),
+  );
+
+  it.effect("a bot without the setting keeps only the workspaces it is listed in", () =>
+    Effect.gen(function* () {
+      const { layer, creates, moves } = setup(undefined, [idle]);
+      const tools = yield* kanbanTools(layer, scopeOf(ops));
+      expect(yield* tools.list()).toMatchObject({
+        workspaces: [{ id: linearWorkspaceId("org") }],
+        tickets: [{ id: linearTicket.id }],
+      });
+      expect(yield* tools.moveLocal(localTicket.id)).toMatchObject({ code: "invalid_request" });
+      expect(yield* tools.create(PROJECT, "Not mine")).toMatchObject({
+        code: "capability_denied",
+      });
+      expect(moves).toEqual([]);
+      expect(creates).toEqual([]);
+    }),
+  );
+
+  it.effect("a bot edits and deletes views of its workspace, not another's", () =>
+    Effect.gen(function* () {
+      const { layer, savedViews, deletedViews } = setup();
+      const ops_ = yield* kanbanTools(layer, scopeOf(ops));
+      expect(yield* ops_.saveView({ id: moneriaView.id, name: "Renamed" })).toMatchObject({
+        id: moneriaView.id,
+        name: "Renamed",
+        projectId: MONERIA_PROJECT,
+        createdBy: "bot:b_keeper",
+        updatedBy: "bot:b_ops",
+      });
+      expect(yield* ops_.saveView({ id: localView.id, name: "Nope" })).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("No view v_local"),
+      });
+      expect(yield* ops_.saveView({ id: moneriaView.id, projectId: PROJECT })).toMatchObject({
+        code: "capability_denied",
+      });
+      expect(yield* ops_.deleteView(localView.id)).toMatchObject({ code: "invalid_request" });
+
+      const keeper_ = yield* kanbanTools(layer, scopeOf(keeper));
+      expect(yield* keeper_.deleteView(moneriaView.id)).toMatchObject({ code: "invalid_request" });
+      expect(yield* keeper_.deleteView(localView.id)).toEqual({ viewId: localView.id });
+
+      expect(savedViews).toEqual([
+        {
+          input: {
+            id: moneriaView.id,
+            projectId: MONERIA_PROJECT,
+            name: "Renamed",
+            icon: null,
+            config: KANBAN_DEFAULT_VIEW_CONFIG,
+          },
+          actor: "bot:b_ops",
+          onBoard: MONERIA_PROJECT,
+        },
+      ]);
+      expect(deletedViews).toEqual([{ input: { viewId: localView.id }, onBoard: PROJECT }]);
+    }),
+  );
+
+  it.effect("without the setting a bot cannot touch a view on every board", () =>
+    Effect.gen(function* () {
+      const { layer, savedViews, deletedViews } = setup();
+      const tools = yield* kanbanTools(layer, scopeOf(keeper));
+      const refusal = {
+        code: "capability_denied",
+        message: expect.stringContaining("every board"),
+      };
+      expect(yield* tools.saveView({ id: everyBoardView.id, name: "Mine now" })).toMatchObject(
+        refusal,
+      );
+      expect(yield* tools.deleteView(everyBoardView.id)).toMatchObject(refusal);
+      expect(yield* tools.saveView({ name: "Everywhere", projectId: null })).toMatchObject(refusal);
+      expect(yield* tools.saveView({ id: localView.id, projectId: null })).toMatchObject(refusal);
+      expect(yield* tools.views()).toMatchObject({
+        views: [
+          { id: everyBoardView.id, editable: false, createdBy: "owner" },
+          { id: localView.id, editable: true },
+        ],
+      });
+      expect(savedViews).toEqual([]);
+      expect(deletedViews).toEqual([]);
+    }),
+  );
+
+  it.effect("with the setting a bot edits and deletes the owner's views", () =>
+    Effect.gen(function* () {
+      const { layer, savedViews, deletedViews } = setup(undefined, [idle]);
+      const tools = yield* kanbanTools(layer, scopeOf(idle));
+      expect(yield* tools.views()).toMatchObject({
+        views: [
+          { id: everyBoardView.id, editable: true },
+          { id: localView.id, editable: true },
+          { id: moneriaView.id, editable: true },
+        ],
+      });
+      expect(
+        yield* tools.saveView({ id: everyBoardView.id, config: { groupBy: "priority" } }),
+      ).toMatchObject({ id: everyBoardView.id, createdBy: "owner", updatedBy: "bot:b_idle" });
+      expect(yield* tools.deleteView(localView.id)).toEqual({ viewId: localView.id });
+      expect(yield* tools.saveView({ name: "Everywhere", projectId: null })).toMatchObject({
+        createdBy: "bot:b_idle",
+      });
+      expect(savedViews.map((saved) => [saved.input.config.groupBy, saved.onBoard])).toEqual([
+        ["priority", null],
+        ["status", undefined],
+      ]);
+      expect(deletedViews).toEqual([{ input: { viewId: localView.id }, onBoard: PROJECT }]);
+    }),
+  );
+
+  it.effect("create a view from the default config, and say what a new view lacks", () =>
+    Effect.gen(function* () {
+      const { layer, savedViews } = setup();
+      const tools = yield* kanbanTools(layer, scopeOf(keeper));
+      expect(yield* tools.saveView({ name: "No board" })).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("projectId"),
+      });
+      yield* tools.saveView({
+        name: "List",
+        projectId: PROJECT,
+        icon: "Zap",
+        config: { layout: "list", filters: [] },
+      });
+      expect(savedViews).toEqual([
+        {
+          input: {
+            projectId: PROJECT,
+            name: "List",
+            icon: "Zap",
+            config: { ...KANBAN_DEFAULT_VIEW_CONFIG, layout: "list" },
+          },
+          actor: "bot:b_keeper",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("refuse an invalid config with the field that failed", () =>
+    Effect.gen(function* () {
+      const { layer, savedViews } = setup();
+      const tools = yield* kanbanTools(layer, scopeOf(keeper));
+      const result = yield* tools.saveViewRaw({
+        name: "Bad",
+        projectId: PROJECT,
+        config: { groupBy: "colour" },
+      });
+      expect(result).toMatchObject({
+        reason: {
+          _tag: "ToolParameterValidationError",
+          description: expect.stringMatching(/Expected "status".*\n.*\["config"\]\["groupBy"\]/s),
+        },
+      });
+      expect(savedViews).toEqual([]);
+    }),
+  );
 });

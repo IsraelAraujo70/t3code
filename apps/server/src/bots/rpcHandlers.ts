@@ -69,6 +69,7 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.kanbanProjectLink]: (input) => kanban.linkProject(input),
       [BOTS_WS_METHODS.kanbanProjectUnlink]: (input) => kanban.unlinkProject(input),
       [BOTS_WS_METHODS.kanbanWorkspaceBots]: (input) => kanban.setWorkspaceBots(input),
+      [BOTS_WS_METHODS.kanbanBotAllWorkspaces]: (input) => kanban.setBotAllWorkspaces(input),
       [BOTS_WS_METHODS.kanbanTicketCreate]: (input) => kanban.createTicket(input),
       [BOTS_WS_METHODS.kanbanTicketMove]: (input) => kanban.moveTicket(input),
       [BOTS_WS_METHODS.kanbanTicketDelete]: (input) => kanban.deleteTicket(input),

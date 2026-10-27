@@ -223,6 +223,7 @@ const snapshot: KanbanSnapshot = {
     { id: "foreign-cycle", teamId: "other-team", number: 2, name: null, startsAt: at, endsAt: at },
   ],
   views: [],
+  allWorkspacesBotIds: [],
 };
 
 const ids = (tickets: ReadonlyArray<KanbanTicket>) => tickets.map((entry) => entry.id);

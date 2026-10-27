@@ -79,6 +79,8 @@ describe("views of a scope", () => {
     icon: null,
     config: KANBAN_DEFAULT_VIEW_CONFIG,
     linearViewId: null,
+    createdBy: "owner",
+    updatedBy: "owner",
     createdAt: "2026-10-26T10:00:00.000Z",
     updatedAt: "2026-10-26T10:00:00.000Z",
   });

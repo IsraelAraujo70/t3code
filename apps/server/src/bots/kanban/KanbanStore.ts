@@ -304,9 +304,19 @@ export class KanbanStore extends Context.Service<
     ) => Effect.Effect<Option.Option<KanbanView>, KanbanError>;
     /** Appends it after the last view. */
     readonly insertView: (view: KanbanView) => Effect.Effect<void, KanbanError>;
-    /** Writes every field but the position. */
-    readonly updateView: (view: KanbanView) => Effect.Effect<void, KanbanError>;
-    readonly deleteView: (id: KanbanViewId) => Effect.Effect<void, KanbanError>;
+    /**
+     * Writes every field but the position and `createdBy`. With `onBoard`, only while the view is
+     * still on that board (null: every board). False when no row matched.
+     */
+    readonly updateView: (
+      view: KanbanView,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<boolean, KanbanError>;
+    /** `onBoard` as in `updateView`. False when no row matched. */
+    readonly deleteView: (
+      id: KanbanViewId,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<boolean, KanbanError>;
     /**
      * The given views take positions 0..n-1 in that order; the others follow in their current
      * relative order. Unknown ids are ignored.
@@ -320,6 +330,12 @@ export class KanbanStore extends Context.Service<
     readonly setWorkspaceBots: (
       workspaceId: KanbanWorkspaceId,
       botIds: ReadonlyArray<BotId>,
+    ) => Effect.Effect<void, KanbanError>;
+    /** Bots responsible for every workspace, in the order they were turned on. */
+    readonly listAllWorkspacesBots: Effect.Effect<ReadonlyArray<BotId>, KanbanError>;
+    readonly setBotAllWorkspaces: (
+      botId: BotId,
+      allWorkspaces: boolean,
     ) => Effect.Effect<void, KanbanError>;
   }
 >()("t3/bots/kanban/KanbanStore") {}
@@ -423,6 +439,7 @@ const decodeViews = Schema.decodeUnknownEffect(Schema.Array(ViewRow));
 const decodeViewIds = Schema.decodeUnknownEffect(Schema.Array(ViewIdRow));
 const decodeThreadLinks = Schema.decodeUnknownEffect(Schema.Array(ThreadLinkRow));
 const decodeWorkspaceBots = Schema.decodeUnknownEffect(Schema.Array(WorkspaceBotRow));
+const decodeBotIds = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ botId: BotId })));
 const decodePreviousScope = Schema.decodeUnknownEffect(Schema.Array(PreviousScopeRow));
 const decodeNextNumber = Schema.decodeUnknownEffect(Schema.Array(NextNumberRow));
 
@@ -552,6 +569,9 @@ const make = Effect.gen(function* () {
       updated_at AS "updatedAt"
     FROM kanban_tickets
   `;
+  // `IS` matches a null project (every board) too.
+  const onBoardClause = (onBoard: ProjectId | null | undefined) =>
+    onBoard === undefined ? sql`` : sql`AND project_id IS ${onBoard}`;
   const selectViews = sql`
     SELECT
       id,
@@ -560,6 +580,8 @@ const make = Effect.gen(function* () {
       icon,
       config,
       linear_view_id AS "linearViewId",
+      created_by AS "createdBy",
+      updated_by AS "updatedBy",
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM kanban_views
@@ -1174,17 +1196,19 @@ const make = Effect.gen(function* () {
     insertView: Effect.fn("KanbanStore.insertView")((view) =>
       sql`
         INSERT INTO kanban_views (
-          id, project_id, name, icon, config, linear_view_id, position, created_at, updated_at
+          id, project_id, name, icon, config, linear_view_id, created_by, updated_by, position,
+          created_at, updated_at
         )
         VALUES (
           ${view.id}, ${view.projectId}, ${view.name}, ${view.icon},
-          ${encodeViewConfig(view.config)}, ${view.linearViewId},
+          ${encodeViewConfig(view.config)}, ${view.linearViewId}, ${view.createdBy},
+          ${view.updatedBy},
           (SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_views),
           ${view.createdAt}, ${view.updatedAt}
         )
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the view"))),
     ),
-    updateView: Effect.fn("KanbanStore.updateView")((view) =>
+    updateView: Effect.fn("KanbanStore.updateView")((view, onBoard) =>
       sql`
         UPDATE kanban_views
         SET
@@ -1193,14 +1217,19 @@ const make = Effect.gen(function* () {
           icon = ${view.icon},
           config = ${encodeViewConfig(view.config)},
           linear_view_id = ${view.linearViewId},
+          updated_by = ${view.updatedBy},
           created_at = ${view.createdAt},
           updated_at = ${view.updatedAt}
-        WHERE id = ${view.id}
-      `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not save view ${view.id}`))),
+        WHERE id = ${view.id} ${onBoardClause(onBoard)}
+        RETURNING id
+      `.pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError(failWith(`Could not save view ${view.id}`)),
+      ),
     ),
-    deleteView: Effect.fn("KanbanStore.deleteView")((id) =>
-      sql`DELETE FROM kanban_views WHERE id = ${id}`.pipe(
-        Effect.asVoid,
+    deleteView: Effect.fn("KanbanStore.deleteView")((id, onBoard) =>
+      sql`DELETE FROM kanban_views WHERE id = ${id} ${onBoardClause(onBoard)} RETURNING id`.pipe(
+        Effect.map((rows) => rows.length > 0),
         Effect.mapError(failWith(`Could not delete view ${id}`)),
       ),
     ),
@@ -1253,6 +1282,21 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(Effect.mapError(failWith("Could not set the workspace's bots"))),
+    ),
+    listAllWorkspacesBots:
+      sql`SELECT bot_id AS "botId" FROM kanban_all_workspace_bots ORDER BY rowid`.pipe(
+        Effect.flatMap(decodeBotIds),
+        Effect.map((rows) => rows.map((row) => row.botId)),
+        Effect.mapError(failWith("Could not read the bots responsible for every workspace")),
+      ),
+    setBotAllWorkspaces: Effect.fn("KanbanStore.setBotAllWorkspaces")((botId, allWorkspaces) =>
+      (allWorkspaces
+        ? sql`INSERT INTO kanban_all_workspace_bots (bot_id) VALUES (${botId}) ON CONFLICT DO NOTHING`
+        : sql`DELETE FROM kanban_all_workspace_bots WHERE bot_id = ${botId}`
+      ).pipe(
+        Effect.asVoid,
+        Effect.mapError(failWith(`Could not change whether bot ${botId} covers every workspace`)),
+      ),
     ),
   });
 });

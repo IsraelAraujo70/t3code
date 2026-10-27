@@ -152,6 +152,7 @@ const snapshot: KanbanSnapshot = {
     cycle("c9", "2026-10-15T00:00:00.000Z", "2026-10-29T00:00:00.000Z", "other"),
   ],
   views: [],
+  allWorkspacesBotIds: [],
 };
 
 const activity = (id: string, createdAt: string): KanbanActivity => ({
