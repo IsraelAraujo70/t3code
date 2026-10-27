@@ -250,7 +250,7 @@ export const ViewInfo = Schema.Struct({
 const KanbanViewListTool = Tool.make("kanban_view_list", {
   ...shared,
   description: `List the saved views (the board's tabs) on the boards of the workspaces you are responsible for, in tab order: every-board views (\`projectId\` null) and the views of those projects' boards, each with its filters and display settings, who created and last saved it, and whether you may change it. ${ONLY_RESPONSIBLE}`,
-  parameters: Schema.Struct({}),
+  // No `parameters`: the default Tool.EmptyParams encodes to an object schema, as MCP requires.
   success: Schema.Struct({ views: Schema.Array(ViewInfo) }),
 })
   .annotate(Tool.Readonly, true)
