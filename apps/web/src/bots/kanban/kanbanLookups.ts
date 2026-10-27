@@ -2,6 +2,7 @@
  * Lookups the kanban UI builds once per snapshot: people, labels, states, projects, cycles,
  * milestones, bots and the owner, so cards and pickers never search arrays per render.
  */
+import { KANBAN_LOCAL_COLUMN_COLORS } from "@t3tools/client-runtime/kanban-board";
 import {
   KANBAN_LOCAL_STATE_LABELS,
   KANBAN_OWNER_PERSON_ID,
@@ -92,13 +93,16 @@ export interface KanbanStatusDisplay {
   readonly progress: number;
 }
 
-/** Linear's default colors for the local states, readable in both themes. */
 const LOCAL_STATE_DISPLAY: Record<KanbanLocalState, Omit<KanbanStatusDisplay, "name">> = {
-  backlog: { stateType: "backlog", color: "#95a2b3", progress: 0 },
-  todo: { stateType: "unstarted", color: "#95a2b3", progress: 0 },
-  in_progress: { stateType: "started", color: "#f2c94c", progress: 0.5 },
-  in_review: { stateType: "started", color: "#5e6ad2", progress: 0.75 },
-  done: { stateType: "completed", color: "#4cb782", progress: 1 },
+  backlog: { stateType: "backlog", color: KANBAN_LOCAL_COLUMN_COLORS.backlog, progress: 0 },
+  todo: { stateType: "unstarted", color: KANBAN_LOCAL_COLUMN_COLORS.todo, progress: 0 },
+  in_progress: {
+    stateType: "started",
+    color: KANBAN_LOCAL_COLUMN_COLORS.in_progress,
+    progress: 0.5,
+  },
+  in_review: { stateType: "started", color: KANBAN_LOCAL_COLUMN_COLORS.in_review, progress: 0.75 },
+  done: { stateType: "completed", color: KANBAN_LOCAL_COLUMN_COLORS.done, progress: 1 },
 };
 
 function startedProgressById(

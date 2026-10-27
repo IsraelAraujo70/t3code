@@ -521,6 +521,13 @@ describe("filter options and chips", () => {
       op: "is",
       value: "No",
     });
+    expect(
+      describeClause(
+        snapshot,
+        { kind: "set", field: "t3Project", op: "in", values: [LINKED] },
+        { projectName: (id) => (id === LINKED ? "moneria-api" : null) },
+      ),
+    ).toEqual({ field: "T3 project", op: "is", value: "moneria-api" });
     expect(describeClause(snapshot, { kind: "text", field: "content", value: "pix" })).toEqual({
       field: "Content",
       op: "contains",

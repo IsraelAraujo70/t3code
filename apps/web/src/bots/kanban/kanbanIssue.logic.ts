@@ -21,7 +21,7 @@ import {
   type LinearStateType,
   type LinearWorkflowState,
 } from "@t3tools/contracts";
-import { sortStates } from "@t3tools/client-runtime/kanban-board";
+import { KANBAN_LOCAL_COLUMN_COLORS, sortStates } from "@t3tools/client-runtime/kanban-board";
 
 export type IssueTimelineEntry =
   | { readonly kind: "activity"; readonly id: string; readonly activity: KanbanActivity }
@@ -98,15 +98,6 @@ export function parsePullRequestUrl(
   return number > 0 ? { repository: match[1]!, number } : null;
 }
 
-/** Colors of the local columns, as the board draws them. */
-const LOCAL_STATE_COLORS: Record<KanbanLocalState, string> = {
-  backlog: "#bec2c8",
-  todo: "#e2e2e2",
-  in_progress: "#f2c94c",
-  in_review: "#5e6ad2",
-  done: "#4cb782",
-};
-
 const LOCAL_STATE_PROGRESS: Partial<Record<KanbanLocalState, number>> = {
   in_progress: 0.5,
   in_review: 0.75,
@@ -130,7 +121,7 @@ export function statusPresentation(
     return {
       name: KANBAN_LOCAL_STATE_LABELS[status.state],
       stateType: kanbanStateTypeOf(status, statesById) ?? "backlog",
-      color: LOCAL_STATE_COLORS[status.state],
+      color: KANBAN_LOCAL_COLUMN_COLORS[status.state],
       ...(progress === undefined ? {} : { progress }),
     };
   }

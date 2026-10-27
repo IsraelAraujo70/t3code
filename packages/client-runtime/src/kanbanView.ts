@@ -49,6 +49,8 @@ export interface KanbanViewContext {
   readonly threadStatus: (threadId: ThreadId) => ThreadCardStatus | null;
   /** Names the snapshot lacks: `owner` and `bot:<id>` people. Null falls back to the id. */
   readonly personName?: (personId: string) => string | null;
+  /** A T3 project's title, for `t3Project` options and chips. Null falls back to the id. */
+  readonly projectName?: (projectId: ProjectId) => string | null;
 }
 
 /** How a group draws its leading icon. */
@@ -103,17 +105,35 @@ export type KanbanDropAction =
 const DAY_MS = 86_400_000;
 const CANCELED_GROUP_ID = "canceled";
 
-const LOCAL_COLUMN_ICONS: Record<
-  KanbanLocalState | typeof CANCELED_GROUP_ID,
-  { readonly stateType: LinearStateType; readonly color: string }
+/** Colors of the local columns (and the board of all projects' `canceled`), Linear's defaults. */
+export const KANBAN_LOCAL_COLUMN_COLORS: Readonly<
+  Record<KanbanLocalState | typeof CANCELED_GROUP_ID, string>
 > = {
-  backlog: { stateType: "backlog", color: "#bec2c8" },
-  todo: { stateType: "unstarted", color: "#e2e2e2" },
-  in_progress: { stateType: "started", color: "#f2c94c" },
-  in_review: { stateType: "started", color: "#5e6ad2" },
-  done: { stateType: "completed", color: "#4cb782" },
-  canceled: { stateType: "canceled", color: "#95a2b3" },
+  backlog: "#bec2c8",
+  todo: "#e2e2e2",
+  in_progress: "#f2c94c",
+  in_review: "#5e6ad2",
+  done: "#4cb782",
+  canceled: "#95a2b3",
 };
+
+const LOCAL_COLUMN_STATE_TYPES: Record<
+  KanbanLocalState | typeof CANCELED_GROUP_ID,
+  LinearStateType
+> = {
+  backlog: "backlog",
+  todo: "unstarted",
+  in_progress: "started",
+  in_review: "started",
+  done: "completed",
+  canceled: "canceled",
+};
+
+const localColumnIcon = (column: KanbanLocalState | typeof CANCELED_GROUP_ID): KanbanGroupIcon => ({
+  kind: "status",
+  stateType: LOCAL_COLUMN_STATE_TYPES[column],
+  color: KANBAN_LOCAL_COLUMN_COLORS[column],
+});
 
 const STATE_TYPE_LABELS: Record<LinearStateType, string> = {
   triage: "Triage",
@@ -427,15 +447,9 @@ function statusColumns(snapshot: KanbanSnapshot, projectId: ProjectId | null) {
     teamId: null,
     drafts: [
       ...KANBAN_LOCAL_STATES.map((state) =>
-        draft(state, KANBAN_LOCAL_STATE_LABELS[state], {
-          kind: "status",
-          ...LOCAL_COLUMN_ICONS[state],
-        }),
+        draft(state, KANBAN_LOCAL_STATE_LABELS[state], localColumnIcon(state)),
       ),
-      draft(CANCELED_GROUP_ID, "Canceled", {
-        kind: "status",
-        ...LOCAL_COLUMN_ICONS[CANCELED_GROUP_ID],
-      }),
+      draft(CANCELED_GROUP_ID, "Canceled", localColumnIcon(CANCELED_GROUP_ID)),
     ],
     columnOf: (ticket: KanbanTicket) =>
       kanbanLocalStateOf(ticket.status, statesById) ??
@@ -812,7 +826,7 @@ function setFieldOptions(
   projectId: ProjectId | null,
   field: KanbanSetFilterField,
   tickets: ReadonlyArray<KanbanTicket>,
-  context: Pick<KanbanViewContext, "personName"> | undefined,
+  context: Pick<KanbanViewContext, "personName" | "projectName"> | undefined,
 ): ReadonlyArray<OptionDraft> {
   const none: OptionDraft = { value: "none", label: "None", icon: { kind: "none" } };
   const { organizations, teams, local } = scopeReach(snapshot, projectId, tickets);
@@ -970,7 +984,11 @@ function setFieldOptions(
           ...snapshot.links.map((link) => link.projectId),
           ...snapshot.tickets.map((ticket) => ticket.projectId),
         ]),
-      ].map((id) => ({ value: id, label: id, icon: { kind: "none" } }));
+      ].map((id) => ({
+        value: id,
+        label: context?.projectName?.(id) ?? id,
+        icon: { kind: "none" },
+      }));
   }
 }
 
@@ -1014,7 +1032,7 @@ const DATE_OP_LABELS = {
 export function describeClause(
   snapshot: KanbanSnapshot,
   clause: KanbanFilterClause,
-  context?: Pick<KanbanViewContext, "personName">,
+  context?: Pick<KanbanViewContext, "personName" | "projectName">,
 ): { readonly field: string; readonly op: string; readonly value: string } {
   const field = KANBAN_FILTER_FIELD_LABELS[clause.field];
   switch (clause.kind) {
