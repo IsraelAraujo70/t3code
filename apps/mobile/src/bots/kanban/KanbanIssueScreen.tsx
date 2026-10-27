@@ -21,7 +21,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Linking, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -62,11 +62,18 @@ import {
   type KanbanGlyphColors,
 } from "./KanbanGlyphs";
 import {
+  addPendingWrite,
   assigneeChoices,
+  draftedLabelIds,
   issueTimeline,
   labelChoices,
+  reconcileLabelDraft,
+  removePendingWrite,
   responsibleBotIds,
   statusChoices,
+  toggleDraftLabel,
+  type KanbanLabelDraft,
+  type PendingWrites,
 } from "./kanbanIssue.logic";
 import { KanbanPickerSheet, reportKanbanResult } from "./KanbanPickerSheet";
 
@@ -139,24 +146,41 @@ function useTicketDetail(environmentId: EnvironmentId, ticketId: KanbanTicketId)
     label: "kanban ticket detail",
     reportFailure: false,
   });
-  const [detail, setDetail] = useState<KanbanTicketDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const key = `${environmentId}\u0000${ticketId}`;
+  const [read, setRead] = useState<{
+    readonly key: string;
+    readonly detail: KanbanTicketDetail | null;
+    readonly error: string | null;
+  }>({ key, detail: null, error: null });
+  // Only the newest read still running applies; unmount or a new ticket bumps it too.
+  const generation = useRef(0);
   // A re-read after a write keeps showing the issue it had until the answer arrives.
   const refresh = useCallback(async () => {
+    const own = ++generation.current;
     const result = await fetchDetail({ environmentId, input: { ticketId } });
+    if (own !== generation.current) return;
     if (result._tag === "Success") {
-      setDetail(result.value);
-      setError(null);
+      setRead({ key, detail: result.value, error: null });
     } else if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : String(failure));
+      const error = failure instanceof Error ? failure.message : String(failure);
+      setRead((previous) => ({
+        key,
+        detail: previous.key === key ? previous.detail : null,
+        error,
+      }));
     }
-  }, [fetchDetail, environmentId, ticketId]);
+  }, [fetchDetail, environmentId, ticketId, key]);
   // oxlint-disable-next-line t3code/react-effect-budget -- reads the issue from the server (Linear) when it opens
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- the read's answer arrives after an await, never synchronously
     void refresh();
+    return () => {
+      generation.current += 1;
+    };
   }, [refresh]);
+  const detail = read.key === key ? read.detail : null;
+  const error = read.key === key ? read.error : null;
   return { detail, error, loading: detail === null && error === null, refresh };
 }
 
@@ -195,7 +219,13 @@ function IssueBody(props: {
   const canEdit = useAtomValue(botsEnvironment.kanbanUpdateTicket.permissionAtom(environmentId));
   const [sheet, setSheet] = useState<IssueSheet | null>(null);
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingWrites>(() => new Map());
+  const anyPending = pending.size > 0;
+  const commentInFlight = useRef(false);
+  const [storedLabelDraft, setLabelDraft] = useState<KanbanLabelDraft | null>(null);
+  const labelDraft = reconcileLabelDraft(storedLabelDraft, ticket);
+  if (labelDraft !== storedLabelDraft) setLabelDraft(labelDraft);
+  const labelIds = draftedLabelIds(labelDraft, ticket);
 
   const [now] = useState(() => new Date());
   const status = statusDisplay(lookups, ticket.status);
@@ -203,7 +233,7 @@ function IssueBody(props: {
     ticket.assigneeId === null
       ? null
       : personDisplay(lookups, ticket.assigneeId, ticket.assigneeName);
-  const labels = ticket.labelIds.flatMap((id) => {
+  const labels = labelIds.flatMap((id) => {
     const label = lookups.labelsById.get(id);
     return label === undefined ? [] : [label];
   });
@@ -232,15 +262,21 @@ function IssueBody(props: {
     .slice(0, 30);
   const timeline = detail === null ? [] : issueTimeline(detail);
 
+  const track = async <A,>(key: string, run: () => Promise<A>): Promise<A> => {
+    setPending((current) => addPendingWrite(current, key));
+    try {
+      return await run();
+    } finally {
+      setPending((current) => removePendingWrite(current, key));
+    }
+  };
   /** Runs one write, reports a failure, and re-reads the issue after it. */
   const write = async (
     key: string,
     title: string,
     run: () => Promise<Parameters<typeof reportKanbanResult>[1]>,
   ): Promise<boolean> => {
-    setBusy(key);
-    const ok = reportKanbanResult(title, await run());
-    setBusy(null);
+    const ok = reportKanbanResult(title, await track(key, run));
     if (ok) void refresh();
     return ok;
   };
@@ -271,9 +307,9 @@ function IssueBody(props: {
   const start = async (
     target: { kind: "project" } | { kind: "bot"; botId: BotDirectoryEntry["id"] },
   ) => {
-    setBusy("start");
-    const result = await startThread({ environmentId, input: { ticketId: ticket.id, target } });
-    setBusy(null);
+    const result = await track("start", () =>
+      startThread({ environmentId, input: { ticketId: ticket.id, target } }),
+    );
     if (!reportKanbanResult("Could not start a thread", result)) return;
     if (result._tag === "Success") {
       void refresh();
@@ -283,11 +319,16 @@ function IssueBody(props: {
 
   const sendComment = async () => {
     const body = draft.trim();
-    if (body.length === 0) return;
-    const sent = await write("comment", "Could not send the comment", () =>
-      comment({ environmentId, input: { ticketId: ticket.id, body } }),
-    );
-    if (sent) setDraft("");
+    if (body.length === 0 || commentInFlight.current) return;
+    commentInFlight.current = true;
+    try {
+      const sent = await write("comment", "Could not send the comment", () =>
+        comment({ environmentId, input: { ticketId: ticket.id, body } }),
+      );
+      if (sent) setDraft("");
+    } finally {
+      commentInFlight.current = false;
+    }
   };
 
   const confirmDeleteComment = (target: KanbanComment) =>
@@ -351,7 +392,7 @@ function IssueBody(props: {
           <PropertyRow
             label="Status"
             disabled={!canEdit}
-            busy={busy === "status"}
+            busy={pending.has("status")}
             onPress={() => setSheet("status")}
           >
             <KanbanStatusIcon
@@ -364,7 +405,7 @@ function IssueBody(props: {
           <PropertyRow
             label="Priority"
             disabled={!canEdit}
-            busy={busy === "priority"}
+            busy={pending.has("priority")}
             onPress={() => setSheet("priority")}
           >
             <KanbanPriorityIcon priority={ticket.priority} colors={colors} />
@@ -375,7 +416,7 @@ function IssueBody(props: {
           <PropertyRow
             label="Assignee"
             disabled={!canEdit}
-            busy={busy === "assignee"}
+            busy={pending.has("assignee")}
             onPress={() => setSheet("assignee")}
           >
             <KanbanAvatar person={assignee} colors={colors} size={18} />
@@ -384,7 +425,7 @@ function IssueBody(props: {
           <PropertyRow
             label="Labels"
             disabled={!canEdit}
-            busy={busy === "labels"}
+            busy={pending.has("labels")}
             onPress={() => setSheet("labels")}
           >
             {labels.length === 0 ? (
@@ -403,7 +444,7 @@ function IssueBody(props: {
           <PropertyRow
             label="Due date"
             disabled={!canEdit}
-            busy={busy === "due"}
+            busy={pending.has("due")}
             onPress={() => setSheet("due")}
           >
             <PropertyValue muted={ticket.dueDate === null} danger={isOverdue(ticket, now)}>
@@ -415,7 +456,7 @@ function IssueBody(props: {
           <PropertyRow
             label="Bot"
             disabled={!canEdit}
-            busy={busy === "bot"}
+            busy={pending.has("bot")}
             onPress={() => setSheet("bot")}
             last
           >
@@ -541,7 +582,7 @@ function IssueBody(props: {
                         <ControlPill
                           icon="xmark"
                           accessibilityLabel={`Unlink ${thread.title}`}
-                          disabled={busy !== null}
+                          disabled={anyPending}
                           onPress={() =>
                             void write(`unlink:${thread.id}`, "Could not unlink the thread", () =>
                               unlink({
@@ -574,7 +615,7 @@ function IssueBody(props: {
                 variant="pill"
                 icon="plus.bubble"
                 label="Start thread"
-                disabled={busy !== null}
+                disabled={anyPending}
                 onPress={() => void start({ kind: "project" })}
               />
               {responsible.map((bot) => (
@@ -583,7 +624,7 @@ function IssueBody(props: {
                   variant="pill"
                   iconNode={<BotAvatar botId={bot.id} size={16} />}
                   label={`Ask ${bot.name}`}
-                  disabled={busy !== null}
+                  disabled={anyPending}
                   onPress={() => void start({ kind: "bot", botId: bot.id })}
                 />
               ))}
@@ -592,7 +633,7 @@ function IssueBody(props: {
                   variant="pill"
                   icon="link"
                   label="Link thread"
-                  disabled={busy !== null}
+                  disabled={anyPending}
                   onPress={() => setSheet("link")}
                 />
               ) : null}
@@ -633,7 +674,7 @@ function IssueBody(props: {
                 colors={colors}
                 now={now}
                 textStyle={markdownStyles.nativeTextStyle}
-                deleting={busy === `delete:${entry.comment.id}`}
+                deleting={pending.has(`delete:${entry.comment.id}`)}
                 onDelete={canEdit && entry.comment.deletable ? confirmDeleteComment : null}
               />
             ),
@@ -642,7 +683,7 @@ function IssueBody(props: {
             <View className="gap-2">
               <TextInput
                 multiline
-                editable={busy !== "comment"}
+                editable={!pending.has("comment")}
                 accessibilityLabel="Comment"
                 placeholder="Leave a comment…"
                 placeholderTextColorClassName="accent-foreground-muted"
@@ -656,7 +697,7 @@ function IssueBody(props: {
                   variant="primary"
                   icon="arrow.up"
                   label="Send"
-                  disabled={draft.trim().length === 0 || busy === "comment"}
+                  disabled={draft.trim().length === 0 || pending.has("comment")}
                   onPress={() => void sendComment()}
                 />
               </View>
@@ -750,14 +791,14 @@ function IssueBody(props: {
               ? "No local labels yet. Create them in T3 Code on your computer."
               : "This team has no labels."
           }
-          selected={ticket.labelIds}
-          onPick={(value) =>
-            void patch("labels", {
-              labelIds: ticket.labelIds.includes(value)
-                ? ticket.labelIds.filter((id) => id !== value)
-                : [...ticket.labelIds, value],
-            })
-          }
+          selected={labelIds}
+          onPick={(value) => {
+            const next = toggleDraftLabel(labelDraft, ticket, value);
+            setLabelDraft(next);
+            void patch("labels", { labelIds: draftedLabelIds(next, ticket) }).then((ok) => {
+              if (!ok) setLabelDraft(null);
+            });
+          }}
           onClose={() => setSheet(null)}
         />
       ) : sheet === "due" ? (

@@ -14,11 +14,16 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  addPendingWrite,
   assigneeChoices,
+  draftedLabelIds,
   issueTimeline,
   labelChoices,
+  reconcileLabelDraft,
+  removePendingWrite,
   responsibleBotIds,
   statusChoices,
+  toggleDraftLabel,
 } from "./kanbanIssue.logic";
 
 const ACCOUNT = LinearAccountId.make("la_1");
@@ -205,5 +210,72 @@ describe("issue choices", () => {
     expect(responsibleBotIds(withBots, { ...baseTicket(true), botId: BotId.make("solo") })).toEqual(
       ["solo"],
     );
+  });
+});
+
+describe("label draft", () => {
+  const ticket = baseTicket(true);
+  const withLabels = (labelIds: ReadonlyArray<string>) => ({ ...ticket, labelIds });
+
+  it("sends every label tapped before the snapshot catches up", () => {
+    const first = toggleDraftLabel(null, ticket, "a");
+    expect(draftedLabelIds(first, ticket)).toEqual(["a"]);
+    const second = toggleDraftLabel(first, ticket, "b");
+    expect(draftedLabelIds(second, ticket)).toEqual(["a", "b"]);
+  });
+
+  it("keeps later taps while an earlier save shows up, then gives way to the snapshot", () => {
+    const draft = toggleDraftLabel(toggleDraftLabel(null, ticket, "a"), ticket, "b");
+    const echoedA = withLabels(["a"]);
+    const afterA = reconcileLabelDraft(draft, echoedA);
+    expect(draftedLabelIds(afterA, echoedA)).toEqual(["a", "b"]);
+    expect(draftedLabelIds(toggleDraftLabel(afterA, echoedA, "c"), echoedA)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(reconcileLabelDraft(afterA, withLabels(["a", "b"]))).toBeNull();
+  });
+
+  it("lets a later edit from elsewhere show through once the save has landed", () => {
+    const draft = toggleDraftLabel(null, ticket, "a");
+    const landed = reconcileLabelDraft(draft, withLabels(["a"]));
+    const removedElsewhere = withLabels([]);
+    expect(
+      draftedLabelIds(reconcileLabelDraft(landed, removedElsewhere), removedElsewhere),
+    ).toEqual([]);
+  });
+
+  it("keeps a label off when the save that added it shows up after it was untapped", () => {
+    const off = toggleDraftLabel(toggleDraftLabel(null, ticket, "a"), ticket, "a");
+    expect(draftedLabelIds(off, ticket)).toEqual([]);
+    const staleEcho = withLabels(["a"]);
+    const reconciled = reconcileLabelDraft(off, staleEcho);
+    expect(draftedLabelIds(reconciled, staleEcho)).toEqual([]);
+    expect(reconcileLabelDraft(reconciled, withLabels([]))).toBeNull();
+  });
+
+  it("ignores another ticket's draft", () => {
+    const other = { ...ticket, id: KanbanTicketId.make("t_other") };
+    const draft = toggleDraftLabel(null, other, "a");
+    expect(draftedLabelIds(draft, ticket)).toEqual([]);
+    expect(reconcileLabelDraft(draft, ticket)).toBeNull();
+    expect(draftedLabelIds(toggleDraftLabel(draft, ticket, "b"), ticket)).toEqual(["b"]);
+  });
+});
+
+describe("pending writes", () => {
+  it("keeps one write pending when another finishes", () => {
+    const both = addPendingWrite(addPendingWrite(new Map(), "comment"), "priority");
+    const afterPriority = removePendingWrite(both, "priority");
+    expect(afterPriority.has("comment")).toBe(true);
+    expect(afterPriority.has("priority")).toBe(false);
+  });
+
+  it("counts the same key in flight twice", () => {
+    const twice = addPendingWrite(addPendingWrite(new Map(), "labels"), "labels");
+    const once = removePendingWrite(twice, "labels");
+    expect(once.has("labels")).toBe(true);
+    expect(removePendingWrite(once, "labels").size).toBe(0);
   });
 });
