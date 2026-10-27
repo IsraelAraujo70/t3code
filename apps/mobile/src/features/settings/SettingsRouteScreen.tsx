@@ -303,9 +303,8 @@ function useSettingsIndexSections(): SettingsListSection[] {
 function useOverflowRows(): SettingsListRow[] {
   const order = useNavigationTabOrder();
   const hidden = useHiddenNavigationTabs();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const tabs =
-    Platform.OS === "android" && layout.usesSplitView ? [] : overflowNavigationTabs(order, hidden);
+  // Fork (friend): Android phones list these under the bar's More instead.
+  const tabs = Platform.OS === "android" ? [] : overflowNavigationTabs(order, hidden);
   const selectTab = useSelectWorkspaceTab();
   return tabs.map((tab) => ({
     id: tab,

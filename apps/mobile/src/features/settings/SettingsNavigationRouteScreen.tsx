@@ -30,6 +30,8 @@ export function SettingsNavigationRouteScreen() {
   const order = useNavigationTabOrder();
   const { layout } = useAdaptiveWorkspaceLayout();
   const capacity = Platform.OS === "android" && layout.usesSplitView ? 5 : 4;
+  // Fork (friend): an Android phone puts what does not fit, and Settings, under the bar's More.
+  const moreMenu = Platform.OS === "android" && !layout.usesSplitView;
   const hidden = useHiddenNavigationTabs();
   const enabled = useEnabledNavigationTabs();
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -43,10 +45,13 @@ export function SettingsNavigationRouteScreen() {
         contentContainerClassName="gap-4 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
+        {/* Fork (friend): Android phones describe the More menu. */}
         <Text className="px-2 text-sm text-foreground-muted">
-          {customizable
-            ? "Phones show the first four enabled sections; Android tablet rails show all enabled sections. Remaining sections appear at the top of Settings. Hidden sections appear only here. Settings always stays last. Saved on this device."
-            : "Tab customization becomes available when there are six sections, including Settings."}
+          {customizable && moreMenu
+            ? "The first four enabled sections are in the bar; the rest, and Settings, are under More. Android tablet rails show all enabled sections. Hidden sections appear only here. Saved on this device."
+            : customizable
+              ? "Phones show the first four enabled sections; Android tablet rails show all enabled sections. Remaining sections appear at the top of Settings. Hidden sections appear only here. Settings always stays last. Saved on this device."
+              : "Tab customization becomes available when there are six sections, including Settings."}
         </Text>
         <SettingsSection title="Tab order">
           {order.map((tab, index) => (
@@ -63,7 +68,10 @@ export function SettingsNavigationRouteScreen() {
                     ? "Hidden"
                     : enabled.indexOf(tab) < capacity
                       ? `Tab ${enabled.indexOf(tab) + 1}`
-                      : "In Settings"}
+                      : // Fork (friend): Android phones list the rest under More.
+                        moreMenu
+                        ? "In More"
+                        : "In Settings"}
                 </Text>
               </View>
               <IconButton

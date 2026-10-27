@@ -110,9 +110,10 @@ import {
 } from "./thread-inspector-preview";
 import type { ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
-// Fork (friend): a bot conversation's header shows the bot's face.
+// Fork (friend): a bot conversation's header shows the bot's face; the Kanban tab's return tab.
 import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
 import { botHeaderAvatar } from "../../bots/BotHeaderAvatar";
+import { threadReturnTab, type ThreadReturnTab } from "../../bots/threadReturnTab";
 
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
@@ -162,6 +163,8 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly draft?: NewTaskDraftRouteParams;
   readonly inspector?: ThreadInspectorTarget;
   readonly prompt?: string | string[];
+  // Fork (friend): the tab Back returns to when the thread was opened from the Kanban tab.
+  readonly returnTab?: ThreadReturnTab;
 }>;
 
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
@@ -234,7 +237,8 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 }
 
 function LiveThreadRouteController(props: ThreadRouteScreenProps) {
-  useAndroidWorkspaceBack("threads");
+  // Fork (friend): Back returns to the Kanban tab when the thread was opened there.
+  useAndroidWorkspaceBack(threadReturnTab(props.route.params));
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();

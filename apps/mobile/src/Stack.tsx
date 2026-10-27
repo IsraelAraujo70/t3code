@@ -835,7 +835,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         gestureEnabled: false,
       },
     }),
-    // Fork (friend): the bots host's live screen and kanban, opened from the Bots section.
+    // Fork (friend): the bots host's live screen, and its kanban where there is no Kanban tab (iOS).
     BotsComputer: createNativeStackScreen({
       screen: BotsComputerRouteScreen,
       linking: "bots/computer/:environmentId",

@@ -7,6 +7,9 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+// Fork (friend): the Kanban tab's return tab.
+import { useRoute } from "@react-navigation/native";
+import { threadReturnTab } from "../../bots/threadReturnTab";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -21,7 +24,8 @@ export function ThreadHeader(
     readonly avatar?: import("react").ReactNode;
   },
 ) {
-  const goBack = useWorkspaceBackNavigation("threads");
+  // Fork (friend): the up arrow returns to the Kanban tab when the thread was opened there.
+  const goBack = useWorkspaceBackNavigation(threadReturnTab(useRoute().params));
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;

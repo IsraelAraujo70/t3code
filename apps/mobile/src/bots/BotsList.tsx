@@ -24,6 +24,7 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../state/pre
 import { environmentThreadShells } from "../state/threads";
 import { BotAvatar } from "./BotAvatar";
 import { botsTabGroups, toggleCollapsedKey } from "./bots.logic";
+import { BOTS_TAB_AVAILABLE } from "./botsTab";
 import { useBotDirectory } from "./state";
 
 const COMPUTER_SYMBOL: AppSymbolName = { ios: "desktopcomputer", android: "desktop_windows" };
@@ -312,31 +313,34 @@ export function BotsList(props: {
           }
           onPress={() => navigation.navigate("BotsComputer", { environmentId })}
         />
-        <BotsListRow
-          accessibilityLabel="Kanban"
-          accessibilityHint="Opens the board of tickets and the threads working on them"
-          leading={
-            <View className="size-10 items-center justify-center rounded-full bg-subtle">
+        {/* Android has a Kanban tab; elsewhere the board opens from here. */}
+        {BOTS_TAB_AVAILABLE ? null : (
+          <BotsListRow
+            accessibilityLabel="Kanban"
+            accessibilityHint="Opens the board of tickets and the threads working on them"
+            leading={
+              <View className="size-10 items-center justify-center rounded-full bg-subtle">
+                <SymbolView
+                  name={KANBAN_SYMBOL}
+                  size={18}
+                  tintColorClassName="accent-foreground-muted"
+                  type="monochrome"
+                />
+              </View>
+            }
+            title="Kanban"
+            subtitle={null}
+            trailing={
               <SymbolView
-                name={KANBAN_SYMBOL}
-                size={18}
-                tintColorClassName="accent-foreground-muted"
+                name="chevron.right"
+                size={12}
+                tintColorClassName="accent-foreground-tertiary"
                 type="monochrome"
               />
-            </View>
-          }
-          title="Kanban"
-          subtitle={null}
-          trailing={
-            <SymbolView
-              name="chevron.right"
-              size={12}
-              tintColorClassName="accent-foreground-tertiary"
-              type="monochrome"
-            />
-          }
-          onPress={() => navigation.navigate("BotsKanban", { environmentId })}
-        />
+            }
+            onPress={() => navigation.navigate("BotsKanban", { environmentId })}
+          />
+        )}
       </View>
     </View>
   );

@@ -1,7 +1,11 @@
 import { createBotsEnvironmentAtoms } from "@t3tools/client-runtime/state/bots";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { BotDirectory, EnvironmentId, KanbanSnapshot } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { useAtomValueWhileVisible } from "../features/home/home-route-visibility";
 import { useServerConfigs } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 
@@ -33,13 +37,32 @@ export function useBotDirectory(environmentId: EnvironmentId | null): {
   return { directory: query.data, error: query.error };
 }
 
-/** The bots host's live kanban; null until the first snapshot arrives. */
-export function useKanbanSnapshot(environmentId: EnvironmentId | null): {
+const NO_KANBAN = Atom.make(AsyncResult.initial<KanbanSnapshot, unknown>(false));
+
+/**
+ * The bots host's live kanban; null until the first snapshot arrives. The server republishes it
+ * after every sync, so a board that is not on screen (`visible` false) stops listening and keeps
+ * the last snapshot it had.
+ */
+export function useKanbanSnapshot(
+  environmentId: EnvironmentId | null,
+  visible = true,
+): {
   readonly snapshot: KanbanSnapshot | null;
   readonly error: string | null;
 } {
-  const query = useEnvironmentQuery(
-    environmentId === null ? null : botsEnvironment.kanban({ environmentId, input: {} }),
+  const result = useAtomValueWhileVisible<AsyncResult.AsyncResult<KanbanSnapshot, unknown>>(
+    environmentId === null ? NO_KANBAN : botsEnvironment.kanban({ environmentId, input: {} }),
+    visible,
   );
-  return { snapshot: query.data, error: query.error };
+  const failure = result._tag === "Failure" ? Cause.squash(result.cause) : null;
+  return {
+    snapshot: Option.getOrNull(AsyncResult.value(result)),
+    error:
+      failure === null
+        ? null
+        : failure instanceof Error && failure.message.trim().length > 0
+          ? failure.message
+          : "The environment request failed.",
+  };
 }

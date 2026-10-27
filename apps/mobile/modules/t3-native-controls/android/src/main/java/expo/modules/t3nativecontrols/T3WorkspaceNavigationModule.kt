@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+// Fork (friend): the More item lives in the bar's row.
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -20,6 +22,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+// Fork (friend): the More menu.
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +73,10 @@ class T3WorkspaceNavigationModule : Module() {
     Name("T3WorkspaceNavigation")
     View(T3WorkspaceNavigationView::class) {
       Prop("tabs") { view: T3WorkspaceNavigationView, value: List<String> -> view.tabs = value }
+      // Fork (friend): what the phone bar's More item lists.
+      Prop("moreTabs") { view: T3WorkspaceNavigationView, value: List<String> ->
+        view.moreTabs = value
+      }
       Prop("selectedTab") { view: T3WorkspaceNavigationView, value: String ->
         view.selectedTab = value
       }
@@ -121,6 +130,8 @@ class T3WorkspaceNavigationView(
   private val onNewThread by EventDispatcher()
   private val onOverlayChange by EventDispatcher()
   var tabs by mutableStateOf(listOf("threads", "pullRequests", "usage", "settings"))
+  // Fork (friend): the phone bar's More menu.
+  var moreTabs by mutableStateOf(listOf<String>())
   var selectedTab by mutableStateOf("threads")
   var rail by mutableStateOf(false)
   var dark by mutableStateOf(false)
@@ -176,6 +187,11 @@ class T3WorkspaceNavigationView(
                 windowInsets = WindowInsets(0),
               ) {
                 tabs.forEach { tab ->
+                  // Fork (friend): More opens a menu of the sections that did not fit.
+                  if (tab == "more") {
+                    moreItem()
+                    return@forEach
+                  }
                   NavigationBarItem(
                     selected = selectedTab == tab,
                     onClick = { onTabSelected(mapOf("tab" to tab)) },
@@ -196,6 +212,41 @@ class T3WorkspaceNavigationView(
         }
       },
       LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    )
+  }
+
+  /** Fork (friend): the phone bar's last item; a menu of `moreTabs` that opens above it. */
+  @Composable
+  private fun RowScope.moreItem() {
+    var open by remember { mutableStateOf(false) }
+    NavigationBarItem(
+      selected = selectedTab == "more",
+      onClick = { open = true },
+      icon = {
+        Box {
+          Icon(tabIconPainter("more"), contentDescription = null)
+          DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            moreTabs.forEach { tab ->
+              DropdownMenuItem(
+                text = { Text(expandedTabTitle(tab), fontSize = (14 * textScale).sp) },
+                leadingIcon = { Icon(tabIconPainter(tab), contentDescription = null) },
+                onClick = {
+                  open = false
+                  onTabSelected(mapOf("tab" to tab))
+                },
+              )
+            }
+          }
+        }
+      },
+      label = { Text(tabTitle("more"), fontSize = (12 * textScale).sp) },
+      colors = NavigationBarItemDefaults.colors(
+        selectedIconColor = Color(selectedColor),
+        selectedTextColor = Color(selectedColor),
+        indicatorColor = Color(indicatorColor),
+        unselectedIconColor = Color(unselectedColor),
+        unselectedTextColor = Color(unselectedColor),
+      ),
     )
   }
 
@@ -358,8 +409,10 @@ class T3WorkspaceNavigationView(
 
   private fun tabTitle(tab: String) = when (tab) {
     "threads" -> "Chats"
-    // Fork (friend): the Bots tab.
+    // Fork (friend): the Bots and Kanban tabs.
     "bots" -> "Bots"
+    "kanban" -> "Kanban"
+    "more" -> "More"
     "pullRequests" -> "Pulls"
     "usage" -> "Usage"
     else -> "Settings"
@@ -372,8 +425,10 @@ class T3WorkspaceNavigationView(
   private fun tabIconPainter(tab: String) = painterResource(
     when (tab) {
       "threads" -> R.drawable.t3_chats
-      // Fork (friend): the Bots tab.
+      // Fork (friend): the Bots and Kanban tabs.
       "bots" -> R.drawable.t3_bots
+      "kanban" -> R.drawable.t3_kanban
+      "more" -> R.drawable.t3_menu
       "pullRequests" -> R.drawable.t3_pull_requests
       "usage" -> R.drawable.t3_usage
       else -> R.drawable.t3_settings

@@ -1,10 +1,10 @@
 import { BOTS_TAB_AVAILABLE } from "../../bots/botsTab";
 
-// Fork (friend): Android lists the bots host's bots in their own tab, next to Chats.
-const NAVIGATION_TABS = ["threads", "bots", "pullRequests", "usage"] as const;
+// Fork (friend): Android gives the bots host's bots and its kanban their own tabs, after Chats.
+const NAVIGATION_TABS = ["threads", "bots", "kanban", "pullRequests", "usage"] as const;
 export type NavigationTab = (typeof NAVIGATION_TABS)[number];
 export const NAVIGATION_TAB_ORDER: readonly NavigationTab[] = NAVIGATION_TABS.filter(
-  (tab) => tab !== "bots" || BOTS_TAB_AVAILABLE,
+  (tab) => (tab !== "bots" && tab !== "kanban") || BOTS_TAB_AVAILABLE,
 );
 
 export function navigationCustomizationAvailable(
@@ -16,6 +16,7 @@ export function navigationCustomizationAvailable(
 export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
   threads: "Threads",
   bots: "Bots", // Fork (friend)
+  kanban: "Kanban",
   pullRequests: "Pulls",
   usage: "Usage",
 };

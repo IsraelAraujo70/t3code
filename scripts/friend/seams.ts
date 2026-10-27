@@ -35,8 +35,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/settings/SettingsRouteScreen.tsx",
-    markers: 3,
-    why: "local-only notification settings; the friend APK's update section",
+    markers: 4,
+    why: "local-only notification settings; the friend APK's update section; Android lists extra tabs under the bar's More",
   },
   {
     file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
@@ -155,13 +155,13 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/threads/ThreadHeader.tsx",
-    markers: 2,
-    why: "pass the bot's face to the app bar",
+    markers: 4,
+    why: "pass the bot's face to the app bar; the up arrow returns to the Kanban tab",
   },
   {
     file: "apps/mobile/src/features/threads/ThreadRouteScreen.tsx",
-    markers: 3,
-    why: 'bot conversation header: the bot\'s face, no "No project" subtitle',
+    markers: 5,
+    why: 'bot conversation header: the bot\'s face, no "No project" subtitle; Back returns to the Kanban tab',
   },
   {
     file: "apps/web/src/components/chat/ChatHeader.tsx",
@@ -336,27 +336,27 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/features/workspace/workspace-tabs-state.ts",
     markers: 1,
-    why: "Bots tab state",
+    why: "Bots and Kanban tab state",
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceTabsContext.tsx",
     markers: 1,
-    why: "Bots tab scroll offset",
+    why: "Bots and Kanban tab scroll offsets",
   },
   {
     file: "apps/mobile/src/features/workspace/navigation-tab-order.ts",
     markers: 2,
-    why: "Bots is a navigation tab on Android (botsTab.android.ts)",
+    why: "Bots and Kanban are navigation tabs on Android (botsTab.android.ts)",
   },
   {
     file: "apps/mobile/src/features/workspace/navigation-tabs.ts",
     markers: 1,
-    why: "Bots tab icon",
+    why: "Bots and Kanban tab icons",
   },
   {
     file: "apps/mobile/src/features/workspace/workspace-tab-navigation.ts",
     markers: 1,
-    why: "the Bots tab has no remembered detail page",
+    why: "the Bots and Kanban tabs have no remembered detail page",
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.browser.test.tsx",
@@ -366,7 +366,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/features/workspace/WorkspaceToolbar.ios.tsx",
     markers: 1,
-    why: "the Bots tab type has no iOS search label",
+    why: "the Bots and Kanban tab types have no iOS search label",
   },
   {
     file: "apps/mobile/src/features/layout/AdaptiveWorkspaceLayout.tsx",
@@ -375,8 +375,18 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.android.tsx",
+    markers: 5,
+    why: "Bots and Kanban tab panes on Android",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/AndroidWorkspaceNavigation.android.tsx",
+    markers: 4,
+    why: "the phone bar ends in More, a menu of the tabs that do not fit and Settings",
+  },
+  {
+    file: "apps/mobile/src/features/settings/SettingsNavigationRouteScreen.tsx",
     markers: 3,
-    why: "Bots tab pane on Android",
+    why: "Navigation tabs settings describe the phone bar's More menu",
   },
   {
     file: "apps/mobile/src/features/workspace/AndroidWorkspaceSidebar.android.tsx",
@@ -385,8 +395,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
-    markers: 2,
-    why: "Bots item title and icon in the Android navigation bar and rail",
+    markers: 8,
+    why: "Bots and Kanban item titles and icons in the Android navigation bar and rail; the phone bar's More menu",
   },
   {
     file: "scripts/build-desktop-artifact.ts",
@@ -423,6 +433,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/desktop/src/friend/",
   "apps/mobile/src/bots/",
   "apps/mobile/modules/t3-native-controls/android/src/main/res/drawable/t3_bots.xml",
+  "apps/mobile/modules/t3-native-controls/android/src/main/res/drawable/t3_kanban.xml",
   "apps/mobile/plugins/withFriendVoiceReaderWebrtc",
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",

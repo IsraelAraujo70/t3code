@@ -44,8 +44,9 @@ export function initialWorkspaceTabsState(): WorkspaceTabsState {
     selectionRevision: 0,
     tabs: {
       threads: emptyTab(),
-      // Fork (friend): the Bots tab.
+      // Fork (friend): the Bots and Kanban tabs.
       bots: emptyTab(),
+      kanban: emptyTab(),
       pullRequests: emptyTab(),
       usage: emptyTab(),
       settings: emptyTab(),

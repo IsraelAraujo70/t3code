@@ -212,8 +212,8 @@ export function workspaceTabNavigationState<
   }
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
   const detail =
-    // Fork (friend): the Bots tab has no remembered detail page.
-    options.columns && tab !== "usage" && tab !== "bots"
+    // Fork (friend): the Bots and Kanban tabs have no remembered detail page.
+    options.columns && tab !== "usage" && tab !== "bots" && tab !== "kanban"
       ? detailRoute(state, tab, selections, options.check)
       : undefined;
   const routes = [...[home, ...(detail ? [detail] : [])].map(keyed), ...overlays];

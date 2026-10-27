@@ -50,9 +50,13 @@ export function WorkspaceToolbar(props: {
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
   const tab = workspace.state.tabs[selectedTab];
-  // Fork (friend): iOS has no Bots tab; the type allows it because Android does.
+  // Fork (friend): iOS has no Bots or Kanban tab; the type allows them because Android does.
   const searchLabel =
-    SEARCH_LABELS[selectedTab === "usage" || selectedTab === "bots" ? "threads" : selectedTab];
+    SEARCH_LABELS[
+      selectedTab === "usage" || selectedTab === "bots" || selectedTab === "kanban"
+        ? "threads"
+        : selectedTab
+    ];
   const { isTabActive: isListTabActive } = workspace;
   const isTabActive = useCallback(
     // A retained tab slot stays mounted while another is shown.

@@ -18,8 +18,9 @@ import { AndroidWorkspaceNavigation } from "./AndroidWorkspaceNavigation";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
-// Fork (friend): the Bots tab.
+// Fork (friend): the Bots and Kanban tabs.
 import { BotsTabDetailPlaceholder, BotsTabScreen } from "../../bots/BotsTabScreen";
+import { KanbanTabScreen } from "../../bots/KanbanTabScreen";
 
 const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
@@ -52,6 +53,12 @@ export function WorkspaceRootScreen() {
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
               <BotsTabDetailPlaceholder />
+            </>
+          ) : tab === "kanban" ? (
+            // Fork (friend): the board fills the detail pane; the sidebar stays empty, as for Usage.
+            <>
+              <NativeStackScreenOptions options={{ headerShown: false }} />
+              <KanbanTabScreen />
             </>
           ) : tab !== "pullRequests" ? (
             <WorkspaceExtraTab tab={tab} />
@@ -90,6 +97,9 @@ export function WorkspaceRootScreen() {
                 ) : tab === "bots" ? (
                   // Fork (friend): the Bots tab.
                   <BotsTabScreen />
+                ) : tab === "kanban" ? (
+                  // Fork (friend): the Kanban tab.
+                  <KanbanTabScreen />
                 ) : tab !== "pullRequests" ? (
                   <WorkspaceExtraTab tab={tab} />
                 ) : (

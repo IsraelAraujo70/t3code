@@ -113,14 +113,24 @@ thread ids, so the board adds no per-thread traffic.
 
 ### Phone
 
-The app opens the board from a "Kanban" row under "Computer" in the Bots list (the Android Bots
-tab and the iOS Bots section share that list). It uses the same RPCs and the same board rules
-(`@t3tools/client-runtime/kanban-board`), with the project, workspace and account filters as menu
-chips. A phone shows one column at a time, picked from a row of chips with counts. Dragging across a
-small screen is clumsy, so a card moves through its menu, opened by long-press or the ⋯ button:
-"Move to…" lists only the columns the ticket can take, and the same menu links and unlinks threads,
-opens the issue in Linear, or deletes a local ticket. Tapping a linked thread opens it; on Android, Back from
-the thread goes to the threads list, as for every thread. "New ticket" asks for a title.
+On Android the board is its own navigation tab, after Bots. Upstream's phone bar holds four sections
+plus Settings and lists the rest at the top of Settings. With Bots and Kanban there are five, so the
+fork ends the phone bar in a More item instead of Settings: Chats, Bots, Kanban, Pulls, More. More
+opens a menu of the sections that did not fit (upstream's overflow: Usage, or whatever the order in
+Settings → Navigation tabs pushes past the fourth) and Settings, and is selected while one of them
+is on screen. Picking one is the same as pressing its tab. Kanban takes part in Navigation tabs like
+the others (reorder, hide). Tablet rails are unchanged. iOS has no Bots tab, so there the board
+opens from a "Kanban" row under "Computer" in the Bots section.
+
+The board uses the same RPCs and the same board rules (`@t3tools/client-runtime/kanban-board`), with
+the project, workspace and account filters as menu chips. A phone shows one column at a time, picked
+from a row of chips with counts. Dragging across a small screen is clumsy, so a card moves through
+its menu, opened by long-press or the ⋯ button: "Move to…" lists only the columns the ticket can
+take, and the same menu links and unlinks threads, opens the issue in Linear, or deletes a local
+ticket. "New ticket" asks for a title. Tapping a linked thread opens it with `returnTab: "kanban"`
+in its route params, so Android Back (and the header's up arrow) return to the Kanban tab instead
+of Chats. The tab stops listening to the board while it is not on screen, since the server
+republishes the snapshot after every sync.
 
 ### Bots
 

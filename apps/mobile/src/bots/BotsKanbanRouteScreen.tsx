@@ -51,6 +51,7 @@ import {
   type TicketMenuThread,
 } from "./kanban.logic";
 import { botsEnvironment, useBotDirectory, useKanbanSnapshot } from "./state";
+import type { ThreadReturnTab } from "./threadReturnTab";
 
 type BotsKanbanRouteScreenProps = StaticScreenProps<{
   /** The bots host whose kanban is shown. */
@@ -79,26 +80,69 @@ function reportResult(title: string, result: AtomCommandResult<unknown, unknown>
   return false;
 }
 
-/**
- * The bots host's kanban on the phone. One column shows at a time, picked from a row of chips, and
- * a card moves through its menu (long-press or ⋯), since dragging across a phone screen is clumsy.
- * Linear accounts and project links are edited on the computer.
- */
-export function BotsKanbanRouteScreen({ route }: BotsKanbanRouteScreenProps) {
-  const environmentId = EnvironmentId.make(route.params.environmentId);
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
-  const { snapshot, error } = useKanbanSnapshot(environmentId);
+/** The header's "Sync with Linear now" button, once a project is linked to Linear. */
+export function useKanbanSyncActions(
+  environmentId: EnvironmentId,
+  snapshot: KanbanSnapshot | null,
+) {
   const sync = useAtomCommand(botsEnvironment.kanbanSync, { label: "kanban sync" });
   const canSync = useAtomValue(botsEnvironment.kanbanSync.permissionAtom(environmentId));
   const [syncing, setSyncing] = useState(false);
-  const onClose = useCallback(() => navigation.goBack(), [navigation]);
-
   const runSync = async () => {
     setSyncing(true);
     reportResult("Could not sync with Linear", await sync({ environmentId, input: {} }));
     setSyncing(false);
   };
+  return (snapshot?.links.length ?? 0) > 0
+    ? [
+        {
+          accessibilityLabel: "Sync with Linear now",
+          icon: "arrow.clockwise" as const,
+          disabled: !canSync,
+          loading: syncing,
+          onPress: () => void runSync(),
+        },
+      ]
+    : [];
+}
+
+/**
+ * The bots host's kanban on a phone, below its header. One column shows at a time, picked from a
+ * row of chips, and a card moves through its menu (long-press or ⋯), since dragging across a phone
+ * screen is clumsy. Linear accounts and project links are edited on the computer.
+ */
+export function KanbanBoardContent(props: {
+  readonly environmentId: EnvironmentId;
+  readonly snapshot: KanbanSnapshot | null;
+  readonly error: string | null;
+  /** Set when the board is a top-level tab, so Back from a thread opened here returns to it. */
+  readonly returnTab?: ThreadReturnTab;
+  readonly bottomPadding?: number;
+}) {
+  return props.error !== null ? (
+    <View className="px-4 py-3">
+      <Notice tone="danger" message={`Kanban unavailable: ${props.error}`} />
+    </View>
+  ) : props.snapshot === null ? (
+    <Text className="px-4 py-3 text-sm text-foreground-muted">Loading the board…</Text>
+  ) : (
+    <KanbanBoardView
+      environmentId={props.environmentId}
+      snapshot={props.snapshot}
+      returnTab={props.returnTab}
+      bottomPadding={props.bottomPadding ?? 0}
+    />
+  );
+}
+
+/** The kanban as a pushed screen, opened from the Bots list where there is no Kanban tab (iOS). */
+export function BotsKanbanRouteScreen({ route }: BotsKanbanRouteScreenProps) {
+  const environmentId = EnvironmentId.make(route.params.environmentId);
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const { snapshot, error } = useKanbanSnapshot(environmentId);
+  const actions = useKanbanSyncActions(environmentId, snapshot);
+  const onClose = useCallback(() => navigation.goBack(), [navigation]);
 
   return (
     <View className="flex-1 bg-screen" style={{ paddingBottom: insets.bottom }}>
@@ -107,29 +151,9 @@ export function BotsKanbanRouteScreen({ route }: BotsKanbanRouteScreenProps) {
         sidebar={false}
         onBack={onClose}
         options={{ headerBackVisible: false }}
-        actions={
-          (snapshot?.links.length ?? 0) > 0
-            ? [
-                {
-                  accessibilityLabel: "Sync with Linear now",
-                  icon: "arrow.clockwise",
-                  disabled: !canSync,
-                  loading: syncing,
-                  onPress: () => void runSync(),
-                },
-              ]
-            : []
-        }
+        actions={actions}
       />
-      {error !== null ? (
-        <View className="px-4 py-3">
-          <Notice tone="danger" message={`Kanban unavailable: ${error}`} />
-        </View>
-      ) : snapshot === null ? (
-        <Text className="px-4 py-3 text-sm text-foreground-muted">Loading the board…</Text>
-      ) : (
-        <KanbanBoardView environmentId={environmentId} snapshot={snapshot} />
-      )}
+      <KanbanBoardContent environmentId={environmentId} snapshot={snapshot} error={error} />
     </View>
   );
 }
@@ -174,6 +198,8 @@ function FilterChip(props: {
 function KanbanBoardView(props: {
   readonly environmentId: EnvironmentId;
   readonly snapshot: KanbanSnapshot;
+  readonly returnTab: ThreadReturnTab | undefined;
+  readonly bottomPadding: number;
 }) {
   const { environmentId, snapshot } = props;
   const navigation = useNavigation();
@@ -322,7 +348,10 @@ function KanbanBoardView(props: {
       .map((shell) => ({ id: shell.id, title: shell.title }));
 
   return (
-    <ScrollView contentContainerClassName="pb-6" stickyHeaderIndices={[1]}>
+    <ScrollView
+      contentContainerStyle={{ paddingBottom: props.bottomPadding + 24 }}
+      stickyHeaderIndices={[1]}
+    >
       <View className="gap-2 px-4 pb-2">
         {snapshot.accounts.length === 0 ? (
           <Notice
@@ -406,7 +435,13 @@ function KanbanBoardView(props: {
               })}
               onChoice={(id) => void onChoice(ticket, id)}
               onOpenThread={(threadId) =>
-                navigation.dispatch(StackActions.push("Thread", { environmentId, threadId }))
+                navigation.dispatch(
+                  StackActions.push("Thread", {
+                    environmentId,
+                    threadId,
+                    ...(props.returnTab === undefined ? {} : { returnTab: props.returnTab }),
+                  }),
+                )
               }
             />
           ))
