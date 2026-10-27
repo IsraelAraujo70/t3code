@@ -302,6 +302,9 @@ describe("phraseHistory", () => {
     );
     expect(phraseHistory(history({ toDueDate: "2026-11-01" }))).toBe("set due date to 2026-11-01");
     expect(phraseHistory(history({ fromDueDate: "2026-11-01" }))).toBe("removed due date");
+    expect(phraseHistory(history({ toDueDate: "2026-11-30T00:00:00.000Z" }))).toBe(
+      "set due date to 2026-11-30",
+    );
     expect(phraseHistory(history({ fromEstimate: 0, toEstimate: 3 }))).toBe(
       "changed estimate from 0 to 3",
     );

@@ -347,6 +347,9 @@ function describeLabels(verb: string, labels: ReadonlyArray<{ readonly name: str
   return `${verb} ${noun} ${labels.map((label) => label.name).join(", ")}`;
 }
 
+/** Linear sends history due dates as day or as midnight timestamps; both read as the day. */
+const dueDay = (value: string | null) => (value === null ? null : value.slice(0, 10));
+
 /**
  * The sentence after the actor's name for one history entry ("changed status from Backlog to
  * Done"), several changes joined with ", "; null when it records nothing we can phrase.
@@ -364,7 +367,7 @@ export function phraseHistory(entry: LinearHistoryEntry): string | null {
       entry.toParent?.identifier ?? null,
     ),
     describeChange("the title", entry.fromTitle, entry.toTitle),
-    describeChange("due date", entry.fromDueDate, entry.toDueDate),
+    describeChange("due date", dueDay(entry.fromDueDate), dueDay(entry.toDueDate)),
     describeChange("project", entry.fromProject?.name ?? null, entry.toProject?.name ?? null),
     describeChange("cycle", entry.fromCycle?.number ?? null, entry.toCycle?.number ?? null),
     describeChange("estimate", entry.fromEstimate, entry.toEstimate),
