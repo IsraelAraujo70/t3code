@@ -131,6 +131,7 @@ const snapshot = Schema.decodeUnknownSync(KanbanSnapshot)({
   milestones: [],
   cycles: [],
   views: [],
+  allWorkspacesBotIds: [],
 });
 const bots = new Map([
   ["bot-one", "Bot one"],

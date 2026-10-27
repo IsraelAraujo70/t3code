@@ -7,6 +7,9 @@ import {
   KanbanTicketTitle,
   KanbanWorkspaceId,
   KANBAN_LIMITS,
+  KanbanViewConfig,
+  KanbanViewId,
+  KanbanViewName,
   LinearId,
   LinearStateType,
   OrchestratorMcpFailure,
@@ -14,6 +17,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
@@ -36,7 +40,10 @@ export const KANBAN_LIST_DEFAULT = 100;
 export const KANBAN_LIST_MAX = 300;
 
 const ONLY_RESPONSIBLE =
-  "Only for a bot the user made responsible for the ticket's workspace on the Kanban page; every other caller is refused.";
+  "Only for a bot the user made responsible for the ticket's workspace, or for every workspace, in the Kanban settings; every other caller is refused.";
+
+const VIEW_SCOPE =
+  "A project's view needs you responsible for that project's workspace; a view on every board (`projectId` null) needs you responsible for every workspace. Whoever created the view, the user included, does not matter.";
 
 /** What a bot sees of a ticket. */
 export const TicketView = Schema.Struct({
@@ -224,6 +231,56 @@ const KanbanUnlinkThreadTool = Tool.make("kanban_unlink_thread", {
   success: TicketView,
 }).annotate(Tool.Destructive, false);
 
+/** What a bot sees of a saved view. */
+export const ViewInfo = Schema.Struct({
+  id: KanbanViewId,
+  name: Schema.String,
+  icon: Schema.NullOr(Schema.String),
+  /** Null: on every board. */
+  projectId: Schema.NullOr(ProjectId),
+  config: KanbanViewConfig,
+  /** `owner` (the user) or `bot:<id>`. */
+  createdBy: Schema.String,
+  /** Who saved it last, the same way. */
+  updatedBy: Schema.String,
+  /** kanban_view_save and kanban_view_delete accept it from you. */
+  editable: Schema.Boolean,
+});
+
+const KanbanViewListTool = Tool.make("kanban_view_list", {
+  ...shared,
+  description: `List the saved views (the board's tabs) on the boards of the workspaces you are responsible for, in tab order: every-board views (\`projectId\` null) and the views of those projects' boards, each with its filters and display settings, who created and last saved it, and whether you may change it. ${ONLY_RESPONSIBLE}`,
+  parameters: Schema.Struct({}),
+  success: Schema.Struct({ views: Schema.Array(ViewInfo) }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const KanbanViewSaveTool = Tool.make("kanban_view_save", {
+  ...shared,
+  description: `Create a saved view, or edit one by \`id\`. A new view needs \`name\` and \`projectId\` (a project's board, or null for every board) and goes last; its config starts from the default (a board by status, every ticket) and \`config\` overrides the keys given. Editing changes only the fields given, and only the given config keys; \`filters\` replaces the whole list. Moving a view to another board needs both boards in scope. The board updates on every open client. ${VIEW_SCOPE}`,
+  parameters: Schema.Struct({
+    id: Schema.optional(KanbanViewId),
+    name: Schema.optional(KanbanViewName),
+    /** A Lucide icon name; null shows none. */
+    icon: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(40)))),
+    projectId: Schema.optional(Schema.NullOr(ProjectId)),
+    config: Schema.optional(KanbanViewConfig.mapFields(Struct.map(Schema.optionalKey))),
+  }),
+  success: ViewInfo,
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false);
+
+const KanbanViewDeleteTool = Tool.make("kanban_view_delete", {
+  ...shared,
+  description: `Delete a saved view. Tickets are not touched. ${VIEW_SCOPE}`,
+  parameters: Schema.Struct({ viewId: KanbanViewId }),
+  success: Schema.Struct({ viewId: KanbanViewId }),
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true);
+
 export const KanbanToolkit = Toolkit.make(
   KanbanListTool,
   KanbanGetTool,
@@ -233,4 +290,7 @@ export const KanbanToolkit = Toolkit.make(
   KanbanCreateTool,
   KanbanLinkThreadTool,
   KanbanUnlinkThreadTool,
+  KanbanViewListTool,
+  KanbanViewSaveTool,
+  KanbanViewDeleteTool,
 );

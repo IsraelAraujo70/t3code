@@ -172,6 +172,9 @@ export const KanbanPersonId = Schema.String.check(Schema.isMaxLength(140));
 export type KanbanPersonId = typeof KanbanPersonId.Type;
 export const KANBAN_OWNER_PERSON_ID = "owner";
 export const kanbanBotPersonId = (botId: string): KanbanPersonId => `bot:${botId}`;
+/** The bot a `bot:<id>` person id names; null for the owner or a Linear user. */
+export const kanbanPersonBotId = (personId: string): typeof BotId.Type | null =>
+  personId.startsWith("bot:") ? BotId.make(personId.slice("bot:".length)) : null;
 
 /** A GitHub pull request attached to a Linear issue (Linear's GitHub integration). */
 export const KanbanPullRequestRef = Schema.Struct({
@@ -450,6 +453,10 @@ export const KanbanView = Schema.Struct({
   config: KanbanViewConfig,
   /** The Linear custom view it was imported from, so a second import skips it. */
   linearViewId: Schema.NullOr(Schema.String),
+  /** `owner`, or `bot:<id>` for a view a bot made through its kanban tools; never changes. */
+  createdBy: KanbanPersonId,
+  /** Who saved it last, the same way. */
+  updatedBy: KanbanPersonId,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -557,6 +564,8 @@ export const KanbanSnapshot = Schema.Struct({
   cycles: Schema.Array(KanbanCycle),
   /** Saved views in tab order. */
   views: Schema.Array(KanbanView),
+  /** Bots responsible for every workspace, including local ones and those added later. */
+  allWorkspacesBotIds: Schema.Array(BotId),
 });
 export type KanbanSnapshot = typeof KanbanSnapshot.Type;
 
@@ -602,6 +611,12 @@ export const KanbanWorkspaceBotsInput = Schema.Struct({
   botIds: Schema.Array(BotId).check(Schema.isMaxLength(32)),
 });
 export type KanbanWorkspaceBotsInput = typeof KanbanWorkspaceBotsInput.Type;
+
+export const KanbanBotAllWorkspacesInput = Schema.Struct({
+  botId: BotId,
+  allWorkspaces: Schema.Boolean,
+});
+export type KanbanBotAllWorkspacesInput = typeof KanbanBotAllWorkspacesInput.Type;
 
 export const KanbanTicketTitle = TrimmedNonEmptyString.check(
   Schema.isMaxLength(KANBAN_LIMITS.title),
@@ -851,6 +866,7 @@ export const KANBAN_WS_METHODS = {
   kanbanProjectLink: "bots.kanban.project.link",
   kanbanProjectUnlink: "bots.kanban.project.unlink",
   kanbanWorkspaceBots: "bots.kanban.workspace.bots",
+  kanbanBotAllWorkspaces: "bots.kanban.bot.allWorkspaces",
   kanbanTicketCreate: "bots.kanban.ticket.create",
   kanbanTicketMove: "bots.kanban.ticket.move",
   kanbanTicketDelete: "bots.kanban.ticket.delete",
@@ -916,6 +932,12 @@ export const KanbanProjectUnlinkRpc = Rpc.make(KANBAN_WS_METHODS.kanbanProjectUn
 export const KanbanWorkspaceBotsRpc = Rpc.make(KANBAN_WS_METHODS.kanbanWorkspaceBots, {
   payload: KanbanWorkspaceBotsInput,
   success: KanbanWorkspaceBotsInput,
+  error: KanbanRpcError,
+});
+/** Makes a bot responsible for every workspace (or not), on top of its per-workspace ones. */
+export const KanbanBotAllWorkspacesRpc = Rpc.make(KANBAN_WS_METHODS.kanbanBotAllWorkspaces, {
+  payload: KanbanBotAllWorkspacesInput,
+  success: KanbanBotAllWorkspacesInput,
   error: KanbanRpcError,
 });
 export const KanbanTicketCreateRpc = Rpc.make(KANBAN_WS_METHODS.kanbanTicketCreate, {
@@ -1025,6 +1047,7 @@ export const KANBAN_RPCS = [
   KanbanProjectLinkRpc,
   KanbanProjectUnlinkRpc,
   KanbanWorkspaceBotsRpc,
+  KanbanBotAllWorkspacesRpc,
   KanbanTicketCreateRpc,
   KanbanTicketMoveRpc,
   KanbanTicketDeleteRpc,

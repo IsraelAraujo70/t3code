@@ -1,24 +1,31 @@
 /**
  * The kanban tools. The calling bot comes from the trusted caller scope, and it reaches only the
- * workspaces the user made it responsible for; no tool argument can widen that.
+ * workspaces the user made it responsible for (all of them, when the user made it responsible for
+ * every workspace); no tool argument can widen that. A view on every board takes a bot responsible
+ * for every workspace.
  */
 import {
+  KANBAN_DEFAULT_VIEW_CONFIG,
   KANBAN_LOCAL_STATE_LABELS,
   KANBAN_OWNER_PERSON_ID,
   kanbanBotPersonId,
   LOCAL_KANBAN_WORKSPACE_ID,
   linearWorkspaceId,
+  KanbanViewSaveInput,
   OrchestratorMcpFailure,
   type KanbanError,
   type KanbanSnapshot,
   type KanbanTicket,
   type KanbanTicketId,
   type KanbanTicketStatus,
+  type KanbanView,
+  type KanbanViewId,
   type KanbanWorkspaceId,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
@@ -38,7 +45,10 @@ const kanbanFailure = (error: { readonly message: string }) =>
 const denied = (message: string) =>
   new OrchestratorMcpFailure({ code: "capability_denied", message });
 
-/** The calling bot and the workspaces it is responsible for, with a fresh snapshot. */
+/**
+ * The calling bot and the workspaces it is responsible for, with a fresh snapshot. A bot
+ * responsible for every workspace gets each one the snapshot has, so new ones count at once.
+ */
 const callerScope = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const bots = yield* BotsService.BotsService;
@@ -51,8 +61,9 @@ const callerScope = Effect.gen(function* () {
     return yield* denied("The kanban tools are only available in a bot's conversation.");
   }
   const snapshot = yield* kanban.readSnapshot.pipe(Effect.mapError(kanbanFailure));
-  const workspaces = snapshot.workspaces.filter((workspace) =>
-    workspace.botIds.includes(bot.value.id),
+  const everyWorkspace = snapshot.allWorkspacesBotIds.includes(bot.value.id);
+  const workspaces = snapshot.workspaces.filter(
+    (workspace) => everyWorkspace || workspace.botIds.includes(bot.value.id),
   );
   if (workspaces.length === 0) {
     return yield* denied(
@@ -66,6 +77,7 @@ const callerScope = Effect.gen(function* () {
     /** Who a local ticket's history names for this bot's writes. */
     actor: kanbanBotPersonId(bot.value.id),
     callerThreadId: scope.thread?.threadId,
+    everyWorkspace,
     workspaceIds: new Set<KanbanWorkspaceId>(workspaces.map((workspace) => workspace.id)),
     workspaces,
   };
@@ -201,6 +213,54 @@ const newest = <A>(items: ReadonlyArray<A>, what: string, trimmed: string[]) => 
   return items.slice(-MAX_ENTRIES);
 };
 
+/** A project's board in one of the caller's workspaces. */
+const reachesProject = (caller: CallerScope, projectId: ProjectId) => {
+  const workspace = workspaceOfProject(caller.snapshot, projectId);
+  return workspace !== null && caller.workspaceIds.has(workspace);
+};
+
+/** The caller sees every board's views; it changes them only when every workspace is its own. */
+const readsBoard = (caller: CallerScope, projectId: ProjectId | null) =>
+  projectId === null || reachesProject(caller, projectId);
+const writesBoard = (caller: CallerScope, projectId: ProjectId | null) =>
+  projectId === null ? caller.everyWorkspace : reachesProject(caller, projectId);
+
+const viewInfo = (caller: CallerScope) => (view: KanbanView) => ({
+  id: view.id,
+  name: view.name,
+  icon: view.icon,
+  projectId: view.projectId,
+  config: view.config,
+  createdBy: view.createdBy,
+  updatedBy: view.updatedBy,
+  editable: writesBoard(caller, view.projectId),
+});
+
+const boardRefusal = (projectId: ProjectId | null) =>
+  denied(
+    projectId === null
+      ? "A view on every board needs you responsible for every workspace; the user turns that on in the Kanban settings."
+      : "That project's board is in a workspace you are not responsible for.",
+  );
+
+/** A view the caller may change. */
+const writableView = (caller: CallerScope, viewId: KanbanViewId) => {
+  const view = caller.snapshot.views.find((candidate) => candidate.id === viewId);
+  if (view === undefined || !readsBoard(caller, view.projectId)) {
+    return Effect.fail(
+      new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: `No view ${viewId} on the boards of the workspaces you are responsible for.`,
+      }),
+    );
+  }
+  return writesBoard(caller, view.projectId)
+    ? Effect.succeed(view)
+    : Effect.fail(boardRefusal(view.projectId));
+};
+
+const decodeViewSave = Schema.decodeUnknownEffect(KanbanViewSaveInput);
+
 const withView = (caller: CallerScope) => (effect: Effect.Effect<KanbanTicket, KanbanError>) =>
   effect.pipe(
     Effect.mapError(kanbanFailure),
@@ -213,6 +273,59 @@ const withView = (caller: CallerScope) => (effect: Effect.Effect<KanbanTicket, K
   );
 
 export const layer = McpToolAccess.toLayer(KanbanToolkit, {
+  kanban_view_list: McpToolAccess.readsAsCaller(() =>
+    Effect.gen(function* () {
+      const caller = yield* callerScope;
+      return {
+        views: caller.snapshot.views
+          .filter((view) => readsBoard(caller, view.projectId))
+          .map(viewInfo(caller)),
+      };
+    }),
+  ),
+  kanban_view_save: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* callerScope;
+      const existing = input.id === undefined ? undefined : yield* writableView(caller, input.id);
+      const name = input.name ?? existing?.name;
+      const projectId = input.projectId === undefined ? existing?.projectId : input.projectId;
+      if (name === undefined || projectId === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "A new view needs name and projectId (null for a view on every board).",
+        });
+      }
+      if (!writesBoard(caller, projectId)) return yield* boardRefusal(projectId);
+      const save = yield* decodeViewSave({
+        ...(existing === undefined ? {} : { id: existing.id }),
+        projectId,
+        name,
+        icon: input.icon === undefined ? (existing?.icon ?? null) : input.icon,
+        config: { ...(existing?.config ?? KANBAN_DEFAULT_VIEW_CONFIG), ...input.config },
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `The view is not valid: ${error.message}`,
+            }),
+        ),
+      );
+      const view = yield* caller.kanban
+        .saveView(save, caller.actor)
+        .pipe(Effect.mapError(kanbanFailure));
+      return viewInfo(caller)(view);
+    }),
+  ),
+  kanban_view_delete: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* callerScope;
+      const view = yield* writableView(caller, input.viewId);
+      return yield* caller.kanban
+        .deleteView({ viewId: view.id })
+        .pipe(Effect.mapError(kanbanFailure));
+    }),
+  ),
   kanban_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const caller = yield* callerScope;

@@ -216,11 +216,22 @@ describe("KanbanStore v2", () => {
           ...last,
           id: KanbanViewId.make("view-new"),
           linearViewId: "linear-view",
+          createdBy: "bot:b_1",
+          updatedBy: "owner",
           name: "New",
         };
         yield* store.insertView(added);
-        yield* store.updateView({ ...added, name: "Renamed" });
-        assert.equal((yield* store.listViews).at(-1)?.name, "Renamed");
+        yield* store.updateView({
+          ...added,
+          name: "Renamed",
+          createdBy: "owner",
+          updatedBy: "bot:b_2",
+        });
+        const updated = (yield* store.listViews).at(-1);
+        assert.deepStrictEqual(
+          [updated?.name, updated?.createdBy, updated?.updatedBy],
+          ["Renamed", "bot:b_1", "bot:b_2"],
+        );
         assert.equal(
           Option.getOrThrow(yield* store.findViewByLinearId("linear-view")).id,
           added.id,

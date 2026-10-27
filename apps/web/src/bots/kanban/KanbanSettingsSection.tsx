@@ -53,11 +53,17 @@ export function KanbanSettingsSection(props: {
         <>
           <AccountsRows environmentId={props.environmentId} snapshot={snapshot} />
           <ProjectLinksRow environmentId={props.environmentId} snapshot={snapshot} />
+          <AllWorkspacesBotsRow
+            environmentId={props.environmentId}
+            allWorkspacesBotIds={snapshot.allWorkspacesBotIds}
+            bots={props.bots}
+          />
           {snapshot.workspaces.map((workspace) => (
             <WorkspaceBotsRow
               key={workspace.id}
               environmentId={props.environmentId}
               workspace={workspace}
+              allWorkspacesBotIds={snapshot.allWorkspacesBotIds}
               bots={props.bots}
             />
           ))}
@@ -395,9 +401,52 @@ function ProjectLinkItem(props: {
   );
 }
 
+function AllWorkspacesBotsRow(props: {
+  environmentId: EnvironmentId;
+  allWorkspacesBotIds: ReadonlyArray<BotId>;
+  bots: ReadonlyArray<BotDirectoryEntry>;
+}) {
+  const { environmentId } = props;
+  const canEdit = useAtomValue(
+    botsEnvironment.kanbanBotAllWorkspaces.permissionAtom(environmentId),
+  );
+  const setAll = useAtomCommand(botsEnvironment.kanbanBotAllWorkspaces, {
+    label: "bot responsible for all workspaces",
+  });
+  const toggle = async (botId: BotId, allWorkspaces: boolean) =>
+    reportCommandResult(
+      "Could not change the bot's workspaces",
+      await setAll({ environmentId, input: { botId, allWorkspaces } }),
+    );
+  if (props.bots.length === 0) return null;
+  return (
+    <SettingsRow
+      title="Responsible for all workspaces"
+      description="These bots are responsible for every workspace, including local tickets and workspaces added later: their kanban tools read, create, move and comment on any ticket, and edit any saved view."
+    >
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
+        {props.bots.map((bot) => (
+          <li key={bot.id}>
+            <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+              <Checkbox
+                checked={props.allWorkspacesBotIds.includes(bot.id)}
+                disabled={!canEdit}
+                onCheckedChange={(checked) => void toggle(bot.id, checked === true)}
+              />
+              <BotAvatar botId={bot.id} size={16} />
+              {bot.name}
+            </label>
+          </li>
+        ))}
+      </ul>
+    </SettingsRow>
+  );
+}
+
 function WorkspaceBotsRow(props: {
   environmentId: EnvironmentId;
   workspace: KanbanWorkspace;
+  allWorkspacesBotIds: ReadonlyArray<BotId>;
   bots: ReadonlyArray<BotDirectoryEntry>;
 }) {
   const { environmentId, workspace } = props;
@@ -427,19 +476,25 @@ function WorkspaceBotsRow(props: {
         <p className="mt-2 text-muted-foreground text-xs">No bots yet.</p>
       ) : (
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
-          {props.bots.map((bot) => (
-            <li key={bot.id}>
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-                <Checkbox
-                  checked={workspace.botIds.includes(bot.id)}
-                  disabled={!canEdit}
-                  onCheckedChange={(checked) => void toggle(bot.id, checked === true)}
-                />
-                <BotAvatar botId={bot.id} size={16} />
-                {bot.name}
-              </label>
-            </li>
-          ))}
+          {props.bots.map((bot) => {
+            const everywhere = props.allWorkspacesBotIds.includes(bot.id);
+            return (
+              <li key={bot.id}>
+                <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+                  <Checkbox
+                    checked={everywhere || workspace.botIds.includes(bot.id)}
+                    disabled={!canEdit || everywhere}
+                    onCheckedChange={(checked) => void toggle(bot.id, checked === true)}
+                  />
+                  <BotAvatar botId={bot.id} size={16} />
+                  {bot.name}
+                  {everywhere ? (
+                    <span className="text-muted-foreground text-xs">(all workspaces)</span>
+                  ) : null}
+                </label>
+              </li>
+            );
+          })}
         </ul>
       )}
     </SettingsRow>

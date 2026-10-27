@@ -46,6 +46,8 @@ const view = (id: string, projectId: ProjectId | null, config = KANBAN_DEFAULT_V
     icon: "Zap",
     config,
     linearViewId: null,
+    createdBy: "owner",
+    updatedBy: "owner",
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z",
   }) satisfies KanbanView;
@@ -265,6 +267,7 @@ const board: KanbanSnapshot = {
   milestones: [],
   cycles: [],
   views: [],
+  allWorkspacesBotIds: [],
 };
 const group = (id: string, tickets: ReadonlyArray<KanbanTicket> = []): KanbanGroup => ({
   id,

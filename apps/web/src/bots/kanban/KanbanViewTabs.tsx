@@ -16,6 +16,7 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   KANBAN_LIMITS,
+  kanbanPersonBotId,
   type KanbanView,
   type KanbanViewId,
   type LinearAccountId,
@@ -55,6 +56,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Switch } from "~/components/ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
+import { BotAvatar } from "../BotAvatar";
 import { confirmDestructive } from "../botsSettingsShared";
 
 export interface KanbanViewTabsProps {
@@ -65,6 +67,8 @@ export interface KanbanViewTabsProps {
   readonly canEdit: boolean;
   /** A view's filters in words, for its tooltip ("Assignee is Me"). */
   readonly lookupsDescribe: (view: KanbanView) => string;
+  /** A bot's name for the marker on views a bot created or last saved. */
+  readonly botName: (botId: string) => string;
   readonly onSelect: (id: KanbanViewId) => void;
   readonly onSaveChanges: () => void;
   readonly onDiscardChanges: () => void;
@@ -136,6 +140,7 @@ function ViewTab(props: {
   readonly active: boolean;
   readonly canEdit: boolean;
   readonly description: string;
+  readonly botName: (botId: string) => string;
   readonly onSelect: () => void;
   readonly onRename: (name: string) => void;
   readonly onMove: (to: number) => void;
@@ -150,6 +155,9 @@ function ViewTab(props: {
     disabled: !canEdit || renaming,
   });
   const icon = view.icon === null ? null : (VIEW_ICONS[view.icon] ?? null);
+  const creatorBot = kanbanPersonBotId(view.createdBy);
+  const editorBot = kanbanPersonBotId(view.updatedBy);
+  const markerBot = editorBot ?? creatorBot;
 
   if (renaming)
     return (
@@ -193,6 +201,7 @@ function ViewTab(props: {
         >
           {icon}
           {view.name}
+          {markerBot === null ? null : <BotAvatar botId={markerBot} size={14} />}
         </TooltipTrigger>
         <TooltipPopup side="bottom" align="start">
           <div className="flex flex-col gap-0.5">
@@ -200,6 +209,14 @@ function ViewTab(props: {
             {props.description ? (
               <span className="text-muted-foreground">{props.description}</span>
             ) : null}
+            {creatorBot === null ? null : (
+              <span className="text-muted-foreground">Created by {props.botName(creatorBot)}</span>
+            )}
+            {editorBot === null ? null : (
+              <span className="text-muted-foreground">
+                Last edited by {props.botName(editorBot)}
+              </span>
+            )}
           </div>
         </TooltipPopup>
       </Tooltip>
@@ -330,6 +347,7 @@ export function KanbanViewTabs(props: KanbanViewTabsProps) {
                 active={view.id === props.activeViewId}
                 canEdit={props.canEdit}
                 description={props.lookupsDescribe(view)}
+                botName={props.botName}
                 onSelect={() => props.onSelect(view.id)}
                 onRename={(name) => props.onRename(view.id, name)}
                 onMove={(to) => reorder(index, to)}

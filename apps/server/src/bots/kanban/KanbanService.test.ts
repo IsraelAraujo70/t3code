@@ -617,6 +617,23 @@ describe("KanbanService", () => {
         .setWorkspaceBots({ workspaceId: linearWorkspaceId("org-x"), botIds: [botId] })
         .pipe(Effect.flip);
       assert.include(unknownWorkspace.message, "does not exist");
+
+      yield* kanban.setBotAllWorkspaces({ botId, allWorkspaces: true });
+      yield* kanban.setBotAllWorkspaces({ botId, allWorkspaces: true });
+      const covering = yield* kanban.readSnapshot;
+      assert.deepStrictEqual(covering.allWorkspacesBotIds, [botId]);
+      // Computed when a tool checks, never copied into each workspace's list.
+      assert.deepStrictEqual(covering.workspaces[0]?.botIds, [botId]);
+      yield* kanban.setBotAllWorkspaces({ botId, allWorkspaces: false });
+      assert.deepStrictEqual((yield* kanban.readSnapshot).allWorkspacesBotIds, []);
+      const unknownCovering = yield* kanban
+        .setBotAllWorkspaces({ botId: BotId.make("b_missing"), allWorkspaces: true })
+        .pipe(Effect.flip);
+      assert.include(unknownCovering.message, "does not exist");
+
+      yield* kanban.setBotAllWorkspaces({ botId, allWorkspaces: true });
+      yield* botsStore.deleteBot(botId);
+      assert.deepStrictEqual((yield* kanban.readSnapshot).allWorkspacesBotIds, []);
     }).pipe(Effect.provide(layer));
   });
   it.effect("a full sync fills every card field and reads each catalog once per pass", () => {
@@ -1053,6 +1070,40 @@ describe("KanbanService", () => {
       });
       assert.equal(renamed.createdAt, saved.createdAt);
       assert.notEqual(renamed.updatedAt, saved.updatedAt);
+      assert.deepStrictEqual([saved.createdBy, saved.updatedBy], ["owner", "owner"]);
+
+      const byBot = yield* kanban.saveView(
+        { projectId: null, name: "Bot's", icon: null, config: KANBAN_DEFAULT_VIEW_CONFIG },
+        "bot:b_1",
+      );
+      yield* kanban.saveView(
+        {
+          id: renamed.id,
+          projectId: PROJECT,
+          name: "Renamed",
+          icon: "Zap",
+          config: renamed.config,
+        },
+        "bot:b_2",
+      );
+      yield* kanban.saveView({
+        id: byBot.id,
+        projectId: null,
+        name: "Owner's now",
+        icon: null,
+        config: byBot.config,
+      });
+      const stored = new Map((yield* kanban.readSnapshot).views.map((view) => [view.id, view]));
+      assert.deepStrictEqual(
+        [stored.get(renamed.id)?.createdBy, stored.get(renamed.id)?.updatedBy],
+        ["owner", "bot:b_2"],
+      );
+      assert.deepStrictEqual(
+        [stored.get(byBot.id)?.createdBy, stored.get(byBot.id)?.updatedBy],
+        ["bot:b_1", "owner"],
+      );
+      assert.isTrue(seeded.every((id) => stored.get(id)?.createdBy === "owner"));
+      yield* kanban.deleteView({ viewId: byBot.id });
 
       yield* kanban.reorderViews({ viewIds: [saved.id] });
       const first = (yield* kanban.readSnapshot).views[0];

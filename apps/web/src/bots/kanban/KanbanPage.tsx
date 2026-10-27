@@ -619,6 +619,7 @@ function KanbanWorkspace(props: {
             dirty={dirty}
             canEdit={canEditViews}
             lookupsDescribe={describeView}
+            botName={(botId) => lookups.botsById.get(botId)?.name ?? "A deleted bot"}
             onSelect={selectView}
             onSaveChanges={() => void saveChanges()}
             onDiscardChanges={discard}

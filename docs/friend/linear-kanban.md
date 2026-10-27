@@ -134,14 +134,23 @@ republishes the snapshot after every sync.
 
 ### Bots
 
-Responsible bots appear on the workspace's cards and get eight MCP tools: `kanban_list` (with
+Responsible bots appear on the workspace's cards and get eleven MCP tools: `kanban_list` (with
 filters: status types, states, assignee incl. `me` = the bot, priorities, labels, text, linked
 threads, a limit), `kanban_get` (the issue with description, comments and history, trimmed, plus
 the labels and assignees it accepts), `kanban_update` (priority, assignee, labels, due date, title,
 the ticket's bot), `kanban_comment`, `kanban_move`, `kanban_create`, `kanban_link_thread` (defaults
-to the calling thread) and `kanban_unlink_thread`. On a local ticket, history and comments name the
-bot that acted. The caller comes from the trusted MCP scope; a bot reaches only the
-workspaces it is responsible for, and a bot responsible for none is refused.
+to the calling thread), `kanban_unlink_thread`, and the saved-view tools `kanban_view_list`,
+`kanban_view_save` and `kanban_view_delete` (see [Views from bots](#views-from-bots)). On a local
+ticket, history and comments name the bot that acted. The caller comes from the trusted MCP scope; a
+bot reaches only the workspaces it is responsible for, and a bot responsible for none is refused.
+
+**Responsible for all workspaces.** Settings → Bots → Kanban & Linear has a row of bots that are
+responsible for every workspace: each Linear workspace, the local one, and any workspace added later.
+Such a bot passes every responsibility check, reads and writes alike, as if it were in every
+workspace's list. The setting is its own table (`kanban_all_workspace_bots`, migration
+`11_KanbanViewAuthorsAndAllWorkspaces`) and is checked on each tool call; it is never copied into a
+workspace's bots, so the per-workspace lists keep what the user picked and the cards still show only
+those. Deleting the bot removes it.
 
 **No automation.** Nothing starts a thread or moves a ticket by itself (for example "when a ticket
 enters In progress, the responsible bot opens a thread"). That is left for later as an explicit,
@@ -246,7 +255,7 @@ completed issues (all, past week, past month, none), closed tickets by recency, 
 columns, hidden columns, and the card properties shown. Empty or hidden columns fold into a "Hidden
 columns" panel. Views are tabs; they can be saved, renamed, reordered and deleted, and live on the
 bots host, so every client sees the same ones. A view is on every board, or on one project's board.
-T3 has one owner per server, so views are the owner's.
+T3 has one owner per server; bots can save views too (below).
 
 Linear's custom views can be imported once per account: the filters T3 can express (assignee is me
 or a person, state type or name, priority, labels by name, parent, children, project, cycle, due
@@ -256,6 +265,26 @@ user. Nothing is written to Linear.
 
 Manual order follows Linear's `sortOrder` (and a local ticket's own). Dragging to reorder inside a
 column is not offered for Linear tickets: the order is shared by the whole team in Linear.
+
+### Views from bots
+
+`kanban_view_list` returns the views on the boards a bot reaches: every-board views and the views of
+projects in its workspaces, each with its config, who created and last saved it, and whether the
+bot may change it. `kanban_view_save` creates a view or edits one by id. A new view needs a name and
+a project id (null for every board); its config starts from the default and takes the keys given.
+An edit changes only the fields and config keys given. Arguments are checked against
+`KanbanViewConfig`, so a wrong value comes back as the field and the values it accepts.
+`kanban_view_delete` deletes one.
+
+Who may change a view depends on its board, not on who made it. A project's view needs the bot
+responsible for that project's workspace; moving a view to another board needs both. An
+every-board view needs a bot responsible for all workspaces, which can then change every view,
+the seeded ones and the user's included. The owner still edits and deletes every view on the web.
+
+`kanban_views` records who created a view and who saved it last (`created_by`, `updated_by`:
+`owner` or `bot:<id>`; earlier views are the owner's). A tab that a bot created or last saved
+shows the bot's avatar, and its tooltip names the bot. Bot saves publish the snapshot like web
+edits, so open boards update at once.
 
 ### Writes
 
@@ -315,7 +344,11 @@ Either way the thread is linked to the ticket. Nothing starts by itself.
   time-in-status field, and views are already shared across the owner's clients.
 - **Description search.** Descriptions are not on the board, so the Content filter matches
   identifier, title and labels only.
-- **Phone:** saving, renaming and reordering views are web-only; the due date takes presets or a
+- **A bot's project view for an unknown project id.** Like `kanban_create`, the view tools treat a
+  project with no Linear link as local, so a bot responsible for the local workspace can save a
+  view for a project id that does not exist; it never shows.
+- **Phone:** saving, renaming and reordering views are web-only, and the phone shows no bot marker
+  on views; the due date takes presets or a
   typed `YYYY-MM-DD`, without a native date picker; no swimlanes on the phone.
 
 ### Verified (2026-10-27)

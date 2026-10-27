@@ -113,6 +113,7 @@ const layerKanbanOff = Layer.succeed(
     linkProject: kanbanNotHost,
     unlinkProject: kanbanNotHost,
     setWorkspaceBots: kanbanNotHost,
+    setBotAllWorkspaces: kanbanNotHost,
     createTicket: kanbanNotHost,
     moveTicket: kanbanNotHost,
     deleteTicket: kanbanNotHost,

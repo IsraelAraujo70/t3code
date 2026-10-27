@@ -125,6 +125,7 @@ const snapshot: KanbanSnapshot = {
   milestones: [],
   cycles: [],
   views: [],
+  allWorkspacesBotIds: [],
 };
 
 describe("issueTimeline", () => {
