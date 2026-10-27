@@ -135,10 +135,18 @@ export class KanbanService extends Context.Service<
     readonly setWorkspaceBots: (
       input: KanbanWorkspaceBotsInput,
     ) => Effect.Effect<KanbanWorkspaceBotsInput, KanbanError>;
+    /**
+     * The writes below take the person a local ticket's history names (default `owner`); a bot's
+     * MCP tools pass `bot:<id>`. Linear records its own actor, the account's user.
+     */
     readonly createTicket: (
       input: KanbanTicketCreateInput,
+      actor?: KanbanPersonId,
     ) => Effect.Effect<KanbanTicket, KanbanError>;
-    readonly moveTicket: (input: KanbanTicketMoveInput) => Effect.Effect<KanbanTicket, KanbanError>;
+    readonly moveTicket: (
+      input: KanbanTicketMoveInput,
+      actor?: KanbanPersonId,
+    ) => Effect.Effect<KanbanTicket, KanbanError>;
     readonly deleteTicket: (input: KanbanTicketRef) => Effect.Effect<KanbanTicketRef, KanbanError>;
     readonly linkThread: (
       input: KanbanTicketThreadInput,
@@ -157,9 +165,11 @@ export class KanbanService extends Context.Service<
     /** Linear first for a synced ticket (except `botId`); a refusal there changes nothing. */
     readonly updateTicket: (
       input: KanbanTicketUpdateInput,
+      actor?: KanbanPersonId,
     ) => Effect.Effect<KanbanTicket, KanbanError>;
     readonly comment: (
       input: KanbanTicketCommentInput,
+      actor?: KanbanPersonId,
     ) => Effect.Effect<KanbanComment, KanbanError>;
     readonly deleteComment: (
       input: KanbanTicketCommentRef,
@@ -790,6 +800,7 @@ const make = Effect.gen(function* () {
 
   const createTicket = Effect.fn("KanbanService.createTicket")(function* (
     input: KanbanTicketCreateInput,
+    actor: KanbanPersonId = KANBAN_OWNER_PERSON_ID,
   ) {
     const link = yield* store.getLink(input.projectId);
     if (Option.isSome(link)) {
@@ -836,20 +847,21 @@ const make = Effect.gen(function* () {
       state: input.state ?? "todo",
       priority: input.priority ?? 0,
       assigneeId: input.assigneeId ?? null,
-      creatorId: KANBAN_OWNER_PERSON_ID,
+      creatorId: actor,
       labelIds: [...new Set(input.labelIds ?? [])],
       description: input.description || null,
       // On top in manual order.
       sortOrder: sortOrders.length === 0 ? 0 : Math.min(...sortOrders) - 1,
       createdAt,
     });
-    yield* recordEvents(id, ["created the ticket"], createdAt, KANBAN_OWNER_PERSON_ID);
+    yield* recordEvents(id, ["created the ticket"], createdAt, actor);
     yield* publish;
     return yield* requireTicket(id);
   });
 
   const moveTicket = Effect.fn("KanbanService.moveTicket")(function* (
     input: KanbanTicketMoveInput,
+    actor: KanbanPersonId = KANBAN_OWNER_PERSON_ID,
   ) {
     const ticket = yield* requireTicket(input.ticketId);
     const to = input.to;
@@ -862,7 +874,7 @@ const make = Effect.gen(function* () {
       if (ticket.status.kind === "local" && ticket.status.state !== to.state) {
         const from = KANBAN_LOCAL_STATE_LABELS[ticket.status.state];
         const text = `moved from ${from} to ${KANBAN_LOCAL_STATE_LABELS[to.state]}`;
-        yield* recordEvents(ticket.id, [text], at, KANBAN_OWNER_PERSON_ID);
+        yield* recordEvents(ticket.id, [text], at, actor);
       }
     } else {
       if (to.kind !== "linear") {
@@ -1173,12 +1185,13 @@ const make = Effect.gen(function* () {
 
   const updateTicket = Effect.fn("KanbanService.updateTicket")(function* (
     input: KanbanTicketUpdateInput,
+    actor: KanbanPersonId = KANBAN_OWNER_PERSON_ID,
   ) {
     const ticket = yield* requireTicket(input.ticketId);
     const { botId, ...fields } = input.patch;
     if (botId !== undefined && botId !== null) yield* requireBot(botId);
     if (ticket.linear === null) {
-      yield* updateLocalTicket(ticket, input.patch, KANBAN_OWNER_PERSON_ID);
+      yield* updateLocalTicket(ticket, input.patch, actor);
     } else {
       const update = yield* linearUpdateOf(ticket, ticket.linear, fields);
       if (Object.keys(update).length > 0) {
@@ -1196,7 +1209,10 @@ const make = Effect.gen(function* () {
     return yield* requireTicket(ticket.id);
   });
 
-  const comment = Effect.fn("KanbanService.comment")(function* (input: KanbanTicketCommentInput) {
+  const comment = Effect.fn("KanbanService.comment")(function* (
+    input: KanbanTicketCommentInput,
+    actor: KanbanPersonId = KANBAN_OWNER_PERSON_ID,
+  ) {
     const ticket = yield* requireTicket(input.ticketId);
     if (ticket.linear !== null) {
       const created = yield* linear.createComment(
@@ -1211,7 +1227,7 @@ const make = Effect.gen(function* () {
     const row = {
       id: `c_${yield* randomHex}`,
       ticketId: ticket.id,
-      authorId: KANBAN_OWNER_PERSON_ID,
+      authorId: actor,
       body: input.body,
       createdAt: at,
       updatedAt: at,

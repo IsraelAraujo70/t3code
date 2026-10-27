@@ -4,6 +4,8 @@
  */
 import {
   KANBAN_LOCAL_STATE_LABELS,
+  KANBAN_OWNER_PERSON_ID,
+  kanbanBotPersonId,
   LOCAL_KANBAN_WORKSPACE_ID,
   linearWorkspaceId,
   OrchestratorMcpFailure,
@@ -11,6 +13,7 @@ import {
   type KanbanSnapshot,
   type KanbanTicket,
   type KanbanTicketId,
+  type KanbanTicketStatus,
   type KanbanWorkspaceId,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -21,7 +24,12 @@ import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import * as BotsService from "../BotsService.ts";
 import { KanbanService, workspaceOfTicket } from "./KanbanService.ts";
-import { KanbanToolkit } from "./tools.ts";
+import { priorityName } from "./linearMapping.ts";
+import { kanbanToolTicketFilter } from "./toolFilters.ts";
+import { KANBAN_LIST_DEFAULT, KANBAN_LIST_MAX, KanbanToolkit } from "./tools.ts";
+
+const MAX_BODY_CHARS = 4_000;
+const MAX_ENTRIES = 50;
 
 const kanbanFailure = (error: { readonly message: string }) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
@@ -53,6 +61,9 @@ const callerScope = Effect.gen(function* () {
   return {
     kanban,
     snapshot,
+    bot: bot.value,
+    /** Who a local ticket's history names for this bot's writes. */
+    actor: kanbanBotPersonId(bot.value.id),
     callerThreadId: scope.thread?.threadId,
     workspaceIds: new Set<KanbanWorkspaceId>(workspaces.map((workspace) => workspace.id)),
     workspaces,
@@ -64,26 +75,53 @@ type CallerScope = Effect.Success<typeof callerScope>;
 const accountsById = (snapshot: KanbanSnapshot) =>
   new Map(snapshot.accounts.map((account) => [account.id, account]));
 
-const ticketView = (snapshot: KanbanSnapshot, ticket: KanbanTicket) => {
-  const status = ticket.status;
-  const state =
+const stateNamer = (snapshot: KanbanSnapshot) => {
+  const states = new Map(snapshot.states.map((state) => [state.id, state.name]));
+  return (status: KanbanTicketStatus) =>
     status.kind === "local"
-      ? { id: status.state, name: KANBAN_LOCAL_STATE_LABELS[status.state], kind: "local" as const }
-      : {
-          id: status.stateId,
-          name: snapshot.states.find((s) => s.id === status.stateId)?.name ?? "Unknown",
-          kind: "linear" as const,
-        };
-  return {
-    id: ticket.id,
-    identifier: ticket.identifier,
-    title: ticket.title,
-    projectId: ticket.projectId,
-    workspaceId: workspaceOfTicket(ticket, accountsById(snapshot)) ?? LOCAL_KANBAN_WORKSPACE_ID,
-    state,
-    url: ticket.linear?.url ?? null,
-    assigneeName: ticket.assigneeName,
-    threadIds: ticket.threadIds,
+      ? KANBAN_LOCAL_STATE_LABELS[status.state]
+      : (states.get(status.stateId) ?? "Unknown");
+};
+
+/** What a bot sees of each ticket of one snapshot. */
+const ticketViewer = (snapshot: KanbanSnapshot) => {
+  const accounts = accountsById(snapshot);
+  const stateName = stateNamer(snapshot);
+  const labels = new Map(snapshot.labels.map((label) => [label.id, label.name]));
+  const people = new Map(snapshot.people.map((person) => [person.id, person.name]));
+  return (ticket: KanbanTicket) => {
+    const status = ticket.status;
+    return {
+      id: ticket.id,
+      identifier: ticket.identifier,
+      title: ticket.title,
+      projectId: ticket.projectId,
+      workspaceId: workspaceOfTicket(ticket, accounts) ?? LOCAL_KANBAN_WORKSPACE_ID,
+      state: {
+        id: status.kind === "local" ? status.state : status.stateId,
+        name: stateName(status),
+        kind: status.kind,
+      },
+      priority: {
+        value: ticket.priority,
+        name: priorityName(ticket.priority) ?? String(ticket.priority),
+      },
+      assignee:
+        ticket.assigneeId === null
+          ? null
+          : {
+              id: ticket.assigneeId,
+              name: ticket.assigneeName ?? people.get(ticket.assigneeId) ?? ticket.assigneeId,
+            },
+      labels: ticket.labelIds.map((id) => labels.get(id) ?? id),
+      parent: ticket.parent?.identifier ?? null,
+      subIssues: ticket.subIssues,
+      pullRequests: ticket.pullRequests.map((pr) => `#${pr.number} ${pr.state} ${pr.url}`),
+      dueDate: ticket.dueDate,
+      botId: ticket.botId,
+      url: ticket.linear?.url ?? null,
+      threadIds: ticket.threadIds,
+    };
   };
 };
 
@@ -110,13 +148,52 @@ const workspaceOfProject = (snapshot: KanbanSnapshot, projectId: ProjectId) => {
   return account === undefined ? null : linearWorkspaceId(account.organizationId);
 };
 
+/** The labels a ticket can take (no label groups) and the people it can be assigned to. */
+const ticketChoices = (caller: CallerScope, ticket: KanbanTicket) => {
+  const { snapshot } = caller;
+  const groups = new Set(snapshot.labels.flatMap((label) => label.parentId ?? []));
+  const linear = ticket.linear;
+  const accounts = accountsById(snapshot);
+  const workspace = workspaceOfTicket(ticket, accounts);
+  const organizationId = linear === null ? null : accounts.get(linear.accountId)?.organizationId;
+  const labels = snapshot.labels.filter(
+    (label) =>
+      !groups.has(label.id) &&
+      label.workspaceId === workspace &&
+      label.source === (linear === null ? "local" : "linear") &&
+      (linear === null || label.teamId === null || label.teamId === linear.teamId),
+  );
+  const assignees =
+    linear === null
+      ? [
+          { id: KANBAN_OWNER_PERSON_ID, name: "The user" },
+          { id: caller.actor, name: `${caller.bot.name} (you)` },
+        ]
+      : snapshot.people
+          .filter((person) => person.active && person.organizationId === organizationId)
+          .map((person) => ({ id: person.id, name: person.name }));
+  return { labels: labels.map((label) => ({ id: label.id, name: label.name })), assignees };
+};
+
+const trimBody = (text: string, what: string, trimmed: string[]) => {
+  if (text.length <= MAX_BODY_CHARS) return text;
+  trimmed.push(`${what}: first ${MAX_BODY_CHARS} of ${text.length} characters`);
+  return `${text.slice(0, MAX_BODY_CHARS)}…`;
+};
+
+const newest = <A>(items: ReadonlyArray<A>, what: string, trimmed: string[]) => {
+  if (items.length <= MAX_ENTRIES) return items;
+  trimmed.push(`${what}: newest ${MAX_ENTRIES} of ${items.length}`);
+  return items.slice(-MAX_ENTRIES);
+};
+
 const withView = (caller: CallerScope) => (effect: Effect.Effect<KanbanTicket, KanbanError>) =>
   effect.pipe(
     Effect.mapError(kanbanFailure),
     Effect.flatMap((ticket) =>
       caller.kanban.readSnapshot.pipe(
         Effect.mapError(kanbanFailure),
-        Effect.map((snapshot) => ticketView(snapshot, ticket)),
+        Effect.map((snapshot) => ticketViewer(snapshot)(ticket)),
       ),
     ),
   );
@@ -127,15 +204,21 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
       const caller = yield* callerScope;
       const { snapshot } = caller;
       const accounts = accountsById(snapshot);
-      const tickets = snapshot.tickets.filter((ticket) => {
-        const workspace = workspaceOfTicket(ticket, accounts);
-        return (
-          workspace !== null &&
-          caller.workspaceIds.has(workspace) &&
-          (input.workspaceId === undefined || workspace === input.workspaceId) &&
-          (input.projectId === undefined || ticket.projectId === input.projectId)
-        );
-      });
+      const matches = kanbanToolTicketFilter(snapshot, input, caller.bot.id);
+      const matched = snapshot.tickets
+        .filter((ticket) => {
+          const workspace = workspaceOfTicket(ticket, accounts);
+          return (
+            workspace !== null &&
+            caller.workspaceIds.has(workspace) &&
+            (input.workspaceId === undefined || workspace === input.workspaceId) &&
+            (input.projectId === undefined || ticket.projectId === input.projectId) &&
+            matches(ticket)
+          );
+        })
+        .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const limit = input.limit ?? KANBAN_LIST_DEFAULT;
+      const tickets = matched.slice(0, limit);
       const teams = new Set(
         tickets.flatMap((ticket) => (ticket.linear ? [ticket.linear.teamId] : [])),
       );
@@ -144,7 +227,7 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
           id: workspace.id,
           name: workspace.name,
         })),
-        tickets: tickets.map((ticket) => ticketView(snapshot, ticket)),
+        tickets: tickets.map(ticketViewer(snapshot)),
         states: snapshot.states
           .filter((state) => teams.has(state.teamId))
           .map((state) => ({
@@ -153,6 +236,59 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
             name: state.name,
             type: state.type,
           })),
+        ...(matched.length > limit
+          ? {
+              truncated: `Showing ${limit} of ${matched.length} matching tickets. ${
+                limit < KANBAN_LIST_MAX
+                  ? `Narrow the filters or raise limit (at most ${KANBAN_LIST_MAX}).`
+                  : "Narrow the filters."
+              }`,
+            }
+          : {}),
+      };
+    }),
+  ),
+  kanban_get: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* callerScope;
+      const ticket = yield* responsibleTicket(caller, input.ticketId);
+      const detail = yield* caller.kanban
+        .ticketDetail({ ticketId: ticket.id })
+        .pipe(Effect.mapError(kanbanFailure));
+      const stateName = stateNamer(caller.snapshot);
+      const trimmed: string[] = [];
+      return {
+        ticket: ticketViewer(caller.snapshot)(ticket),
+        description:
+          detail.description === null ? null : trimBody(detail.description, "description", trimmed),
+        parent:
+          detail.parent === null
+            ? null
+            : {
+                identifier: detail.parent.identifier,
+                title: detail.parent.title,
+                ticketId: detail.parent.ticketId,
+              },
+        children: detail.children.map((child) => ({
+          identifier: child.identifier,
+          title: child.title,
+          state: stateName(child.status),
+          ticketId: child.ticketId,
+        })),
+        comments: newest(detail.comments, "comments", trimmed).map((comment) => ({
+          id: comment.id,
+          author: comment.authorName,
+          body: trimBody(comment.body, `comment ${comment.id}`, trimmed),
+          replyTo: comment.parentId,
+          createdAt: comment.createdAt,
+        })),
+        activity: newest(detail.activity, "activity", trimmed).map((entry) => ({
+          actor: entry.actorName,
+          text: entry.text,
+          createdAt: entry.createdAt,
+        })),
+        ...ticketChoices(caller, ticket),
+        trimmed,
       };
     }),
   ),
@@ -177,7 +313,44 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
               : `${ticket.identifier} is a local ticket: pass localState.`,
         });
       }
-      return yield* withView(caller)(caller.kanban.moveTicket({ ticketId: ticket.id, to }));
+      return yield* withView(caller)(
+        caller.kanban.moveTicket({ ticketId: ticket.id, to }, caller.actor),
+      );
+    }),
+  ),
+  kanban_update: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* callerScope;
+      const ticket = yield* responsibleTicket(caller, input.ticketId);
+      const patch = {
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...(input.assigneeId === undefined
+          ? {}
+          : { assigneeId: input.assigneeId === "none" ? null : input.assigneeId }),
+        ...(input.labelIds === undefined ? {} : { labelIds: input.labelIds }),
+        ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
+        ...(input.botId === undefined ? {} : { botId: input.botId }),
+      };
+      if (Object.keys(patch).length === 0) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Pass at least one field to change.",
+        });
+      }
+      return yield* withView(caller)(
+        caller.kanban.updateTicket({ ticketId: ticket.id, patch }, caller.actor),
+      );
+    }),
+  ),
+  kanban_comment: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* callerScope;
+      const ticket = yield* responsibleTicket(caller, input.ticketId);
+      const comment = yield* caller.kanban
+        .comment({ ticketId: ticket.id, body: input.body }, caller.actor)
+        .pipe(Effect.mapError(kanbanFailure));
+      return { id: comment.id, ticketId: ticket.id, author: comment.authorName };
     }),
   ),
   kanban_create: McpToolAccess.actsAsCaller((input) =>
@@ -188,11 +361,14 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
         return yield* denied("That project's board is in a workspace you are not responsible for.");
       }
       return yield* withView(caller)(
-        caller.kanban.createTicket({
-          projectId: input.projectId,
-          title: input.title,
-          ...(input.description === undefined ? {} : { description: input.description }),
-        }),
+        caller.kanban.createTicket(
+          {
+            projectId: input.projectId,
+            title: input.title,
+            ...(input.description === undefined ? {} : { description: input.description }),
+          },
+          caller.actor,
+        ),
       );
     }),
   ),
