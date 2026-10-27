@@ -147,13 +147,11 @@ workspaces it is responsible for, and a bot responsible for none is refused.
 enters In progress, the responsible bot opens a thread"). That is left for later as an explicit,
 per-workspace rule that is off by default and deduplicated in the database.
 
-## Not done
+## Not done (v1; v2 added comments, labels, assignees and starting threads)
 
 - Linear accounts and project links on the phone: they are edited on web or desktop, and the app
   says so when no account exists.
-- OAuth accounts, Linear webhooks, comments, labels, assignee changes, card reordering within a
-  column.
-- Starting a thread from a card (link an existing thread instead).
+- OAuth accounts, Linear webhooks.
 
 ## Verified (2026-10-26)
 
@@ -252,7 +250,9 @@ T3 has one owner per server, so views are the owner's.
 
 Linear's custom views can be imported once per account: the filters T3 can express (assignee is me
 or a person, state type or name, priority, labels by name, parent, children, project, cycle, due
-date set) become a T3 view; the rest are listed as skipped. Nothing is written to Linear.
+date set) become a T3 view; the rest are listed as skipped. An imported view stays inside its
+Linear workspace (and its team's T3 projects for a team view), and "me" is the importing account's
+user. Nothing is written to Linear.
 
 Manual order follows Linear's `sortOrder` (and a local ticket's own). Dragging to reorder inside a
 column is not offered for Linear tickets: the order is shared by the whole team in Linear.
@@ -285,9 +285,56 @@ activity, pull requests (the app's PR screen when the repository resolves) and t
 unlink, link, start). The card's long-press menu stays; its thread rows moved to the issue screen.
 Saving and editing views is web-only.
 
+### Local tickets
+
+A local ticket's `closed_at` is set when it enters Done and cleared when it leaves (migration
+`10_KanbanLocalClosedAt` backfills v1's Done tickets), so the completed-issues window and ordering
+treat local and Linear tickets alike.
+
 ### Starting work
 
 "Start thread" on an issue creates a thread in the ticket's T3 project with the project's default
 model (or one picked), in the project root, whose first message carries the issue: identifier,
 title, link and description. "Ask <bot>" sends the same message to a bot's conversation instead.
 Either way the thread is linked to the ticket. Nothing starts by itself.
+
+### Not done in v2
+
+- **Linear images in descriptions and comments.** `uploads.linear.app` files need the account's
+  key; the issue view renders markdown with the chat's renderer, which loads images directly, so
+  private Linear uploads show as broken images. A server proxy route with the key would fix it; it
+  was left out to avoid a new authenticated HTTP route.
+- **Manual reordering of Linear cards** (shared order of the whole team in Linear), and of local
+  cards (manual order follows `sortOrder`; there is no drag-to-reorder within a column yet).
+- **Linear favorites.** Custom views are imported on demand; favorites are not mirrored.
+- **Several accounts with different visibility in one organization.** A full sync refreshes an
+  organization's catalog (people, labels, projects, milestones) from one of its accounts per pass,
+  replacing the previous one. If accounts of the same organization see different private teams,
+  names from the other account's teams can go missing until its link syncs again.
+- **"Time in status" and "Set default for everyone"** from Linear's display panel: Linear exposes no
+  time-in-status field, and views are already shared across the owner's clients.
+- **Description search.** Descriptions are not on the board, so the Content filter matches
+  identifier, title and labels only.
+- **Phone:** saving, renaming and reordering views are web-only; the due date takes presets or a
+  typed `YYYY-MM-DD`, without a native date picker; no swimlanes on the phone.
+
+### Verified (2026-10-27)
+
+On an isolated server (base dir `~/.cache/friend-tmp/kanban-v2-home`, ports 16392/8352, bots host,
+seeded with `migrate-dev-db --projects 20` from a read-only snapshot; deleted afterwards) with the
+real Moneria Linear:
+
+- Sync of `moneria-api` ↔ Back-end: 111 tickets with labels, PRs, parents, sub-issue progress;
+  catalogs 9 people, 17 labels, 11 projects, 5 milestones; account user and avatar set.
+- Board, filters (Assignee is Me), display (rows by priority), views (seeded, imported from Linear:
+  5 imported, "Tarefas bloqueadas" skipped; "Meus por prioridade" created), the issue panel and full
+  screen, PR rows with live checks opening the T3 PR view, AI filter ("minhas issues de prioridade
+  alta que têm PR aberto" → Assignee is Me, Priority is High, Pull requests is Open).
+- Writes only on BACK-204: priority, assignee, label, due date, a comment (UI and service), a drag
+  Cancelado → Concluído and back through the status picker; Linear confirmed it ended Cancelado,
+  with no priority, assignee, labels or due date, and no comments.
+- Local board on `moneria-docs`: priority, local label, assignee bot, description, comment, history;
+  "Start thread" created a thread with the issue as its first message and linked it.
+- Android (release APK on the `friend36` emulator): Kanban tab with the new cards, saved views
+  (Meus issues), filter chips, the issue screen with properties, sub-issues, activity, comments,
+  threads, and PRs opening the app's PR screen.
