@@ -19,6 +19,10 @@
       "types": "./src/botDirectory.ts",
       "default": "./src/botDirectory.ts"
     },
+    "./kanban-board": {
+      "types": "./src/kanbanBoard.ts",
+      "default": "./src/kanbanBoard.ts"
+    },
     "./app-self-update": {
       "types": "./src/appSelfUpdate.ts",
       "default": "./src/appSelfUpdate.ts"

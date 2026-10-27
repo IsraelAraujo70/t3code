@@ -111,6 +111,17 @@ with a few teams (Moneria: 12,130), so teams and projects are read flat and grou
 Thread status comes from the thread shells the client already has; the kanban snapshot carries only
 thread ids, so the board adds no per-thread traffic.
 
+### Phone
+
+The app opens the board from a "Kanban" row under "Computer" in the Bots list (the Android Bots
+tab and the iOS Bots section share that list). It uses the same RPCs and the same board rules
+(`@t3tools/client-runtime/kanban-board`), with the project, workspace and account filters as menu
+chips. A phone shows one column at a time, picked from a row of chips with counts. Dragging across a
+small screen is clumsy, so a card moves through its menu, opened by long-press or the ⋯ button:
+"Move to…" lists only the columns the ticket can take, and the same menu links and unlinks threads,
+opens the issue in Linear, or deletes a local ticket. Tapping a linked thread opens it, stacked on
+the board. "New ticket" asks for a title.
+
 ### Bots
 
 Responsible bots appear on the workspace's cards and get five MCP tools: `kanban_list`,
@@ -124,8 +135,8 @@ per-workspace rule that is off by default and deduplicated in the database.
 
 ## Not done
 
-- Mobile: the Android app has no board. The RPCs and contracts are shared, so a later mobile screen
-  needs only UI.
+- Linear accounts and project links on the phone: they are edited on web or desktop, and the app
+  says so when no account exists.
 - OAuth accounts, Linear webhooks, comments, labels, assignee changes, card reordering within a
   column.
 - Starting a thread from a card (link an existing thread instead).

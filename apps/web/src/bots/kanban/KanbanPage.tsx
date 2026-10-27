@@ -65,7 +65,7 @@ import {
   workspaceOf,
   type KanbanColumn,
   type KanbanFilter,
-} from "./kanban.logic";
+} from "@t3tools/client-runtime/kanban-board";
 
 const FILTER_KEY = "t3code:bots:kanban-filter";
 const StoredFilter = Schema.Struct({

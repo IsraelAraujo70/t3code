@@ -1,5 +1,10 @@
-import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import type { BotThreadShell } from "@t3tools/client-runtime/bot-directory";
+/**
+ * The kanban board's rules (friend fork), shared by the web board and the mobile one: which
+ * columns a filtered board has, where each ticket sits, the status a dropped or moved ticket takes,
+ * and how a linked thread's status reads on a card.
+ */
+import type { BotThreadShell } from "./botDirectory.ts";
+import { isThreadWorking } from "./state/threadInbox.ts";
 import {
   KANBAN_LOCAL_STATE_LABELS,
   KANBAN_LOCAL_STATES,
