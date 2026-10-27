@@ -32,6 +32,7 @@ import {
   type LinearComment,
   type LinearIssue,
   type LinearIssueDetail,
+  personName,
 } from "./linearMapping.ts";
 
 export type { LinearComment, LinearIssue, LinearIssueDetail } from "./linearMapping.ts";
@@ -187,7 +188,7 @@ export class LinearClient extends Context.Service<
 const ISSUE_FIELDS = `
   id identifier title url priority estimate dueDate sortOrder
   createdAt updatedAt completedAt canceledAt archivedAt autoClosedAt
-  state { id } team { id } assignee { id name } creator { id }
+  state { id } team { id } assignee { id name displayName } creator { id }
   project { id } projectMilestone { id } cycle { id }
   parent { id identifier title }
   children(first: 50) { nodes { id state { type } } }
@@ -676,7 +677,7 @@ export const make = Effect.gen(function* () {
             pageInfo { hasNextPage endCursor }
           }
         }`,
-      ),
+      ).pipe(Effect.map((users) => users.map((user) => ({ ...user, name: personName(user) })))),
     ),
     labels: Effect.fn("LinearClient.labels")((key) =>
       catalogPages(

@@ -6,6 +6,7 @@ import {
   IssueDetailNode,
   IssueNode,
   parsePullRequest,
+  personName,
   phraseHistory,
   toIssue,
   toIssueDetail,
@@ -90,7 +91,7 @@ const issueNode = (overrides: Partial<typeof IssueNode.Encoded> = {}) =>
     autoClosedAt: null,
     state: { id: "s-progress" },
     team: { id: "t-back" },
-    assignee: { id: ISRAEL.id, name: ISRAEL.name },
+    assignee: { id: ISRAEL.id, name: ISRAEL.name, displayName: "israel" },
     creator: { id: "kellen" },
     project: { id: "p-infra" },
     projectMilestone: { id: "m-1" },
@@ -329,5 +330,14 @@ describe("phraseHistory", () => {
     expect(phraseHistory(history({ archived: true, autoClosed: true }))).toBe(
       "archived the issue, auto-closed the issue",
     );
+  });
+});
+
+describe("personName", () => {
+  it("shows the handle of a user whose Linear name is an email address", () => {
+    expect(
+      personName({ name: "vinicius.bispo@moneria.com.br", displayName: "vinicius.bispo" }),
+    ).toBe("vinicius.bispo");
+    expect(personName({ name: "Ana Souza", displayName: "ana" })).toBe("Ana Souza");
   });
 });

@@ -82,7 +82,7 @@ import {
   type LinearIssue,
   type LinearIssueUpdate,
 } from "./LinearClient.ts";
-import { phraseHistory, priorityName } from "./linearMapping.ts";
+import { personName, phraseHistory, priorityName } from "./linearMapping.ts";
 import { linearFilterToClauses } from "./linearViewImport.ts";
 import { planFullSync, planIncrementalSync, ticketsToRefresh } from "./syncPlan.ts";
 
@@ -262,7 +262,10 @@ function localPersonResolver(
 const toKanbanComment = (comment: LinearComment, ownUserId: string | null): KanbanComment => ({
   id: comment.id,
   authorId: comment.user?.id ?? null,
-  authorName: comment.user?.name ?? comment.botActor?.name ?? "Linear",
+  authorName:
+    (comment.user === null ? undefined : personName(comment.user)) ??
+    comment.botActor?.name ??
+    "Linear",
   authorAvatarUrl: comment.user?.avatarUrl ?? comment.botActor?.avatarUrl ?? null,
   body: comment.body,
   parentId: comment.parentId,
@@ -946,7 +949,10 @@ const make = Effect.gen(function* () {
         {
           id: entry.id,
           actorId: entry.actor?.id ?? null,
-          actorName: entry.actor?.name ?? entry.botActor?.name ?? "Linear",
+          actorName:
+            (entry.actor === null ? undefined : personName(entry.actor)) ??
+            entry.botActor?.name ??
+            "Linear",
           actorAvatarUrl: entry.actor?.avatarUrl ?? entry.botActor?.avatarUrl ?? null,
           text,
           createdAt: entry.createdAt,

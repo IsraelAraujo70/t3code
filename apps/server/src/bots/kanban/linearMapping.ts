@@ -43,7 +43,9 @@ export const IssueNode = Schema.Struct({
   autoClosedAt: Schema.NullOr(Schema.String),
   state: Id,
   team: Id,
-  assignee: Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  assignee: Schema.NullOr(
+    Schema.Struct({ id: Schema.String, name: Schema.String, displayName: Schema.String }),
+  ),
   creator: Schema.NullOr(Id),
   project: Schema.NullOr(Id),
   projectMilestone: Schema.NullOr(Id),
@@ -147,7 +149,7 @@ export function toIssue(node: IssueNode): LinearIssue {
     stateId: node.state.id,
     teamId: node.team.id,
     assigneeId: node.assignee?.id ?? null,
-    assigneeName: node.assignee?.name ?? null,
+    assigneeName: node.assignee === null ? null : personName(node.assignee),
     creatorId: node.creator?.id ?? null,
     estimate: node.estimate,
     dueDate: node.dueDate,
@@ -346,6 +348,10 @@ function describeLabels(verb: string, labels: ReadonlyArray<{ readonly name: str
   const noun = labels.length === 1 ? "label" : "labels";
   return `${verb} ${noun} ${labels.map((label) => label.name).join(", ")}`;
 }
+
+/** Linear users invited by email can keep the address as their name; show their handle instead. */
+export const personName = (user: { readonly name: string; readonly displayName: string }) =>
+  user.name.includes("@") && user.displayName !== "" ? user.displayName : user.name;
 
 /** Linear sends history due dates as day or as midnight timestamps; both read as the day. */
 const dueDay = (value: string | null) => (value === null ? null : value.slice(0, 10));
