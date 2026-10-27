@@ -255,6 +255,16 @@ for its tickets only. Nothing runs by itself. The data lives in `bots.sqlite`. T
 Kanban row in its Bots list, one column at a time, and moves cards through their menu. Design, the study of
 other forks, and what is left out: [`docs/friend/linear-kanban.md`](docs/friend/linear-kanban.md).
 
+## Public webhook URLs without T3 Connect
+
+A webhook task's URL normally comes from the T3 Connect relay, so without Connect `schedule_task`
+returns no `webhookUrl`. The server still answers direct deliveries at `POST /api/hooks/<task id>/<token>`.
+With `T3CODE_WEBHOOK_PUBLIC_BASE_URL` set to an https origin that forwards that path here (say a
+Tailscale Funnel), webhook tasks get `<base>/api/hooks/<task id>/<token>`. The relay URL still wins when
+Connect is on. The base must be https with no trailing slash; an invalid value is ignored with a warning.
+Setup and what the URL exposes: [`docs/friend/webhook-public-base.md`](docs/friend/webhook-public-base.md).
+See [`apps/server/src/bots/webhookPublicBase.ts`](apps/server/src/bots/webhookPublicBase.ts).
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork

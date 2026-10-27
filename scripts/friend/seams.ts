@@ -235,8 +235,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/server.ts",
-    markers: 5,
-    why: "bots layers, the Computer stream and the app update routes",
+    markers: 7,
+    why: "bots layers, the Computer stream, the app update routes and the public webhook base",
   },
   {
     file: "apps/web/src/components/Sidebar.tsx",
