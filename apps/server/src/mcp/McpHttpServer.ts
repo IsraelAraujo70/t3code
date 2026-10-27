@@ -73,8 +73,10 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
-// Fork (friend): bots read and write their own memories, allowed bots manage bots, and threads
-// watch threads, over /mcp.
+// Fork (friend): bots read and write their own memories, allowed bots manage bots, threads
+// watch threads, and responsible bots work the kanban, over /mcp.
+import * as KanbanHandlers from "../bots/kanban/handlers.ts";
+import { KanbanToolkit } from "../bots/kanban/tools.ts";
 import * as BotMemoryHandlers from "../bots/mcp/handlers.ts";
 import { BotManagementToolkit, BotMemoryToolkit } from "../bots/mcp/tools.ts";
 import * as ThreadWatchHandlers from "../bots/threadWatch/handlers.ts";
@@ -1074,8 +1076,10 @@ export const layer = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   // Fork (friend): bot memory tools (handlers refuse every caller that is not a bot thread), bot
-  // management (only bots the user allowed), and thread watches.
+  // management (only bots the user allowed), thread watches, and the kanban (only bots
+  // responsible for the ticket's workspace).
   toolkitRegistration(BotMemoryToolkit, BotMemoryHandlers.layer),
   toolkitRegistration(BotManagementToolkit, BotMemoryHandlers.managementLayer),
   toolkitRegistration(ThreadWatchToolkit, ThreadWatchHandlers.layer),
+  toolkitRegistration(KanbanToolkit, KanbanHandlers.layer),
 ).pipe(Layer.provideMerge(layerMcpTransport));

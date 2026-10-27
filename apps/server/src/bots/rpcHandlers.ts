@@ -11,6 +11,7 @@ import { RpcGroup } from "effect/rpc";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
+import { KanbanService } from "./kanban/KanbanService.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 
@@ -32,6 +33,7 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
     const dictation = yield* Dictation.Dictation;
     const voice = yield* VoiceSession.VoiceSessions;
     const restarts = yield* BotSessionRestart.BotSessionRestart;
+    const kanban = yield* KanbanService;
     return ServerBotsRpcGroup.of({
       [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
@@ -55,6 +57,20 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.voiceReady]: (input) => voice.ready(input),
       [BOTS_WS_METHODS.voiceReconnect]: (input) => voice.reconnect(input),
       [BOTS_WS_METHODS.voiceReport]: (input) => voice.report(input),
+      [BOTS_WS_METHODS.kanbanSubscribe]: () => kanban.snapshot,
+      [BOTS_WS_METHODS.kanbanAccountAdd]: (input) => kanban.addAccount(input),
+      [BOTS_WS_METHODS.kanbanAccountRename]: (input) => kanban.renameAccount(input),
+      [BOTS_WS_METHODS.kanbanAccountDelete]: (input) => kanban.deleteAccount(input),
+      [BOTS_WS_METHODS.kanbanLinearTeams]: (input) => kanban.linearTeams(input),
+      [BOTS_WS_METHODS.kanbanProjectLink]: (input) => kanban.linkProject(input),
+      [BOTS_WS_METHODS.kanbanProjectUnlink]: (input) => kanban.unlinkProject(input),
+      [BOTS_WS_METHODS.kanbanWorkspaceBots]: (input) => kanban.setWorkspaceBots(input),
+      [BOTS_WS_METHODS.kanbanTicketCreate]: (input) => kanban.createTicket(input),
+      [BOTS_WS_METHODS.kanbanTicketMove]: (input) => kanban.moveTicket(input),
+      [BOTS_WS_METHODS.kanbanTicketDelete]: (input) => kanban.deleteTicket(input),
+      [BOTS_WS_METHODS.kanbanTicketLinkThread]: (input) => kanban.linkThread(input),
+      [BOTS_WS_METHODS.kanbanTicketUnlinkThread]: (input) => kanban.unlinkThread(input),
+      [BOTS_WS_METHODS.kanbanSync]: (input) => kanban.sync(input),
     });
   }),
 );

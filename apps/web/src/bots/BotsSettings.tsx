@@ -43,6 +43,7 @@ import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
 import { BotsImportSection } from "./BotsImportSection";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
+import { KanbanSettingsSection } from "./kanban/KanbanSettingsSection";
 import {
   confirmDestructive,
   modelLabel,
@@ -153,6 +154,13 @@ function BotsEnvironmentSettings({
         />
       ) : null}
       <VoiceSettingsSection environmentId={environmentId} connected={connected} />
+      {connected ? (
+        <KanbanSettingsSection
+          environmentId={environmentId}
+          connected={connected}
+          bots={directory?.bots ?? []}
+        />
+      ) : null}
       <BotsImportSection environmentId={environmentId} connected={connected} />
       {editor ? (
         <BotEditorDialog

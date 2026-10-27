@@ -20,7 +20,10 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { KANBAN_RPCS, KANBAN_WS_METHODS } from "./kanban.ts";
 import { ModelSelection } from "./modelSelection.ts";
+
+export * from "./kanban.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -262,6 +265,7 @@ export const BOTS_WS_METHODS = {
   voiceReady: "bots.voice.ready",
   voiceReconnect: "bots.voice.reconnect",
   voiceReport: "bots.voice.report",
+  ...KANBAN_WS_METHODS,
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -570,6 +574,7 @@ export const BOTS_RPCS = [
   VoiceReadyRpc,
   VoiceReconnectRpc,
   VoiceReportRpc,
+  ...KANBAN_RPCS,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -597,11 +602,26 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.voiceReady]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.voiceReconnect]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.voiceReport]: AuthOrchestrationOperateScope,
+  // Kanban: Linear credentials and writes to the user's Linear workspaces.
+  [BOTS_WS_METHODS.kanbanAccountAdd]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanAccountRename]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanAccountDelete]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanLinearTeams]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanProjectLink]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanProjectUnlink]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanWorkspaceBots]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketCreate]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketMove]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketDelete]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketLinkThread]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketUnlinkThread]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanSync]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */
 export const BOTS_RPC_SCOPES = {
   [BOTS_WS_METHODS.directorySubscribe]: AuthOrchestrationReadScope,
+  [BOTS_WS_METHODS.kanbanSubscribe]: AuthOrchestrationReadScope,
   ...BOTS_GUARDED_RPC_SCOPES,
 } as const;
 
