@@ -251,7 +251,8 @@ with five columns. Dragging a card moves the issue in Linear first. Linear accou
 keys kept in the server secret store, never sent to clients. The bots host has no public URL, so it
 polls Linear every `T3CODE_KANBAN_POLL_SECONDS` (default 60, `0` off) for issues updated since its
 cursor. Tickets link to threads, and each workspace's responsible bots get the `kanban_*` MCP tools
-for its tickets only. Nothing runs by itself. The data lives in `bots.sqlite`. Design, the study of
+for its tickets only. Nothing runs by itself. The data lives in `bots.sqlite`. The app opens the same board from the
+Kanban row in its Bots list, one column at a time, and moves cards through their menu. Design, the study of
 other forks, and what is left out: [`docs/friend/linear-kanban.md`](docs/friend/linear-kanban.md).
 
 ## State and rollback

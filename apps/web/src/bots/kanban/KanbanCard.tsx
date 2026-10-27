@@ -22,7 +22,11 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { BotAvatar } from "../BotAvatar";
-import { THREAD_CARD_STATUS_LABELS, threadCardStatus, type ThreadCardStatus } from "./kanban.logic";
+import {
+  THREAD_CARD_STATUS_LABELS,
+  threadCardStatus,
+  type ThreadCardStatus,
+} from "@t3tools/client-runtime/kanban-board";
 
 const STATUS_DOT: Record<ThreadCardStatus, string> = {
   approval: "bg-amber-500 dark:bg-amber-300/90",

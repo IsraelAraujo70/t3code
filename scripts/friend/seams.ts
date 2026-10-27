@@ -120,6 +120,11 @@ export const SEAMS: readonly Seam[] = [
     contains: '"./app-self-update"',
     why: "export the Android apps' self-update shared by the friend APK and the guest app",
   },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./kanban-board"',
+    why: "export the kanban board rules shared by the web and mobile boards",
+  },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
   {
@@ -316,7 +321,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/Stack.tsx",
     markers: 2,
-    why: "Computer screen route on mobile",
+    why: "Computer and Kanban screen routes on mobile",
   },
   {
     file: "apps/mobile/src/features/home/HomeRouteScreen.tsx",
@@ -410,6 +415,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/botChat.",
   "packages/client-runtime/src/botDirectory.",
   "packages/client-runtime/src/appSelfUpdate.",
+  "packages/client-runtime/src/kanbanBoard.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",

@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildBoard, dropTarget, filterTickets } from "./kanban.logic";
+import { buildBoard, dropTarget, filterTickets } from "./kanbanBoard.ts";
 
 const LINKED = ProjectId.make("linked");
 const LOCAL = ProjectId.make("local");

@@ -27,6 +27,7 @@ import { botsTabGroups, toggleCollapsedKey } from "./bots.logic";
 import { useBotDirectory } from "./state";
 
 const COMPUTER_SYMBOL: AppSymbolName = { ios: "desktopcomputer", android: "desktop_windows" };
+const KANBAN_SYMBOL: AppSymbolName = "square.split.2x1";
 
 // The home thread rows' surface: rounded inset cards on Android, flat edge-to-edge rows on iOS.
 const ROW_CONTAINER_CLASS_NAME =
@@ -305,6 +306,31 @@ export function BotsList(props: {
             />
           }
           onPress={() => navigation.navigate("BotsComputer", { environmentId })}
+        />
+        <BotsListRow
+          accessibilityLabel="Kanban"
+          accessibilityHint="Opens the board of tickets and the threads working on them"
+          leading={
+            <View className="size-10 items-center justify-center rounded-full bg-subtle">
+              <SymbolView
+                name={KANBAN_SYMBOL}
+                size={18}
+                tintColorClassName="accent-foreground-muted"
+                type="monochrome"
+              />
+            </View>
+          }
+          title="Kanban"
+          subtitle={null}
+          trailing={
+            <SymbolView
+              name="chevron.right"
+              size={12}
+              tintColorClassName="accent-foreground-tertiary"
+              type="monochrome"
+            />
+          }
+          onPress={() => navigation.navigate("BotsKanban", { environmentId })}
         />
       </View>
     </View>

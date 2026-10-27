@@ -56,8 +56,9 @@ import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
-// Fork (friend): the bots host's live screen.
+// Fork (friend): the bots host's live screen and kanban.
 import { BotsComputerRouteScreen } from "./bots/BotsComputerRouteScreen";
+import { BotsKanbanRouteScreen } from "./bots/BotsKanbanRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -806,7 +807,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
         gestureEnabled: false,
       },
     }),
-    // Fork (friend): the bots host's live screen, opened from the Bots section.
+    // Fork (friend): the bots host's live screen and kanban, opened from the Bots section. The
+    // kanban is a plain card so a thread opened from it stacks on top and Back returns to it.
     BotsComputer: createNativeStackScreen({
       screen: BotsComputerRouteScreen,
       linking: "bots/computer/:environmentId",
@@ -815,6 +817,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerShown: false,
         gestureEnabled: false,
       },
+    }),
+    BotsKanban: createNativeStackScreen({
+      screen: BotsKanbanRouteScreen,
+      linking: "bots/kanban/:environmentId",
+      options: { headerShown: false },
     }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
