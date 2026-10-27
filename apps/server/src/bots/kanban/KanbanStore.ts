@@ -227,6 +227,7 @@ export class KanbanStore extends Context.Service<
       id: KanbanTicketId,
       fields: LocalTicketFields,
     ) => Effect.Effect<void, KanbanError>;
+    /** Entering `done` stamps `closed_at` and leaving it clears it; a no-op on a Linear ticket. */
     readonly setLocalState: (
       id: KanbanTicketId,
       state: KanbanLocalState,
@@ -957,13 +958,13 @@ const make = Effect.gen(function* () {
       sql`
         INSERT INTO kanban_tickets (
           id, project_id, local_number, identifier, title, local_state, priority, assignee_id,
-          creator_id, label_ids, description, sort_order, created_at, updated_at
+          creator_id, label_ids, description, sort_order, closed_at, created_at, updated_at
         )
         VALUES (
           ${row.id}, ${row.projectId}, ${row.localNumber}, ${`T-${row.localNumber}`},
           ${row.title}, ${row.state}, ${row.priority}, ${row.assigneeId}, ${row.creatorId},
           ${encodeLabelIds(row.labelIds)}, ${row.description}, ${row.sortOrder},
-          ${row.createdAt}, ${row.createdAt}
+          ${row.state === "done" ? row.createdAt : null}, ${row.createdAt}, ${row.createdAt}
         )
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the ticket"))),
     ),
@@ -985,7 +986,15 @@ const make = Effect.gen(function* () {
     }),
     setLocalState: Effect.fn("KanbanStore.setLocalState")((id, state, updatedAt) =>
       sql`
-        UPDATE kanban_tickets SET local_state = ${state}, updated_at = ${updatedAt}
+        UPDATE kanban_tickets
+        SET
+          local_state = ${state},
+          updated_at = ${updatedAt},
+          closed_at = CASE
+            WHEN ${state} <> 'done' THEN NULL
+            WHEN local_state = 'done' THEN closed_at
+            ELSE ${updatedAt}
+          END
         WHERE id = ${id} AND issue_id IS NULL
       `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not move ticket ${id}`))),
     ),

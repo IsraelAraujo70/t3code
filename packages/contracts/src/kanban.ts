@@ -644,6 +644,15 @@ export const KanbanSyncInput = Schema.Struct({
 });
 export type KanbanSyncInput = typeof KanbanSyncInput.Type;
 
+/** A `YYYY-MM-DD` string naming a real day: `2026-02-30` and `2026-99-99` are not. */
+export function isCalendarDay(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year = 0, month = 0, day = 0] = value.split("-").map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return days !== undefined && day >= 1 && day <= days;
+}
+
 /**
  * A change to a ticket's properties; absent keys stay. On a Linear ticket every key but `botId`
  * goes to Linear first (`issueUpdate`), and the board keeps Linear's answer. On a local ticket
@@ -658,7 +667,11 @@ export const KanbanTicketPatch = Schema.Struct({
   assigneeId: Schema.optionalKey(Schema.NullOr(KanbanPersonId)),
   labelIds: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(50))),
   dueDate: Schema.optionalKey(
-    Schema.NullOr(Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/))),
+    Schema.NullOr(
+      Schema.String.check(
+        Schema.makeFilter(isCalendarDay, { expected: "a calendar day (YYYY-MM-DD)" }),
+      ),
+    ),
   ),
   estimate: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   linearProjectId: Schema.optionalKey(Schema.NullOr(Schema.String)),

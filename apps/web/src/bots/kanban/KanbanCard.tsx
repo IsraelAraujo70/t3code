@@ -40,6 +40,7 @@ import {
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { formatDueDate, isOverdue } from "./kanbanIssue.logic";
 import { personDisplay, ticketStatusDisplay, type KanbanLookups } from "./kanbanLookups";
 import {
   KanbanAvatar,
@@ -97,13 +98,8 @@ export function formatKanbanDate(date: Date): string {
     : SHORT_DATE_WITH_YEAR.format(date);
 }
 
-/** A `YYYY-MM-DD` due date at local midnight. */
-const dueDateOf = (dueDate: string) => new Date(`${dueDate}T00:00:00`);
-
-const isOverdue = (ticket: KanbanTicket) =>
-  ticket.dueDate !== null &&
-  ticket.closedAt === null &&
-  dueDateOf(ticket.dueDate).getTime() < new Date().setHours(0, 0, 0, 0);
+const isTicketOverdue = (ticket: KanbanTicket) =>
+  ticket.closedAt === null && isOverdue(ticket.dueDate, Date.now());
 
 /** The ticket's own bot when it has one, else its workspace's bots. */
 export function responsibleBots(
@@ -336,9 +332,9 @@ export const KanbanCard = memo(function KanbanCard(
   }
   if (show.has("dueDate") && ticket.dueDate !== null) {
     chips.push(
-      <KanbanChip key="due" tone={isOverdue(ticket) ? "danger" : "default"}>
+      <KanbanChip key="due" tone={isTicketOverdue(ticket) ? "danger" : "default"}>
         <CalendarIcon aria-hidden className="size-3 shrink-0" />
-        {formatKanbanDate(dueDateOf(ticket.dueDate))}
+        {formatDueDate(ticket.dueDate, formatKanbanDate)}
       </KanbanChip>,
     );
   }

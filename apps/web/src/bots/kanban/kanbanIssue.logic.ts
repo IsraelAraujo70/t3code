@@ -3,6 +3,7 @@
  * status presentation and the options each property picker offers.
  */
 import {
+  isCalendarDay,
   KANBAN_LOCAL_STATE_LABELS,
   KANBAN_LOCAL_STATES,
   KANBAN_OWNER_PERSON_ID,
@@ -80,6 +81,11 @@ export function dateKey(date: Date): string {
 export function dateFromKey(key: string): Date {
   const [year = 0, month = 1, day = 1] = key.split("-").map(Number);
   return new Date(year, month - 1, day);
+}
+
+/** A due date written by `format`; a stored value that is not a real day shows as is. */
+export function formatDueDate(dueDate: string, format: (date: Date) => string): string {
+  return isCalendarDay(dueDate) ? format(dateFromKey(dueDate)) : dueDate;
 }
 
 /** Due before today (local time); the due day itself is not overdue. */

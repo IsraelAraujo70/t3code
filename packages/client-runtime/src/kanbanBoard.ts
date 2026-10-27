@@ -1,13 +1,11 @@
 /**
- * The kanban board's rules (friend fork), shared by the web board and the mobile one: which
- * columns a filtered board has, where each ticket sits, the status a dropped or moved ticket takes,
- * and how a linked thread's status reads on a card.
+ * The kanban board's rules (friend fork), shared by the web board and the mobile one: a ticket's
+ * workspace, the order of workflow states, the status a dropped or moved ticket takes, and how a
+ * linked thread's status reads on a card. Views and columns: kanbanView.ts.
  */
 import type { BotThreadShell } from "./botDirectory.ts";
 import { isThreadWorking } from "./state/threadInbox.ts";
 import {
-  KANBAN_LOCAL_STATE_LABELS,
-  KANBAN_LOCAL_STATES,
   kanbanLocalStateOf,
   LINEAR_STATE_TYPE_ORDER,
   LOCAL_KANBAN_WORKSPACE_ID,
@@ -17,17 +15,8 @@ import {
   type KanbanTicket,
   type KanbanTicketStatus,
   type KanbanWorkspaceId,
-  type LinearAccountId,
   type LinearWorkflowState,
-  type ProjectId,
 } from "@t3tools/contracts";
-
-/** What the board shows; null in a field means "all". */
-export interface KanbanFilter {
-  readonly projectId: ProjectId | null;
-  readonly workspaceId: KanbanWorkspaceId | null;
-  readonly accountId: LinearAccountId | null;
-}
 
 /**
  * A board column. On a linked project's board the columns are its team's workflow states
@@ -52,12 +41,6 @@ export type KanbanColumn =
       readonly tickets: ReadonlyArray<KanbanTicket>;
     };
 
-export interface KanbanBoard {
-  /** The team whose workflow the columns follow; null on a board of local states. */
-  readonly teamId: string | null;
-  readonly columns: ReadonlyArray<KanbanColumn>;
-}
-
 export function workspaceOf(snapshot: KanbanSnapshot, ticket: KanbanTicket): KanbanWorkspaceId {
   if (ticket.linear === null) return LOCAL_KANBAN_WORKSPACE_ID;
   const linear = ticket.linear;
@@ -65,18 +48,6 @@ export function workspaceOf(snapshot: KanbanSnapshot, ticket: KanbanTicket): Kan
   return account === undefined
     ? LOCAL_KANBAN_WORKSPACE_ID
     : linearWorkspaceId(account.organizationId);
-}
-
-export function filterTickets(
-  snapshot: KanbanSnapshot,
-  filter: KanbanFilter,
-): ReadonlyArray<KanbanTicket> {
-  return snapshot.tickets.filter(
-    (ticket) =>
-      (filter.projectId === null || ticket.projectId === filter.projectId) &&
-      (filter.workspaceId === null || workspaceOf(snapshot, ticket) === filter.workspaceId) &&
-      (filter.accountId === null || ticket.linear?.accountId === filter.accountId),
-  );
 }
 
 /** Board order: Linear's categories in workflow order, then `position` within one. */
@@ -88,66 +59,6 @@ export function sortStates(
       LINEAR_STATE_TYPE_ORDER.indexOf(a.type) - LINEAR_STATE_TYPE_ORDER.indexOf(b.type) ||
       a.position - b.position,
   );
-}
-
-const byPriorityThenUpdate = (a: KanbanTicket, b: KanbanTicket) => {
-  // Linear's 0 is "no priority"; it sorts after urgent (1) through low (4).
-  const rank = (priority: number) => (priority === 0 ? 5 : priority);
-  return rank(a.priority) - rank(b.priority) || b.updatedAt.localeCompare(a.updatedAt);
-};
-
-/**
- * The columns of the filtered board. A board narrowed to one linked project follows that
- * project's team; its local tickets (from before the link) sit in the first state of their
- * category.
- */
-export function buildBoard(snapshot: KanbanSnapshot, filter: KanbanFilter): KanbanBoard {
-  const tickets = [...filterTickets(snapshot, filter)].sort(byPriorityThenUpdate);
-  const statesById = new Map(snapshot.states.map((state) => [state.id, state]));
-  const link =
-    filter.projectId === null
-      ? undefined
-      : snapshot.links.find((candidate) => candidate.projectId === filter.projectId);
-  const teamStates = link
-    ? sortStates(snapshot.states.filter((state) => state.teamId === link.teamId))
-    : [];
-
-  if (link !== undefined && teamStates.length > 0) {
-    const firstOfCategory = new Map<KanbanLocalState, string>();
-    for (const state of teamStates) {
-      const category = kanbanLocalStateOf({ kind: "linear", stateId: state.id }, statesById);
-      if (category !== null && !firstOfCategory.has(category)) {
-        firstOfCategory.set(category, state.id);
-      }
-    }
-    const columnOf = (ticket: KanbanTicket) =>
-      ticket.status.kind === "linear"
-        ? ticket.status.stateId
-        : firstOfCategory.get(ticket.status.state);
-    return {
-      teamId: link.teamId,
-      columns: teamStates.map((state) => ({
-        kind: "linear",
-        id: state.id,
-        title: state.name,
-        color: state.color,
-        state,
-        tickets: tickets.filter((ticket) => columnOf(ticket) === state.id),
-      })),
-    };
-  }
-
-  return {
-    teamId: null,
-    columns: KANBAN_LOCAL_STATES.map((state) => ({
-      kind: "local",
-      id: state,
-      title: KANBAN_LOCAL_STATE_LABELS[state],
-      color: null,
-      state,
-      tickets: tickets.filter((ticket) => kanbanLocalStateOf(ticket.status, statesById) === state),
-    })),
-  };
 }
 
 /**

@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as BotsDb from "../BotsDb.ts";
+import backfillLocalClosedAt from "../migrations/010_KanbanLocalClosedAt.ts";
 import {
   KanbanStore,
   layerFromDb,
@@ -262,6 +263,34 @@ describe("KanbanStore v2", () => {
       assert.equal(ticket.sortOrder, local.sortOrder);
       assert.isNull(ticket.assigneeId);
       assert.equal(ticket.dueDate, "2026-11-01");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("closes a local ticket while it is done, and backfills old done ones", () =>
+    Effect.gen(function* () {
+      const store = yield* KanbanStore;
+      const sql = yield* SqlClient.SqlClient;
+      const closedAt = Effect.map(store.getTicket(TICKET), (ticket) =>
+        Option.isSome(ticket) ? ticket.value.closedAt : "missing",
+      );
+      yield* store.insertLocalTicket(local);
+      assert.isNull(yield* closedAt);
+      yield* store.setLocalState(TICKET, "done", "2026-10-02T00:00:00.000Z");
+      assert.equal(yield* closedAt, "2026-10-02T00:00:00.000Z");
+      yield* store.setLocalState(TICKET, "done", "2026-10-03T00:00:00.000Z");
+      assert.equal(yield* closedAt, "2026-10-02T00:00:00.000Z");
+      yield* store.setLocalState(TICKET, "in_review", "2026-10-04T00:00:00.000Z");
+      assert.isNull(yield* closedAt);
+
+      const born = KanbanTicketId.make("ticket-done");
+      yield* store.insertLocalTicket({ ...local, id: born, localNumber: 2, state: "done" });
+      assert.equal(Option.getOrThrow(yield* store.getTicket(born)).closedAt, AT);
+
+      yield* store.setLocalState(TICKET, "done", "2026-10-05T00:00:00.000Z");
+      yield* sql`UPDATE kanban_tickets SET closed_at = NULL`;
+      yield* backfillLocalClosedAt;
+      assert.equal(yield* closedAt, "2026-10-05T00:00:00.000Z");
+      assert.equal(Option.getOrThrow(yield* store.getTicket(born)).closedAt, AT);
     }).pipe(Effect.provide(layer)),
   );
 

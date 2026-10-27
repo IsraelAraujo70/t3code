@@ -959,6 +959,7 @@ describe("KanbanService", () => {
         [{ labelIds: ["l-bug"] }, "not a local label"],
         [{ assigneeId: "u-bia" }, "assigned to you or to an existing bot"],
         [{ assigneeId: "bot:b_missing" }, "assigned to you or to an existing bot"],
+        [{ dueDate: "2026-99-99" }, "not a calendar day"],
       ] as const;
       for (const [patch, message] of refusals) {
         const refused = yield* kanban
@@ -1101,10 +1102,20 @@ describe("KanbanService", () => {
           ["Everything", null, "cv-all"],
         ],
       );
+      const organization = {
+        kind: "set",
+        field: "workspace",
+        op: "in",
+        values: [linearWorkspaceId("org-moneria")],
+      } as const;
+      // `isMe` is the importing account's user, not every account's "me".
       assert.deepStrictEqual(first.imported[0]?.config.filters, [
-        { kind: "set", field: "assignee", op: "in", values: ["me"] },
+        organization,
+        { kind: "set", field: "assignee", op: "in", values: ["u-israel"] },
         { kind: "set", field: "label", op: "in", values: ["l-bug"] },
       ]);
+      // An organization-wide view keeps out local tickets and other organizations.
+      assert.deepStrictEqual(first.imported[1]?.config.filters, [organization]);
       assert.deepStrictEqual(
         first.skipped.map((skipped) => skipped.name),
         ["Titles"],
@@ -1125,6 +1136,51 @@ describe("KanbanService", () => {
         (saved) => saved.linearViewId !== null,
       );
       assert.equal(linearViews.length, 2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("pins a team view shown by several projects to those projects", () => {
+    const { linear, layer } = setup();
+    const view = (id: string, teamId: string) => ({
+      id,
+      name: id,
+      icon: null,
+      color: null,
+      shared: true,
+      teamId,
+      filterData: {},
+    });
+    linear.customViews = [view("cv-back", TEAM), view("cv-front", OTHER_TEAM)];
+    return Effect.gen(function* () {
+      const { kanban, account } = yield* linkedBoard;
+      yield* kanban.linkProject({
+        projectId: OTHER_PROJECT,
+        accountId: account.id,
+        teamId: TEAM,
+        linearProjectId: null,
+      });
+      const result = yield* kanban.importLinearViews({ accountId: account.id });
+      assert.deepStrictEqual(
+        result.imported.map((imported) => [imported.projectId, imported.config.filters]),
+        [
+          [
+            null,
+            [
+              {
+                kind: "set",
+                field: "workspace",
+                op: "in",
+                values: [linearWorkspaceId("org-moneria")],
+              },
+              { kind: "set", field: "t3Project", op: "in", values: [PROJECT, OTHER_PROJECT] },
+            ],
+          ],
+        ],
+      );
+      assert.deepStrictEqual(
+        result.skipped.map((skipped) => skipped.name),
+        ["cv-front"],
+      );
     }).pipe(Effect.provide(layer));
   });
 

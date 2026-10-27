@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   KANBAN_PRIORITY_LABELS,
+  kanbanStartProjectTarget,
   THREAD_CARD_STATUS_LABELS,
   threadCardStatus,
 } from "@t3tools/client-runtime/kanban-board";
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   EnvironmentId,
+  isCalendarDay,
   KanbanTicketId,
   type BotDirectoryEntry,
   type KanbanComment,
@@ -36,7 +38,7 @@ import { useMarkdownPreviewStyles } from "../../features/files/FileMarkdownPrevi
 import { pullRequestStatus } from "../../features/pull-requests/pullRequestStatus";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
-import { useThreadShells } from "../../state/entities";
+import { useProject, useThreadShells } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useKanbanGlyphColors } from "../BotsKanbanRouteScreen";
 import { BotAvatar } from "../BotAvatar";
@@ -46,6 +48,7 @@ import {
   buildKanbanLookups,
   dueDateOf,
   dueDatePresets,
+  formatDueDate,
   formatKanbanDate,
   isoDay,
   isOverdue,
@@ -87,7 +90,6 @@ type KanbanIssueScreenProps = StaticScreenProps<{
 type IssueSheet = "status" | "priority" | "assignee" | "labels" | "due" | "bot" | "link";
 
 const NONE = "none";
-const DUE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** A Linear issue (or local ticket) on a phone: properties, description, work and discussion. */
 export function KanbanIssueScreen({ route }: KanbanIssueScreenProps) {
@@ -197,6 +199,7 @@ function IssueBody(props: {
   const navigateToPullRequest = useNavigateToPullRequest();
   const { directory } = useBotDirectory(environmentId);
   const shells = useThreadShells();
+  const project = useProject({ environmentId, projectId: ticket.projectId });
   const bots = directory?.bots;
   const lookups = useMemo(() => buildKanbanLookups(snapshot, bots ?? []), [snapshot, bots]);
   const {
@@ -308,7 +311,20 @@ function IssueBody(props: {
     target: { kind: "project" } | { kind: "bot"; botId: BotDirectoryEntry["id"] },
   ) => {
     const result = await track("start", () =>
-      startThread({ environmentId, input: { ticketId: ticket.id, target } }),
+      startThread({
+        environmentId,
+        input: {
+          ticketId: ticket.id,
+          target:
+            target.kind === "project"
+              ? kanbanStartProjectTarget(
+                  project?.defaultModelSelection ?? null,
+                  [...threadsById.values()],
+                  ticket,
+                )
+              : target,
+        },
+      }),
     );
     if (!reportKanbanResult("Could not start a thread", result)) return;
     if (result._tag === "Success") {
@@ -352,7 +368,7 @@ function IssueBody(props: {
       confirmText: "Set",
       onConfirm: (value) => {
         const day = value.trim();
-        if (DUE_DATE.test(day)) void patch("due", { dueDate: day });
+        if (isCalendarDay(day)) void patch("due", { dueDate: day });
         else Dialog.alert("Not a date", "Write the date as YYYY-MM-DD.");
       },
     });
@@ -448,9 +464,7 @@ function IssueBody(props: {
             onPress={() => setSheet("due")}
           >
             <PropertyValue muted={ticket.dueDate === null} danger={isOverdue(ticket, now)}>
-              {ticket.dueDate === null
-                ? "No due date"
-                : formatKanbanDate(dueDateOf(ticket.dueDate), now)}
+              {ticket.dueDate === null ? "No due date" : formatDueDate(ticket.dueDate, now)}
             </PropertyValue>
           </PropertyRow>
           <PropertyRow

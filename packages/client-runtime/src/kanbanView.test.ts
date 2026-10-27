@@ -6,6 +6,7 @@ import {
   linearWorkspaceId,
   LOCAL_KANBAN_WORKSPACE_ID,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type KanbanFilterClause,
   type KanbanSnapshot,
@@ -22,6 +23,7 @@ import {
   filterOptions,
   groupTickets,
   kanbanMeIds,
+  kanbanStartProjectTarget,
   sortViewTickets,
   ticketMatchesClause,
   viewTickets,
@@ -562,5 +564,27 @@ describe("review fixes", () => {
       ],
     };
     expect(filterOptions(scoped, LINKED, "bot").map((option) => option.value)).toEqual(["ours"]);
+  });
+});
+
+describe("kanbanStartProjectTarget", () => {
+  const model = (name: string) => ({ instanceId: ProviderInstanceId.make("codex"), model: name });
+  const shells = [
+    { projectId: "other", updatedAt: "2026-10-27T00:00:00.000Z", modelSelection: model("newest") },
+    { projectId: LINKED, updatedAt: "2026-10-20T00:00:00.000Z", modelSelection: model("old") },
+    { projectId: LINKED, updatedAt: "2026-10-25T00:00:00.000Z", modelSelection: model("recent") },
+  ];
+
+  it("lets the server pick when the project has a default model", () => {
+    expect(kanbanStartProjectTarget(model("default"), shells, parent)).toEqual({ kind: "project" });
+  });
+
+  it("copies the project's latest thread model, else the environment's latest", () => {
+    expect(kanbanStartProjectTarget(null, shells, parent).modelSelection?.model).toBe("recent");
+    expect(
+      kanbanStartProjectTarget(null, shells, { projectId: ProjectId.make("empty") }).modelSelection
+        ?.model,
+    ).toBe("newest");
+    expect(kanbanStartProjectTarget(null, [], parent)).toEqual({ kind: "project" });
   });
 });

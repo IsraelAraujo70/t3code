@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import {
+  kanbanStartProjectTarget,
   THREAD_CARD_STATUS_LABELS,
   threadCardStatus,
   workspaceOf,
@@ -8,7 +9,6 @@ import {
 } from "@t3tools/client-runtime/kanban-board";
 import { resolveChangeRequestLinkTarget } from "@t3tools/client-runtime/change-request-links";
 import type {
-  ModelSelection,
   BotDirectoryEntry,
   EnvironmentId,
   KanbanPullRequestRef,
@@ -203,29 +203,6 @@ function PullRequestRow(props: {
   );
 }
 
-/**
- * A project without a default model starts with the model of its latest thread (else the
- * environment's latest), like a new thread would; with a default the server picks it.
- */
-function startModelFallback(
-  defaultModel: ModelSelection | null,
-  shells: ReadonlyArray<{ projectId: string; updatedAt: string; modelSelection: ModelSelection }>,
-  ticket: KanbanTicket,
-): { kind: "project"; modelSelection?: ModelSelection } {
-  if (defaultModel !== null) return { kind: "project" };
-  const latest = (candidates: typeof shells) =>
-    candidates.reduce<(typeof shells)[number] | null>(
-      (best, shell) => (best === null || shell.updatedAt > best.updatedAt ? shell : best),
-      null,
-    );
-  const shell =
-    latest(shells.filter((candidate) => candidate.projectId === ticket.projectId)) ??
-    latest(shells);
-  return shell === null
-    ? { kind: "project" }
-    : { kind: "project", modelSelection: shell.modelSelection };
-}
-
 function ThreadLinks(props: {
   readonly environmentId: EnvironmentId;
   readonly ticket: KanbanTicket;
@@ -279,7 +256,11 @@ function ThreadLinks(props: {
         ticketId: ticket.id,
         target:
           target.kind === "project"
-            ? startModelFallback(project?.defaultModelSelection ?? null, environmentShells, ticket)
+            ? kanbanStartProjectTarget(
+                project?.defaultModelSelection ?? null,
+                environmentShells,
+                ticket,
+              )
             : { kind: "bot", botId: target.bot.id },
       },
     });

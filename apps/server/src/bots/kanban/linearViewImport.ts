@@ -14,6 +14,8 @@ export interface LinearFilterContext {
   /** Case-insensitive; includes the labels of a label group with that name. */
   readonly labelIdsByName: (name: string) => ReadonlyArray<string>;
   readonly statesByName: (name: string) => ReadonlyArray<string>;
+  /** What `isMe` becomes: the importing account's Linear user id (`me` is every account's). */
+  readonly me: string;
 }
 
 export type LinearViewImport =
@@ -98,13 +100,13 @@ function nullFlag(field: string, value: unknown): boolean {
   return !isNull;
 }
 
-function personClause(field: "assignee" | "creator", value: unknown): SetClause {
+function personClause(field: "assignee" | "creator", value: unknown, me: string): SetClause {
   const [key, operand] = onlyEntry(field, value);
   switch (key) {
     case "isMe": {
       const [op, isMe] = onlyEntry(field, operand);
       if (op !== "eq" || isMe !== true) throw unsupported(field);
-      return setClause(field, ["me"]);
+      return setClause(field, [me]);
     }
     case "null":
       if (typeof operand !== "boolean") throw unsupported(field);
@@ -137,7 +139,7 @@ function fieldClauses(
   switch (field) {
     case "assignee":
     case "creator":
-      return [personClause(field, node)];
+      return [personClause(field, node, ctx.me)];
     case "state": {
       if (key === "type") {
         const { op, values } = comparison("state", operand, ["eq", "in", "nin"]);

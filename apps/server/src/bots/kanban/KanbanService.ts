@@ -25,10 +25,12 @@ import {
   LinearAccountId,
   LOCAL_KANBAN_WORKSPACE_ID,
   kanbanBotPersonId,
+  isCalendarDay,
   linearWorkspaceId,
   type Bot,
   type BotId,
   type KanbanActivity,
+  type KanbanFilterClause,
   type KanbanPersonId,
   type KanbanTicketPatch,
   type KanbanProjectLink,
@@ -1190,6 +1192,10 @@ const make = Effect.gen(function* () {
     const ticket = yield* requireTicket(input.ticketId);
     const { botId, ...fields } = input.patch;
     if (botId !== undefined && botId !== null) yield* requireBot(botId);
+    // The MCP tool's schema checks only the shape.
+    if (typeof fields.dueDate === "string" && !isCalendarDay(fields.dueDate)) {
+      return yield* new KanbanError({ message: `${fields.dueDate} is not a calendar day.` });
+    }
     if (ticket.linear === null) {
       yield* updateLocalTicket(ticket, input.patch, actor);
     } else {
@@ -1347,6 +1353,8 @@ const make = Effect.gen(function* () {
       },
       statesByName: (name: string) =>
         organizationStates.filter(named(name)).map((state) => state.id),
+      // An account whose user is not known yet still reads `isMe` as T3's "me".
+      me: account.userId ?? "me",
     };
 
     const imported: KanbanView[] = [];
@@ -1368,14 +1376,35 @@ const make = Effect.gen(function* () {
           ),
         ),
       ];
+      const projectId = teamProjects.length === 1 ? (teamProjects[0] ?? null) : null;
+      if (custom.teamId !== null && teamProjects.length === 0) {
+        skipped.push({ name: custom.name, reason: "its team is not linked to a T3 project" });
+        continue;
+      }
+      // The view's own clauses also match local tickets and other organizations' (and, for a
+      // team view on the all-projects board, other teams'), so the import pins its scope.
+      const scope: Array<KanbanFilterClause> = [
+        { kind: "set", field: "workspace", op: "in", values: [workspaceId] },
+      ];
+      if (custom.teamId !== null && projectId === null) {
+        scope.push({ kind: "set", field: "t3Project", op: "in", values: teamProjects });
+      }
+      const filters = [...scope, ...result.filters];
+      if (
+        filters.length > KANBAN_LIMITS.filterClauses ||
+        teamProjects.length > KANBAN_LIMITS.filterValues
+      ) {
+        skipped.push({ name: custom.name, reason: "so many filters: not supported in T3" });
+        continue;
+      }
       const now = yield* nowIso;
       const view: KanbanView = {
         id: yield* newViewId,
         // A team's view belongs on that team's board when exactly one project shows it.
-        projectId: teamProjects.length === 1 ? (teamProjects[0] ?? null) : null,
+        projectId,
         name: custom.name.trim().slice(0, KANBAN_LIMITS.viewName).trim() || "Linear view",
         icon: custom.icon,
-        config: { ...KANBAN_DEFAULT_VIEW_CONFIG, filters: result.filters },
+        config: { ...KANBAN_DEFAULT_VIEW_CONFIG, filters },
         linearViewId: custom.id,
         createdAt: now,
         updatedAt: now,

@@ -3,6 +3,7 @@
  * priority glyph geometry (Linear's), PR badges, and dates. Mirrors web's kanbanLookups.
  */
 import {
+  isCalendarDay,
   KANBAN_LOCAL_STATE_LABELS,
   KANBAN_OWNER_PERSON_ID,
   type BotDirectoryEntry,
@@ -270,13 +271,19 @@ export const dueDateOf = (dueDate: string): Date => {
   return new Date(year, month - 1, day);
 };
 
+/** A due date as `formatKanbanDate` writes it; a stored value that is not a real day shows as is. */
+export const formatDueDate = (dueDate: string, now: Date): string =>
+  isCalendarDay(dueDate) ? formatKanbanDate(dueDateOf(dueDate), now) : dueDate;
+
 /** `YYYY-MM-DD` of a local date. */
 export const isoDay = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
 /** An open ticket whose due day is before today. */
 export function isOverdue(ticket: Pick<KanbanTicket, "dueDate" | "closedAt">, now: Date): boolean {
-  if (ticket.dueDate === null || ticket.closedAt !== null) return false;
+  if (ticket.dueDate === null || ticket.closedAt !== null || !isCalendarDay(ticket.dueDate)) {
+    return false;
+  }
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return dueDateOf(ticket.dueDate).getTime() < today.getTime();
 }

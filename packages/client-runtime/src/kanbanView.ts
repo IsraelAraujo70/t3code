@@ -27,6 +27,7 @@ import {
   type KanbanViewConfig,
   type LinearStateType,
   type LinearWorkflowState,
+  type ModelSelection,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -1074,3 +1075,31 @@ export function describeClause(
 
 /** Linear's priority names, by Linear's number (0 none, 1 urgent … 4 low). */
 export const KANBAN_PRIORITY_LABELS = ["No priority", "Urgent", "High", "Medium", "Low"] as const;
+
+/**
+ * The `project` start target for a ticket. A project without a default model starts with the
+ * model of its latest thread (else the environment's latest), like a new thread would; with a
+ * default, or with no thread to copy, the server picks.
+ */
+export function kanbanStartProjectTarget(
+  defaultModel: ModelSelection | null,
+  shells: ReadonlyArray<{
+    readonly projectId: string;
+    readonly updatedAt: string;
+    readonly modelSelection: ModelSelection;
+  }>,
+  ticket: Pick<KanbanTicket, "projectId">,
+): { readonly kind: "project"; readonly modelSelection?: ModelSelection } {
+  if (defaultModel !== null) return { kind: "project" };
+  const latest = (candidates: typeof shells) =>
+    candidates.reduce<(typeof shells)[number] | null>(
+      (best, shell) => (best === null || shell.updatedAt > best.updatedAt ? shell : best),
+      null,
+    );
+  const shell =
+    latest(shells.filter((candidate) => candidate.projectId === ticket.projectId)) ??
+    latest(shells);
+  return shell === null
+    ? { kind: "project" }
+    : { kind: "project", modelSelection: shell.modelSelection };
+}

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildKanbanLookups,
   dueDatePresets,
+  formatDueDate,
   formatKanbanDate,
   isOverdue,
   personDisplay,
@@ -139,6 +140,12 @@ describe("dates", () => {
   it("formats like Linear, with the year only when it differs", () => {
     expect(formatKanbanDate(new Date(2026, 9, 26), now)).toBe("Oct 26");
     expect(formatKanbanDate(new Date(2025, 0, 3), now)).toBe("Jan 3, 2025");
+  });
+
+  it("shows a stored due date that is not a real day as written", () => {
+    expect(formatDueDate("2026-10-26", now)).toBe("Oct 26");
+    expect(formatDueDate("2026-99-99", now)).toBe("2026-99-99");
+    expect(isOverdue({ dueDate: "2026-02-30", closedAt: null }, now)).toBe(false);
   });
 
   it("marks an open ticket overdue from the day after its due date", () => {

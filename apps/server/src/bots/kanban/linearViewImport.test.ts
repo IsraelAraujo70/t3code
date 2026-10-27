@@ -5,6 +5,7 @@ import { linearFilterToClauses, type LinearFilterContext } from "./linearViewImp
 const ctx: LinearFilterContext = {
   labelIdsByName: (name) => (name.toLowerCase() === "bug" ? ["l-bug", "l-bug-ui"] : []),
   statesByName: (name) => (name === "Todo" ? ["s-todo", "f-todo"] : []),
+  me: "u-me",
 };
 
 const imported = (filterData: unknown) => linearFilterToClauses(filterData, ctx);
@@ -13,7 +14,7 @@ describe("linearFilterToClauses", () => {
   it("imports the views Linear wrote for this workspace", () => {
     expect(imported({ and: [{ assignee: { or: [{ isMe: { eq: true } }] } }] })).toEqual({
       ok: true,
-      filters: [{ kind: "set", field: "assignee", op: "in", values: ["me"] }],
+      filters: [{ kind: "set", field: "assignee", op: "in", values: ["u-me"] }],
     });
     expect(
       imported({
@@ -50,7 +51,7 @@ describe("linearFilterToClauses", () => {
       }),
     ).toEqual({
       ok: true,
-      filters: [{ kind: "set", field: "assignee", op: "in", values: ["me", "none", "u-ana"] }],
+      filters: [{ kind: "set", field: "assignee", op: "in", values: ["u-me", "none", "u-ana"] }],
     });
   });
 

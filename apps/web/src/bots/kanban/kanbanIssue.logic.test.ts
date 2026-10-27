@@ -18,6 +18,7 @@ import {
   cycleOptions,
   dateFromKey,
   dateKey,
+  formatDueDate,
   isOverdue,
   issueTimeline,
   labelOptions,
@@ -228,6 +229,13 @@ describe("due dates", () => {
   it("round-trips a calendar day", () => {
     expect(dateKey(dateFromKey("2026-03-09"))).toBe("2026-03-09");
     expect(dateKey(new Date(2026, 0, 5, 23, 59))).toBe("2026-01-05");
+  });
+
+  it("shows a stored due date that is not a real day as written", () => {
+    const format = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format;
+    expect(formatDueDate("2026-10-24", format)).toBe("Oct 24");
+    expect(formatDueDate("2026-99-99", format)).toBe("2026-99-99");
+    expect(formatDueDate("2026-02-30", format)).toBe("2026-02-30");
   });
 });
 

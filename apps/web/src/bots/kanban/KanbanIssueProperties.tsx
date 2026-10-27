@@ -1,4 +1,5 @@
 import {
+  isCalendarDay,
   type EnvironmentId,
   type KanbanLabel,
   type KanbanSnapshot,
@@ -44,6 +45,7 @@ import {
   cycleOptions,
   dateFromKey,
   dateKey,
+  formatDueDate,
   isOverdue,
   labelOptions,
   matchesQuery,
@@ -489,11 +491,11 @@ function DueDatePicker(props: {
   const label =
     props.dueDate === null
       ? "No due date"
-      : dateFromKey(props.dueDate).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        });
+      : formatDueDate(props.dueDate, (date) =>
+          date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+        );
+  const day =
+    props.dueDate !== null && isCalendarDay(props.dueDate) ? dateFromKey(props.dueDate) : undefined;
   const value = (
     <PropertyValue
       icon={
@@ -529,8 +531,8 @@ function DueDatePicker(props: {
       <PopoverPopup align="start" aria-label="Choose a due date">
         <Calendar
           mode="single"
-          selected={props.dueDate === null ? undefined : dateFromKey(props.dueDate)}
-          {...(props.dueDate === null ? {} : { defaultMonth: dateFromKey(props.dueDate) })}
+          selected={day}
+          {...(day === undefined ? {} : { defaultMonth: day })}
           onSelect={(selected: Date | undefined) => {
             setOpen(false);
             props.onChange(selected === undefined ? null : dateKey(selected));

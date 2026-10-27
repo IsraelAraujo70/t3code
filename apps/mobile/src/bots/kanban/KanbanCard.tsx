@@ -17,7 +17,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { pullRequestStatus } from "../../features/pull-requests/pullRequestStatus";
 import {
-  dueDateOf,
+  formatDueDate,
   formatKanbanDate,
   isOverdue,
   personDisplay,
@@ -154,9 +154,7 @@ export const KanbanCard = memo(function KanbanCard(props: {
           size={11}
           tintColorClassName={overdue ? "accent-danger-foreground" : "accent-icon-muted"}
         />
-        <KanbanPillText tone={tone}>
-          {formatKanbanDate(dueDateOf(ticket.dueDate), now)}
-        </KanbanPillText>
+        <KanbanPillText tone={tone}>{formatDueDate(ticket.dueDate, now)}</KanbanPillText>
       </KanbanPill>,
     );
   }

@@ -2,7 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "./auth.ts";
-import { BOTS_GUARDED_RPC_SCOPES, BOTS_RPC_SCOPES, KANBAN_WS_METHODS } from "./bots.ts";
+import {
+  BOTS_GUARDED_RPC_SCOPES,
+  BOTS_RPC_SCOPES,
+  isCalendarDay,
+  KANBAN_WS_METHODS,
+  KanbanTicketPatch,
+} from "./bots.ts";
 import { ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -40,5 +46,18 @@ describe("kanban RPCs", () => {
         expect(BOTS_GUARDED_RPC_SCOPES[method]).toBe(AuthOrchestrationOperateScope);
       }
     }
+  });
+});
+
+describe("kanban due dates", () => {
+  it("accepts only real calendar days", () => {
+    expect(["2026-10-27", "2028-02-29"].map(isCalendarDay)).toEqual([true, true]);
+    expect(
+      ["2026-99-99", "2026-02-30", "2027-02-29", "2026-1-05", "26-10-27"].map(isCalendarDay),
+    ).toEqual([false, false, false, false, false]);
+    const decode = Schema.decodeUnknownExit(KanbanTicketPatch);
+    expect(decode({ dueDate: "2026-10-27" })._tag).toBe("Success");
+    expect(decode({ dueDate: null })._tag).toBe("Success");
+    expect(decode({ dueDate: "2026-99-99" })._tag).toBe("Failure");
   });
 });
