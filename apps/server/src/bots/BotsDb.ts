@@ -19,6 +19,7 @@ import Migration0005 from "./migrations/005_BotPushDevices.ts";
 import Migration0006 from "./migrations/006_Guests.ts";
 import Migration0007 from "./migrations/007_GuestArtifacts.ts";
 import Migration0008 from "./migrations/008_Kanban.ts";
+import Migration0009 from "./migrations/009_KanbanV2.ts";
 
 const runMigrations = Migrator.make({})({
   loader: Migrator.fromRecord({
@@ -30,6 +31,7 @@ const runMigrations = Migrator.make({})({
     "6_Guests": Migration0006,
     "7_GuestArtifacts": Migration0007,
     "8_Kanban": Migration0008,
+    "9_KanbanV2": Migration0009,
   }),
 });
 

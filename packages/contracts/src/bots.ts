@@ -616,6 +616,19 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.kanbanTicketLinkThread]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanTicketUnlinkThread]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanSync]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketUpdate]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketComment]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketDeleteComment]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanTicketStartThread]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanViewSave]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanViewDelete]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanViewReorder]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanViewImportLinear]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanLabelCreate]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanLabelDelete]: AuthOrchestrationOperateScope,
+  // Reads Linear with the server's key and spends its OpenRouter allowance.
+  [BOTS_WS_METHODS.kanbanTicketDetail]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.kanbanAiFilter]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Every bots RPC's server scope. */

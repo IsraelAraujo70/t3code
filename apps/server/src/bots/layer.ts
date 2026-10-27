@@ -120,6 +120,16 @@ const layerKanbanOff = Layer.succeed(
     unlinkThread: kanbanNotHost,
     sync: kanbanNotHost,
     poll: kanbanNotHost(),
+    ticketDetail: kanbanNotHost,
+    updateTicket: kanbanNotHost,
+    comment: kanbanNotHost,
+    deleteComment: kanbanNotHost,
+    saveView: kanbanNotHost,
+    deleteView: kanbanNotHost,
+    reorderViews: kanbanNotHost,
+    importLinearViews: kanbanNotHost,
+    createLabel: kanbanNotHost,
+    deleteLabel: kanbanNotHost,
   }),
 );
 

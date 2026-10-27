@@ -204,3 +204,4 @@ export function threadCardStatus(shell: BotThreadShell): ThreadCardStatus {
   if (isThreadWorking(shell)) return "working";
   return "settled";
 }
+export * from "./kanbanView.ts";

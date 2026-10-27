@@ -33,6 +33,19 @@ import {
   type KanbanWorkspace,
   type KanbanWorkspaceBotsInput,
   type KanbanWorkspaceId,
+  type KanbanComment,
+  type KanbanLabel,
+  type KanbanLabelCreateInput,
+  type KanbanLabelRef,
+  type KanbanTicketCommentInput,
+  type KanbanTicketCommentRef,
+  type KanbanTicketDetail,
+  type KanbanTicketUpdateInput,
+  type KanbanView,
+  type KanbanViewImportResult,
+  type KanbanViewRef,
+  type KanbanViewReorderInput,
+  type KanbanViewSaveInput,
   type LinearAccount,
   type LinearAccountAddInput,
   type LinearAccountRef,
@@ -112,6 +125,32 @@ export class KanbanService extends Context.Service<
     readonly sync: (input: KanbanSyncInput) => Effect.Effect<KanbanSyncInput, KanbanError>;
     /** One poll: syncs every link, fully when its last full sync is old. */
     readonly poll: Effect.Effect<void, KanbanError>;
+    /** Description, parent, sub-issues, comments and history, read when the issue opens. */
+    readonly ticketDetail: (
+      input: KanbanTicketRef,
+    ) => Effect.Effect<KanbanTicketDetail, KanbanError>;
+    /** Linear first for a synced ticket (except `botId`); a refusal there changes nothing. */
+    readonly updateTicket: (
+      input: KanbanTicketUpdateInput,
+    ) => Effect.Effect<KanbanTicket, KanbanError>;
+    readonly comment: (
+      input: KanbanTicketCommentInput,
+    ) => Effect.Effect<KanbanComment, KanbanError>;
+    readonly deleteComment: (
+      input: KanbanTicketCommentRef,
+    ) => Effect.Effect<KanbanTicketCommentRef, KanbanError>;
+    readonly saveView: (input: KanbanViewSaveInput) => Effect.Effect<KanbanView, KanbanError>;
+    readonly deleteView: (input: KanbanViewRef) => Effect.Effect<KanbanViewRef, KanbanError>;
+    readonly reorderViews: (
+      input: KanbanViewReorderInput,
+    ) => Effect.Effect<KanbanViewReorderInput, KanbanError>;
+    readonly importLinearViews: (
+      input: LinearAccountRef,
+    ) => Effect.Effect<KanbanViewImportResult, KanbanError>;
+    readonly createLabel: (
+      input: KanbanLabelCreateInput,
+    ) => Effect.Effect<KanbanLabel, KanbanError>;
+    readonly deleteLabel: (input: KanbanLabelRef) => Effect.Effect<KanbanLabelRef, KanbanError>;
   }
 >()("t3/bots/kanban/KanbanService") {}
 
@@ -119,6 +158,9 @@ const randomHex = randomUuidV4.pipe(Effect.map((uuid) => uuid.replaceAll("-", ""
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+// Placeholder until the v2 methods land (graph node n-s3).
+const notYet = () => Effect.fail(new KanbanError({ message: "Not implemented yet." }));
 
 const kanbanError = (message: string) => (cause: unknown) => new KanbanError({ message, cause });
 
@@ -177,6 +219,12 @@ const make = Effect.gen(function* () {
       links: links.map(publicLink),
       states: states.filter((state) => linkedTeams.has(state.teamId)),
       tickets,
+      people: [],
+      labels: [],
+      linearProjects: [],
+      milestones: [],
+      cycles: [],
+      views: [],
     } satisfies KanbanSnapshot;
   });
 
@@ -340,6 +388,8 @@ const make = Effect.gen(function* () {
       name: input.name,
       keyLast4: input.apiKey.slice(-4),
       userName: viewer.userName,
+      userId: null,
+      userAvatarUrl: null,
       organizationId: viewer.organizationId,
       organizationName: viewer.organizationName,
       organizationUrlKey: viewer.organizationUrlKey,
@@ -587,6 +637,16 @@ const make = Effect.gen(function* () {
     unlinkThread,
     sync,
     poll: syncLinks(() => true, false),
+    ticketDetail: notYet,
+    updateTicket: notYet,
+    comment: notYet,
+    deleteComment: notYet,
+    saveView: notYet,
+    deleteView: notYet,
+    reorderViews: notYet,
+    importLinearViews: notYet,
+    createLabel: notYet,
+    deleteLabel: notYet,
   });
 });
 

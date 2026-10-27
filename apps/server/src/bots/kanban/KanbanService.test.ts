@@ -86,6 +86,8 @@ function makeLinear() {
         seen(key);
         return {
           userName: "Israel",
+          userId: null,
+          userAvatarUrl: null,
           organizationId: "org-moneria",
           organizationName: "Moneria",
           organizationUrlKey: "moneria",

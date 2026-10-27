@@ -113,6 +113,28 @@ export function createBotsEnvironmentAtoms<R, E>(
     kanbanLinkThread: kanbanCommand("link-thread", BOTS_WS_METHODS.kanbanTicketLinkThread),
     kanbanUnlinkThread: kanbanCommand("unlink-thread", BOTS_WS_METHODS.kanbanTicketUnlinkThread),
     kanbanSync: kanbanCommand("sync", BOTS_WS_METHODS.kanbanSync),
+    kanbanUpdateTicket: kanbanCommand("update-ticket", BOTS_WS_METHODS.kanbanTicketUpdate),
+    kanbanComment: kanbanCommand("comment", BOTS_WS_METHODS.kanbanTicketComment),
+    kanbanDeleteComment: kanbanCommand("delete-comment", BOTS_WS_METHODS.kanbanTicketDeleteComment),
+    kanbanStartThread: kanbanCommand("start-thread", BOTS_WS_METHODS.kanbanTicketStartThread),
+    kanbanSaveView: kanbanCommand("save-view", BOTS_WS_METHODS.kanbanViewSave),
+    kanbanDeleteView: kanbanCommand("delete-view", BOTS_WS_METHODS.kanbanViewDelete),
+    kanbanReorderViews: kanbanCommand("reorder-views", BOTS_WS_METHODS.kanbanViewReorder),
+    kanbanImportLinearViews: kanbanCommand(
+      "import-linear-views",
+      BOTS_WS_METHODS.kanbanViewImportLinear,
+    ),
+    kanbanCreateLabel: kanbanCommand("create-label", BOTS_WS_METHODS.kanbanLabelCreate),
+    kanbanDeleteLabel: kanbanCommand("delete-label", BOTS_WS_METHODS.kanbanLabelDelete),
+    // Reads are not queued behind Linear writes: opening an issue must not wait on a move.
+    kanbanTicketDetail: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:kanban-ticket-detail",
+      tag: BOTS_WS_METHODS.kanbanTicketDetail,
+    }),
+    kanbanAiFilter: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:kanban-ai-filter",
+      tag: BOTS_WS_METHODS.kanbanAiFilter,
+    }),
     // Not queued behind the bot mutations: a dictation is slow and independent of them.
     transcribeDictation: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:bots:transcribe-dictation",

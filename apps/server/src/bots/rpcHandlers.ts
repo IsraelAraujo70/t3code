@@ -11,7 +11,9 @@ import { RpcGroup } from "effect/rpc";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
+import * as KanbanAiFilter from "./kanban/KanbanAiFilter.ts";
 import { KanbanService } from "./kanban/KanbanService.ts";
+import * as KanbanThreadStarter from "./kanban/KanbanThreadStarter.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 
@@ -24,8 +26,8 @@ export const ServerBotsRpcGroup = RpcGroup.make(...BOTS_RPCS)
   .middleware(RpcInstrumentation);
 
 /**
- * The handlers, with Dictation, VoiceSessions and BotSessionRestart left to the caller (tests mock
- * them).
+ * The handlers, with Dictation, VoiceSessions, BotSessionRestart, KanbanThreadStarter and
+ * KanbanAiFilter left to the caller (tests mock them).
  */
 export const layerHandlers = ServerBotsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -34,6 +36,8 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
     const voice = yield* VoiceSession.VoiceSessions;
     const restarts = yield* BotSessionRestart.BotSessionRestart;
     const kanban = yield* KanbanService;
+    const threadStarter = yield* KanbanThreadStarter.KanbanThreadStarter;
+    const aiFilter = yield* KanbanAiFilter.KanbanAiFilter;
     return ServerBotsRpcGroup.of({
       [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
@@ -71,6 +75,18 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.kanbanTicketLinkThread]: (input) => kanban.linkThread(input),
       [BOTS_WS_METHODS.kanbanTicketUnlinkThread]: (input) => kanban.unlinkThread(input),
       [BOTS_WS_METHODS.kanbanSync]: (input) => kanban.sync(input),
+      [BOTS_WS_METHODS.kanbanTicketDetail]: (input) => kanban.ticketDetail(input),
+      [BOTS_WS_METHODS.kanbanTicketUpdate]: (input) => kanban.updateTicket(input),
+      [BOTS_WS_METHODS.kanbanTicketComment]: (input) => kanban.comment(input),
+      [BOTS_WS_METHODS.kanbanTicketDeleteComment]: (input) => kanban.deleteComment(input),
+      [BOTS_WS_METHODS.kanbanTicketStartThread]: (input) => threadStarter.startThread(input),
+      [BOTS_WS_METHODS.kanbanViewSave]: (input) => kanban.saveView(input),
+      [BOTS_WS_METHODS.kanbanViewDelete]: (input) => kanban.deleteView(input),
+      [BOTS_WS_METHODS.kanbanViewReorder]: (input) => kanban.reorderViews(input),
+      [BOTS_WS_METHODS.kanbanViewImportLinear]: (input) => kanban.importLinearViews(input),
+      [BOTS_WS_METHODS.kanbanLabelCreate]: (input) => kanban.createLabel(input),
+      [BOTS_WS_METHODS.kanbanLabelDelete]: (input) => kanban.deleteLabel(input),
+      [BOTS_WS_METHODS.kanbanAiFilter]: (input) => aiFilter.filter(input),
     });
   }),
 );
@@ -79,4 +95,6 @@ export const layer = layerHandlers.pipe(
   Layer.provide(Dictation.layer),
   Layer.provide(VoiceSession.layerLive),
   Layer.provide(BotSessionRestart.layerLive),
+  Layer.provide(KanbanThreadStarter.layerLive),
+  Layer.provide(KanbanAiFilter.layerLive),
 );

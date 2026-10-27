@@ -15,7 +15,9 @@ import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import { rpcInstrumentationLayer } from "../observability/RpcInstrumentation.ts";
 import * as BotsService from "./BotsService.ts";
 import * as Dictation from "./dictation/Dictation.ts";
+import * as KanbanAiFilter from "./kanban/KanbanAiFilter.ts";
 import * as KanbanService from "./kanban/KanbanService.ts";
+import * as KanbanThreadStarter from "./kanban/KanbanThreadStarter.ts";
 import * as BotsRpc from "./rpcHandlers.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
@@ -47,6 +49,8 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
           Layer.provide(Layer.mock(Dictation.Dictation)({})),
           Layer.provide(Layer.mock(VoiceSession.VoiceSessions)({})),
           Layer.provide(Layer.mock(BotSessionRestart.BotSessionRestart)({})),
+          Layer.provide(Layer.mock(KanbanThreadStarter.KanbanThreadStarter)({})),
+          Layer.provide(Layer.mock(KanbanAiFilter.KanbanAiFilter)({})),
           Layer.provide(
             Layer.mock(KanbanService.KanbanService)({
               renameAccount: (input) =>
@@ -57,6 +61,8 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
                     name: input.name,
                     keyLast4: "abcd",
                     userName: "Ada",
+                    userId: null,
+                    userAvatarUrl: null,
                     organizationId: "org",
                     organizationName: "Org",
                     organizationUrlKey: "org",
