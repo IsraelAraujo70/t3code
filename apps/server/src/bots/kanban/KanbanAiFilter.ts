@@ -48,6 +48,9 @@ const unusable = () => new KanbanError({ message: "Could not turn that into filt
  * The system prompt: clause shapes, value encodings, and the catalog (states, people, labels…) of
  * the board scope (`projectId` null = every project). Tickets themselves are never sent.
  */
+/** About 15k tokens: a filter request must stay cheap whatever the board's size. */
+export const AI_FILTER_PROMPT_MAX_CHARS = 60_000;
+
 export function buildAiFilterPrompt(
   snapshot: KanbanSnapshot,
   projectId: ProjectId | null,
@@ -228,7 +231,12 @@ const make = Effect.gen(function* () {
       DateTime.formatIsoDateUtc(yield* DateTime.now),
       new Map(bots.map((bot) => [bot.id, bot.name])),
     );
-    const response = yield* HttpClientRequest.post(ENDPOINT).pipe(
+    if (prompt.length > AI_FILTER_PROMPT_MAX_CHARS) {
+      return yield* new KanbanError({
+        message: "This board's catalog is too large for the AI filter. Pick one project first.",
+      });
+    }
+    const exchange = HttpClientRequest.post(ENDPOINT).pipe(
       HttpClientRequest.bearerToken(Redacted.value(key.value)),
       HttpClientRequest.bodyJson({
         model: yield* readModel,
@@ -238,13 +246,19 @@ const make = Effect.gen(function* () {
         ],
       }),
       Effect.flatMap((request) => httpClient.execute(request)),
+      Effect.flatMap((response) =>
+        HttpClientResponse.schemaBodyJson(ChatResponse)(response).pipe(
+          Effect.map((decoded) => ({ response, decoded })),
+          Effect.orElseSucceed(() => ({ response, decoded: null })),
+        ),
+      ),
+    );
+    // The deadline covers the body too: headers can arrive and the body then stall.
+    const { response, decoded } = yield* exchange.pipe(
       Effect.timeout("30 seconds"),
       Effect.mapError(
         (cause) => new KanbanError({ message: "Could not reach the AI filter service.", cause }),
       ),
-    );
-    const decoded = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response).pipe(
-      Effect.orElseSucceed(() => null),
     );
     if (response.status < 200 || response.status >= 300 || decoded === null || decoded.error) {
       const detail = decoded?.error?.message ?? `HTTP ${response.status}`;

@@ -1,10 +1,23 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { TestClock } from "effect/testing";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { KanbanSnapshot, ProjectId } from "@t3tools/contracts";
 
-import { buildAiFilterPrompt, parseAiFilterAnswer } from "./KanbanAiFilter.ts";
+import { BotsStore } from "../BotsStore.ts";
+import { DICTATION_KEY_ENV } from "../dictation/Dictation.ts";
+import {
+  buildAiFilterPrompt,
+  KanbanAiFilter,
+  layerLive,
+  parseAiFilterAnswer,
+} from "./KanbanAiFilter.ts";
+import { KanbanService } from "./KanbanService.ts";
 
 describe("parseAiFilterAnswer", () => {
   it.effect("keeps the valid clauses and drops the invalid ones", () =>
@@ -147,5 +160,70 @@ describe("buildAiFilterPrompt", () => {
     for (const text of ["State one", "State two", "Person two", "Label two", "Bot two"]) {
       assert.include(prompt, text);
     }
+  });
+});
+
+const decodeSnapshot = Schema.decodeUnknownSync(KanbanSnapshot);
+const encodeSnapshot = Schema.encodeSync(KanbanSnapshot);
+
+/** The service over a fake OpenRouter whose answer body never ends. */
+const layerService = (board: KanbanSnapshot, requests: Array<string>) =>
+  layerLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(KanbanService)({ readSnapshot: Effect.succeed(board) }),
+        Layer.mock(BotsStore)({ listBots: Effect.succeed([]) }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              requests.push(request.url);
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response(new ReadableStream({ start: () => undefined }), { status: 200 }),
+              );
+            }),
+          ),
+        ),
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { [DICTATION_KEY_ENV]: "sk-test" } })),
+      ),
+    ),
+  );
+
+describe("KanbanAiFilter", () => {
+  it.effect("gives up when the answer's body stalls after its headers", () => {
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const filter = yield* KanbanAiFilter;
+      const fiber = yield* filter
+        .filter({ text: "urgent", projectId: null })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("31 seconds");
+      const error = yield* Fiber.join(fiber);
+      assert.strictEqual(error.message, "Could not reach the AI filter service.");
+      assert.strictEqual(requests.length, 1);
+    }).pipe(Effect.provide(layerService(snapshot, requests)));
+  });
+
+  it.effect("refuses a catalog over the prompt budget without calling the model", () => {
+    const requests: Array<string> = [];
+    const huge = decodeSnapshot({
+      ...encodeSnapshot(snapshot),
+      labels: Array.from({ length: 3_000 }, (_, index) => ({
+        id: `label-big-${index}`,
+        workspaceId: "local",
+        teamId: null,
+        name: `A rather long label name number ${index}`,
+        color: "#ffffff",
+        parentId: null,
+        source: "local",
+      })),
+    });
+    return Effect.gen(function* () {
+      const filter = yield* KanbanAiFilter;
+      const error = yield* Effect.flip(filter.filter({ text: "urgent", projectId: null }));
+      assert.match(error.message, /too large/);
+      assert.strictEqual(requests.length, 0);
+    }).pipe(Effect.provide(layerService(huge, requests)));
   });
 });

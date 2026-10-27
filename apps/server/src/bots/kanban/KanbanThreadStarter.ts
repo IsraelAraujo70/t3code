@@ -143,6 +143,8 @@ const make = Effect.gen(function* () {
         messageId: MessageId.make(`kanban:${id}`),
         text,
         attachments: [],
+        // The bot's own model, never the conversation's stored one: a guest bot stays sandboxed.
+        modelSelection: bot.value.model,
         dispatchMode: { type: "queue_after_active" },
         createdBy: "user",
         creationSource: "web",

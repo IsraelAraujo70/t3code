@@ -200,6 +200,7 @@ describe("KanbanThreadStarter", () => {
       assert.strictEqual(command.threadId, threadId);
       assert.deepStrictEqual(command.dispatchMode, { type: "queue_after_active" });
       assert.strictEqual(command.text, "Kanban ticket T-1 (local ticket)\nT-1: Fix it");
+      assert.deepStrictEqual(command.modelSelection, bot.model);
     }).pipe(Effect.provide(layer));
   });
 
