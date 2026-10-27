@@ -11,6 +11,7 @@ import {
 } from "@dnd-kit/core";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  KANBAN_DEFAULT_PROPERTIES,
   KanbanTicketTitle,
   type BotDirectoryEntry,
   type EnvironmentId,
@@ -22,7 +23,7 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Schema } from "effect";
 import { PlusIcon, RefreshCwIcon, SettingsIcon, SquareKanbanIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -58,16 +59,21 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { confirmDestructive, reportCommandResult } from "../botsSettingsShared";
 import { KanbanCard, type KanbanThreadOption } from "./KanbanCard";
+import { buildKanbanLookups } from "./kanbanLookups";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   buildBoard,
   dropTarget,
   sameStatus,
+  threadCardStatus,
   workspaceOf,
   type KanbanColumn,
   type KanbanFilter,
 } from "@t3tools/client-runtime/kanban-board";
 
 const FILTER_KEY = "t3code:bots:kanban-filter";
+const CARD_PROPERTIES = new Set(KANBAN_DEFAULT_PROPERTIES);
 const StoredFilter = Schema.Struct({
   projectId: Schema.NullOr(Schema.String),
   workspaceId: Schema.NullOr(Schema.String),
@@ -235,9 +241,9 @@ function KanbanBoardView(props: {
   const create = useAtomCommand(botsEnvironment.kanbanCreateTicket, { label: "kanban create" });
   const remove = useAtomCommand(botsEnvironment.kanbanDeleteTicket, { label: "kanban delete" });
   const link = useAtomCommand(botsEnvironment.kanbanLinkThread, { label: "kanban link" });
-  const unlink = useAtomCommand(botsEnvironment.kanbanUnlinkThread, { label: "kanban unlink" });
   const canEdit = useAtomValue(botsEnvironment.kanbanMoveTicket.permissionAtom(environmentId));
   const shells = useThreadShells();
+  const navigate = useNavigate();
   // A move shows at once and holds until a snapshot arrives with the ticket's new status.
   const [pending, setPending] = useState<ReadonlyMap<string, KanbanTicketStatus>>(new Map());
   const [dragging, setDragging] = useState<KanbanTicket | null>(null);
@@ -262,6 +268,7 @@ function KanbanBoardView(props: {
       .map((shell) => [shell.id, shell]),
   );
   const botsById = new Map(props.bots.map((bot) => [bot.id, bot]));
+  const lookups = buildKanbanLookups(snapshot, props.bots, null);
   const workspaceBots = new Map(
     snapshot.workspaces.map((workspace) => [
       workspace.id,
@@ -388,23 +395,34 @@ function KanbanBoardView(props: {
                   key={ticket.id}
                   environmentId={environmentId}
                   ticket={ticket}
-                  bots={workspaceBots.get(workspaceOf(snapshot, ticket)) ?? []}
+                  lookups={lookups}
+                  properties={CARD_PROPERTIES}
+                  workspaceBots={workspaceBots.get(workspaceOf(snapshot, ticket)) ?? []}
+                  threads={ticket.threadIds.flatMap((threadId) => {
+                    const shell = threadsById.get(threadId);
+                    return shell === undefined
+                      ? []
+                      : [{ id: shell.id, title: shell.title, status: threadCardStatus(shell) }];
+                  })}
                   projectTitle={
                     filter.projectId === null ? (projectTitles.get(ticket.projectId) ?? null) : null
                   }
-                  threadsById={threadsById}
+                  selected={false}
                   linkableThreads={linkableThreads(ticket)}
                   canEdit={canEdit}
+                  onOpen={() => {
+                    if (ticket.linear) window.open(ticket.linear.url, "_blank", "noopener");
+                  }}
+                  onOpenThread={(threadId: ThreadId) =>
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+                    })
+                  }
                   onLinkThread={async (threadId: ThreadId) =>
                     reportCommandResult(
                       "Could not link the thread",
                       await link({ environmentId, input: { ticketId: ticket.id, threadId } }),
-                    )
-                  }
-                  onUnlinkThread={async (threadId: ThreadId) =>
-                    reportCommandResult(
-                      "Could not unlink the thread",
-                      await unlink({ environmentId, input: { ticketId: ticket.id, threadId } }),
                     )
                   }
                   onDelete={async () => {
