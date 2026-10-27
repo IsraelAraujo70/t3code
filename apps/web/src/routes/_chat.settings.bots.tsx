@@ -6,6 +6,6 @@ function SettingsBotsRoute() {
   return <BotsSettings />;
 }
 
-export const Route = createFileRoute("/settings/bots")({
+export const Route = createFileRoute("/_chat/settings/bots")({
   component: SettingsBotsRoute,
 });

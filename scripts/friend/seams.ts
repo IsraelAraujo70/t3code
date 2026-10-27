@@ -407,8 +407,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
-    contains: "from './routes/settings.bots'",
-    why: "generated route for the Bots settings page",
+    contains: "from './routes/_chat.settings.bots'",
+    why: "generated route for the Bots settings page, inside the Settings layout",
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
