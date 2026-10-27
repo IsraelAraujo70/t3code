@@ -13,6 +13,7 @@ import {
   ChevronRightIcon,
   DiamondIcon,
   ExternalLinkIcon,
+  UnlinkIcon,
   FolderIcon,
   IterationCcwIcon,
   LinkIcon,
@@ -78,6 +79,7 @@ export interface KanbanTicketViewProps {
   readonly onOpen: () => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly onLinkThread: (threadId: ThreadId) => void;
+  readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly onDelete: () => void;
 }
 
@@ -182,7 +184,14 @@ export function ticketOpenHandlers(onOpen: () => void) {
 export function KanbanTicketMenu(
   props: Pick<
     KanbanTicketViewProps,
-    "ticket" | "canEdit" | "linkableThreads" | "onOpen" | "onLinkThread" | "onDelete"
+    | "ticket"
+    | "canEdit"
+    | "threads"
+    | "linkableThreads"
+    | "onOpen"
+    | "onLinkThread"
+    | "onUnlinkThread"
+    | "onDelete"
   >,
 ) {
   const { ticket } = props;
@@ -219,6 +228,19 @@ export function KanbanTicketMenu(
                 </MenuItem>
               ))}
             </MenuGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger disabled={!props.canEdit || props.threads.length === 0}>
+            <UnlinkIcon />
+            Unlink thread
+          </MenuSubTrigger>
+          <MenuSubPopup className="max-h-80 overflow-y-auto">
+            {props.threads.map((thread) => (
+              <MenuItem key={thread.id} onClick={() => props.onUnlinkThread(thread.id)}>
+                <span className="max-w-72 truncate">{thread.title}</span>
+              </MenuItem>
+            ))}
           </MenuSubPopup>
         </MenuSub>
         {ticket.linear ? (
@@ -348,7 +370,8 @@ export const KanbanCard = memo(function KanbanCard(props: KanbanTicketViewProps)
   return (
     <div
       ref={setNodeRef}
-      {...attributes}
+      // A read-only card still opens: only an editable one carries the draggable semantics.
+      {...(props.canEdit ? attributes : { role: "button", tabIndex: 0 })}
       {...listeners}
       {...ticketOpenHandlers(props.onOpen)}
       className={cn(
@@ -416,9 +439,11 @@ export const KanbanCard = memo(function KanbanCard(props: KanbanTicketViewProps)
         <KanbanTicketMenu
           ticket={ticket}
           canEdit={props.canEdit}
+          threads={props.threads}
           linkableThreads={props.linkableThreads}
           onOpen={props.onOpen}
           onLinkThread={props.onLinkThread}
+          onUnlinkThread={props.onUnlinkThread}
           onDelete={props.onDelete}
         />
       </span>

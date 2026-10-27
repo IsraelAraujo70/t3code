@@ -98,9 +98,11 @@ export const KanbanListRow = memo(function KanbanListRow(props: KanbanTicketView
           <KanbanTicketMenu
             ticket={ticket}
             canEdit={props.canEdit}
+            threads={props.threads}
             linkableThreads={props.linkableThreads}
             onOpen={props.onOpen}
             onLinkThread={props.onLinkThread}
+            onUnlinkThread={props.onUnlinkThread}
             onDelete={props.onDelete}
           />
         </span>

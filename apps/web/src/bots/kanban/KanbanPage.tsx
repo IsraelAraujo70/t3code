@@ -241,6 +241,7 @@ function KanbanBoardView(props: {
   const create = useAtomCommand(botsEnvironment.kanbanCreateTicket, { label: "kanban create" });
   const remove = useAtomCommand(botsEnvironment.kanbanDeleteTicket, { label: "kanban delete" });
   const link = useAtomCommand(botsEnvironment.kanbanLinkThread, { label: "kanban link" });
+  const unlink = useAtomCommand(botsEnvironment.kanbanUnlinkThread, { label: "kanban unlink" });
   const canEdit = useAtomValue(botsEnvironment.kanbanMoveTicket.permissionAtom(environmentId));
   const shells = useThreadShells();
   const navigate = useNavigate();
@@ -423,6 +424,12 @@ function KanbanBoardView(props: {
                     reportCommandResult(
                       "Could not link the thread",
                       await link({ environmentId, input: { ticketId: ticket.id, threadId } }),
+                    )
+                  }
+                  onUnlinkThread={async (threadId: ThreadId) =>
+                    reportCommandResult(
+                      "Could not unlink the thread",
+                      await unlink({ environmentId, input: { ticketId: ticket.id, threadId } }),
                     )
                   }
                   onDelete={async () => {

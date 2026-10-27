@@ -22,6 +22,8 @@ export interface KanbanLookups {
   readonly peopleById: ReadonlyMap<string, KanbanPerson>;
   readonly labelsById: ReadonlyMap<string, KanbanLabel>;
   readonly statesById: ReadonlyMap<string, LinearWorkflowState>;
+  /** Fill of each started state's glyph: a team's started states go from half to three quarters. */
+  readonly startedProgressById: ReadonlyMap<string, number>;
   readonly projectsById: ReadonlyMap<string, KanbanLinearProject>;
   readonly milestonesById: ReadonlyMap<string, KanbanMilestone>;
   readonly cyclesById: ReadonlyMap<string, KanbanCycle>;
@@ -51,6 +53,7 @@ export function buildKanbanLookups(
     peopleById: byId(snapshot.people),
     labelsById: byId(snapshot.labels),
     statesById: byId(snapshot.states),
+    startedProgressById: startedProgressById(snapshot.states),
     projectsById: byId(snapshot.linearProjects),
     milestonesById: byId(snapshot.milestones),
     cyclesById: byId(snapshot.cycles),
@@ -98,13 +101,25 @@ const LOCAL_STATE_DISPLAY: Record<KanbanLocalState, Omit<KanbanStatusDisplay, "n
   done: { stateType: "completed", color: "#4cb782", progress: 1 },
 };
 
-/** A Linear state's fill: the team's started states go from half to three quarters, in order. */
-function startedProgress(lookups: KanbanLookups, state: LinearWorkflowState): number {
-  const started = [...lookups.statesById.values()]
-    .filter((candidate) => candidate.teamId === state.teamId && candidate.type === "started")
-    .sort((a, b) => a.position - b.position);
-  const index = started.findIndex((candidate) => candidate.id === state.id);
-  return started.length <= 1 || index < 0 ? 0.5 : 0.5 + (0.25 * index) / (started.length - 1);
+function startedProgressById(
+  states: ReadonlyArray<LinearWorkflowState>,
+): ReadonlyMap<string, number> {
+  const byTeam = new Map<string, LinearWorkflowState[]>();
+  for (const state of states) {
+    if (state.type !== "started") continue;
+    byTeam.set(state.teamId, [...(byTeam.get(state.teamId) ?? []), state]);
+  }
+  const progress = new Map<string, number>();
+  for (const started of byTeam.values()) {
+    started.sort((a, b) => a.position - b.position);
+    started.forEach((state, index) =>
+      progress.set(
+        state.id,
+        started.length <= 1 ? 0.5 : 0.5 + (0.25 * index) / (started.length - 1),
+      ),
+    );
+  }
+  return progress;
 }
 
 /** A ticket's status for its glyph; a Linear state missing from the snapshot reads as backlog. */
@@ -126,6 +141,6 @@ export function ticketStatusDisplay(
     name: state.name,
     stateType: state.type,
     color: state.color,
-    progress: state.type === "started" ? startedProgress(lookups, state) : 0,
+    progress: lookups.startedProgressById.get(state.id) ?? 0,
   };
 }
