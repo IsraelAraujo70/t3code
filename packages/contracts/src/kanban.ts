@@ -368,7 +368,10 @@ export const KanbanFilterClause = Schema.Union([
 ]);
 export type KanbanFilterClause = typeof KanbanFilterClause.Type;
 
-/** Board columns, list sections and swimlanes group by one of these. */
+/**
+ * Board columns, list sections and swimlanes group by one of these. `threadStatus` is the most
+ * urgent status of the ticket's linked threads, as the client sees them.
+ */
 export const KANBAN_GROUPINGS = [
   "status",
   "assignee",
@@ -376,12 +379,20 @@ export const KANBAN_GROUPINGS = [
   "label",
   "project",
   "cycle",
+  "threadStatus",
   "none",
 ] as const;
 export const KanbanGrouping = Schema.Literals(KANBAN_GROUPINGS);
 export type KanbanGrouping = typeof KanbanGrouping.Type;
 
-export const KANBAN_ORDERINGS = ["priority", "updated", "created", "manual", "dueDate"] as const;
+export const KANBAN_ORDERINGS = [
+  "priority",
+  "updated",
+  "created",
+  "manual",
+  "dueDate",
+  "threadStatus",
+] as const;
 export const KanbanOrdering = Schema.Literals(KANBAN_ORDERINGS);
 export type KanbanOrdering = typeof KanbanOrdering.Type;
 

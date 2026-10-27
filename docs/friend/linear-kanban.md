@@ -241,7 +241,8 @@ returns is decoded, and invalid ones are dropped. Without `OPENROUTER_API_KEY` t
 ### Display and views
 
 A view stores its filters and display: board or list, columns and swimlanes grouped by status,
-assignee, priority, label, project or cycle, ordering (priority, updated, created, manual, due date),
+assignee, priority, label, project, cycle or thread status, ordering (priority, updated, created,
+manual, due date, thread status),
 completed issues (all, past week, past month, none), closed tickets by recency, sub-issues, empty
 columns, hidden columns, and the card properties shown. Empty or hidden columns fold into a "Hidden
 columns" panel. Views are tabs; they can be saved, renamed, reordered and deleted, and live on the
@@ -256,6 +257,24 @@ user. Nothing is written to Linear.
 
 Manual order follows Linear's `sortOrder` (and a local ticket's own). Dragging to reorder inside a
 column is not offered for Linear tickets: the order is shared by the whole team in Linear.
+
+#### Grouping by thread status
+
+A ticket takes the most urgent status of its linked threads, in this rank
+(`THREAD_STATUS_RANK` in `kanbanView.ts`):
+
+1. Needs approval
+2. Waiting for answer
+3. Failed
+4. Working
+5. Settled (idle, ready or done: T3 does not tell these apart)
+6. No thread: no linked thread, or none this client knows (archived or on another environment)
+
+Failed ranks above Working because it needs the user and Working does not. Groups and swimlanes
+follow this rank, with "No thread" last. Ordering by thread status uses the same rank, and ties
+fall back to the newest update, as ordering by priority does. The status is the client's live view
+of the threads, so a card moves when its thread changes, as the thread status filter does. It is
+not stored on the ticket, so dropping a card on a thread status group does nothing.
 
 ### Writes
 

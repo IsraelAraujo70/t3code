@@ -366,6 +366,19 @@ export function KanbanGroupIconView(props: {
           style={{ width: size, height: size }}
         />
       );
+    case "threadStatus":
+      return (
+        <span
+          aria-hidden
+          className={cn(
+            "shrink-0 rounded-full",
+            icon.status === null
+              ? "border border-muted-foreground/60"
+              : THREAD_STATUS_DOT[icon.status],
+          )}
+          style={{ width: Math.round(size * 0.55), height: Math.round(size * 0.55) }}
+        />
+      );
     case "none":
       return null;
   }
