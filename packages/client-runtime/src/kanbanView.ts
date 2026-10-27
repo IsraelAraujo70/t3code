@@ -12,6 +12,7 @@ import {
   kanbanStateTypeOf,
   LINEAR_STATE_TYPE_ORDER,
   linearWorkspaceId,
+  LOCAL_KANBAN_WORKSPACE_ID,
   type KanbanCycle,
   type KanbanDateFilterField,
   type KanbanFilterClause,
@@ -175,13 +176,26 @@ function setValueReader(snapshot: KanbanSnapshot, context: KanbanViewContext) {
   const workspaceBots = new Map(
     snapshot.workspaces.map((workspace) => [workspace.id, workspace.botIds]),
   );
+  // A local ticket on a linked project's board sits in the first state of its category.
+  const linkedFirstOfCategory = new Map<string, Map<KanbanLocalState, string>>();
+  for (const link of snapshot.links) {
+    const firsts = new Map<KanbanLocalState, string>();
+    for (const state of sortStates(snapshot.states.filter((s) => s.teamId === link.teamId))) {
+      const category = kanbanLocalStateOf({ kind: "linear", stateId: state.id }, statesById);
+      if (category !== null && !firsts.has(category)) firsts.set(category, state.id);
+    }
+    linkedFirstOfCategory.set(link.projectId, firsts);
+  }
   const person = (id: string | null) => (id === null ? ["none"] : me.has(id) ? [id, "me"] : [id]);
   const orNone = (value: string | null) => [value ?? "none"];
 
   return (ticket: KanbanTicket, field: KanbanSetFilterField): ReadonlyArray<string> => {
     switch (field) {
       case "status": {
-        if (ticket.status.kind === "local") return [ticket.status.state];
+        if (ticket.status.kind === "local") {
+          const folded = linkedFirstOfCategory.get(ticket.projectId)?.get(ticket.status.state);
+          return folded === undefined ? [ticket.status.state] : [ticket.status.state, folded];
+        }
         const column =
           kanbanLocalStateOf(ticket.status, statesById) ??
           (isClosedType(kanbanStateTypeOf(ticket.status, statesById)) ? CANCELED_GROUP_ID : null);
@@ -643,6 +657,8 @@ export function dropActionFor(
     case "none":
       return null;
     case "status": {
+      // Several states can fold into one column; dropping where it already sits is no move.
+      if (group.tickets.some((candidate) => candidate.id === ticket.id)) return null;
       const statesById = statesByIdOf(snapshot);
       const column = statusDropColumn(statesById, group.id);
       if (column !== null) {
@@ -899,7 +915,12 @@ function setFieldOptions(
         none,
       ];
     case "bot": {
-      const botIds = new Set<string>(snapshot.workspaces.flatMap((workspace) => workspace.botIds));
+      const reached = snapshot.workspaces.filter((workspace) =>
+        workspace.id === LOCAL_KANBAN_WORKSPACE_ID
+          ? local
+          : organizations.has(workspace.id.slice("linear:".length)),
+      );
+      const botIds = new Set<string>(reached.flatMap((workspace) => workspace.botIds));
       for (const ticket of tickets) if (ticket.botId !== null) botIds.add(ticket.botId);
       return [...botIds].map((botId) => {
         const personId = kanbanBotPersonId(botId);

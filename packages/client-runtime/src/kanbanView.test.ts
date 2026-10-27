@@ -1,4 +1,5 @@
 import {
+  BotId,
   KANBAN_DEFAULT_VIEW_CONFIG,
   KanbanTicketId,
   LinearAccountId,
@@ -525,5 +526,34 @@ describe("filter options and chips", () => {
       op: "contains",
       value: "pix",
     });
+  });
+});
+
+describe("review fixes", () => {
+  it("does not move a ticket dropped on the folded column it already sits in", () => {
+    const extra = { ...states[2]!, id: "s-doing-2", name: "Fazendo", position: 10 };
+    const inExtra = ticket("7", { status: { kind: "linear", stateId: "s-doing-2" } });
+    const wider = { ...snapshot, states: [...states, extra], tickets: [inExtra] };
+    const column = { ...group("in_progress"), tickets: [inExtra] };
+    expect(dropActionFor(wider, inExtra, "status", column)).toBeNull();
+  });
+
+  it("counts and matches a local ticket in the linked state its column shows", () => {
+    const todo = filterOptions(snapshot, LINKED, "status").find((o) => o.value === "s-todo");
+    expect(todo?.count).toBe(1);
+    expect(matches(local, { kind: "set", field: "status", op: "in", values: ["s-todo"] })).toBe(
+      true,
+    );
+  });
+
+  it("offers only the bots of workspaces the board reaches", () => {
+    const scoped: KanbanSnapshot = {
+      ...snapshot,
+      workspaces: [
+        { id: linearWorkspaceId("org"), name: "Moneria", botIds: [BotId.make("ours")] },
+        { id: linearWorkspaceId("elsewhere"), name: "Other", botIds: [BotId.make("theirs")] },
+      ],
+    };
+    expect(filterOptions(scoped, LINKED, "bot").map((option) => option.value)).toEqual(["ours"]);
   });
 });
