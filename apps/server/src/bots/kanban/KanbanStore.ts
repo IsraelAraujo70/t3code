@@ -327,6 +327,7 @@ const LabelIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const PullRequestsJson = Schema.fromJsonString(Schema.Array(KanbanPullRequestRef));
 const ViewConfigJson = Schema.fromJsonString(KanbanViewConfig);
 const encodeLabelIds = Schema.encodeSync(LabelIdsJson);
+const decodeLabelIds = Schema.decodeUnknownOption(LabelIdsJson);
 const encodePullRequests = Schema.encodeSync(PullRequestsJson);
 const decodePullRequests = Schema.decodeUnknownOption(PullRequestsJson);
 const encodeViewConfig = Schema.encodeSync(ViewConfigJson);
@@ -358,7 +359,7 @@ const TicketRow = Schema.Struct({
   priority: Schema.Number,
   estimate: Schema.NullOr(Schema.Number),
   dueDate: Schema.NullOr(Schema.String),
-  labelIds: LabelIdsJson,
+  labelIds: Schema.String,
   linearProjectId: Schema.NullOr(Schema.String),
   milestoneId: Schema.NullOr(Schema.String),
   cycleId: Schema.NullOr(Schema.String),
@@ -452,7 +453,7 @@ function toTicket(row: TicketRow, threadIds: ReadonlyArray<ThreadId>): KanbanTic
     priority: Math.max(0, Math.trunc(row.priority)),
     estimate: row.estimate,
     dueDate: row.dueDate,
-    labelIds: row.labelIds,
+    labelIds: Option.getOrElse(decodeLabelIds(row.labelIds), () => []),
     linearProjectId: row.linearProjectId,
     milestoneId: row.milestoneId,
     cycleId: row.cycleId,

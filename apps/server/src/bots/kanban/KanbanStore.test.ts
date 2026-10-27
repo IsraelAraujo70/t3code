@@ -148,17 +148,41 @@ describe("KanbanStore v2", () => {
         yield* store.setTicketBot(TICKET, bot, "2026-10-03T00:00:00.000Z");
         assert.equal(Option.getOrThrow(yield* store.getTicket(TICKET)).updatedAt, AT);
         yield* sql`UPDATE kanban_tickets SET description = 'T3 description' WHERE id = ${TICKET}`;
-        yield* store.upsertLinearTickets(PROJECT, ACCOUNT, [
-          { ...synced, title: "New", updatedAt: "2026-10-02T00:00:00.000Z" },
-        ]);
-        assert.equal(Option.getOrThrow(yield* store.getTicket(TICKET)).botId, bot);
+        const resynced = {
+          ...synced,
+          title: "New",
+          updatedAt: "2026-10-02T00:00:00.000Z",
+          assigneeId: null,
+          assigneeName: null,
+          labelIds: [],
+          pullRequests: [],
+          parent: null,
+          subIssues: null,
+          closedAt: null,
+          autoClosed: false,
+          dueDate: null,
+          cycleId: null,
+        };
+        yield* store.upsertLinearTickets(PROJECT, ACCOUNT, [resynced]);
+        const after = Option.getOrThrow(yield* store.getTicket(TICKET));
+        const { issueId: _i, teamId: _t, url: _u, stateId: _s, ...resyncedFields } = resynced;
+        assert.deepStrictEqual(after, {
+          ...resyncedFields,
+          projectId: PROJECT,
+          linear: { accountId: ACCOUNT, issueId, teamId, url },
+          status: { kind: "linear", stateId },
+          botId: bot,
+          threadIds: [],
+        });
         assert.deepStrictEqual(
           yield* sql`SELECT description FROM kanban_tickets WHERE id = ${TICKET}`,
           [{ description: "T3 description" }],
         );
-        yield* sql`UPDATE kanban_tickets SET pull_requests = 'broken', sub_total = 0, parent_title = NULL WHERE id = ${TICKET}`;
+        yield* sql`UPDATE kanban_tickets SET pull_requests = 'broken', label_ids = '[1]', sub_total = 0, parent_title = NULL WHERE id = ${TICKET}`;
         const repaired = Option.getOrThrow(yield* store.getTicket(TICKET));
         assert.deepStrictEqual(repaired.pullRequests, []);
+        assert.deepStrictEqual(repaired.labelIds, []);
+        assert.equal((yield* store.listTickets).length, 1);
         assert.isNull(repaired.subIssues);
         assert.isNull(repaired.parent);
       }).pipe(Effect.provide(layer)),
