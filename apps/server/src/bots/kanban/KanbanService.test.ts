@@ -1069,6 +1069,39 @@ describe("KanbanService", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("learns the account's Linear user before importing an isMe view", () => {
+    const { linear, layer } = setup({
+      // An account added before its first sync: its user is not known yet.
+      storeOverrides: (store) => ({
+        getAccount: (id) =>
+          store
+            .getAccount(id)
+            .pipe(Effect.map(Option.map((account) => ({ ...account, userId: null })))),
+      }),
+    });
+    linear.customViews = [
+      {
+        id: "cv-mine",
+        name: "Mine",
+        icon: null,
+        color: null,
+        shared: true,
+        teamId: null,
+        filterData: { assignee: { isMe: { eq: true } } },
+      },
+    ];
+    return Effect.gen(function* () {
+      const { kanban, account } = yield* linkedBoard;
+      const result = yield* kanban.importLinearViews({ accountId: account.id });
+      assert.deepStrictEqual(result.imported[0]?.config.filters[1], {
+        kind: "set",
+        field: "assignee",
+        op: "in",
+        values: ["u-israel"],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("imports the Linear views T3 can express, once", () => {
     const { linear, layer } = setup();
     const view = (id: string, name: string, teamId: string | null, filterData: unknown) => ({

@@ -1321,7 +1321,20 @@ const make = Effect.gen(function* () {
     input: LinearAccountRef,
   ) {
     const account = yield* requireAccount(input.accountId);
-    const customViews = yield* linear.customViews(yield* accountKey(account.id));
+    const key = yield* accountKey(account.id);
+    // Linear's `isMe` is this account's user: learn it before translating, never fall back to T3's "me".
+    let userId = account.userId;
+    if (userId === null) {
+      const viewer = yield* linear.viewer(key);
+      if (viewer.userId === null) {
+        return yield* new KanbanError({
+          message: "Could not identify this account's Linear user.",
+        });
+      }
+      userId = viewer.userId;
+      yield* store.setAccountUser(account.id, viewer.userId, viewer.userAvatarUrl);
+    }
+    const customViews = yield* linear.customViews(key);
     const [accounts, links, labels, states] = yield* Effect.all([
       store.listAccounts,
       store.listLinks,
@@ -1353,8 +1366,7 @@ const make = Effect.gen(function* () {
       },
       statesByName: (name: string) =>
         organizationStates.filter(named(name)).map((state) => state.id),
-      // An account whose user is not known yet still reads `isMe` as T3's "me".
-      me: account.userId ?? "me",
+      me: userId,
     };
 
     const imported: KanbanView[] = [];
