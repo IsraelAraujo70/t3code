@@ -193,13 +193,31 @@ const shortDate = (date: string) => {
 
 const LINEAR_ONLY_KEYS = ["linearProjectId", "milestoneId", "cycleId", "estimate"] as const;
 
-/** What one sync pass already refreshed, so links sharing an account or team ask Linear once. */
+/**
+ * What one sync pass already refreshed, so links sharing an account or team ask Linear once. Each
+ * entry is the refresh's failure, or null once it succeeded; every link that needs it shares it.
+ */
 interface SyncPass {
-  readonly viewers: Set<LinearAccountId>;
-  /** The failure of an organization's catalog refresh, or null once it succeeded. */
+  readonly viewers: Map<LinearAccountId, KanbanError | null>;
   readonly catalogs: Map<string, KanbanError | null>;
-  readonly cycleTeams: Set<string>;
+  readonly cycleTeams: Map<string, KanbanError | null>;
 }
+
+/** Runs `refresh` once per pass for `id`, and fails every caller with its failure. */
+const oncePerPass = Effect.fn("KanbanService.oncePerPass")(function* <K>(
+  outcomes: Map<K, KanbanError | null>,
+  id: K,
+  refresh: Effect.Effect<void, KanbanError>,
+) {
+  let outcome = outcomes.get(id);
+  if (outcome === undefined) {
+    outcome = yield* refresh.pipe(
+      Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
+    );
+    outcomes.set(id, outcome);
+  }
+  if (outcome !== null) return yield* outcome;
+});
 
 const kanbanError = (message: string) => (cause: unknown) => new KanbanError({ message, cause });
 
@@ -290,6 +308,8 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.sliding<void>(1);
   const publish = PubSub.publish(changes, undefined).pipe(Effect.asVoid);
   const syncPermit = yield* Semaphore.make(1);
+  // Imports look a view up before inserting it, so two at once would both insert it.
+  const importPermit = yield* Semaphore.make(1);
 
   const readSnapshot = Effect.gen(function* () {
     const [
@@ -475,29 +495,34 @@ const make = Effect.gen(function* () {
     now: DateTime.Utc,
   ) {
     const account = yield* requireAccount(link.accountId);
-    let changed = false;
-    if ((full || account.userId === null) && !pass.viewers.has(account.id)) {
-      pass.viewers.add(account.id);
-      const viewer = yield* linear.viewer(key);
-      yield* store.setAccountUser(account.id, viewer.userId, viewer.userAvatarUrl);
-      changed = true;
-    }
-    if (!full) return changed;
-    const previous = pass.catalogs.get(account.organizationId);
-    if (previous === undefined) {
-      const failed = yield* refreshCatalog(key, account.organizationId).pipe(
-        Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
+    const needsViewer = full || account.userId === null;
+    if (needsViewer) {
+      yield* oncePerPass(
+        pass.viewers,
+        account.id,
+        linear
+          .viewer(key)
+          .pipe(
+            Effect.flatMap((viewer) =>
+              store.setAccountUser(account.id, viewer.userId, viewer.userAvatarUrl),
+            ),
+          ),
       );
-      pass.catalogs.set(account.organizationId, failed);
-      if (failed !== null) return yield* failed;
-    } else if (previous !== null) {
-      return yield* previous;
     }
-    if (!pass.cycleTeams.has(link.teamId)) {
-      pass.cycleTeams.add(link.teamId);
-      const since = DateTime.formatIso(DateTime.subtract(now, { days: CYCLE_WINDOW_DAYS }));
-      yield* store.replaceTeamCycles(link.teamId, yield* linear.cycles(key, link.teamId, since));
-    }
+    if (!full) return needsViewer;
+    yield* oncePerPass(
+      pass.catalogs,
+      account.organizationId,
+      refreshCatalog(key, account.organizationId),
+    );
+    const since = DateTime.formatIso(DateTime.subtract(now, { days: CYCLE_WINDOW_DAYS }));
+    yield* oncePerPass(
+      pass.cycleTeams,
+      link.teamId,
+      linear
+        .cycles(key, link.teamId, since)
+        .pipe(Effect.flatMap((cycles) => store.replaceTeamCycles(link.teamId, cycles))),
+    );
     return true;
   });
 
@@ -570,7 +595,7 @@ const make = Effect.gen(function* () {
     syncPermit.withPermits(1)(
       Effect.gen(function* () {
         const links = (yield* store.listLinks).filter(filter);
-        const pass: SyncPass = { viewers: new Set(), catalogs: new Map(), cycleTeams: new Set() };
+        const pass: SyncPass = { viewers: new Map(), catalogs: new Map(), cycleTeams: new Map() };
         for (const link of links) yield* syncLink(link, forceFull, pass);
       }),
     );
@@ -1194,7 +1219,13 @@ const make = Effect.gen(function* () {
   ) {
     const ticket = yield* requireTicket(input.ticketId);
     if (ticket.linear !== null) {
-      yield* linear.deleteComment(yield* accountKey(ticket.linear.accountId), input.commentId);
+      const key = yield* accountKey(ticket.linear.accountId);
+      if ((yield* linear.commentIssueId(key, input.commentId)) !== ticket.linear.issueId) {
+        return yield* new KanbanError({
+          message: `Comment ${input.commentId} does not exist on ${ticket.identifier}.`,
+        });
+      }
+      yield* linear.deleteComment(key, input.commentId);
       return input;
     }
     if (!(yield* store.deleteLocalComment(ticket.id, input.commentId))) {
@@ -1332,7 +1363,7 @@ const make = Effect.gen(function* () {
     }
     if (imported.length > 0) yield* publish;
     return { imported, skipped };
-  });
+  }, importPermit.withPermits(1));
 
   const createLabel = Effect.fn("KanbanService.createLabel")(function* (
     input: KanbanLabelCreateInput,

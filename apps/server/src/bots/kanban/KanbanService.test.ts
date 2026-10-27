@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -149,6 +151,11 @@ function makeLinear() {
     ] as KanbanCycle[],
     detail: null as LinearIssueDetail | null,
     customViews: [] as LinearCustomView[],
+    /** The issue of each comment Linear knows. */
+    commentIssues: new Map<string, string>(),
+    deletedComments: [] as string[],
+    /** Teams whose cycles Linear refuses to read. */
+    failCycles: new Set<string>(),
   };
   const seen = (key: Redacted.Redacted) => {
     world.keys.push(Redacted.value(key));
@@ -237,13 +244,25 @@ function makeLinear() {
         botActor: null,
         parentId: null,
       }),
-    deleteComment: () => Effect.void,
+    commentIssueId: (_key, commentId) => Effect.succeed(world.commentIssues.get(commentId) ?? null),
+    deleteComment: (_key, commentId) =>
+      Effect.sync(() => {
+        world.deletedComments.push(commentId);
+      }),
     people: () => catalog("people", () => PEOPLE),
     labels: () => catalog("labels", () => LABELS),
     linearProjects: () => catalog("projects", () => world.projects),
     milestones: () => catalog("milestones", () => world.milestones),
     cycles: (_key, teamId) =>
-      catalog(`cycles:${teamId}`, () => world.cycles.filter((cycle) => cycle.teamId === teamId)),
+      catalog(`cycles:${teamId}`, () =>
+        world.cycles.filter((cycle) => cycle.teamId === teamId),
+      ).pipe(
+        Effect.tap(() =>
+          world.failCycles.has(teamId)
+            ? Effect.fail(new KanbanError({ message: "Linear: cycles unavailable" }))
+            : Effect.void,
+        ),
+      ),
     customViews: () => Effect.succeed(world.customViews),
   });
   return { world, layer: Layer.succeed(LinearClient, service) };
@@ -265,11 +284,23 @@ function makeSecrets() {
   return { stored, layer };
 }
 
-function setup() {
+type StoreService = KanbanStore.KanbanStore["Service"];
+
+/** `storeOverrides` replaces store methods for the service and the test alike. */
+function setup(
+  options: { readonly storeOverrides?: (store: StoreService) => Partial<StoreService> } = {},
+) {
   const linear = makeLinear();
   const secrets = makeSecrets();
+  const storeLayer = Layer.effect(
+    KanbanStore.KanbanStore,
+    Effect.gen(function* () {
+      const store = yield* KanbanStore.KanbanStore;
+      return KanbanStore.KanbanStore.of({ ...store, ...options.storeOverrides?.(store) });
+    }),
+  ).pipe(Layer.provide(KanbanStore.layerFromDb));
   const layer = layerService.pipe(
-    Layer.provideMerge(Layer.merge(KanbanStore.layerFromDb, botsStoreFromDb)),
+    Layer.provideMerge(Layer.merge(storeLayer, botsStoreFromDb)),
     Layer.provide(BotsDb.layerMemory),
     Layer.provide(linear.layer),
     Layer.provide(secrets.layer),
@@ -1121,6 +1152,131 @@ describe("KanbanService", () => {
       );
       const unknown = yield* kanban.deleteLabel({ labelId: chore.id }).pipe(Effect.flip);
       assert.include(unknown.message, "does not exist");
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect("deletes a Linear comment only when it is on the ticket's own issue", () => {
+    const { linear, layer } = setup();
+    linear.window = [issue("1"), issue("2")];
+    linear.commentIssues.set("lc-1", "1");
+    linear.commentIssues.set("lc-2", "2");
+    return Effect.gen(function* () {
+      const { kanban } = yield* linkedBoard;
+      const ticket = ticketByIssue(yield* kanban.readSnapshot, "1")!;
+
+      const refused = yield* kanban
+        .deleteComment({ ticketId: ticket.id, commentId: "lc-2" })
+        .pipe(Effect.flip);
+      assert.include(refused.message, "does not exist on BACK-1");
+      const unknown = yield* kanban
+        .deleteComment({ ticketId: ticket.id, commentId: "lc-gone" })
+        .pipe(Effect.flip);
+      assert.include(unknown.message, "does not exist");
+      assert.deepStrictEqual(linear.deletedComments, []);
+
+      yield* kanban.deleteComment({ ticketId: ticket.id, commentId: "lc-1" });
+      assert.deepStrictEqual(linear.deletedComments, ["lc-1"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("two overlapping imports save each Linear view once", () => {
+    const entered = Deferred.makeUnsafe<void>();
+    const gate = Deferred.makeUnsafe<void>();
+    let lookups = 0;
+    let inserts = 0;
+    // The first insert waits until a second lookup has answered, which only an overlapping import
+    // can make; when imports are serialized none comes, and the clock lets the insert go.
+    const { linear, layer } = setup({
+      storeOverrides: (store) => ({
+        findViewByLinearId: (linearViewId) =>
+          store.findViewByLinearId(linearViewId).pipe(
+            Effect.tap(() => {
+              lookups += 1;
+              return lookups === 2 ? Deferred.succeed(gate, undefined) : Effect.void;
+            }),
+          ),
+        insertView: (view) =>
+          Effect.suspend(() => {
+            inserts += 1;
+            return inserts === 1
+              ? Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(gate).pipe(Effect.timeoutOption("1 second"))),
+                )
+              : Effect.void;
+          }).pipe(Effect.andThen(store.insertView(view))),
+      }),
+    });
+    linear.customViews = [
+      {
+        id: "cv-all",
+        name: "Everything",
+        icon: null,
+        color: null,
+        shared: true,
+        teamId: null,
+        filterData: {},
+      },
+    ];
+    return Effect.gen(function* () {
+      const { kanban, account } = yield* linkedBoard;
+      const both = yield* Effect.all(
+        [
+          kanban.importLinearViews({ accountId: account.id }),
+          kanban.importLinearViews({ accountId: account.id }),
+        ],
+        { concurrency: 2 },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("1 second");
+      const results = yield* Fiber.join(both);
+
+      assert.deepStrictEqual(
+        results.map((result) => result.imported.length),
+        [1, 0],
+      );
+      const saved = (yield* kanban.readSnapshot).views.filter(
+        (view) => view.linearViewId === "cv-all",
+      );
+      assert.equal(saved.length, 1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a team whose cycles fail fails every link of that team in the pass", () => {
+    const { linear, layer } = setup();
+    linear.window = [issue("1")];
+    linear.failCycles.add(TEAM);
+    return Effect.gen(function* () {
+      const { kanban, account } = yield* linkedBoard;
+      yield* kanban.linkProject({
+        projectId: OTHER_PROJECT,
+        accountId: account.id,
+        teamId: TEAM,
+        linearProjectId: null,
+      });
+      linear.catalogReads.length = 0;
+      yield* kanban.sync({});
+      // Read once for both links, and its failure lands on both.
+      assert.deepStrictEqual(
+        linear.catalogReads.filter((read) => read.startsWith("cycles:")),
+        [`cycles:${TEAM}`],
+      );
+      const links = (yield* kanban.readSnapshot).links;
+      assert.deepStrictEqual(
+        links.map((link) => [link.projectId, link.syncError]).sort(),
+        [
+          [PROJECT, "Linear: cycles unavailable"],
+          [OTHER_PROJECT, "Linear: cycles unavailable"],
+        ].sort(),
+      );
+
+      // Neither link recorded a full sync, so the next poll reads the whole window again.
+      linear.failCycles.delete(TEAM);
+      linear.queries.length = 0;
+      yield* kanban.poll;
+      assert.deepStrictEqual(
+        linear.queries.flatMap((query) => (query.kind === "ids" ? [] : [query.kind])),
+        ["window", "window"],
+      );
+      assert.isTrue((yield* kanban.readSnapshot).links.every((link) => link.syncError === null));
     }).pipe(Effect.provide(layer));
   });
 });

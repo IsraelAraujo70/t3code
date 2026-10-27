@@ -150,6 +150,11 @@ export class LinearClient extends Context.Service<
       issueId: string,
       body: string,
     ) => Effect.Effect<LinearComment, KanbanError>;
+    /** The issue a comment is on, or null when it is on none (or Linear does not know it). */
+    readonly commentIssueId: (
+      key: Redacted.Redacted,
+      commentId: string,
+    ) => Effect.Effect<string | null, KanbanError>;
     readonly deleteComment: (
       key: Redacted.Redacted,
       commentId: string,
@@ -266,6 +271,11 @@ const IssueCreateData = Schema.Struct({
 const IssueDetailData = Schema.Struct({ issue: IssueDetailNode });
 const CommentCreateData = Schema.Struct({
   commentCreate: Schema.Struct({ success: Schema.Boolean, comment: Schema.NullOr(CommentNode) }),
+});
+const CommentIssueData = Schema.Struct({
+  comment: Schema.NullOr(
+    Schema.Struct({ issue: Schema.NullOr(Schema.Struct({ id: Schema.String })) }),
+  ),
 });
 const CommentDeleteData = Schema.Struct({
   commentDelete: Schema.Struct({ success: Schema.Boolean }),
@@ -641,6 +651,11 @@ export const make = Effect.gen(function* () {
       }
       return toComment(commentCreate.comment);
     }),
+    commentIssueId: Effect.fn("LinearClient.commentIssueId")((key, commentId) =>
+      request(key, CommentIssueData, `query($id: String!) { comment(id: $id) { issue { id } } }`, {
+        id: commentId,
+      }).pipe(Effect.map(({ comment }) => comment?.issue?.id ?? null)),
+    ),
     deleteComment: Effect.fn("LinearClient.deleteComment")(function* (key, commentId) {
       const { commentDelete } = yield* request(
         key,
