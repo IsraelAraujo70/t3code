@@ -319,7 +319,8 @@ export function toIssueDetail(node: typeof IssueDetailNode.Type): LinearIssueDet
 }
 
 const PRIORITY_NAMES = ["No priority", "Urgent", "High", "Medium", "Low"];
-const priorityName = (priority: number | null) =>
+/** Linear's name for a priority ("High"); null stays null. */
+export const priorityName = (priority: number | null) =>
   priority === null ? null : (PRIORITY_NAMES[priority] ?? String(priority));
 
 function describeChange(

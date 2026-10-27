@@ -135,6 +135,9 @@ export class LinearClient extends Context.Service<
         readonly projectId: string | null;
         readonly title: string;
         readonly description: string | null;
+        readonly priority?: number;
+        readonly assigneeId?: string | null;
+        readonly labelIds?: ReadonlyArray<string>;
       },
     ) => Effect.Effect<LinearIssue, KanbanError>;
     /** Description, parent, sub-issues, the first 100 comments and history entries. */
@@ -573,6 +576,9 @@ export const make = Effect.gen(function* () {
             title: input.title,
             ...(input.projectId === null ? {} : { projectId: input.projectId }),
             ...(input.description === null ? {} : { description: input.description }),
+            ...(input.priority === undefined ? {} : { priority: input.priority }),
+            ...((input.assigneeId ?? null) === null ? {} : { assigneeId: input.assigneeId }),
+            ...(input.labelIds === undefined ? {} : { labelIds: input.labelIds }),
           },
         },
       ).pipe(
