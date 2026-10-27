@@ -268,7 +268,8 @@ describe("CodexAdapterV2 runtime policy", () => {
         friend_role: { kind: "application", value: "## Role\n\nYou are Ada." },
         friend_memories: { kind: "application", value: "## Memories\n\n- likes tea" },
       });
-      assert.isUndefined(bot.collaborationMode);
+      // Bot instructions stay out of collaboration mode, whose instructions model defaults replace.
+      assert.deepEqual(bot.collaborationMode, ordinary.collaborationMode);
       // Alongside T3's own context and an app's untrusted context, all are kept.
       const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-bot",

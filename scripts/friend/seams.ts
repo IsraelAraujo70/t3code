@@ -354,6 +354,11 @@ export const SEAMS: readonly Seam[] = [
     why: "the Bots tab has no remembered detail page",
   },
   {
+    file: "apps/web/src/components/chat/MessagesTimeline.browser.test.tsx",
+    markers: 1,
+    why: "the query mock honors null, so user rows can read the bot directory",
+  },
+  {
     file: "apps/mobile/src/features/workspace/WorkspaceToolbar.ios.tsx",
     markers: 1,
     why: "the Bots tab type has no iOS search label",

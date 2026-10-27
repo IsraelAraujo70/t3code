@@ -19,17 +19,15 @@ const resolve = Effect.fnUntraced(function* (targetThreadId: ThreadId) {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const caller = yield* McpInvocationContext.requireThreadScope(scope, "Watching a thread");
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const target = yield* threads
-    .getThreadShell(targetThreadId)
-    .pipe(
-      Effect.mapError(
-        () =>
-          new OrchestratorMcpFailure({
-            code: "orchestration_error",
-            message: "Could not read threads.",
-          }),
-      ),
-    );
+  const target = yield* threads.getThreadShell(targetThreadId).pipe(
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Could not read threads.",
+        }),
+    ),
+  );
   if (target === null || target.deletedAt !== null) {
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",

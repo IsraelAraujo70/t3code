@@ -930,7 +930,7 @@ const startTurnWithBots = (
 
     yield* runExecution.startRootRun({
       commandId: CommandId.make("command:run-execution-bot"),
-      appThread: { id: threadId } as OrchestrationV2AppThread,
+      appThread: rootAppThread(threadId),
       providerSessionId: ProviderSessionId.make("session:run-execution-bot"),
       session,
       run: {

@@ -33,8 +33,9 @@ const environmentQuery = vi.hoisted(() => ({
 }));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
-  useEnvironmentQuery: (() => ({
-    data: environmentQuery.data,
+  // Fork (friend): a null query has no data, as in the real hook; user rows query the bot directory.
+  useEnvironmentQuery: ((query: unknown) => ({
+    data: query === null ? null : environmentQuery.data,
     dataUpdatedAt: 0,
     error: environmentQuery.error,
     failure: null,
