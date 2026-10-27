@@ -51,6 +51,7 @@ export function createBotsEnvironmentAtoms<R, E>(
     Tag extends (typeof BOTS_WS_METHODS)[Exclude<
       keyof typeof BOTS_WS_METHODS,
       | "directorySubscribe"
+      | "kanbanSubscribe"
       | "dictationTranscribe"
       | "voiceSession"
       | "voiceReady"
@@ -60,13 +61,18 @@ export function createBotsEnvironmentAtoms<R, E>(
   >(
     label: string,
     tag: Tag,
+    commandScheduler = scheduler,
   ) =>
     createEnvironmentRpcCommand(runtime, {
       label: `environment-data:bots:${label}`,
       tag,
-      scheduler,
+      scheduler: commandScheduler,
       concurrency,
     });
+  // Kanban writes wait on Linear, so they queue apart from the bot mutations.
+  const kanbanScheduler = createAtomCommandScheduler();
+  const kanbanCommand = <Tag extends Parameters<typeof command>[1]>(label: string, tag: Tag) =>
+    command(`kanban-${label}`, tag, kanbanScheduler);
   return {
     /** Sections and bots in sidebar order, memories, and the owner profile; refreshed on change. */
     directory: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -89,6 +95,24 @@ export function createBotsEnvironmentAtoms<R, E>(
     arrange: command("arrange", BOTS_WS_METHODS.arrange),
     registerPushDevice: command("register-push-device", BOTS_WS_METHODS.pushDeviceRegister),
     unregisterPushDevice: command("unregister-push-device", BOTS_WS_METHODS.pushDeviceUnregister),
+    /** Kanban accounts, links, workflow states and tickets; refreshed on change. */
+    kanban: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:bots:kanban",
+      tag: BOTS_WS_METHODS.kanbanSubscribe,
+    }),
+    kanbanAddAccount: kanbanCommand("add-account", BOTS_WS_METHODS.kanbanAccountAdd),
+    kanbanRenameAccount: kanbanCommand("rename-account", BOTS_WS_METHODS.kanbanAccountRename),
+    kanbanDeleteAccount: kanbanCommand("delete-account", BOTS_WS_METHODS.kanbanAccountDelete),
+    kanbanLinearTeams: kanbanCommand("linear-teams", BOTS_WS_METHODS.kanbanLinearTeams),
+    kanbanLinkProject: kanbanCommand("link-project", BOTS_WS_METHODS.kanbanProjectLink),
+    kanbanUnlinkProject: kanbanCommand("unlink-project", BOTS_WS_METHODS.kanbanProjectUnlink),
+    kanbanWorkspaceBots: kanbanCommand("workspace-bots", BOTS_WS_METHODS.kanbanWorkspaceBots),
+    kanbanCreateTicket: kanbanCommand("create-ticket", BOTS_WS_METHODS.kanbanTicketCreate),
+    kanbanMoveTicket: kanbanCommand("move-ticket", BOTS_WS_METHODS.kanbanTicketMove),
+    kanbanDeleteTicket: kanbanCommand("delete-ticket", BOTS_WS_METHODS.kanbanTicketDelete),
+    kanbanLinkThread: kanbanCommand("link-thread", BOTS_WS_METHODS.kanbanTicketLinkThread),
+    kanbanUnlinkThread: kanbanCommand("unlink-thread", BOTS_WS_METHODS.kanbanTicketUnlinkThread),
+    kanbanSync: kanbanCommand("sync", BOTS_WS_METHODS.kanbanSync),
     // Not queued behind the bot mutations: a dictation is slow and independent of them.
     transcribeDictation: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:bots:transcribe-dictation",

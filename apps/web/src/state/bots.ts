@@ -1,5 +1,5 @@
 import { createBotsEnvironmentAtoms } from "@t3tools/client-runtime/state/bots";
-import type { BotDirectory, EnvironmentId } from "@t3tools/contracts";
+import type { BotDirectory, EnvironmentId, KanbanSnapshot } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useServerConfigs } from "./entities";
@@ -46,4 +46,15 @@ export function useBotDirectory(environmentId: EnvironmentId | null): {
     environmentId === null ? null : botsEnvironment.directory({ environmentId, input: {} }),
   );
   return { directory: query.data, error: query.error };
+}
+
+/** The live kanban of the bots host; null until the first snapshot arrives. */
+export function useKanbanSnapshot(environmentId: EnvironmentId | null): {
+  readonly snapshot: KanbanSnapshot | null;
+  readonly error: string | null;
+} {
+  const query = useEnvironmentQuery(
+    environmentId === null ? null : botsEnvironment.kanban({ environmentId, input: {} }),
+  );
+  return { snapshot: query.data, error: query.error };
 }

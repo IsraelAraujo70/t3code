@@ -372,13 +372,23 @@ export const SEAMS: readonly Seam[] = [
   { file: "apps/desktop/src/ipc/DesktopIpcHandlers.ts", markers: 2, why: "Mac self-update IPC" },
   {
     file: "apps/web/src/components/sidebar/SidebarChrome.tsx",
-    markers: 2,
-    why: "the Mac app's self-update notice in the sidebar footer",
+    markers: 3,
+    why: "the Mac app's self-update notice and the kanban button in the sidebar footer",
+  },
+  {
+    file: "apps/web/src/components/sidebar/mainAppLocation.ts",
+    markers: 1,
+    why: "the kanban page is a utility page, like pull requests",
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/settings.bots'",
     why: "generated route for the Bots settings page",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.kanban'",
+    why: "generated route for the kanban page",
   },
 ];
 
@@ -392,6 +402,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
+  "packages/contracts/src/kanban.ts",
   "packages/contracts/src/guest.ts",
   "apps/bia/",
   "packages/client-runtime/src/state/bots.ts",

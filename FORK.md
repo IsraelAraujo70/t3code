@@ -242,6 +242,18 @@ newest two kept) and relaunches. The renderer checks when the bots host connects
 regains focus, at most every 15 minutes, and shows the offer in the sidebar footer. The Mac runs
 whatever the bots host publishes: writing that directory on omarchy is shipping code to the Mac.
 
+## Kanban and Linear
+
+The sidebar footer's Kanban button (after Pull Requests, only while a bots host is connected) opens a
+board of tickets per project. A project linked to a Linear team (Settings → Bots → Kanban & Linear)
+shows that team's issues with its workflow states as columns; any other project has a local board
+with five columns. Dragging a card moves the issue in Linear first. Linear accounts are personal API
+keys kept in the server secret store, never sent to clients. The bots host has no public URL, so it
+polls Linear every `T3CODE_KANBAN_POLL_SECONDS` (default 60, `0` off) for issues updated since its
+cursor. Tickets link to threads, and each workspace's responsible bots get the `kanban_*` MCP tools
+for its tickets only. Nothing runs by itself. The data lives in `bots.sqlite`. Design, the study of
+other forks, and what is left out: [`docs/friend/linear-kanban.md`](docs/friend/linear-kanban.md).
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
