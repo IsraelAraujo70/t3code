@@ -31,8 +31,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import type { Tool } from "effect/ai";
+import { McpSchema, McpServer, type Tool } from "effect/ai";
 
+import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../mcp/McpToolAccess.testkit.ts";
@@ -718,4 +719,52 @@ describe("kanban tools", () => {
       expect(savedViews).toEqual([]);
     }),
   );
+
+  // Production registers the toolkit on McpServer at startup; a parameter schema without an
+  // object root kills the server there, which the toolkit.handle tests above never reach.
+  it.effect(
+    "registers every kanban tool on a real MCP server and calls a view tool through it",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = setup();
+        const server = McpHttpServer.toolkitRegistration(KanbanToolkit, KanbanHandlers.layer).pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(Layer.merge(layer, McpToolAccessTestkit.liveThreadsLayer)),
+        );
+        const { names, listed } = yield* Effect.gen(function* () {
+          const mcp = yield* McpServer.McpServer;
+          const result = yield* mcp
+            .callTool({ name: "kanban_view_list", arguments: {} })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, scopeOf(keeper)),
+              Effect.provideService(McpSchema.McpServerClient, mcpClient),
+            );
+          return {
+            names: mcp.tools.map((entry) => entry.tool.name),
+            listed: result,
+          };
+        }).pipe(Effect.provide(server));
+        expect(names.toSorted()).toEqual(Object.keys(KanbanToolkit.tools).toSorted());
+        expect(names).toEqual(
+          expect.arrayContaining(["kanban_view_list", "kanban_view_save", "kanban_view_delete"]),
+        );
+        expect(listed.isError).toBe(false);
+        expect(listed.structuredContent).toMatchObject({
+          views: [{ id: everyBoardView.id }, { id: localView.id }],
+        });
+      }),
+  );
+});
+
+const mcpClient = McpSchema.McpServerClient.of({
+  clientId: 1,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "kanban-test", version: "1" },
+  initializePayload: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "kanban-test", version: "1" },
+  },
+  getClient: Effect.die("unused"),
 });
