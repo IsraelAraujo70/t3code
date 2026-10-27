@@ -101,8 +101,11 @@ import {
   saveViewInput,
   scopeKey,
   viewsForScope,
+  withColumnShown,
   withDraft,
+  withIssue,
   withoutDraft,
+  withoutSavedDraft,
   type KanbanDrafts,
   type KanbanPendingDrops,
   type KanbanSearch,
@@ -292,7 +295,9 @@ function KanbanWorkspace(props: {
 
   const issueOpen = search.issue !== undefined;
   const openTicket =
-    search.issue === undefined ? null : findIssue(shown.tickets, scope, search.issue);
+    search.issue === undefined
+      ? null
+      : findIssue(shown.tickets, scope, search.issue, search.issueProject);
   const maximized = issueOpen && search.full === 1;
 
   const go = (next: KanbanSearch, replace: boolean) =>
@@ -306,11 +311,13 @@ function KanbanWorkspace(props: {
     const nextScope = patch.scope === undefined ? scope : patch.scope;
     const nextView = patch.view === undefined ? (active?.id ?? null) : patch.view;
     const issue = patch.issue === undefined ? (search.issue ?? null) : patch.issue;
+    const issueProject = patch.issue === undefined ? search.issueProject : undefined;
     const full = patch.full ?? search.full === 1;
     return {
       ...(nextScope === null ? {} : { project: nextScope }),
       ...(nextView === null ? {} : { view: nextView }),
       ...(issue === null ? {} : { issue }),
+      ...(issue === null || issueProject === undefined ? {} : { issueProject }),
       ...(issue !== null && full ? { full: 1 as const } : {}),
     };
   };
@@ -337,15 +344,18 @@ function KanbanWorkspace(props: {
   const openIssue = (ticket: KanbanTicket) =>
     void navigate({
       to: "/kanban",
-      search: (previous) => ({
-        ...(hasKanbanSearch(previous)
-          ? previous
-          : {
-              ...(scope === null ? {} : { project: scope }),
-              ...(activeId === null ? {} : { view: activeId }),
-            }),
-        issue: ticket.identifier,
-      }),
+      search: (previous) =>
+        withIssue(
+          hasKanbanSearch(previous)
+            ? previous
+            : {
+                ...(scope === null ? {} : { project: scope }),
+                ...(activeId === null ? {} : { view: activeId }),
+              },
+          shown.tickets,
+          scope,
+          ticket,
+        ),
     });
   const closeIssue = () => go(searchFor({ issue: null }), true);
   const openThread = (threadId: ThreadId) =>
@@ -360,10 +370,15 @@ function KanbanWorkspace(props: {
   const discard = () => {
     if (active !== null) setDrafts((current) => withoutDraft(current, active.id));
   };
+  // `draft` is this render's, so edits made while a save runs stay a draft.
+  const dropSavedDraft = (viewId: KanbanViewId, saved: KanbanViewConfig) =>
+    setDrafts((current) => withoutSavedDraft(current, viewId, saved));
   const saveChanges = async () => {
     if (active === null) return;
     const result = await saveView({ environmentId, input: saveViewInput(active, draft) });
-    if (reportCommandResult(`Could not save "${active.name}"`, result)) discard();
+    if (reportCommandResult(`Could not save "${active.name}"`, result)) {
+      dropSavedDraft(active.id, draft);
+    }
   };
   const saveAs = async (name: string, everywhere: boolean) => {
     const result = await saveView({
@@ -372,7 +387,7 @@ function KanbanWorkspace(props: {
     });
     if (!reportCommandResult("Could not save the view", result) || result._tag !== "Success")
       return;
-    discard();
+    if (active !== null) dropSavedDraft(active.id, draft);
     selectView(result.value.id);
   };
   const renameView = async (viewId: KanbanViewId, name: string) => {
@@ -664,12 +679,10 @@ function KanbanWorkspace(props: {
                 hiddenColumns: [...draft.hiddenColumns.filter((id) => id !== groupId), groupId],
               })
             }
-            onShowColumn={(groupId) =>
-              setDraft({
-                ...draft,
-                hiddenColumns: draft.hiddenColumns.filter((id) => id !== groupId),
-              })
-            }
+            onShowColumn={(groupId) => {
+              const group = view.hiddenColumns.find((candidate) => candidate.id === groupId);
+              if (group !== undefined) setDraft(withColumnShown(draft, group));
+            }}
             onDrop={(ticket, actions) => void drop(ticket, actions)}
           />
         )}

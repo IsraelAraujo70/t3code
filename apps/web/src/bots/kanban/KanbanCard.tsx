@@ -263,10 +263,16 @@ export function KanbanTicketMenu(
 }
 
 /** One ticket on the board, Linear-dense: identifier, status and title, property chips, dates. */
-export const KanbanCard = memo(function KanbanCard(props: KanbanTicketViewProps) {
+export const KanbanCard = memo(function KanbanCard(
+  props: KanbanTicketViewProps & {
+    /** Unique per rendered copy: label grouping shows a ticket in several cells. */
+    readonly dragId: string;
+  },
+) {
   const { ticket, lookups, properties: show } = props;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: ticket.id,
+    id: props.dragId,
+    data: { ticketId: ticket.id },
     disabled: !props.canEdit,
   });
   const status = ticketStatusDisplay(lookups, ticket);

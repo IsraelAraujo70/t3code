@@ -27,8 +27,11 @@ import {
   saveAsInput,
   saveViewInput,
   viewsForScope,
+  withColumnShown,
   withDraft,
+  withIssue,
   withoutDraft,
+  withoutSavedDraft,
   type KanbanDrafts,
 } from "./kanbanPageState";
 
@@ -63,6 +66,11 @@ describe("kanban URL", () => {
       issue: "BACK-1",
       full: 1,
     });
+    expect(parseKanbanSearch({ issue: "BACK-1", issueProject: "api" })).toEqual({
+      issue: "BACK-1",
+      issueProject: API,
+    });
+    expect(parseKanbanSearch({ issueProject: "api" })).toEqual({});
   });
 
   it("tells a bare visit from one that says something", () => {
@@ -106,6 +114,26 @@ describe("drafts", () => {
     expect(drafts.size).toBe(0);
     drafts = withoutDraft(withDraft(drafts, apiOnly, listConfig), apiOnly.id);
     expect(isDirty(apiOnly, drafts)).toBe(false);
+  });
+
+  it("keeps edits made while a save was running", () => {
+    const saved = withDraft(new Map(), apiOnly, listConfig);
+    expect(withoutSavedDraft(saved, apiOnly.id, listConfig).size).toBe(0);
+    const editedMeanwhile = withDraft(saved, apiOnly, { ...listConfig, showSubIssues: false });
+    expect(draftOf(apiOnly, withoutSavedDraft(editedMeanwhile, apiOnly.id, listConfig))).toEqual({
+      ...listConfig,
+      showSubIssues: false,
+    });
+  });
+
+  it("shows a hidden column again, turning empty columns on when it was folded for being empty", () => {
+    const hidden = { ...KANBAN_DEFAULT_VIEW_CONFIG, hiddenColumns: ["todo", "done"] };
+    expect(withColumnShown(hidden, group("todo", [localTicket]))).toEqual({
+      ...hidden,
+      hiddenColumns: ["done"],
+    });
+    const shown = withColumnShown(KANBAN_DEFAULT_VIEW_CONFIG, group("backlog"));
+    expect(shown.showEmptyColumns).toBe(true);
   });
 
   it("adds the search box as a content clause the saved view never gets", () => {
@@ -172,6 +200,27 @@ describe("open issue", () => {
     expect(find(API, "BACK-169")).toBe("c");
     expect(find(null, "T-1")).toBe("a");
     expect(find(API, "NOPE-1")).toBeNull();
+    expect(findIssue(tickets, null, "T-1", API)?.id).toBe("b");
+  });
+
+  it("names the project in the URL only when the identifier alone opens another ticket", () => {
+    const inWeb = { id: KanbanTicketId.make("a"), identifier: "T-1", projectId: WEB };
+    const inApi = { id: KanbanTicketId.make("b"), identifier: "T-1", projectId: API };
+    const unique = { id: KanbanTicketId.make("c"), identifier: "BACK-169", projectId: WEB };
+    const tickets = [inWeb, inApi, unique];
+    expect(withIssue({ view: everywhere.id, full: 1 }, tickets, null, unique)).toEqual({
+      view: everywhere.id,
+      issue: "BACK-169",
+      full: 1,
+    });
+    expect(withIssue({}, tickets, null, inWeb)).toEqual({ issue: "T-1" });
+    const ambiguous = withIssue({ issueProject: WEB }, tickets, null, inApi);
+    expect(ambiguous).toEqual({ issue: "T-1", issueProject: API });
+    expect(findIssue(tickets, null, "T-1", ambiguous.issueProject)).toBe(inApi);
+    expect(withIssue({ project: API }, tickets, API, inApi)).toEqual({
+      project: API,
+      issue: "T-1",
+    });
   });
 });
 
@@ -246,6 +295,22 @@ describe("board drops", () => {
         group("none", [localTicket]),
       ),
     ).toEqual([]);
+  });
+
+  it("refuses the whole drop when the lane cannot take the ticket", () => {
+    const statusByAssignee = { groupBy: "status", subGroupBy: "assignee" } as const;
+    expect(
+      cellDropActions(board, localTicket, statusByAssignee, group("done"), group("someone-else")),
+    ).toEqual([]);
+    expect(
+      cellDropActions(
+        board,
+        localTicket,
+        statusByAssignee,
+        group("done"),
+        group("none", [localTicket]),
+      ),
+    ).toEqual([{ kind: "move", to: { kind: "local", state: "done" } }]);
   });
 
   it("shows pending drops on the snapshot until they settle", () => {

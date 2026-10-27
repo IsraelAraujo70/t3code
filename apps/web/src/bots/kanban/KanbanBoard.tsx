@@ -96,6 +96,10 @@ interface DropCell {
 const cellId = (laneIndex: number | null, columnIndex: number) =>
   laneIndex === null ? `c:${columnIndex}` : `l:${laneIndex}:${columnIndex}`;
 
+/** The ticket a dragged card carries; a ticket shows once per label cell, so ids are per cell. */
+const draggedTicketId = (event: DragStartEvent | DragEndEvent): unknown =>
+  event.active.data.current?.ticketId;
+
 function cellOf(view: KanbanViewResult, id: string): DropCell | null {
   const [kind, first, second] = id.split(":");
   if (kind === "c") {
@@ -131,11 +135,13 @@ export function KanbanBoard(
     cellDropActions(snapshot, dragging, config, cell.column, cell.lane).length > 0;
 
   const onDragStart = (event: DragStartEvent) => {
-    setDragging(snapshot.tickets.find((ticket) => ticket.id === event.active.id) ?? null);
+    const ticketId = draggedTicketId(event);
+    setDragging(snapshot.tickets.find((ticket) => ticket.id === ticketId) ?? null);
   };
   const onDragEnd = (event: DragEndEvent) => {
     setDragging(null);
-    const ticket = snapshot.tickets.find((candidate) => candidate.id === event.active.id);
+    const ticketId = draggedTicketId(event);
+    const ticket = snapshot.tickets.find((candidate) => candidate.id === ticketId);
     const cell = event.over === null ? null : cellOf(view, String(event.over.id));
     if (ticket === undefined || cell === null) return;
     const actions = cellDropActions(snapshot, ticket, config, cell.column, cell.lane);
@@ -162,8 +168,10 @@ export function KanbanBoard(
       ) : null}
     </>
   );
-  const cards = (tickets: ReadonlyArray<KanbanTicket>) =>
-    tickets.map((ticket) => <KanbanCard key={ticket.id} {...props.ticketProps(ticket)} />);
+  const cards = (cell: string, tickets: ReadonlyArray<KanbanTicket>) =>
+    tickets.map((ticket) => (
+      <KanbanCard key={ticket.id} dragId={`${cell}:${ticket.id}`} {...props.ticketProps(ticket)} />
+    ));
   const hidden =
     view.hiddenColumns.length > 0 ? (
       <div className="w-64 shrink-0">
@@ -199,22 +207,21 @@ export function KanbanBoard(
                 accepts={accepts({ column, lane: null })}
                 className="flex min-h-12 flex-1 flex-col gap-2 overflow-y-auto"
               >
-                {cards(column.tickets)}
+                {cards(cellId(null, index), column.tickets)}
               </DropZone>
             </section>
           ))}
           {hidden}
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto px-(--workspace-gutter-start) pb-4">
-          <div className="flex w-max flex-col gap-1">
+        <div className="flex min-h-0 flex-1 items-start gap-3 overflow-auto px-(--workspace-gutter-start) pb-4">
+          <div className="flex w-max shrink-0 flex-col gap-1">
             <div className="sticky top-0 z-10 flex gap-3 bg-background">
               {view.columns.map((column) => (
                 <div key={column.id} className="w-80 shrink-0">
                   {header(column)}
                 </div>
               ))}
-              {hidden}
             </div>
             {view.swimlanes.map((lane, laneIndex) => {
               const collapsed = collapsedLanes.has(lane.id);
@@ -250,7 +257,7 @@ export function KanbanBoard(
                           accepts={accepts({ column, lane })}
                           className="flex min-h-12 w-80 shrink-0 flex-col gap-2 rounded-xl bg-muted/30 p-1.5"
                         >
-                          {cards(lane.cells.get(column.id) ?? [])}
+                          {cards(cellId(laneIndex, columnIndex), lane.cells.get(column.id) ?? [])}
                         </DropZone>
                       ))}
                     </div>
@@ -259,6 +266,8 @@ export function KanbanBoard(
               );
             })}
           </div>
+          {/* Beside the lanes: in the sticky header row its height would push every lane down. */}
+          {hidden}
         </div>
       )}
       <DragOverlay>

@@ -30,6 +30,8 @@ export interface KanbanSearch {
   readonly view?: KanbanViewId;
   /** A ticket identifier such as `BACK-169`. */
   readonly issue?: string;
+  /** The issue's project, written only when the identifier alone would open another ticket. */
+  readonly issueProject?: ProjectId;
   readonly full?: 1;
 }
 
@@ -41,10 +43,15 @@ export function parseKanbanSearch(raw: Record<string, unknown>): KanbanSearch {
   const project = text(raw.project);
   const view = text(raw.view);
   const issue = text(raw.issue);
+  const issueProject = text(raw.issueProject);
+  const hasIssue = ISSUE_PATTERN.test(issue);
   return {
     ...(project !== "" && project.length <= 200 ? { project: ProjectId.make(project) } : {}),
     ...(isViewId(view) ? { view } : {}),
-    ...(ISSUE_PATTERN.test(issue) ? { issue: issue.toUpperCase() } : {}),
+    ...(hasIssue ? { issue: issue.toUpperCase() } : {}),
+    ...(hasIssue && issueProject !== "" && issueProject.length <= 200
+      ? { issueProject: ProjectId.make(issueProject) }
+      : {}),
     ...(issue !== "" && (raw.full === 1 || raw.full === "1") ? { full: 1 as const } : {}),
   };
 }
@@ -125,6 +132,30 @@ export function withoutDraft(drafts: KanbanDrafts, viewId: KanbanViewId): Kanban
   return next;
 }
 
+/** Drops a view's draft after `saved` was saved, unless it was edited while the save ran. */
+export function withoutSavedDraft(
+  drafts: KanbanDrafts,
+  viewId: KanbanViewId,
+  saved: KanbanViewConfig,
+): KanbanDrafts {
+  const current = drafts.get(viewId);
+  return current !== undefined && configEquals(current, saved)
+    ? withoutDraft(drafts, viewId)
+    : drafts;
+}
+
+/** Shows a folded column again; a column folded for being empty turns empty columns on. */
+export function withColumnShown(
+  config: KanbanViewConfig,
+  group: Pick<KanbanGroup, "id" | "tickets">,
+): KanbanViewConfig {
+  return {
+    ...config,
+    hiddenColumns: config.hiddenColumns.filter((id) => id !== group.id),
+    ...(group.tickets.length === 0 ? { showEmptyColumns: true } : {}),
+  };
+}
+
 /** The config the board renders: the draft plus the search box as a content clause. */
 export function effectiveConfig(draft: KanbanViewConfig, search: string): KanbanViewConfig {
   const value = search.trim();
@@ -177,21 +208,43 @@ export function importSummary(result: KanbanViewImportResult): {
   };
 }
 
-/** The open issue: in the scope first, then on any project's board. */
+/** The open issue: in the URL's project, then in the scope, then on any project's board. */
 export function findIssue<T extends Pick<KanbanTicket, "identifier" | "projectId">>(
   tickets: ReadonlyArray<T>,
   scope: ProjectId | null,
   identifier: string,
+  project?: ProjectId,
 ): T | null {
   const matches = tickets.filter((ticket) => ticket.identifier.toUpperCase() === identifier);
   return (
-    matches.find((ticket) => scope === null || ticket.projectId === scope) ?? matches[0] ?? null
+    matches.find((ticket) => project !== undefined && ticket.projectId === project) ??
+    matches.find((ticket) => scope === null || ticket.projectId === scope) ??
+    matches[0] ??
+    null
   );
+}
+
+/** The URL with `ticket` open: its identifier, and its project when the identifier is ambiguous. */
+export function withIssue<T extends Pick<KanbanTicket, "id" | "identifier" | "projectId">>(
+  search: KanbanSearch,
+  tickets: ReadonlyArray<T>,
+  scope: ProjectId | null,
+  ticket: T,
+): KanbanSearch {
+  const resolved = findIssue(tickets, scope, ticket.identifier.toUpperCase());
+  return {
+    ...(search.project === undefined ? {} : { project: search.project }),
+    ...(search.view === undefined ? {} : { view: search.view }),
+    issue: ticket.identifier,
+    ...(resolved?.id === ticket.id ? {} : { issueProject: ticket.projectId }),
+    ...(search.full === undefined ? {} : { full: search.full }),
+  };
 }
 
 /**
  * What dropping a ticket on a board cell does: the column's change, then the swimlane's (a lane
- * grouped like the columns adds nothing). Two property changes go as one update.
+ * grouped like the columns adds nothing). Two property changes go as one update. A cell where
+ * either change is impossible takes nothing.
  */
 export function cellDropActions(
   snapshot: KanbanSnapshot,
@@ -200,15 +253,29 @@ export function cellDropActions(
   column: KanbanGroup,
   lane: KanbanGroup | null,
 ): ReadonlyArray<KanbanDropAction> {
-  const byColumn = dropActionFor(snapshot, ticket, config.groupBy, column);
+  const byColumn = groupDropAction(snapshot, ticket, config.groupBy, column);
   const byLane =
     lane === null || config.subGroupBy === config.groupBy
       ? null
-      : dropActionFor(snapshot, ticket, config.subGroupBy, lane);
+      : groupDropAction(snapshot, ticket, config.subGroupBy, lane);
+  if (byColumn === INVALID_DROP || byLane === INVALID_DROP) return [];
   if (byColumn?.kind === "update" && byLane?.kind === "update") {
     return [{ kind: "update", patch: { ...byColumn.patch, ...byLane.patch } }];
   }
   return [byColumn, byLane].filter((action) => action !== null);
+}
+
+const INVALID_DROP = "invalid";
+
+/** Null when the ticket already sits in the group; `invalid` when it cannot go there. */
+function groupDropAction(
+  snapshot: KanbanSnapshot,
+  ticket: KanbanTicket,
+  grouping: KanbanViewConfig["groupBy"],
+  group: KanbanGroup,
+): KanbanDropAction | null | typeof INVALID_DROP {
+  if (group.tickets.some((candidate) => candidate.id === ticket.id)) return null;
+  return dropActionFor(snapshot, ticket, grouping, group) ?? INVALID_DROP;
 }
 
 /** Drops the board shows at once, by ticket id, until the server answers. */
