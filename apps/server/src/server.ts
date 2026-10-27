@@ -63,6 +63,8 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as BotsLayer from "./bots/layer.ts";
 // Fork (friend): live view of the bots host screen and the fork apps' self-update.
 import * as BotsHttpRoutes from "./bots/httpRoutes.ts";
+// Fork (friend): webhook URLs from a public base when T3 Connect is off.
+import { withWebhookPublicBase } from "./bots/webhookPublicBase.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControl/sourceControlDefinitions.ts";
@@ -508,7 +510,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
         }),
       };
     });
-  }),
+  }).pipe(Effect.flatMap(withWebhookPublicBase)), // Fork (friend): public base fallback.
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
