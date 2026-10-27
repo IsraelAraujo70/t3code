@@ -28,6 +28,8 @@ export interface KanbanViewContext {
   readonly now: number;
   /** A linked thread's status as the client sees it; null for a thread it does not know. */
   readonly threadStatus: (threadId: ThreadId) => ThreadCardStatus | null;
+  /** Names the snapshot lacks: `owner` and `bot:<id>` people. Null falls back to the id. */
+  readonly personName?: (personId: string) => string | null;
 }
 
 /** How a group draws its leading icon. */
