@@ -1,10 +1,7 @@
 /**
- * What one sync of a project link writes, decided without I/O.
- *
- * A full sync asks Linear for the board's window (open issues plus recently updated ones). Synced
- * tickets outside it are dropped, except tickets with linked threads: those are refreshed by id
- * and kept while they stay unarchived in the link's team, so a finished ticket keeps its threads.
- * An incremental sync asks only for issues updated since the cursor and drops the archived ones.
+ * What one sync of a project link writes, decided without I/O. A full sync drops synced tickets
+ * outside the board's window, except tickets with linked threads, which are refreshed by id and
+ * kept while unarchived in the team. An incremental sync drops only archived issues.
  */
 import type { KanbanTicket } from "@t3tools/contracts";
 

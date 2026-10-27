@@ -1,15 +1,8 @@
 /**
- * Owns the kanban: Linear accounts and their keys, project links, tickets, thread links and the
- * bots responsible for each workspace, plus the sync that pulls Linear changes into tickets.
- *
- * Invariants:
- * - An account's API key is written to the server secret store under `accountSecretName` before
- *   its row, and is read only to call Linear. No answer carries it; clients get its last 4.
- * - A Linear ticket changes only from Linear's own answer: a move updates the issue in Linear
- *   first and stores what Linear returns, so a refused move changes nothing here.
- * - Syncs run one at a time (the poller and "Sync now" share one permit), so two syncs of a link
- *   never interleave their writes or cursors.
- * - `snapshot` publishes only after a write commits.
+ * Owns the kanban and its Linear sync. Invariants: an account's key goes to the secret store before
+ * its row and no answer carries it; a Linear ticket changes only from Linear's own answer, so a
+ * refused move changes nothing; syncs take one shared permit, so cursors never interleave; and
+ * `snapshot` publishes only after a write commits.
  */
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";

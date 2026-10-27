@@ -1,18 +1,8 @@
 /**
- * Kanban of agent work (friend fork), optionally synced with Linear. It lives on the bots host,
- * in `bots.sqlite`, beside the bots it assigns.
- *
- * - A Linear account is a personal API key with a name. Linear scopes each key to one user in one
- *   workspace (organization), so several accounts reach several workspaces or several users of
- *   one. The key stays in the server's secret store; clients only ever see its last 4 characters.
- * - A T3 project is linked to at most one account and team (and optionally a Linear project). Its
- *   board then holds that team's issues and uses the team's workflow states as columns. An
- *   unlinked project has a local board with the five local states.
- * - A ticket is linked to any number of threads. A workspace (`local`, or one Linear organization)
- *   has any number of responsible bots, which get the kanban MCP tools for its tickets.
- *
- * `bots.ts` re-exports this module and spreads its RPCs into the bots group, so this file must not
- * import from `bots.ts`.
+ * Kanban of agent work (friend fork), optionally synced with Linear, kept on the bots host in
+ * `bots.sqlite`. A Linear key never leaves the server; clients see only its last 4 characters.
+ * `bots.ts` re-exports this module, so this file must not import from `bots.ts`.
+ * Design: docs/friend/linear-kanban.md.
  */
 import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";

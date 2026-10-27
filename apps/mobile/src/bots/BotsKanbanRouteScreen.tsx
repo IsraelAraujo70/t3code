@@ -26,7 +26,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Schema } from "effect";
 import { useCallback, useState } from "react";
 import { Linking, Pressable, ScrollView, View } from "react-native";
@@ -406,7 +406,7 @@ function KanbanBoardView(props: {
               })}
               onChoice={(id) => void onChoice(ticket, id)}
               onOpenThread={(threadId) =>
-                navigation.navigate("Thread", { environmentId, threadId })
+                navigation.dispatch(StackActions.push("Thread", { environmentId, threadId }))
               }
             />
           ))

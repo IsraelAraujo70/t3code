@@ -268,7 +268,7 @@ export const make = Effect.gen(function* () {
   });
 
   return LinearClient.of({
-    viewer: (key) =>
+    viewer: Effect.fn("LinearClient.viewer")((key) =>
       request(key, ViewerData, `{ viewer { name organization { id name urlKey } } }`, {}).pipe(
         Effect.map(({ viewer }) => ({
           userName: viewer.name,
@@ -277,6 +277,7 @@ export const make = Effect.gen(function* () {
           organizationUrlKey: viewer.organization.urlKey,
         })),
       ),
+    ),
     // Projects are read flat and grouped by team: nesting them under teams multiplies Linear's
     // query complexity past its 10,000 limit on a workspace with a few teams.
     teams: Effect.fn("LinearClient.teams")(function* (key) {
@@ -317,7 +318,7 @@ export const make = Effect.gen(function* () {
         projects: projectsByTeam.get(team.id) ?? [],
       }));
     }),
-    teamStates: (key, teamId) =>
+    teamStates: Effect.fn("LinearClient.teamStates")((key, teamId) =>
       request(
         key,
         StatesData,
@@ -338,7 +339,8 @@ export const make = Effect.gen(function* () {
           })),
         ),
       ),
-    issues: (key, scope, window, maxPages) => {
+    ),
+    issues: Effect.fn("LinearClient.issues")((key, scope, window, maxPages) => {
       const base: Record<string, unknown> = {
         team: { id: { eq: scope.teamId } },
         ...(scope.linearProjectId === null
@@ -356,12 +358,13 @@ export const make = Effect.gen(function* () {
               ],
             };
       return issuePages(key, filter, maxPages);
-    },
-    issuesById: (key, ids) =>
+    }),
+    issuesById: Effect.fn("LinearClient.issuesById")((key, ids) =>
       ids.length === 0
         ? Effect.succeed([])
         : issuePages(key, { id: { in: ids } }, Math.ceil(ids.length / PAGE_SIZE)),
-    setIssueState: (key, issueId, stateId) =>
+    ),
+    setIssueState: Effect.fn("LinearClient.setIssueState")((key, issueId, stateId) =>
       request(
         key,
         IssueUpdateData,
@@ -376,7 +379,8 @@ export const make = Effect.gen(function* () {
             : Effect.fail(failure("Linear did not move the issue.")),
         ),
       ),
-    createIssue: (key, input) =>
+    ),
+    createIssue: Effect.fn("LinearClient.createIssue")((key, input) =>
       request(
         key,
         IssueCreateData,
@@ -398,6 +402,7 @@ export const make = Effect.gen(function* () {
             : Effect.fail(failure("Linear did not create the issue.")),
         ),
       ),
+    ),
   });
 });
 

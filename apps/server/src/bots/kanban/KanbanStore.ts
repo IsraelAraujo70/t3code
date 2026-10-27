@@ -309,13 +309,14 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodeAccounts),
       Effect.mapError(failWith("Could not read Linear accounts from bots.sqlite")),
     ),
-    getAccount: (id) =>
+    getAccount: Effect.fn("KanbanStore.getAccount")((id) =>
       sql`${selectAccounts} WHERE id = ${id}`.pipe(
         Effect.flatMap(decodeAccounts),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read Linear account ${id}`)),
       ),
-    insertAccount: (account) =>
+    ),
+    insertAccount: Effect.fn("KanbanStore.insertAccount")((account) =>
       sql`
         INSERT INTO linear_accounts (
           id, name, key_last4, user_name, organization_id, organization_name,
@@ -327,28 +328,32 @@ const make = Effect.gen(function* () {
           ${account.createdAt}, ${account.updatedAt}
         )
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the Linear account"))),
-    renameAccount: (id, name, updatedAt) =>
+    ),
+    renameAccount: Effect.fn("KanbanStore.renameAccount")((id, name, updatedAt) =>
       sql`UPDATE linear_accounts SET name = ${name}, updated_at = ${updatedAt} WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not rename Linear account ${id}`)),
       ),
-    deleteAccount: (id) =>
+    ),
+    deleteAccount: Effect.fn("KanbanStore.deleteAccount")((id) =>
       sql`DELETE FROM linear_accounts WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete Linear account ${id}`)),
       ),
+    ),
 
     listLinks: sql`${selectLinks} ORDER BY created_at, project_id`.pipe(
       Effect.flatMap(decodeLinks),
       Effect.mapError(failWith("Could not read project links from bots.sqlite")),
     ),
-    getLink: (projectId) =>
+    getLink: Effect.fn("KanbanStore.getLink")((projectId) =>
       sql`${selectLinks} WHERE project_id = ${projectId}`.pipe(
         Effect.flatMap(decodeLinks),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read the link of project ${projectId}`)),
       ),
-    putLink: (link) =>
+    ),
+    putLink: Effect.fn("KanbanStore.putLink")((link) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -392,7 +397,8 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(Effect.mapError(failWith(`Could not link project ${link.projectId}`))),
-    deleteLink: (projectId) =>
+    ),
+    deleteLink: Effect.fn("KanbanStore.deleteLink")((projectId) =>
       sql
         .withTransaction(
           dropSyncedTickets(projectId).pipe(
@@ -400,7 +406,8 @@ const make = Effect.gen(function* () {
           ),
         )
         .pipe(Effect.asVoid, Effect.mapError(failWith(`Could not unlink project ${projectId}`))),
-    recordSync: (projectId, result) =>
+    ),
+    recordSync: Effect.fn("KanbanStore.recordSync")((projectId, result) =>
       (result.ok
         ? sql`
             UPDATE kanban_project_links
@@ -417,6 +424,7 @@ const make = Effect.gen(function* () {
             WHERE project_id = ${projectId}
           `
       ).pipe(Effect.asVoid, Effect.mapError(failWith("Could not record the sync"))),
+    ),
 
     listStates: sql`
       SELECT id, team_id AS "teamId", name, type, position, color
@@ -425,7 +433,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodeStates),
       Effect.mapError(failWith("Could not read workflow states from bots.sqlite")),
     ),
-    replaceTeamStates: (teamId, states) =>
+    replaceTeamStates: Effect.fn("KanbanStore.replaceTeamStates")((teamId, states) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -448,6 +456,7 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(Effect.mapError(failWith("Could not save workflow states"))),
+    ),
 
     listTickets: Effect.all([
       sql`${selectTickets} ORDER BY created_at, id`.pipe(Effect.flatMap(decodeTickets)),
@@ -456,7 +465,7 @@ const make = Effect.gen(function* () {
       Effect.map(([rows, threads]) => rows.map((row) => toTicket(row, threads.get(row.id) ?? []))),
       Effect.mapError(failWith("Could not read tickets from bots.sqlite")),
     ),
-    getTicket: (id) =>
+    getTicket: Effect.fn("KanbanStore.getTicket")((id) =>
       Effect.all([
         sql`${selectTickets} WHERE id = ${id}`.pipe(Effect.flatMap(decodeTickets)),
         threadIdsByTicket(id),
@@ -468,13 +477,14 @@ const make = Effect.gen(function* () {
         ),
         Effect.mapError(failWith(`Could not read ticket ${id}`)),
       ),
+    ),
     nextLocalNumber:
       sql`SELECT COALESCE(MAX(local_number), 0) + 1 AS "next" FROM kanban_tickets`.pipe(
         Effect.flatMap(decodeNextNumber),
         Effect.map((rows) => rows[0]?.next ?? 1),
         Effect.mapError(failWith("Could not number the ticket")),
       ),
-    insertLocalTicket: (row) =>
+    insertLocalTicket: Effect.fn("KanbanStore.insertLocalTicket")((row) =>
       sql`
         INSERT INTO kanban_tickets (
           id, project_id, local_number, identifier, title, local_state, priority, created_at,
@@ -485,22 +495,26 @@ const make = Effect.gen(function* () {
           ${row.title}, ${row.state}, 0, ${row.createdAt}, ${row.createdAt}
         )
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the ticket"))),
-    setLocalState: (id, state, updatedAt) =>
+    ),
+    setLocalState: Effect.fn("KanbanStore.setLocalState")((id, state, updatedAt) =>
       sql`
         UPDATE kanban_tickets SET local_state = ${state}, updated_at = ${updatedAt}
         WHERE id = ${id} AND issue_id IS NULL
       `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not move ticket ${id}`))),
-    deleteTicket: (id) =>
+    ),
+    deleteTicket: Effect.fn("KanbanStore.deleteTicket")((id) =>
       sql`DELETE FROM kanban_tickets WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete ticket ${id}`)),
       ),
-    upsertLinearTickets: (projectId, accountId, rows) =>
-      sql
-        .withTransaction(
-          Effect.forEach(
-            rows,
-            (row) => sql`
+    ),
+    upsertLinearTickets: Effect.fn("KanbanStore.upsertLinearTickets")(
+      (projectId, accountId, rows) =>
+        sql
+          .withTransaction(
+            Effect.forEach(
+              rows,
+              (row) => sql`
               INSERT INTO kanban_tickets (
                 id, project_id, account_id, issue_id, team_id, url, identifier, title,
                 linear_state_id, assignee_name, priority, created_at, updated_at
@@ -521,28 +535,32 @@ const make = Effect.gen(function* () {
                 priority = excluded.priority,
                 updated_at = excluded.updated_at
             `,
-            { discard: true },
-          ),
-        )
-        .pipe(Effect.mapError(failWith("Could not save synced tickets"))),
-    deleteLinearTickets: (projectId, issueIds) =>
+              { discard: true },
+            ),
+          )
+          .pipe(Effect.mapError(failWith("Could not save synced tickets"))),
+    ),
+    deleteLinearTickets: Effect.fn("KanbanStore.deleteLinearTickets")((projectId, issueIds) =>
       issueIds.length === 0
         ? Effect.void
         : sql`
             DELETE FROM kanban_tickets
             WHERE project_id = ${projectId} AND issue_id IN ${sql.in(issueIds)}
           `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not drop synced tickets"))),
+    ),
 
-    linkThread: (ticketId, threadId, at) =>
+    linkThread: Effect.fn("KanbanStore.linkThread")((ticketId, threadId, at) =>
       sql`
         INSERT INTO kanban_ticket_threads (ticket_id, thread_id, created_at)
         VALUES (${ticketId}, ${threadId}, ${at})
         ON CONFLICT DO NOTHING
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not link the thread"))),
-    unlinkThread: (ticketId, threadId) =>
+    ),
+    unlinkThread: Effect.fn("KanbanStore.unlinkThread")((ticketId, threadId) =>
       sql`
         DELETE FROM kanban_ticket_threads WHERE ticket_id = ${ticketId} AND thread_id = ${threadId}
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not unlink the thread"))),
+    ),
 
     listWorkspaceBots: sql`
       SELECT workspace_id AS "workspaceId", bot_id AS "botId"
@@ -561,7 +579,7 @@ const make = Effect.gen(function* () {
       }),
       Effect.mapError(failWith("Could not read workspace bots from bots.sqlite")),
     ),
-    setWorkspaceBots: (workspaceId, botIds) =>
+    setWorkspaceBots: Effect.fn("KanbanStore.setWorkspaceBots")((workspaceId, botIds) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -575,6 +593,7 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(Effect.mapError(failWith("Could not set the workspace's bots"))),
+    ),
   });
 });
 
