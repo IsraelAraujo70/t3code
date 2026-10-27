@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/kanban-board";
 import { resolveChangeRequestLinkTarget } from "@t3tools/client-runtime/change-request-links";
 import type {
+  ModelSelection,
   BotDirectoryEntry,
   EnvironmentId,
   KanbanPullRequestRef,
@@ -202,6 +203,29 @@ function PullRequestRow(props: {
   );
 }
 
+/**
+ * A project without a default model starts with the model of its latest thread (else the
+ * environment's latest), like a new thread would; with a default the server picks it.
+ */
+function startModelFallback(
+  defaultModel: ModelSelection | null,
+  shells: ReadonlyArray<{ projectId: string; updatedAt: string; modelSelection: ModelSelection }>,
+  ticket: KanbanTicket,
+): { kind: "project"; modelSelection?: ModelSelection } {
+  if (defaultModel !== null) return { kind: "project" };
+  const latest = (candidates: typeof shells) =>
+    candidates.reduce<(typeof shells)[number] | null>(
+      (best, shell) => (best === null || shell.updatedAt > best.updatedAt ? shell : best),
+      null,
+    );
+  const shell =
+    latest(shells.filter((candidate) => candidate.projectId === ticket.projectId)) ??
+    latest(shells);
+  return shell === null
+    ? { kind: "project" }
+    : { kind: "project", modelSelection: shell.modelSelection };
+}
+
 function ThreadLinks(props: {
   readonly environmentId: EnvironmentId;
   readonly ticket: KanbanTicket;
@@ -211,6 +235,7 @@ function ThreadLinks(props: {
 }) {
   const { environmentId, ticket, snapshot } = props;
   const shells = useThreadShells();
+  const projects = useProjects();
   const { directory } = useBotDirectory(environmentId);
   const link = useAtomCommand(botsEnvironment.kanbanLinkThread, { label: "kanban link" });
   const unlink = useAtomCommand(botsEnvironment.kanbanUnlinkThread, { label: "kanban unlink" });
@@ -241,6 +266,9 @@ function ThreadLinks(props: {
     ...new Set([...(ticket.botId ? [ticket.botId] : []), ...(workspace?.botIds ?? [])]),
   ].flatMap((botId) => botsById.get(botId) ?? []);
 
+  const project = projects.find(
+    (candidate) => candidate.environmentId === environmentId && candidate.id === ticket.projectId,
+  );
   const startThread = async (
     target: { kind: "project" } | { kind: "bot"; bot: BotDirectoryEntry },
   ) => {
@@ -250,7 +278,9 @@ function ThreadLinks(props: {
       input: {
         ticketId: ticket.id,
         target:
-          target.kind === "project" ? { kind: "project" } : { kind: "bot", botId: target.bot.id },
+          target.kind === "project"
+            ? startModelFallback(project?.defaultModelSelection ?? null, environmentShells, ticket)
+            : { kind: "bot", botId: target.bot.id },
       },
     });
     setStarting(false);
