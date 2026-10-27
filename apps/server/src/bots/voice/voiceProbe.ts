@@ -78,8 +78,10 @@ const recordingRealtime = Layer.effect(
 const program = Effect.gen(function* () {
   const activity = yield* Queue.unbounded<VoiceSession.ThreadActivity, BotsError>();
   const threads = Layer.succeed(VoiceSession.VoiceThreads, {
-    replyText: () => Effect.succeed(reply),
-    post: (_thread, text) => Effect.sync(() => note("posted", text)),
+    replyText: Effect.fn("VoiceSession.VoiceThreads.replyText")(() => Effect.succeed(reply)),
+    post: Effect.fn("VoiceSession.VoiceThreads.post")((_thread, text) =>
+      Effect.sync(() => note("posted", text)),
+    ),
     activity: () => Stream.fromQueue(activity),
   });
   const service = yield* VoiceSession.VoiceSessions.pipe(

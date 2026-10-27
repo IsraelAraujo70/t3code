@@ -20,6 +20,7 @@ import { resolveAttachmentRelativePath } from "../../attachmentPaths.ts";
 import { createAttachmentId, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as Dictation from "./Dictation.ts";
+import * as DocumentText from "../../provider/DocumentText.ts";
 
 interface RecordedRequest {
   readonly model: string;
@@ -77,6 +78,7 @@ const layerTest = (
     Layer.provideMerge(layerOpenRouter(replies, requests)),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-dictation-" })),
+    Layer.provideMerge(DocumentText.layer),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );

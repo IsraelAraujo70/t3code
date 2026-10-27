@@ -1,4 +1,4 @@
-import type { GuestStreamEvent } from "@t3tools/contracts";
+import type { GuestBotStreamEvent } from "@t3tools/contracts";
 
 import { authorizationHeader, eventsUrl, type BotId } from "./api";
 import type { Pairing } from "./pairing";
@@ -24,7 +24,7 @@ export interface BotStream {
 export function openBotStream(options: {
   readonly pairing: Pairing;
   readonly botId: BotId;
-  readonly onEvent: (event: GuestStreamEvent) => void;
+  readonly onEvent: (event: GuestBotStreamEvent) => void;
   readonly onOpen: () => void;
   readonly onUnauthorized: () => void;
 }): BotStream {

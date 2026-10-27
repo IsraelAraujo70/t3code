@@ -20,7 +20,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
-import type { GuestBotsResponse, GuestHistoryResponse, GuestStreamEvent } from "@t3tools/contracts";
+import type {
+  GuestBotsResponse,
+  GuestHistoryResponse,
+  GuestBotStreamEvent,
+} from "@t3tools/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { asPlainText } from "./GuestService.ts";
@@ -91,13 +95,13 @@ const send = (token: string, botId: string, body: unknown) =>
 async function readEvents(
   token: string,
   botId: string,
-  done: (events: GuestStreamEvent[]) => boolean,
+  done: (events: GuestBotStreamEvent[]) => boolean,
   ms: number,
   onOpen?: () => Promise<void>,
-): Promise<GuestStreamEvent[]> {
+): Promise<GuestBotStreamEvent[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
-  const events: GuestStreamEvent[] = [];
+  const events: GuestBotStreamEvent[] = [];
   try {
     const response = await api(`/guest/v1/bots/${botId}/events`, {
       token,
@@ -117,7 +121,7 @@ async function readEvents(
         const frame = buffer.slice(0, cut);
         buffer = buffer.slice(cut + 2);
         if (!frame.startsWith("data: ")) continue;
-        events.push(JSON.parse(frame.slice(6)) as GuestStreamEvent);
+        events.push(JSON.parse(frame.slice(6)) as GuestBotStreamEvent);
       }
       if (!opened && events.length > 0) {
         opened = true;
@@ -205,7 +209,7 @@ async function ownerSend(threadId: string, text: string, modelSelection: unknown
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const finalReply = (events: GuestStreamEvent[], text: string | RegExp) =>
+const finalReply = (events: GuestBotStreamEvent[], text: string | RegExp) =>
   events.some(
     (event) =>
       event.type === "message" &&

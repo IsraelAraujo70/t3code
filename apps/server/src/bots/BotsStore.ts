@@ -181,19 +181,21 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodeBots),
       Effect.mapError(failWith("Could not read bots from bots.sqlite")),
     ),
-    getBot: (id) =>
+    getBot: Effect.fn("BotsStore.getBot")((id) =>
       sql`${selectBots} WHERE id = ${id}`.pipe(
         Effect.flatMap(decodeBots),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read bot ${id} from bots.sqlite`)),
       ),
-    insertBot: (bot) =>
+    ),
+    insertBot: Effect.fn("BotsStore.insertBot")((bot) =>
       encodeBot(bot).pipe(
         Effect.flatMap((row) => insertBotRow(row, "fail")),
         Effect.asVoid,
         Effect.mapError(failWith(`Could not insert bot ${bot.id}`)),
       ),
-    updateBot: (bot) =>
+    ),
+    updateBot: Effect.fn("BotsStore.updateBot")((bot) =>
       encodeBot(bot).pipe(
         Effect.flatMap(
           (row) => sql`
@@ -219,22 +221,25 @@ const make = Effect.gen(function* () {
             : Effect.void,
         ),
       ),
-    deleteBot: (id) =>
+    ),
+    deleteBot: Effect.fn("BotsStore.deleteBot")((id) =>
       sql`DELETE FROM bots WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete bot ${id}`)),
       ),
+    ),
     listSections: sql`${selectSections} ORDER BY position, created_at, id`.pipe(
       Effect.flatMap(decodeSections),
       Effect.mapError(failWith("Could not read bot sections from bots.sqlite")),
     ),
-    getSection: (id) =>
+    getSection: Effect.fn("BotsStore.getSection")((id) =>
       sql`${selectSections} WHERE id = ${id}`.pipe(
         Effect.flatMap(decodeSections),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read section ${id} from bots.sqlite`)),
       ),
-    insertSection: (section) =>
+    ),
+    insertSection: Effect.fn("BotsStore.insertSection")((section) =>
       sql`
         INSERT INTO sections (id, name, position, created_at, updated_at)
         VALUES (
@@ -242,7 +247,8 @@ const make = Effect.gen(function* () {
           ${section.updatedAt}
         )
       `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not insert section ${section.id}`))),
-    updateSection: (section) =>
+    ),
+    updateSection: Effect.fn("BotsStore.updateSection")((section) =>
       sql`
         UPDATE sections
         SET
@@ -260,12 +266,14 @@ const make = Effect.gen(function* () {
             : Effect.void,
         ),
       ),
-    deleteSection: (id) =>
+    ),
+    deleteSection: Effect.fn("BotsStore.deleteSection")((id) =>
       sql`DELETE FROM sections WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete section ${id}`)),
       ),
-    arrange: (arrangement) =>
+    ),
+    arrange: Effect.fn("BotsStore.arrange")((arrangement) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -285,20 +293,23 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(Effect.mapError(failWith("Could not rearrange the bots; nothing changed"))),
+    ),
     listMemories,
-    getMemory: (id) =>
+    getMemory: Effect.fn("BotsStore.getMemory")((id) =>
       sql`${selectMemories} WHERE id = ${id}`.pipe(
         Effect.flatMap(decodeMemories),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read memory ${id} from bots.sqlite`)),
       ),
-    insertMemory: (memory) =>
+    ),
+    insertMemory: Effect.fn("BotsStore.insertMemory")((memory) =>
       encodeMemory(memory).pipe(
         Effect.flatMap((row) => insertMemoryRow(row, "fail")),
         Effect.asVoid,
         Effect.mapError(failWith(`Could not insert memory ${memory.id} for bot ${memory.botId}`)),
       ),
-    updateMemory: (memory) =>
+    ),
+    updateMemory: Effect.fn("BotsStore.updateMemory")((memory) =>
       encodeMemory(memory).pipe(
         Effect.flatMap(
           (row) => sql`
@@ -321,21 +332,24 @@ const make = Effect.gen(function* () {
             : Effect.void,
         ),
       ),
-    deleteMemory: (id) =>
+    ),
+    deleteMemory: Effect.fn("BotsStore.deleteMemory")((id) =>
       sql`DELETE FROM memories WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete memory ${id}`)),
       ),
+    ),
     getAboutMe: sql`SELECT about_me AS "aboutMe" FROM owner_profile WHERE id = 1`.pipe(
       Effect.flatMap(decodeAboutMe),
       Effect.map((rows) => rows[0]?.aboutMe ?? ""),
       Effect.mapError(failWith("Could not read the owner profile from bots.sqlite")),
     ),
-    setAboutMe: (text) =>
+    setAboutMe: Effect.fn("BotsStore.setAboutMe")((text) =>
       sql`
         INSERT INTO owner_profile (id, about_me) VALUES (1, ${text})
         ON CONFLICT (id) DO UPDATE SET about_me = excluded.about_me
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the owner profile"))),
+    ),
     importBatch: Effect.fn("BotsStore.importBatch")(
       function* (batch: BotsImportBatch) {
         const botRows = yield* Effect.forEach(batch.bots, (bot) => encodeBot(bot));
@@ -360,7 +374,7 @@ const make = Effect.gen(function* () {
       },
       Effect.mapError(failWith("Could not import bots; nothing was written")),
     ),
-    upsertPushDevice: (device) =>
+    upsertPushDevice: Effect.fn("BotsStore.upsertPushDevice")((device) =>
       sql`
         INSERT INTO bot_push_devices (token, label, created_at, updated_at)
         VALUES (${device.token}, ${device.label}, ${device.createdAt}, ${device.updatedAt})
@@ -368,11 +382,13 @@ const make = Effect.gen(function* () {
           label = excluded.label,
           updated_at = excluded.updated_at
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not register the push device"))),
-    deletePushDevice: (token) =>
+    ),
+    deletePushDevice: Effect.fn("BotsStore.deletePushDevice")((token) =>
       sql`DELETE FROM bot_push_devices WHERE token = ${token}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith("Could not unregister the push device")),
       ),
+    ),
     listPushDevices: sql`
       SELECT token, label, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM bot_push_devices

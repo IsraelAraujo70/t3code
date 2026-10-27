@@ -159,7 +159,7 @@ const toolFailure = (message: string) => new ToolFailure({ message });
 const decodeArgs =
   <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S) =>
   (args: unknown) =>
-    Schema.decodeUnknownEffect(schema)(args ?? {}, { onExcessProperty: "error" }).pipe(
+    Schema.decodeEffect(schema)(args ?? {}, { onExcessProperty: "error" }).pipe(
       Effect.mapError((issue) => toolFailure(`Invalid arguments: ${issue.message}`)),
     );
 
@@ -172,6 +172,7 @@ export class GuestTools extends Context.Service<
 >()("t3/bots/guest/GuestTools") {}
 
 const make = Effect.gen(function* () {
+  const services = yield* Effect.context<never>();
   const guests = yield* GuestStore;
   const artifacts = yield* GuestArtifacts;
   const images = yield* CodexImages;
@@ -184,15 +185,16 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => DEFAULT_IMAGES_PER_DAY),
   );
 
-  const threadImages = Effect.fn("GuestTools.threadImages")(function* (threadId: ThreadId) {
-    const { messages } = yield* projections
-      .getThreadRecords(threadId, ["messages"], { messageRoles: ["user", "assistant"] })
-      .pipe(Effect.mapError(() => toolFailure("Could not read this conversation.")));
-    const generated = yield* artifacts
-      .listForThread(threadId)
-      .pipe(Effect.mapError(() => toolFailure("Could not read this conversation.")));
-    return conversationImages(messages, generated);
-  });
+  const threadImages = Effect.fn("GuestTools.threadImages")(
+    function* (threadId: ThreadId) {
+      const { messages } = yield* projections.getThreadRecords(threadId, ["messages"], {
+        messageRoles: ["user", "assistant"],
+      });
+      const generated = yield* artifacts.listForThread(threadId);
+      return conversationImages(messages, generated);
+    },
+    Effect.mapError(() => toolFailure("Could not read this conversation.")),
+  );
 
   const now = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -310,7 +312,7 @@ const make = Effect.gen(function* () {
       handler: (args: A) => Effect.Effect<string, ToolFailure>,
     ) =>
     (args: unknown) =>
-      Effect.runPromise(
+      Effect.runPromiseWith(services)(
         decode(args).pipe(
           Effect.flatMap(handler),
           Effect.map((text) => ({ text })),

@@ -16,7 +16,7 @@ import { SymbolView, type AppSymbolName } from "../components/ui/AppSymbol";
 import { AppText as Text } from "../components/ui/AppText";
 import { RowPressable } from "../components/ui/RowPressable";
 import { useAtomValueWhileVisible } from "../features/home/home-route-visibility";
-import { useHomeThreadSelection } from "../features/home/home-thread-navigation";
+import { useSelectWorkspaceDetail } from "../features/workspace/useSelectWorkspaceDetail";
 import { THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME } from "../features/threads/thread-list-v2-row-appearance";
 import { cn } from "../lib/cn";
 import { relativeTime } from "../lib/time";
@@ -229,7 +229,7 @@ function BotGroups(props: {
   const { environmentId, directory } = props;
   const shells = useBotThreadShells(environmentId, directory.bots, props.visible);
   const { collapsed, toggle } = useCollapsedBotGroups();
-  const selectThread = useHomeThreadSelection();
+  const selectDetail = useSelectWorkspaceDetail();
   const groups = botsTabGroups(
     groupBotRows(directory.sections, resolveBotRows(directory.bots, environmentId, shells)),
     collapsed,
@@ -250,7 +250,12 @@ function BotGroups(props: {
             <BotRow
               key={row.bot.id}
               row={row}
-              onOpen={() => selectThread({ environmentId, id: row.bot.homeThreadId })}
+              onOpen={() =>
+                selectDetail({
+                  name: "Thread",
+                  params: { environmentId, threadId: row.bot.homeThreadId },
+                })
+              }
             />
           ))}
     </View>

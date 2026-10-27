@@ -194,7 +194,7 @@ export const make = Effect.fn("ComputerInput.make")(function* (runCommand: Input
   };
 
   return ComputerInput.of({
-    replay: (input) =>
+    replay: Effect.fn("ComputerInput.replay")((input) =>
       lock
         .withPermits(1)(replayOne(input))
         .pipe(
@@ -205,6 +205,7 @@ export const make = Effect.fn("ComputerInput.make")(function* (runCommand: Input
             }),
           ),
         ),
+    ),
   });
 });
 

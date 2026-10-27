@@ -118,7 +118,10 @@ export class BotPushDelivery extends Context.Service<
   }
 >()("t3/bots/push/BotPushDelivery") {}
 
-const disabled = BotPushDelivery.of({ enabled: false, deliver: () => Effect.void });
+const disabled = BotPushDelivery.of({
+  enabled: false,
+  deliver: Effect.fn("BotPushDelivery.deliver")(() => Effect.void),
+});
 
 const readServiceAccount = Effect.fn("BotPushDelivery.readServiceAccount")(function* (
   path: string,

@@ -54,13 +54,14 @@ const make = Effect.gen(function* () {
   const select = sql`SELECT watcher_thread_id, target_thread_id, created_at FROM thread_watches`;
 
   return ThreadWatchStore.of({
-    watch: (watch) =>
+    watch: Effect.fn("ThreadWatchStore.watch")((watch) =>
       sql`
         INSERT INTO thread_watches (watcher_thread_id, target_thread_id, created_at)
         VALUES (${watch.watcherThreadId}, ${watch.targetThreadId}, ${watch.createdAt})
         ON CONFLICT DO NOTHING
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the thread watch"))),
-    unwatch: (watcherThreadId, targetThreadId) =>
+    ),
+    unwatch: Effect.fn("ThreadWatchStore.unwatch")((watcherThreadId, targetThreadId) =>
       sql<{ readonly watcher_thread_id: string }>`
         DELETE FROM thread_watches
         WHERE watcher_thread_id = ${watcherThreadId} AND target_thread_id = ${targetThreadId}
@@ -69,11 +70,13 @@ const make = Effect.gen(function* () {
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(failWith("Could not remove the thread watch")),
       ),
-    watchersOf: (targetThreadId) =>
+    ),
+    watchersOf: Effect.fn("ThreadWatchStore.watchersOf")((targetThreadId) =>
       sql<Row>`${select} WHERE target_thread_id = ${targetThreadId} ORDER BY created_at`.pipe(
         Effect.map((rows) => rows.map(toWatch)),
         Effect.mapError(failWith("Could not read thread watches")),
       ),
+    ),
     list: sql<Row>`${select} ORDER BY created_at`.pipe(
       Effect.map((rows) => rows.map(toWatch)),
       Effect.mapError(failWith("Could not read thread watches")),

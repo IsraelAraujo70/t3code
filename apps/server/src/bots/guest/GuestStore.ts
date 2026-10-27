@@ -124,25 +124,28 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodeGuests),
       Effect.mapError(failWith("Could not read guests from bots.sqlite")),
     ),
-    getGuest: (id) =>
+    getGuest: Effect.fn("GuestStore.getGuest")((id) =>
       sql`${selectGuests} WHERE id = ${id}`.pipe(
         Effect.flatMap(decodeGuests),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read guest ${id} from bots.sqlite`)),
       ),
-    getGuestByTokenHash: (tokenHash) =>
+    ),
+    getGuestByTokenHash: Effect.fn("GuestStore.getGuestByTokenHash")((tokenHash) =>
       sql`${selectGuests} WHERE token_hash IS NOT NULL AND token_hash = ${tokenHash}`.pipe(
         Effect.flatMap(decodeGuests),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith("Could not look up the guest token")),
       ),
-    insertGuest: (guest) =>
+    ),
+    insertGuest: Effect.fn("GuestStore.insertGuest")((guest) =>
       sql`
         INSERT INTO guests (id, name, token_hash, token_created_at, created_at, updated_at)
         VALUES (${guest.id}, ${guest.name}, ${guest.tokenHash}, ${guest.tokenCreatedAt},
           ${guest.createdAt}, ${guest.updatedAt})
       `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not insert guest ${guest.id}`))),
-    setTokenHash: (id, tokenHash, at) =>
+    ),
+    setTokenHash: Effect.fn("GuestStore.setTokenHash")((id, tokenHash, at) =>
       sql`
         UPDATE guests SET token_hash = ${tokenHash},
           token_created_at = ${tokenHash === null ? null : at}, updated_at = ${at}
@@ -155,29 +158,33 @@ const make = Effect.gen(function* () {
             : Effect.void,
         ),
       ),
-    deleteGuest: (id) =>
+    ),
+    deleteGuest: Effect.fn("GuestStore.deleteGuest")((id) =>
       sql`DELETE FROM guests WHERE id = ${id}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not delete guest ${id}`)),
       ),
-    listGuestBotIds: (guestId) =>
+    ),
+    listGuestBotIds: Effect.fn("GuestStore.listGuestBotIds")((guestId) =>
       sql`${selectAssignments} WHERE guest_id = ${guestId} ORDER BY created_at, bot_id`.pipe(
         Effect.flatMap(decodeAssignments),
         Effect.map((rows) => rows.map((row) => row.botId)),
         Effect.mapError(failWith(`Could not read bots for guest ${guestId}`)),
       ),
+    ),
     listAssignments: sql`${selectAssignments} ORDER BY bot_id`.pipe(
       Effect.flatMap(decodeAssignments),
       Effect.map((rows) => new Map(rows.map((row) => [row.botId, row.guestId]))),
       Effect.mapError(failWith("Could not read guest bot assignments")),
     ),
-    guestOfBot: (botId) =>
+    guestOfBot: Effect.fn("GuestStore.guestOfBot")((botId) =>
       sql`${selectAssignments} WHERE bot_id = ${botId}`.pipe(
         Effect.flatMap(decodeAssignments),
         Effect.map((rows) => Option.fromNullishOr(rows[0]?.guestId)),
         Effect.mapError(failWith(`Could not read the guest for bot ${botId}`)),
       ),
-    assignBot: (guestId, botId, at) =>
+    ),
+    assignBot: Effect.fn("GuestStore.assignBot")((guestId, botId, at) =>
       sql`
         INSERT INTO guest_bots (bot_id, guest_id, created_at) VALUES (${botId}, ${guestId}, ${at})
         ON CONFLICT (bot_id) DO UPDATE SET guest_id = excluded.guest_id
@@ -193,26 +200,30 @@ const make = Effect.gen(function* () {
             : Effect.void,
         ),
       ),
-    unassignBot: (botId) =>
+    ),
+    unassignBot: Effect.fn("GuestStore.unassignBot")((botId) =>
       sql`DELETE FROM guest_bots WHERE bot_id = ${botId}`.pipe(
         Effect.asVoid,
         Effect.mapError(failWith(`Could not unassign bot ${botId}`)),
       ),
-    upsertPushDevice: (device) =>
+    ),
+    upsertPushDevice: Effect.fn("GuestStore.upsertPushDevice")((device) =>
       sql`
         INSERT INTO guest_push_devices (token, guest_id, label, created_at, updated_at)
         VALUES (${device.token}, ${device.guestId}, ${device.label}, ${device.createdAt}, ${device.updatedAt})
         ON CONFLICT (token) DO UPDATE SET label = excluded.label, updated_at = excluded.updated_at
         WHERE guest_push_devices.guest_id = excluded.guest_id
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not register the guest push device"))),
-    deletePushDevice: (guestId, token) =>
+    ),
+    deletePushDevice: Effect.fn("GuestStore.deletePushDevice")((guestId, token) =>
       sql`
         DELETE FROM guest_push_devices WHERE guest_id = ${guestId} AND token = ${token}
       `.pipe(
         Effect.asVoid,
         Effect.mapError(failWith("Could not unregister the guest push device")),
       ),
-    listPushDevices: (guestId) =>
+    ),
+    listPushDevices: Effect.fn("GuestStore.listPushDevices")((guestId) =>
       sql`
         SELECT token, guest_id AS "guestId", label, created_at AS "createdAt", updated_at AS "updatedAt"
         FROM guest_push_devices WHERE guest_id = ${guestId} ORDER BY created_at, token
@@ -220,6 +231,7 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodePushDevices),
         Effect.mapError(failWith("Could not read guest push devices from bots.sqlite")),
       ),
+    ),
   });
 });
 

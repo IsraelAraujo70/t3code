@@ -92,7 +92,7 @@ const decodeBody = <S extends Schema.Top & { readonly DecodingServices: never }>
         String(cause).includes("maxBytes") ? tooLarge() : badRequest("Pedido inválido."),
       ),
     );
-    return yield* Schema.decodeUnknownEffect(schema)(body, { onExcessProperty: "error" }).pipe(
+    return yield* Schema.decodeEffect(schema)(body, { onExcessProperty: "error" }).pipe(
       Effect.mapError((issue) => badRequest(`Pedido inválido: ${issue.message}`)),
     );
   });

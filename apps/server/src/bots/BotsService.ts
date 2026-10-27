@@ -580,7 +580,7 @@ const make = Effect.gen(function* () {
     createMemory,
     updateMemory,
     deleteMemory,
-    memoriesOf: (botId) => store.listMemories(botId),
+    memoriesOf: Effect.fn("BotsService.memoriesOf")((botId) => store.listMemories(botId)),
     updateOwner,
     importFriend,
     createSection,

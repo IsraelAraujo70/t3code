@@ -250,7 +250,7 @@ const botCreate = Command.make(
         const { settingsPath } = yield* ServerConfig.ServerConfig;
         const settings = yield* fs.readFileString(settingsPath).pipe(
           Effect.flatMap(decodeSettings),
-          Effect.catch(() => Effect.succeed({ providerInstances: {} })),
+          Effect.orElseSucceed(() => ({ providerInstances: {} })),
         );
         if (
           sandboxBinaryFor(settings.providerInstances, bot.model.instanceId, args.guestId) === null

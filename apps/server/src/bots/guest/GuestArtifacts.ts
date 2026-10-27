@@ -73,7 +73,7 @@ const make = Effect.gen(function* () {
   `;
 
   return GuestArtifacts.of({
-    record: (artifact) =>
+    record: Effect.fn("GuestArtifacts.record")((artifact) =>
       sql`
         INSERT INTO guest_artifacts
           (id, bot_id, thread_id, kind, name, mime_type, height, size_bytes, created_at)
@@ -85,18 +85,21 @@ const make = Effect.gen(function* () {
         Effect.andThen(PubSub.publish(changes, artifact)),
         Effect.asVoid,
       ),
-    listForThread: (threadId) =>
+    ),
+    listForThread: Effect.fn("GuestArtifacts.listForThread")((threadId) =>
       sql`${select} WHERE thread_id = ${threadId} ORDER BY created_at, id`.pipe(
         Effect.flatMap(decodeArtifacts),
         Effect.mapError(failWith(`Could not read the guest artifacts of ${threadId}`)),
       ),
-    get: (threadId, id) =>
+    ),
+    get: Effect.fn("GuestArtifacts.get")((threadId, id) =>
       sql`${select} WHERE thread_id = ${threadId} AND id = ${id}`.pipe(
         Effect.flatMap(decodeArtifacts),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read guest artifact ${id}`)),
       ),
-    countImagesSince: (guestId, sinceIso) =>
+    ),
+    countImagesSince: Effect.fn("GuestArtifacts.countImagesSince")((guestId, sinceIso) =>
       sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM guest_artifacts a
         JOIN guest_bots g ON g.bot_id = a.bot_id
@@ -105,6 +108,7 @@ const make = Effect.gen(function* () {
         Effect.map((rows) => Number(rows[0]?.count ?? 0)),
         Effect.mapError(failWith(`Could not count the images of guest ${guestId}`)),
       ),
+    ),
     recorded: Stream.fromPubSub(changes),
   });
 });

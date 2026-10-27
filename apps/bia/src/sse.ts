@@ -1,4 +1,4 @@
-import type { GuestMessage, GuestStreamEvent } from "@t3tools/contracts";
+import type { GuestMessage, GuestBotStreamEvent } from "@t3tools/contracts";
 
 /**
  * Reads the complete SSE events in `text` from `cursor` on. The XHR's `responseText` only grows,
@@ -55,7 +55,7 @@ function isGuestMessage(value: unknown): value is GuestMessage {
 }
 
 /** One `data:` payload as a stream event, or null when it is not one the app understands. */
-export function parseStreamEvent(data: string): GuestStreamEvent | null {
+export function parseStreamEvent(data: string): GuestBotStreamEvent | null {
   let value: unknown;
   try {
     value = JSON.parse(data);

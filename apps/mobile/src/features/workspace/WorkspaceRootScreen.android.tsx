@@ -1,3 +1,7 @@
+import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
+import { useEnabledNavigationTabs } from "./navigation-tabs";
+import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
+import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,7 +11,6 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
-import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -18,12 +21,12 @@ import type { WorkspaceTab } from "./workspace-tabs-state";
 // Fork (friend): the Bots tab.
 import { BotsTabDetailPlaceholder, BotsTabScreen } from "../../bots/BotsTabScreen";
 
-// Fork (friend): the Bots tab, next to Chats as in the navigation bar.
-const TABS: readonly WorkspaceTab[] = ["threads", "bots", "pullRequests"];
+const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
 export function WorkspaceRootScreen() {
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
+  const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
   const context = useMemo(
@@ -36,6 +39,7 @@ export function WorkspaceRootScreen() {
   const tab = workspace.state.selectedTab;
 
   if (layout.usesSplitView) {
+    if (enabled.length === 0) return <View className="flex-1 bg-screen" />;
     return (
       <WorkspaceTabPanes
         tabs={TABS}
@@ -43,24 +47,25 @@ export function WorkspaceRootScreen() {
         renderTab={(tab) =>
           tab === "threads" ? (
             <HomeRouteScreen />
+          ) : tab === "bots" ? (
+            // Fork (friend): the Bots tab's detail pane waits for a bot like PRs wait for a PR.
+            <>
+              <NativeStackScreenOptions options={{ headerShown: false }} />
+              <BotsTabDetailPlaceholder />
+            </>
+          ) : tab !== "pullRequests" ? (
+            <WorkspaceExtraTab tab={tab} />
           ) : (
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
-              {/* Fork (friend): the Bots tab's detail pane waits for a bot like PRs wait for a PR. */}
-              {tab === "bots" ? (
-                <BotsTabDetailPlaceholder />
-              ) : (
-                <>
-                  <AndroidScreenHeader title="Pull requests" />
-                  <View className="flex-1 items-center justify-center px-10">
-                    <EmptyState
-                      title="Select a pull request"
-                      detail="Choose a pull request from the sidebar to review it."
-                      variant="plain"
-                    />
-                  </View>
-                </>
-              )}
+              <AndroidScreenHeader title="Pull requests" />
+              <View className="flex-1 items-center justify-center px-10">
+                <EmptyState
+                  title="Select a pull request"
+                  detail="Choose a pull request from the sidebar to review it."
+                  variant="plain"
+                />
+              </View>
             </>
           )
         }
@@ -73,25 +78,33 @@ export function WorkspaceRootScreen() {
       <View className="flex-1 bg-header">
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <SafeAreaInsetsContext value={{ ...insets, bottom: 0 }}>
-          <WorkspaceTabPanes
-            tabs={TABS}
-            selected={tab}
-            renderTab={(tab) =>
-              tab === "threads" ? (
-                <HomeRouteScreen />
-              ) : tab === "bots" ? (
-                // Fork (friend): the Bots tab.
-                <BotsTabScreen />
-              ) : (
-                <PullRequestFilterMenuProvider>
-                  <PullRequestToolbar />
-                  <ScreenContent>
-                    <PullRequestsScreen />
-                  </ScreenContent>
-                </PullRequestFilterMenuProvider>
-              )
-            }
-          />
+          {enabled.length === 0 ? (
+            <WorkspaceNoTabs />
+          ) : (
+            <WorkspaceTabPanes
+              tabs={TABS}
+              selected={tab}
+              renderTab={(tab) =>
+                tab === "threads" ? (
+                  <HomeRouteScreen />
+                ) : tab === "bots" ? (
+                  // Fork (friend): the Bots tab.
+                  <BotsTabScreen />
+                ) : tab !== "pullRequests" ? (
+                  <WorkspaceExtraTab tab={tab} />
+                ) : (
+                  <PullRequestsScreen
+                    renderFrame={(filters, list) => (
+                      <>
+                        <PullRequestToolbar filters={filters} />
+                        <ScreenContent>{list}</ScreenContent>
+                      </>
+                    )}
+                  />
+                )
+              }
+            />
+          )}
         </SafeAreaInsetsContext>
         <AndroidWorkspaceNavigation onNewThread={startNewTask} />
       </View>

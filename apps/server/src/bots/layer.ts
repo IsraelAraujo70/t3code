@@ -5,7 +5,6 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { BotsError } from "@t3tools/contracts";
@@ -64,7 +63,11 @@ const layerStoreOff = Layer.succeed(
 
 const layerInstructionsOff = Layer.succeed(
   BotsInstructions.BotsInstructions,
-  BotsInstructions.BotsInstructions.of({ forThread: () => Effect.succeed(undefined) }),
+  BotsInstructions.BotsInstructions.of({
+    forThread: Effect.fn("BotsInstructions.BotsInstructions.forThread")(() =>
+      Effect.as(Effect.void, undefined),
+    ),
+  }),
 );
 
 const layerServiceOff = Layer.succeed(
@@ -87,7 +90,7 @@ const layerServiceOff = Layer.succeed(
     arrange: notHost,
     ensureConversation: notHost,
     // Not a bots host: no thread belongs to a bot here.
-    botForThread: () => Effect.succeed(Option.none()),
+    botForThread: Effect.fn("BotsService.BotsService.botForThread")(() => Effect.succeedNone),
     registerPushDevice: notHost,
     unregisterPushDevice: notHost,
   }),

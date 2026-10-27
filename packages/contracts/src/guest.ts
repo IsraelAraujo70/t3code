@@ -28,7 +28,7 @@ export const GUEST_API_ROUTES = {
   bots: `${GUEST_API_PREFIX}/bots`,
   /** GET ?limit= → GuestHistoryResponse; POST GuestSendInput → GuestSendResult */
   messages: `${GUEST_API_PREFIX}/bots/:botId/messages`,
-  /** GET → text/event-stream of GuestStreamEvent, one JSON object per `data:` line */
+  /** GET → text/event-stream of GuestBotStreamEvent, one JSON object per `data:` line */
   events: `${GUEST_API_PREFIX}/bots/:botId/events`,
   /** GET → the image bytes of an attachment on one of the bot's messages */
   attachment: `${GUEST_API_PREFIX}/bots/:botId/attachments/:attachmentId`,
@@ -157,11 +157,11 @@ export type GuestSendResult = typeof GuestSendResult.Type;
  * The live stream of one bot's conversation. It starts with `working`, then sends every change:
  * a message (user or assistant, the whole text so far each time) and the working flag.
  */
-export const GuestStreamEvent = Schema.Union([
+export const GuestBotStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("message"), message: GuestMessage }),
   Schema.Struct({ type: Schema.Literal("working"), working: Schema.Boolean }),
 ]);
-export type GuestStreamEvent = typeof GuestStreamEvent.Type;
+export type GuestBotStreamEvent = typeof GuestBotStreamEvent.Type;
 
 export const GuestPushDeviceRef = Schema.Struct({
   token: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),

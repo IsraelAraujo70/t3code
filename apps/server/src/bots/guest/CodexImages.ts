@@ -387,7 +387,9 @@ export const layer = Layer.effect(
     }, Effect.scoped);
 
     return CodexImages.of({
-      generate: (input) => permits.withPermits(1)(generateOnce(input)),
+      generate: Effect.fn("CodexImages.generate")((input) =>
+        permits.withPermits(1)(generateOnce(input)),
+      ),
     });
   }),
 );

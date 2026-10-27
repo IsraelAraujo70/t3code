@@ -28,7 +28,7 @@ import {
   type GuestPushDeviceRef,
   type GuestSendInput,
   type GuestSendResult,
-  type GuestStreamEvent,
+  type GuestBotStreamEvent,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -121,7 +121,7 @@ export class GuestService extends Context.Service<
     readonly events: (
       guest: GuestRecord,
       botId: string,
-    ) => Effect.Effect<Stream.Stream<GuestStreamEvent>, GuestApiError>;
+    ) => Effect.Effect<Stream.Stream<GuestBotStreamEvent>, GuestApiError>;
     /** An image a person sent in the conversation, or one the bot's tools generated there. */
     readonly attachment: (
       guest: GuestRecord,
@@ -494,7 +494,7 @@ const make = Effect.gen(function* () {
     const { runs } = yield* readThread(threadId);
     const active = new Set(runs.filter(isWorking).map((run) => run.id));
     let working = active.size > 0;
-    const changes = (event: OrchestrationV2DomainEvent): GuestStreamEvent[] => {
+    const changes = (event: OrchestrationV2DomainEvent): GuestBotStreamEvent[] => {
       if (event.type === "message.updated") {
         return isGuestVisible(event.payload)
           ? [{ type: "message", message: toGuestMessage(guest, event.payload) }]
@@ -507,10 +507,10 @@ const make = Effect.gen(function* () {
       working = active.size > 0;
       return [{ type: "working", working }];
     };
-    const initial: GuestStreamEvent = { type: "working", working };
+    const initial: GuestBotStreamEvent = { type: "working", working };
     const made = artifacts.recorded.pipe(
       Stream.filter((artifact) => artifact.threadId === threadId),
-      Stream.map((artifact): GuestStreamEvent => ({
+      Stream.map((artifact): GuestBotStreamEvent => ({
         type: "message",
         message: artifactMessage(artifact),
       })),

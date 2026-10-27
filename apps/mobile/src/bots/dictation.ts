@@ -3,13 +3,14 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { createServerVoiceTranscriber } from "@t3tools/client-runtime/state/bots";
 import type { VoiceTranscriber } from "@t3tools/client-runtime/voice-input";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { File, UploadType } from "expo-file-system";
-import { useMemo } from "react";
 
 import { appAtomRegistry } from "../state/atom-registry";
 import { attachmentEnvironment } from "../state/attachments";
+import { environmentServerConfigsAtom } from "../state/server";
 import { environmentSession, readEnvironmentScope } from "../state/session";
-import { botsEnvironment, useDictationEnvironmentId } from "./state";
+import { botsEnvironment } from "./state";
 
 /** The server reads the container from the extension; expo-audio's preset records `.m4a`. */
 const MIME_TYPES: Readonly<Record<string, string>> = {
@@ -71,14 +72,19 @@ function createTranscriber(environmentId: EnvironmentId): VoiceTranscriber {
   });
 }
 
+const dictationEnvironmentIdAtom = Atom.make((get) => {
+  for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
+    if (config.environment.capabilities.dictation === true) return environmentId;
+  }
+  return null;
+});
+
 /**
  * Server dictation for devices without on-device transcription (Android, older iOS), or null
- * when no connected server advertises `dictation`.
+ * when no connected server advertises `dictation`. Voice input is app-wide on the phone, so any
+ * such server will do.
  */
-export function useServerVoiceTranscriber(): VoiceTranscriber | null {
-  const environmentId = useDictationEnvironmentId();
-  return useMemo(
-    () => (environmentId === null ? null : createTranscriber(environmentId)),
-    [environmentId],
-  );
-}
+export const serverVoiceTranscriberAtom = Atom.make((get) => {
+  const environmentId = get(dictationEnvironmentIdAtom);
+  return environmentId === null ? null : createTranscriber(environmentId);
+}).pipe(Atom.withLabel("mobile:server-voice-transcriber"));

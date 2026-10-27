@@ -712,18 +712,21 @@ export const layer = Layer.effect(
             return Stream.make(answer).pipe(Stream.concat(Stream.fromQueue(events)));
           }),
         ),
-      ready: (input) =>
+      ready: Effect.fn("VoiceSessions.ready")((input) =>
         (
           readies.get(input.sessionId) ??
           Effect.fail(new BotsError({ message: "This voice session is not waiting to connect." }))
         ).pipe(Effect.as(input)),
-      reconnect: ({ sessionId, sdp }) =>
+      ),
+      reconnect: Effect.fn("VoiceSessions.reconnect")(({ sessionId, sdp }) =>
         (
           reconnects.get(sessionId)?.(sdp) ??
           Effect.fail(new BotsError({ message: "This voice session cannot change its voice." }))
         ).pipe(Effect.map((answer) => ({ sdp: answer }))),
-      report: ({ sessionId, entries }) =>
+      ),
+      report: Effect.fn("VoiceSessions.report")(({ sessionId, entries }) =>
         Effect.logInfo(`Voice ${sessionId} client: ${JSON.stringify(entries)}`),
+      ),
     });
   }),
 ).pipe(Layer.provide(NodeCrypto.layer));
@@ -815,12 +818,8 @@ export const layerThreads = Layer.effect(
         Stream.unwrap(
           Effect.gen(function* () {
             // Taken before reading the runs, so a change between the two still replays.
-            const afterSequence = yield* engine
-              .getThreadEventSequence(threadId)
-              .pipe(Effect.mapError(threadFailure));
-            const { runs } = yield* projections
-              .getThreadRecords(threadId, ["runs"])
-              .pipe(Effect.mapError(threadFailure));
+            const afterSequence = yield* engine.getThreadEventSequence(threadId);
+            const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
             const active = new Set(
               runs.filter((run) => !settledRunStatuses.has(run.status)).map((run) => run.id),
             );
@@ -863,7 +862,7 @@ export const layerThreads = Layer.effect(
                 ),
               ),
             );
-          }),
+          }).pipe(Effect.mapError(threadFailure)),
         ),
     });
   }),

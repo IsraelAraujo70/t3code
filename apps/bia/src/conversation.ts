@@ -1,4 +1,4 @@
-import type { GuestHistoryResponse, GuestMessage, GuestStreamEvent } from "@t3tools/contracts";
+import type { GuestHistoryResponse, GuestMessage, GuestBotStreamEvent } from "@t3tools/contracts";
 
 /** A message Bia sent that the server has not echoed back yet. */
 export interface OutgoingMessage {
@@ -20,7 +20,7 @@ export interface Conversation {
 
 export type ConversationAction =
   | { readonly type: "history"; readonly history: GuestHistoryResponse }
-  | { readonly type: "event"; readonly event: GuestStreamEvent }
+  | { readonly type: "event"; readonly event: GuestBotStreamEvent }
   | { readonly type: "queued"; readonly message: OutgoingMessage }
   | { readonly type: "sent"; readonly localId: string; readonly messageId: string }
   | { readonly type: "dropped"; readonly localId: string };

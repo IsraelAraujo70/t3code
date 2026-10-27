@@ -318,7 +318,7 @@ export const make = Effect.fn("ScreenCapture.make")(function* (commands: ScreenC
     );
 
   return ScreenCapture.of({
-    attach: (options) =>
+    attach: Effect.fn("ScreenCapture.attach")((options) =>
       Effect.acquireRelease(
         lock.withPermits(1)(
           Effect.gen(function* () {
@@ -333,6 +333,7 @@ export const make = Effect.fn("ScreenCapture.make")(function* (commands: ScreenC
         ),
         detach,
       ).pipe(Effect.map((viewer) => ({ next: Queue.take(viewer.frames) }))),
+    ),
     geometry,
   });
 });

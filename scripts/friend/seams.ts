@@ -35,7 +35,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/settings/SettingsRouteScreen.tsx",
-    markers: 2,
+    markers: 3,
     why: "local-only notification settings; the friend APK's update section",
   },
   {
@@ -245,7 +245,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/settings/settingsSearch.ts",
-    markers: 5,
+    markers: 6,
     why: "Bots in sidebar setting and the Bots settings page",
   },
   {
@@ -330,13 +330,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/workspace/workspace-tabs-state.ts",
-    markers: 2,
-    why: "Bots workspace tab",
-  },
-  {
-    file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.tsx",
     markers: 1,
-    why: "Bots tab title",
+    why: "Bots tab state",
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceTabsContext.tsx",
@@ -344,24 +339,44 @@ export const SEAMS: readonly Seam[] = [
     why: "Bots tab scroll offset",
   },
   {
-    file: "apps/mobile/src/features/workspace/useAndroidWorkspaceSelection.ts",
+    file: "apps/mobile/src/features/workspace/navigation-tab-order.ts",
+    markers: 2,
+    why: "Bots is a navigation tab on Android (botsTab.android.ts)",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/navigation-tabs.ts",
+    markers: 1,
+    why: "Bots tab icon",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/workspace-tab-navigation.ts",
+    markers: 1,
+    why: "the Bots tab has no remembered detail page",
+  },
+  {
+    file: "apps/mobile/src/features/workspace/WorkspaceToolbar.ios.tsx",
+    markers: 1,
+    why: "the Bots tab type has no iOS search label",
+  },
+  {
+    file: "apps/mobile/src/features/layout/AdaptiveWorkspaceLayout.tsx",
     markers: 2,
     why: "bot conversations open from the Bots tab",
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.android.tsx",
-    markers: 4,
+    markers: 3,
     why: "Bots tab pane on Android",
   },
   {
     file: "apps/mobile/src/features/workspace/AndroidWorkspaceSidebar.android.tsx",
-    markers: 3,
+    markers: 2,
     why: "Bots tab in the Android split sidebar",
   },
   {
     file: "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
-    markers: 3,
-    why: "Bots item in the Android navigation bar and rail",
+    markers: 2,
+    why: "Bots item title and icon in the Android navigation bar and rail",
   },
   {
     file: "scripts/build-desktop-artifact.ts",
