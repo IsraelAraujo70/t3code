@@ -304,9 +304,19 @@ export class KanbanStore extends Context.Service<
     ) => Effect.Effect<Option.Option<KanbanView>, KanbanError>;
     /** Appends it after the last view. */
     readonly insertView: (view: KanbanView) => Effect.Effect<void, KanbanError>;
-    /** Writes every field but the position and `createdBy`. */
-    readonly updateView: (view: KanbanView) => Effect.Effect<void, KanbanError>;
-    readonly deleteView: (id: KanbanViewId) => Effect.Effect<void, KanbanError>;
+    /**
+     * Writes every field but the position and `createdBy`. With `onBoard`, only while the view is
+     * still on that board (null: every board). False when no row matched.
+     */
+    readonly updateView: (
+      view: KanbanView,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<boolean, KanbanError>;
+    /** `onBoard` as in `updateView`. False when no row matched. */
+    readonly deleteView: (
+      id: KanbanViewId,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<boolean, KanbanError>;
     /**
      * The given views take positions 0..n-1 in that order; the others follow in their current
      * relative order. Unknown ids are ignored.
@@ -559,6 +569,9 @@ const make = Effect.gen(function* () {
       updated_at AS "updatedAt"
     FROM kanban_tickets
   `;
+  // `IS` matches a null project (every board) too.
+  const onBoardClause = (onBoard: ProjectId | null | undefined) =>
+    onBoard === undefined ? sql`` : sql`AND project_id IS ${onBoard}`;
   const selectViews = sql`
     SELECT
       id,
@@ -1195,7 +1208,7 @@ const make = Effect.gen(function* () {
         )
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the view"))),
     ),
-    updateView: Effect.fn("KanbanStore.updateView")((view) =>
+    updateView: Effect.fn("KanbanStore.updateView")((view, onBoard) =>
       sql`
         UPDATE kanban_views
         SET
@@ -1207,12 +1220,16 @@ const make = Effect.gen(function* () {
           updated_by = ${view.updatedBy},
           created_at = ${view.createdAt},
           updated_at = ${view.updatedAt}
-        WHERE id = ${view.id}
-      `.pipe(Effect.asVoid, Effect.mapError(failWith(`Could not save view ${view.id}`))),
+        WHERE id = ${view.id} ${onBoardClause(onBoard)}
+        RETURNING id
+      `.pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError(failWith(`Could not save view ${view.id}`)),
+      ),
     ),
-    deleteView: Effect.fn("KanbanStore.deleteView")((id) =>
-      sql`DELETE FROM kanban_views WHERE id = ${id}`.pipe(
-        Effect.asVoid,
+    deleteView: Effect.fn("KanbanStore.deleteView")((id, onBoard) =>
+      sql`DELETE FROM kanban_views WHERE id = ${id} ${onBoardClause(onBoard)} RETURNING id`.pipe(
+        Effect.map((rows) => rows.length > 0),
         Effect.mapError(failWith(`Could not delete view ${id}`)),
       ),
     ),

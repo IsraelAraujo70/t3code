@@ -1120,6 +1120,33 @@ describe("KanbanService", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("a bot's view write applies only while the view is on the board it checked", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const kanban = yield* KanbanService;
+      const local = yield* kanban.saveView(
+        { projectId: PROJECT, name: "Local", icon: null, config: KANBAN_DEFAULT_VIEW_CONFIG },
+        "bot:b_1",
+      );
+      // The bot checked the view on PROJECT's board; the owner then moves it to every board.
+      yield* kanban.saveView({ ...local, projectId: null });
+      const staleSave = yield* kanban
+        .saveView({ ...local, name: "Bot rename" }, "bot:b_1", PROJECT)
+        .pipe(Effect.flip);
+      assert.include(staleSave.message, "moved to another board");
+      const staleDelete = yield* kanban.deleteView({ viewId: local.id }, PROJECT).pipe(Effect.flip);
+      assert.include(staleDelete.message, "moved to another board");
+      const kept = (yield* kanban.readSnapshot).views.find((view) => view.id === local.id);
+      assert.deepStrictEqual(
+        [kept?.projectId, kept?.name, kept?.updatedBy],
+        [null, "Local", "owner"],
+      );
+
+      yield* kanban.deleteView({ viewId: local.id }, null);
+      assert.isUndefined((yield* kanban.readSnapshot).views.find((view) => view.id === local.id));
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("learns the account's Linear user before importing an isMe view", () => {
     const { linear, layer } = setup({
       // An account added before its first sync: its user is not known yet.

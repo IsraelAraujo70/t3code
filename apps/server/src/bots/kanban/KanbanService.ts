@@ -181,12 +181,20 @@ export class KanbanService extends Context.Service<
     readonly deleteComment: (
       input: KanbanTicketCommentRef,
     ) => Effect.Effect<KanbanTicketCommentRef, KanbanError>;
-    /** Records `actor` (default `owner`) as the last editor, and as the creator of a new view. */
+    /**
+     * Records `actor` (default `owner`) as the last editor, and as the creator of a new view. With
+     * `onBoard`, an edit applies only while the view is still on that board, as a bot's tools
+     * checked it; `deleteView` likewise.
+     */
     readonly saveView: (
       input: KanbanViewSaveInput,
       actor?: KanbanPersonId,
+      onBoard?: ProjectId | null,
     ) => Effect.Effect<KanbanView, KanbanError>;
-    readonly deleteView: (input: KanbanViewRef) => Effect.Effect<KanbanViewRef, KanbanError>;
+    readonly deleteView: (
+      input: KanbanViewRef,
+      onBoard?: ProjectId | null,
+    ) => Effect.Effect<KanbanViewRef, KanbanError>;
     readonly reorderViews: (
       input: KanbanViewReorderInput,
     ) => Effect.Effect<KanbanViewReorderInput, KanbanError>;
@@ -1297,11 +1305,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const viewMoved = (viewId: KanbanViewId) =>
+    Effect.fail(
+      new KanbanError({
+        message: `View ${viewId} moved to another board or was deleted meanwhile; nothing changed.`,
+      }),
+    );
+
   const newViewId = randomHex.pipe(Effect.map((hex) => KanbanViewId.make(`v_${hex}`)));
 
   const saveView = Effect.fn("KanbanService.saveView")(function* (
     input: KanbanViewSaveInput,
     actor: KanbanPersonId = KANBAN_OWNER_PERSON_ID,
+    onBoard?: ProjectId | null,
   ) {
     const now = yield* nowIso;
     const fields = {
@@ -1325,14 +1341,17 @@ const make = Effect.gen(function* () {
       return view;
     }
     const view: KanbanView = { ...(yield* requireView(input.id)), ...fields };
-    yield* store.updateView(view);
+    if (!(yield* store.updateView(view, onBoard))) return yield* viewMoved(input.id);
     yield* publish;
     return view;
   });
 
-  const deleteView = Effect.fn("KanbanService.deleteView")(function* (input: KanbanViewRef) {
+  const deleteView = Effect.fn("KanbanService.deleteView")(function* (
+    input: KanbanViewRef,
+    onBoard?: ProjectId | null,
+  ) {
     yield* requireView(input.viewId);
-    yield* store.deleteView(input.viewId);
+    if (!(yield* store.deleteView(input.viewId, onBoard))) return yield* viewMoved(input.viewId);
     yield* publish;
     return input;
   });

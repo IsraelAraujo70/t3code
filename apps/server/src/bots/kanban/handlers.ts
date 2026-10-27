@@ -312,7 +312,7 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
         ),
       );
       const view = yield* caller.kanban
-        .saveView(save, caller.actor)
+        .saveView(save, caller.actor, existing?.projectId)
         .pipe(Effect.mapError(kanbanFailure));
       return viewInfo(caller)(view);
     }),
@@ -322,7 +322,7 @@ export const layer = McpToolAccess.toLayer(KanbanToolkit, {
       const caller = yield* callerScope;
       const view = yield* writableView(caller, input.viewId);
       return yield* caller.kanban
-        .deleteView({ viewId: view.id })
+        .deleteView({ viewId: view.id }, view.projectId)
         .pipe(Effect.mapError(kanbanFailure));
     }),
   ),

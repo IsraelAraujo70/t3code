@@ -208,8 +208,12 @@ function setup(
     [];
   const creates: Array<{ input: KanbanTicketCreateInput; actor: KanbanPersonId | undefined }> = [];
   const unlinks: KanbanTicketThreadInput[] = [];
-  const savedViews: Array<{ input: KanbanViewSaveInput; actor: KanbanPersonId | undefined }> = [];
-  const deletedViews: KanbanViewRef[] = [];
+  const savedViews: Array<{
+    input: KanbanViewSaveInput;
+    actor: KanbanPersonId | undefined;
+    onBoard?: ProjectId | null | undefined;
+  }> = [];
+  const deletedViews: Array<{ input: KanbanViewRef; onBoard: ProjectId | null | undefined }> = [];
   const bots = Layer.mock(BotsService.BotsService)({
     botForThread: (threadId) => {
       const parsed = parseBotThreadId(threadId);
@@ -232,9 +236,9 @@ function setup(
         unlinks.push(input);
         return localTicket;
       }),
-    saveView: (input, actor) =>
+    saveView: (input, actor, onBoard) =>
       Effect.sync(() => {
-        savedViews.push({ input, actor });
+        savedViews.push({ input, actor, ...(onBoard === undefined ? {} : { onBoard }) });
         const existing = snapshot.views.find((candidate) => candidate.id === input.id);
         return view(input.id ?? "v_new", input.projectId, {
           name: input.name,
@@ -244,9 +248,9 @@ function setup(
           updatedBy: actor ?? "owner",
         });
       }),
-    deleteView: (input) =>
+    deleteView: (input, onBoard) =>
       Effect.sync(() => {
-        deletedViews.push(input);
+        deletedViews.push({ input, onBoard });
         return input;
       }),
     moveTicket: (input) =>
@@ -610,9 +614,10 @@ describe("kanban tools", () => {
             config: KANBAN_DEFAULT_VIEW_CONFIG,
           },
           actor: "bot:b_ops",
+          onBoard: MONERIA_PROJECT,
         },
       ]);
-      expect(deletedViews).toEqual([{ viewId: localView.id }]);
+      expect(deletedViews).toEqual([{ input: { viewId: localView.id }, onBoard: PROJECT }]);
     }),
   );
 
@@ -659,8 +664,11 @@ describe("kanban tools", () => {
       expect(yield* tools.saveView({ name: "Everywhere", projectId: null })).toMatchObject({
         createdBy: "bot:b_idle",
       });
-      expect(savedViews.map((saved) => saved.input.config.groupBy)).toEqual(["priority", "status"]);
-      expect(deletedViews).toEqual([{ viewId: localView.id }]);
+      expect(savedViews.map((saved) => [saved.input.config.groupBy, saved.onBoard])).toEqual([
+        ["priority", null],
+        ["status", undefined],
+      ]);
+      expect(deletedViews).toEqual([{ input: { viewId: localView.id }, onBoard: PROJECT }]);
     }),
   );
 

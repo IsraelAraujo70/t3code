@@ -279,7 +279,9 @@ An edit changes only the fields and config keys given. Arguments are checked aga
 Who may change a view depends on its board, not on who made it. A project's view needs the bot
 responsible for that project's workspace; moving a view to another board needs both. An
 every-board view needs a bot responsible for all workspaces, which can then change every view,
-the seeded ones and the user's included. The owner still edits and deletes every view on the web.
+the seeded ones and the user's included. The write itself re-checks the board (`project_id IS` the
+board the tools checked), so a view the owner moves meanwhile is left alone. The owner still edits
+and deletes every view on the web.
 
 `kanban_views` records who created a view and who saved it last (`created_by`, `updated_by`:
 `owner` or `bot:<id>`; earlier views are the owner's). A tab that a bot created or last saved

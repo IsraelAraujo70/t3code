@@ -4,6 +4,7 @@
  * `bots.ts` re-exports this module, so this file must not import from `bots.ts`.
  * Design: docs/friend/linear-kanban.md.
  */
+import * as Effect from "effect/Effect";
 import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";
 
@@ -454,9 +455,13 @@ export const KanbanView = Schema.Struct({
   /** The Linear custom view it was imported from, so a second import skips it. */
   linearViewId: Schema.NullOr(Schema.String),
   /** `owner`, or `bot:<id>` for a view a bot made through its kanban tools; never changes. */
-  createdBy: KanbanPersonId,
-  /** Who saved it last, the same way. */
-  updatedBy: KanbanPersonId,
+  createdBy: KanbanPersonId.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(KANBAN_OWNER_PERSON_ID)),
+  ),
+  /** Who saved it last, the same way. Both default for hosts from before bots saved views. */
+  updatedBy: KanbanPersonId.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(KANBAN_OWNER_PERSON_ID)),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -565,7 +570,7 @@ export const KanbanSnapshot = Schema.Struct({
   /** Saved views in tab order. */
   views: Schema.Array(KanbanView),
   /** Bots responsible for every workspace, including local ones and those added later. */
-  allWorkspacesBotIds: Schema.Array(BotId),
+  allWorkspacesBotIds: Schema.Array(BotId).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type KanbanSnapshot = typeof KanbanSnapshot.Type;
 
