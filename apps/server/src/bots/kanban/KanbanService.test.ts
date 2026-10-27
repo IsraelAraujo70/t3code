@@ -55,6 +55,20 @@ const issue = (id: string, overrides: Partial<LinearIssue> = {}): LinearIssue =>
   stateId: "s-todo",
   teamId: TEAM,
   assigneeName: null,
+  assigneeId: null,
+  creatorId: null,
+  estimate: null,
+  dueDate: null,
+  labelIds: [],
+  projectId: null,
+  milestoneId: null,
+  cycleId: null,
+  parent: null,
+  subIssues: null,
+  pullRequests: [],
+  sortOrder: 0,
+  closedAt: null,
+  autoClosed: false,
   ...overrides,
 });
 
@@ -134,6 +148,16 @@ function makeLinear() {
           }),
     createIssue: (_key, input) =>
       Effect.succeed(issue("new", { title: input.title, updatedAt: "2026-10-06T00:00:00.000Z" })),
+    updateIssue: () => Effect.die("updateIssue is not faked"),
+    issueDetail: () => Effect.die("issueDetail is not faked"),
+    createComment: () => Effect.die("createComment is not faked"),
+    deleteComment: () => Effect.void,
+    people: () => Effect.succeed([]),
+    labels: () => Effect.succeed([]),
+    linearProjects: () => Effect.succeed([]),
+    milestones: () => Effect.succeed([]),
+    cycles: () => Effect.succeed([]),
+    customViews: () => Effect.succeed([]),
   });
   return { world, layer: Layer.succeed(LinearClient, service) };
 }

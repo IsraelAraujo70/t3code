@@ -13,32 +13,73 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import {
   KanbanError,
   LinearStateType,
+  type KanbanCycle,
+  type KanbanLabel,
+  type KanbanLinearProject,
+  type KanbanMilestone,
+  type KanbanPerson,
   type LinearTeamSummary,
   type LinearWorkflowState,
 } from "@t3tools/contracts";
 
+import {
+  CommentNode,
+  IssueDetailNode,
+  IssueNode,
+  toComment,
+  toIssue,
+  toIssueDetail,
+  type LinearComment,
+  type LinearIssue,
+  type LinearIssueDetail,
+} from "./linearMapping.ts";
+
+export type { LinearComment, LinearIssue, LinearIssueDetail } from "./linearMapping.ts";
+
 const ENDPOINT = "https://api.linear.app/graphql";
 const PAGE_SIZE = 100;
+const CATALOG_MAX_PAGES = 10;
 
 export interface LinearViewer {
+  readonly userId: string | null;
+  readonly userAvatarUrl: string | null;
   readonly userName: string;
   readonly organizationId: string;
   readonly organizationName: string;
   readonly organizationUrlKey: string;
 }
 
-export interface LinearIssue {
+/** The caller adds the organization (or workspace) these belong to. */
+export type LinearPerson = Omit<KanbanPerson, "organizationId">;
+export type LinearLabel = Omit<KanbanLabel, "workspaceId" | "source">;
+export type LinearProject = Omit<KanbanLinearProject, "organizationId">;
+export type LinearMilestone = KanbanMilestone & { readonly sortOrder: number };
+
+export interface LinearCustomView {
   readonly id: string;
-  readonly identifier: string;
-  readonly title: string;
-  readonly url: string;
-  readonly priority: number;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly archivedAt: string | null;
-  readonly stateId: string;
-  readonly teamId: string;
-  readonly assigneeName: string | null;
+  readonly name: string;
+  readonly icon: string | null;
+  readonly color: string | null;
+  readonly shared: boolean;
+  readonly teamId: string | null;
+  /** Linear's IssueFilter JSON; `linearFilterToClauses` reads it. */
+  readonly filterData: unknown;
+}
+
+/** Omitted fields stay as they are; `null` clears one. */
+export interface LinearIssueUpdate {
+  readonly stateId?: string;
+  readonly priority?: number;
+  readonly assigneeId?: string | null;
+  readonly labelIds?: ReadonlyArray<string>;
+  /** `YYYY-MM-DD`. */
+  readonly dueDate?: string | null;
+  readonly estimate?: number | null;
+  readonly projectId?: string | null;
+  readonly cycleId?: string | null;
+  readonly projectMilestoneId?: string | null;
+  readonly title?: string;
+  readonly description?: string;
 }
 
 /** Which issues of a team (optionally one Linear project) a query asks for. */
@@ -77,6 +118,11 @@ export class LinearClient extends Context.Service<
       key: Redacted.Redacted,
       ids: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<LinearIssue>, KanbanError>;
+    readonly updateIssue: (
+      key: Redacted.Redacted,
+      issueId: string,
+      input: LinearIssueUpdate,
+    ) => Effect.Effect<LinearIssue, KanbanError>;
     readonly setIssueState: (
       key: Redacted.Redacted,
       issueId: string,
@@ -91,28 +137,57 @@ export class LinearClient extends Context.Service<
         readonly description: string | null;
       },
     ) => Effect.Effect<LinearIssue, KanbanError>;
+    /** Description, parent, sub-issues, the first 100 comments and history entries. */
+    readonly issueDetail: (
+      key: Redacted.Redacted,
+      issueId: string,
+    ) => Effect.Effect<LinearIssueDetail, KanbanError>;
+    readonly createComment: (
+      key: Redacted.Redacted,
+      issueId: string,
+      body: string,
+    ) => Effect.Effect<LinearComment, KanbanError>;
+    readonly deleteComment: (
+      key: Redacted.Redacted,
+      commentId: string,
+    ) => Effect.Effect<void, KanbanError>;
+    /** Catalogs below read at most 10 pages each. */
+    readonly people: (
+      key: Redacted.Redacted,
+    ) => Effect.Effect<ReadonlyArray<LinearPerson>, KanbanError>;
+    readonly labels: (
+      key: Redacted.Redacted,
+    ) => Effect.Effect<ReadonlyArray<LinearLabel>, KanbanError>;
+    readonly linearProjects: (
+      key: Redacted.Redacted,
+    ) => Effect.Effect<ReadonlyArray<LinearProject>, KanbanError>;
+    readonly milestones: (
+      key: Redacted.Redacted,
+    ) => Effect.Effect<ReadonlyArray<LinearMilestone>, KanbanError>;
+    /** The team's cycles ending after `since` (an ISO date). */
+    readonly cycles: (
+      key: Redacted.Redacted,
+      teamId: string,
+      since: string,
+    ) => Effect.Effect<ReadonlyArray<KanbanCycle>, KanbanError>;
+    readonly customViews: (
+      key: Redacted.Redacted,
+    ) => Effect.Effect<ReadonlyArray<LinearCustomView>, KanbanError>;
   }
 >()("t3/bots/kanban/LinearClient") {}
 
 const ISSUE_FIELDS = `
-  id identifier title url priority createdAt updatedAt archivedAt
-  state { id } team { id } assignee { name }
+  id identifier title url priority estimate dueDate sortOrder
+  createdAt updatedAt completedAt canceledAt archivedAt autoClosedAt
+  state { id } team { id } assignee { id name } creator { id }
+  project { id } projectMilestone { id } cycle { id }
+  parent { id identifier title }
+  children(first: 50) { nodes { id state { type } } }
+  labels(first: 50) { nodes { id } }
+  attachments(first: 25) { nodes { id url title sourceType metadata } }
 `;
 
-const IssueNode = Schema.Struct({
-  id: Schema.String,
-  identifier: Schema.String,
-  title: Schema.String,
-  url: Schema.String,
-  priority: Schema.Number,
-  createdAt: Schema.String,
-  updatedAt: Schema.String,
-  archivedAt: Schema.NullOr(Schema.String),
-  state: Schema.Struct({ id: Schema.String }),
-  team: Schema.Struct({ id: Schema.String }),
-  assignee: Schema.NullOr(Schema.Struct({ name: Schema.String })),
-});
-type IssueNode = typeof IssueNode.Type;
+const Id = Schema.Struct({ id: Schema.String });
 
 const PageInfo = Schema.Struct({
   hasNextPage: Schema.Boolean,
@@ -135,7 +210,9 @@ const GraphQlResponse = Schema.Struct({
 
 const ViewerData = Schema.Struct({
   viewer: Schema.Struct({
+    id: Schema.String,
     name: Schema.String,
+    avatarUrl: Schema.NullOr(Schema.String),
     organization: Schema.Struct({ id: Schema.String, name: Schema.String, urlKey: Schema.String }),
   }),
 });
@@ -183,23 +260,91 @@ const IssueCreateData = Schema.Struct({
   issueCreate: Schema.Struct({ success: Schema.Boolean, issue: Schema.NullOr(IssueNode) }),
 });
 
-const isStateType = Schema.is(LinearStateType);
+const IssueDetailData = Schema.Struct({ issue: IssueDetailNode });
+const CommentCreateData = Schema.Struct({
+  commentCreate: Schema.Struct({ success: Schema.Boolean, comment: Schema.NullOr(CommentNode) }),
+});
+const CommentDeleteData = Schema.Struct({
+  commentDelete: Schema.Struct({ success: Schema.Boolean }),
+});
 
-function toIssue(node: IssueNode): LinearIssue {
-  return {
-    id: node.id,
-    identifier: node.identifier,
-    title: node.title,
-    url: node.url,
-    priority: node.priority,
-    createdAt: node.createdAt,
-    updatedAt: node.updatedAt,
-    archivedAt: node.archivedAt,
-    stateId: node.state.id,
-    teamId: node.team.id,
-    assigneeName: node.assignee?.name ?? null,
-  };
+const Connection = <S extends Schema.Top>(node: S) =>
+  Schema.Struct({ nodes: Schema.Array(node), pageInfo: PageInfo });
+const UsersData = Schema.Struct({
+  users: Connection(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      displayName: Schema.String,
+      avatarUrl: Schema.NullOr(Schema.String),
+      active: Schema.Boolean,
+    }),
+  ),
+});
+const LabelsData = Schema.Struct({
+  issueLabels: Connection(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      color: Schema.String,
+      parent: Schema.NullOr(Id),
+      team: Schema.NullOr(Id),
+    }),
+  ),
+});
+const LinearProjectsData = Schema.Struct({
+  projects: Connection(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      color: Schema.String,
+      icon: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+const MilestonesData = Schema.Struct({
+  projectMilestones: Connection(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      sortOrder: Schema.Number,
+      project: Id,
+    }),
+  ),
+});
+const CyclesData = Schema.Struct({
+  team: Schema.Struct({
+    cycles: Connection(
+      Schema.Struct({
+        id: Schema.String,
+        number: Schema.Number,
+        name: Schema.NullOr(Schema.String),
+        startsAt: Schema.String,
+        endsAt: Schema.String,
+      }),
+    ),
+  }),
+});
+const CustomViewsData = Schema.Struct({
+  customViews: Connection(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      icon: Schema.NullOr(Schema.String),
+      color: Schema.NullOr(Schema.String),
+      shared: Schema.Boolean,
+      team: Schema.NullOr(Id),
+      filterData: Schema.Unknown,
+    }),
+  ),
+});
+
+interface Page<N> {
+  readonly nodes: ReadonlyArray<N>;
+  readonly pageInfo: typeof PageInfo.Type;
 }
+
+const isStateType = Schema.is(LinearStateType);
 
 const failure = (message: string, cause?: unknown) =>
   new KanbanError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -267,10 +412,57 @@ export const make = Effect.gen(function* () {
     return issues.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   });
 
+  /** `query` declares `$after: String` and passes it to the one connection `page` reads. */
+  const catalogPages = Effect.fn("LinearClient.catalogPages")(function* <S extends Schema.Top, N>(
+    key: Redacted.Redacted,
+    data: S,
+    page: (data: S["Type"]) => Page<N>,
+    query: string,
+    variables: Record<string, unknown> = {},
+  ) {
+    const nodes: N[] = [];
+    let after: string | null = null;
+    for (let index = 0; index < CATALOG_MAX_PAGES; index++) {
+      const { nodes: pageNodes, pageInfo }: Page<N> = page(
+        yield* request(key, data, query, { ...variables, after }),
+      );
+      nodes.push(...pageNodes);
+      if (!pageInfo.hasNextPage || pageInfo.endCursor === null) break;
+      after = pageInfo.endCursor;
+    }
+    return nodes;
+  });
+
+  const updateIssue = Effect.fn("LinearClient.updateIssue")(function* (
+    key: Redacted.Redacted,
+    issueId: string,
+    input: LinearIssueUpdate,
+  ) {
+    const { issueUpdate } = yield* request(
+      key,
+      IssueUpdateData,
+      `mutation($id: String!, $input: IssueUpdateInput!) {
+        issueUpdate(id: $id, input: $input) { success issue { ${ISSUE_FIELDS} } }
+      }`,
+      { id: issueId, input },
+    );
+    if (!issueUpdate.success || issueUpdate.issue === null) {
+      return yield* failure("Linear did not update the issue.");
+    }
+    return toIssue(issueUpdate.issue);
+  });
+
   return LinearClient.of({
     viewer: Effect.fn("LinearClient.viewer")((key) =>
-      request(key, ViewerData, `{ viewer { name organization { id name urlKey } } }`, {}).pipe(
+      request(
+        key,
+        ViewerData,
+        `{ viewer { id name avatarUrl organization { id name urlKey } } }`,
+        {},
+      ).pipe(
         Effect.map(({ viewer }) => ({
+          userId: viewer.id,
+          userAvatarUrl: viewer.avatarUrl,
           userName: viewer.name,
           organizationId: viewer.organization.id,
           organizationName: viewer.organization.name,
@@ -364,21 +556,9 @@ export const make = Effect.gen(function* () {
         ? Effect.succeed([])
         : issuePages(key, { id: { in: ids } }, Math.ceil(ids.length / PAGE_SIZE)),
     ),
+    updateIssue,
     setIssueState: Effect.fn("LinearClient.setIssueState")((key, issueId, stateId) =>
-      request(
-        key,
-        IssueUpdateData,
-        `mutation($id: String!, $stateId: String!) {
-          issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { ${ISSUE_FIELDS} } }
-        }`,
-        { id: issueId, stateId },
-      ).pipe(
-        Effect.flatMap(({ issueUpdate }) =>
-          issueUpdate.success && issueUpdate.issue !== null
-            ? Effect.succeed(toIssue(issueUpdate.issue))
-            : Effect.fail(failure("Linear did not move the issue.")),
-        ),
-      ),
+      updateIssue(key, issueId, { stateId }),
     ),
     createIssue: Effect.fn("LinearClient.createIssue")((key, input) =>
       request(
@@ -400,6 +580,171 @@ export const make = Effect.gen(function* () {
           issueCreate.success && issueCreate.issue !== null
             ? Effect.succeed(toIssue(issueCreate.issue))
             : Effect.fail(failure("Linear did not create the issue.")),
+        ),
+      ),
+    ),
+    issueDetail: Effect.fn("LinearClient.issueDetail")((key, issueId) =>
+      request(
+        key,
+        IssueDetailData,
+        `query($id: String!) {
+          issue(id: $id) {
+            id identifier description
+            parent { id identifier title state { id } }
+            children(first: 100) {
+              nodes { id identifier title priority url state { id } assignee { id } }
+            }
+            comments(first: 100, orderBy: createdAt) {
+              nodes {
+                id body createdAt editedAt user { id name displayName avatarUrl }
+                botActor { name avatarUrl } parent { id }
+              }
+            }
+            history(first: 100) {
+              nodes {
+                id createdAt actor { id name displayName avatarUrl } botActor { name avatarUrl }
+                fromState { name } toState { name } fromAssignee { name } toAssignee { name }
+                fromPriority toPriority addedLabels { name } removedLabels { name }
+                fromParent { identifier } toParent { identifier } fromTitle toTitle
+                fromDueDate toDueDate fromProject { name } toProject { name }
+                fromCycle { number } toCycle { number } fromEstimate toEstimate
+                archived trashed autoClosed autoArchived
+              }
+            }
+          }
+        }`,
+        { id: issueId },
+      ).pipe(Effect.map(({ issue }) => toIssueDetail(issue))),
+    ),
+    createComment: Effect.fn("LinearClient.createComment")(function* (key, issueId, body) {
+      const { commentCreate } = yield* request(
+        key,
+        CommentCreateData,
+        `mutation($input: CommentCreateInput!) {
+          commentCreate(input: $input) {
+            success
+            comment {
+              id body createdAt editedAt user { id name displayName avatarUrl } parent { id }
+            }
+          }
+        }`,
+        { input: { issueId, body } },
+      );
+      if (!commentCreate.success || commentCreate.comment === null) {
+        return yield* failure("Linear did not add the comment.");
+      }
+      return toComment(commentCreate.comment);
+    }),
+    deleteComment: Effect.fn("LinearClient.deleteComment")(function* (key, commentId) {
+      const { commentDelete } = yield* request(
+        key,
+        CommentDeleteData,
+        `mutation($id: String!) { commentDelete(id: $id) { success } }`,
+        { id: commentId },
+      );
+      if (!commentDelete.success) return yield* failure("Linear did not delete the comment.");
+    }),
+    people: Effect.fn("LinearClient.people")((key) =>
+      catalogPages(
+        key,
+        UsersData,
+        (data) => data.users,
+        `query($after: String) {
+          users(first: 250, after: $after) {
+            nodes { id name displayName avatarUrl active }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+      ),
+    ),
+    labels: Effect.fn("LinearClient.labels")((key) =>
+      catalogPages(
+        key,
+        LabelsData,
+        (data) => data.issueLabels,
+        `query($after: String) {
+          issueLabels(first: 250, after: $after) {
+            nodes { id name color parent { id } team { id } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+      ).pipe(
+        Effect.map((labels) =>
+          labels.map((label) => ({
+            id: label.id,
+            name: label.name,
+            color: label.color,
+            parentId: label.parent?.id ?? null,
+            teamId: label.team?.id ?? null,
+          })),
+        ),
+      ),
+    ),
+    linearProjects: Effect.fn("LinearClient.linearProjects")((key) =>
+      catalogPages(
+        key,
+        LinearProjectsData,
+        (data) => data.projects,
+        `query($after: String) {
+          projects(first: 100, after: $after) {
+            nodes { id name color icon }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+      ),
+    ),
+    milestones: Effect.fn("LinearClient.milestones")((key) =>
+      catalogPages(
+        key,
+        MilestonesData,
+        (data) => data.projectMilestones,
+        `query($after: String) {
+          projectMilestones(first: 250, after: $after) {
+            nodes { id name sortOrder project { id } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+      ).pipe(
+        Effect.map((milestones) =>
+          milestones.map((milestone) => ({
+            id: milestone.id,
+            projectId: milestone.project.id,
+            name: milestone.name,
+            sortOrder: milestone.sortOrder,
+          })),
+        ),
+      ),
+    ),
+    cycles: Effect.fn("LinearClient.cycles")((key, teamId, since) =>
+      catalogPages(
+        key,
+        CyclesData,
+        (data) => data.team.cycles,
+        `query($id: String!, $since: DateTimeOrDuration!, $after: String) {
+          team(id: $id) {
+            cycles(first: 50, after: $after, filter: { endsAt: { gt: $since } }) {
+              nodes { id number name startsAt endsAt }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }`,
+        { id: teamId, since },
+      ).pipe(Effect.map((cycles) => cycles.map((cycle) => ({ ...cycle, teamId })))),
+    ),
+    customViews: Effect.fn("LinearClient.customViews")((key) =>
+      catalogPages(
+        key,
+        CustomViewsData,
+        (data) => data.customViews,
+        `query($after: String) {
+          customViews(first: 50, after: $after) {
+            nodes { id name icon color shared team { id } filterData }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+      ).pipe(
+        Effect.map((views) =>
+          views.map(({ team, ...view }) => ({ ...view, teamId: team?.id ?? null })),
         ),
       ),
     ),
