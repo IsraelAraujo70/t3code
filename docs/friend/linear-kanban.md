@@ -134,9 +134,13 @@ republishes the snapshot after every sync.
 
 ### Bots
 
-Responsible bots appear on the workspace's cards and get five MCP tools: `kanban_list`,
-`kanban_move`, `kanban_create`, `kanban_link_thread` (defaults to the calling thread) and
-`kanban_unlink_thread`. The caller comes from the trusted MCP scope; a bot reaches only the
+Responsible bots appear on the workspace's cards and get eight MCP tools: `kanban_list` (with
+filters: status types, states, assignee incl. `me` = the bot, priorities, labels, text, linked
+threads, a limit), `kanban_get` (the issue with description, comments and history, trimmed, plus
+the labels and assignees it accepts), `kanban_update` (priority, assignee, labels, due date, title,
+the ticket's bot), `kanban_comment`, `kanban_move`, `kanban_create`, `kanban_link_thread` (defaults
+to the calling thread) and `kanban_unlink_thread`. On a local ticket, history and comments name the
+bot that acted. The caller comes from the trusted MCP scope; a bot reaches only the
 workspaces it is responsible for, and a bot responsible for none is refused.
 
 **No automation.** Nothing starts a thread or moves a ticket by itself (for example "when a ticket
@@ -260,6 +264,26 @@ description go to Linear with `issueUpdate`, comments with `commentCreate`/`comm
 v1, the board keeps Linear's answer, so a refused write changes nothing. A ticket's own bot is
 T3-only. Local tickets take priority, local labels, an assignee (the owner or a bot), a description,
 comments, and keep a history.
+
+### Web
+
+The page keeps its URL as the deep link: `/kanban?project=<id>&view=<id>&issue=BACK-169&full=1`.
+View tabs, the filter button and chips, search (`/`), and the display menu sit above the board or
+list. A card opens the issue in a panel on the right (`PreviewPanelShell`, resizable); the panel's
+maximize button takes the whole page, like a pull request. From the PR view it reuses the PR
+glyphs, checks and diff stat (`linkedPullRequestDetailAtom`), and a PR row opens
+`/pull-requests` with that PR selected when its repository is a project of this environment.
+Issue descriptions and comments render with the chat's markdown.
+
+### Phone (v2)
+
+The Android Kanban tab draws the same cards (status and priority glyphs in `react-native-svg`),
+a row of saved views, and chips for status, assignee (Me first), priority and label, with the
+workspace and Linear account as filter chips; the project stays a scope menu. A tap opens the issue
+screen (`BotsKanbanIssue`): description, editable properties, sub-issues, comments with a composer,
+activity, pull requests (the app's PR screen when the repository resolves) and threads (open,
+unlink, link, start). The card's long-press menu stays; its thread rows moved to the issue screen.
+Saving and editing views is web-only.
 
 ### Starting work
 
