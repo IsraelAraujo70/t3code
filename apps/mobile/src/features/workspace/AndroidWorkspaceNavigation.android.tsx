@@ -1,9 +1,6 @@
-// Fork (friend): overflowNavigationTabs fills the phone bar's More menu.
-import {
-  overflowNavigationTabs,
-  selectedNavigationTab,
-  visibleNavigationTabs,
-} from "./navigation-tab-order";
+import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-order";
+// Fork (friend): a phone's bar and floating pill end in More.
+import { androidNavigationTabs } from "../../bots/androidNavigationTabs";
 import { requireNativeView } from "expo";
 import { CommonActions, useNavigation } from "@react-navigation/native";
 import {
@@ -110,10 +107,8 @@ export function AndroidWorkspaceNavigation(props: {
     rail ? 5 : 4,
   );
   if (!rail && keyboardVisible) return null;
-  // Fork (friend): on a phone bar, what does not fit and Settings go under More. The floating
-  // pill keeps upstream's tabs; its native view has no More menu.
-  const barMore = !rail && !floating;
-  const moreTabs = barMore ? [...overflowNavigationTabs(order, hidden), "settings" as const] : [];
+  // Fork (friend): on a phone, what does not fit and Settings go under More, bar or pill alike.
+  const shown = androidNavigationTabs({ order, hidden, rail, selected: selectedTab });
 
   return (
     <View
@@ -130,10 +125,10 @@ export function AndroidWorkspaceNavigation(props: {
       <NativeNavigation
         rail={rail}
         floating={floating}
-        // Fork (friend): More takes Settings' place on a phone bar and is selected for what it holds.
-        tabs={barMore ? [...visibleNavigationTabs(order, hidden, 4), "more"] : tabs}
-        moreTabs={moreTabs}
-        selectedTab={barMore && selectedTab === "settings" ? "more" : selectedTab}
+        // Fork (friend): More takes Settings' place on a phone and is selected for what it holds.
+        tabs={shown.tabs}
+        moreTabs={shown.moreTabs}
+        selectedTab={shown.selectedTab}
         dark={themeAppearance === "dark"}
         textScale={scale}
         newEnabled={connectionState.hasConnections}

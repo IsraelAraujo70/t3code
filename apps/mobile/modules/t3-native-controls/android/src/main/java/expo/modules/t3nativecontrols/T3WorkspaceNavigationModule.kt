@@ -235,18 +235,7 @@ class T3WorkspaceNavigationView(
       icon = {
         Box {
           Icon(tabIconPainter("more"), contentDescription = null)
-          DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            moreTabs.forEach { tab ->
-              DropdownMenuItem(
-                text = { Text(expandedTabTitle(tab), fontSize = (14 * textScale).sp) },
-                leadingIcon = { Icon(tabIconPainter(tab), contentDescription = null) },
-                onClick = {
-                  open = false
-                  onTabSelected(mapOf("tab" to tab))
-                },
-              )
-            }
-          }
+          moreMenu(open) { open = false }
         }
       },
       label = { Text(tabTitle("more"), fontSize = (12 * textScale).sp) },
@@ -258,6 +247,23 @@ class T3WorkspaceNavigationView(
         unselectedTextColor = Color(unselectedColor),
       ),
     )
+  }
+
+  /** Fork (friend): the sections that did not fit and Settings, for the bar's and the pill's More. */
+  @Composable
+  private fun moreMenu(open: Boolean, onDismiss: () -> Unit) {
+    DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+      moreTabs.forEach { tab ->
+        DropdownMenuItem(
+          text = { Text(expandedTabTitle(tab), fontSize = (14 * textScale).sp) },
+          leadingIcon = { Icon(tabIconPainter(tab), contentDescription = null) },
+          onClick = {
+            onDismiss()
+            onTabSelected(mapOf("tab" to tab))
+          },
+        )
+      }
+    }
   }
 
   @Composable
@@ -275,6 +281,8 @@ class T3WorkspaceNavigationView(
         tabs.forEach { tab ->
           val selected = selectedTab == tab
           val tint = Color(if (selected) selectedColor else unselectedColor)
+          // Fork (friend): the pill's More opens the bar's menu instead of selecting a tab.
+          var moreOpen by remember { mutableStateOf(false) }
           Box(
             modifier = Modifier
               .weight(1f)
@@ -283,7 +291,9 @@ class T3WorkspaceNavigationView(
               .selectable(
                 selected = selected,
                 role = Role.Tab,
-                onClick = { onTabSelected(mapOf("tab" to tab)) },
+                onClick = {
+                  if (tab == "more") moreOpen = true else onTabSelected(mapOf("tab" to tab))
+                },
               )
               .semantics { contentDescription = expandedTabTitle(tab) }
               .padding(4.dp)
@@ -296,6 +306,7 @@ class T3WorkspaceNavigationView(
               modifier = Modifier.size((24 * textScale).dp),
               tint = tint,
             )
+            if (tab == "more") moreMenu(moreOpen) { moreOpen = false } // Fork (friend)
           }
         }
       }
