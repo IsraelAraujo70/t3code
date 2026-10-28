@@ -10,10 +10,8 @@ import { useRef, useState } from "react";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
 import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
+  providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
-  sortProviderInstanceEntries,
 } from "../providerInstances";
 import { botsEnvironment } from "../state/bots";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../state/server";
@@ -81,9 +79,7 @@ export function BotEditorDialog({
   const submissionPending = useRef(false);
   const botMissing = editing && bot === null;
 
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-  );
+  const instanceEntries = providerInstanceEntriesFor(providers, settings, null);
   const selection =
     draft.model ??
     bot?.model ??

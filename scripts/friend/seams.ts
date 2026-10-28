@@ -91,6 +91,11 @@ export const SEAMS: readonly Seam[] = [
     why: "bot threads keep their title (test)",
   },
   {
+    file: "apps/server/package.json",
+    contains: '"@modelcontextprotocol/sdk"',
+    why: "guest app tools and the host MCP forward use the MCP SDK; upstream dropped it in 0.1.4",
+  },
+  {
     file: "packages/client-runtime/package.json",
     contains: '"./state/bots"',
     why: "export the bots atoms",
@@ -342,6 +347,11 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/mobile/src/features/workspace/workspace-tabs-state.ts",
     markers: 1,
     why: "Bots and Kanban tab state",
+  },
+  {
+    file: "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+    markers: 1,
+    why: "export the section divider the iOS home Bots section uses",
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceTabsContext.tsx",

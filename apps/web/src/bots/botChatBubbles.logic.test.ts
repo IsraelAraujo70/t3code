@@ -18,7 +18,6 @@ const message = (
   kind: "message",
   id,
   createdAt: at,
-  durationStart: at,
   showAssistantMeta: role === "assistant",
   showAssistantCopyButton: role === "assistant",
   assistantCopyStreaming: false,

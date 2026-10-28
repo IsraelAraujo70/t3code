@@ -105,6 +105,7 @@ export const installFriendSelfUpdate = Effect.fn("friend.selfUpdate.install")(fu
       result: Schema.String,
       handler: Effect.fn("friend.selfUpdate.download")(function* ({ build, url }) {
         const window = yield* ElectronWindow.ElectronWindow;
+        const runFork = Effect.runForkWith(yield* Effect.context<never>());
         const checked = yield* Effect.try({
           try: () => Installer.checkDownloadUrl(url, build),
           catch: (cause) => new FriendSelfUpdateError({ reason: String((cause as Error).message) }),
@@ -115,7 +116,7 @@ export const installFriendSelfUpdate = Effect.fn("friend.selfUpdate.install")(fu
             url: checked,
             build,
             onProgress: (fraction) => {
-              Effect.runFork(
+              runFork(
                 window.sendAll(Channels.PROGRESS_CHANNEL, { commit: build.commit, fraction }),
               );
             },

@@ -101,22 +101,18 @@ function PullRequestRows(props: {
 }) {
   const projects = useProjects();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
-  const capabilities = config?.environment.capabilities;
   return (
     <ul className="flex flex-col">
       {props.ticket.pullRequests.map((pullRequest) => {
-        const target =
-          capabilities === undefined
-            ? null
-            : resolveChangeRequestLinkTarget({
-                url: pullRequest.url,
-                projects,
-                capabilities: (environmentId) =>
-                  environmentId === props.environmentId ? capabilities : undefined,
-                environmentId: props.environmentId,
-                projectId: props.ticket.projectId,
-                lendHostProject: false,
-              });
+        const target = resolveChangeRequestLinkTarget({
+          url: pullRequest.url,
+          projects,
+          configLoaded: (environmentId) =>
+            environmentId === props.environmentId && config !== undefined && config !== null,
+          environmentId: props.environmentId,
+          projectId: props.ticket.projectId,
+          lendHostProject: false,
+        });
         return (
           <li key={pullRequest.attachmentId}>
             <PullRequestRow pullRequest={pullRequest} target={target} />
