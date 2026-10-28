@@ -430,10 +430,10 @@ export interface ProviderAdapterV2TurnInput {
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
   // Fork (friend): standing instructions T3 owns for this thread (a bot's role, memories and
   // owner profile), resolved per turn. Adapters deliver them at system or developer level.
-  // `appTools` are tools T3 runs in its own process for this thread (a guest sandbox's tools);
-  // an adapter that cannot offer them leaves them out.
+  // `appTools` are MCP servers T3 runs in its own process for this thread (a guest sandbox's
+  // tools); an adapter that cannot offer them leaves them out.
   readonly appInstructions?: AppInstructions;
-  readonly appTools?: AppTools;
+  readonly appTools?: ReadonlyArray<AppTools>;
 }
 
 /** Fork (friend): tools T3 runs for one thread, offered to the agent as one MCP server. */

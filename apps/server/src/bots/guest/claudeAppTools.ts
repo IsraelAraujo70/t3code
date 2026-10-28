@@ -54,17 +54,32 @@ interface ClaudeMcpOverrides {
 }
 
 /**
- * The adapter's MCP overrides plus the thread's AppTools, pre-approved, since headless permission
- * modes deny tools that are not. Unchanged without AppTools.
+ * The adapter's MCP overrides plus the thread's AppTools servers, pre-approved, since headless
+ * permission modes deny tools that are not. Servers without tools, or named like a server the
+ * overrides already carry, are left out. Unchanged without AppTools.
  */
 export function withClaudeAppTools(
   overrides: ClaudeMcpOverrides,
-  appTools: AppTools | undefined,
+  appTools: ReadonlyArray<AppTools> | undefined,
 ): ClaudeMcpOverrides {
-  if (appTools === undefined || appTools.tools.length === 0) return overrides;
+  const servers = (appTools ?? []).filter(
+    (server, index, all) =>
+      server.tools.length > 0 &&
+      overrides.mcpServers?.[server.server] === undefined &&
+      all.findIndex((other) => other.server === server.server) === index,
+  );
+  if (servers.length === 0) return overrides;
   return {
     ...overrides,
-    allowedTools: [...(overrides.allowedTools ?? []), `mcp__${appTools.server}__*`],
-    mcpServers: { ...overrides.mcpServers, [appTools.server]: claudeAppToolsServer(appTools) },
+    allowedTools: [
+      ...(overrides.allowedTools ?? []),
+      ...servers.map((server) => `mcp__${server.server}__*`),
+    ],
+    mcpServers: {
+      ...overrides.mcpServers,
+      ...Object.fromEntries(
+        servers.map((server) => [server.server, claudeAppToolsServer(server)] as const),
+      ),
+    },
   };
 }
