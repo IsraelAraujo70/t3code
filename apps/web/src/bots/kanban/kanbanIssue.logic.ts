@@ -268,7 +268,7 @@ export function cycleOptions(
 }
 
 /** Colors offered to a new local label, picked in turn. */
-export const LOCAL_LABEL_COLORS = [
+const LOCAL_LABEL_COLORS = [
   "#5e6ad2",
   "#26b5ce",
   "#4cb782",

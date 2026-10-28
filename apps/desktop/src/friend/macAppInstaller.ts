@@ -1,15 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The installer streams the download to disk, renames whole app bundles and runs macOS tools at the Node boundary.
 // @effect-diagnostics globalFetch:off -- The download streams to disk with progress from Electron's own fetch.
 /**
- * The fork's Mac app installs its own updates. The app is not signed, so Squirrel.Mac (upstream's
- * electron-updater) cannot be used: it refuses a bundle without a valid Developer ID signature.
- * Instead this downloads the zipped `.app` that the bots host publishes, checks its sha256 and size
- * against the manifest, extracts it with `ditto`, checks that it is the same app built from the
- * published commit, removes any quarantine attribute, and swaps it for the running bundle with two
- * renames, keeping the old bundle as `~/t3-app-backup-<timestamp>.app` (the same backups
- * `scripts/friend/update-mac-app.sh` keeps). Gatekeeper only assesses quarantined files, and a
- * file written by this process carries none, so the swapped app launches like the one
- * `update-mac-app.sh` installs.
+ * Squirrel.Mac refuses unsigned bundles, so this swaps the verified `.app` in with two renames and
+ * keeps the old one as `~/t3-app-backup-<timestamp>.app`, like `update-mac-app.sh`. Gatekeeper
+ * only assesses quarantined files, and files this process writes carry no quarantine.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -24,7 +18,7 @@ import * as NodeUtil from "node:util";
 import { DESKTOP_UPDATE_ZIP_PATH, type MobileUpdateBuild } from "@t3tools/contracts";
 
 /** A refusal the renderer shows as is. */
-export class SelfUpdateError extends Error {}
+class SelfUpdateError extends Error {}
 
 export const MISMATCH_MESSAGE =
   "o arquivo baixado não confere com o publicado. Nada foi instalado.";

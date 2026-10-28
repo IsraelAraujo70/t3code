@@ -173,7 +173,7 @@ function useTicketDetail(environmentId: EnvironmentId, ticketId: KanbanTicketId)
       }));
     }
   }, [fetchDetail, environmentId, ticketId, key]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- reads the issue from the server (Linear) when it opens
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the issue from the server (Linear) when it opens
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- the read's answer arrives after an await, never synchronously
     void refresh();

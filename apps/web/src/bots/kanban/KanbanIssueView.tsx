@@ -112,7 +112,7 @@ export function KanbanIssueView(props: {
   );
   const close = useEffectEvent(() => props.onClose());
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- reads the issue detail from the server when a ticket opens
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the issue detail from the server when a ticket opens
   useEffect(() => {
     activeKey.current = key;
     const current = ++request.current;
@@ -123,7 +123,7 @@ export function KanbanIssueView(props: {
     });
   }, [key]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Esc anywhere outside a field or popup closes the issue
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Esc anywhere outside a field or popup closes the issue
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;

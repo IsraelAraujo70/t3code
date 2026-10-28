@@ -1,9 +1,5 @@
 /**
- * The fork's Mac app updating itself from the bots host, like the friend APK
- * (`apps/mobile/src/bots/selfUpdate.ts`): the renderer checks the host's published build with the
- * connection's credentials, and the main process (`apps/desktop/src/friend`) downloads, verifies
- * and installs it. Only a packaged fork Mac build exposes `window.friendDesktopSelfUpdate`;
- * everywhere else this is null.
+ * Only packaged fork Mac builds expose window.friendDesktopSelfUpdate.
  */
 import {
   resolveDeviceHubAccess,
