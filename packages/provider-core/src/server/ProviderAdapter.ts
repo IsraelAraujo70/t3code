@@ -441,6 +441,8 @@ export interface AppTools {
   /** The server name the agent sees. */
   readonly server: string;
   readonly tools: ReadonlyArray<AppTool>;
+  /** Changes when what stands behind the tools changes, so a kept session knows to reopen. */
+  readonly identity?: string;
 }
 
 export interface AppTool {

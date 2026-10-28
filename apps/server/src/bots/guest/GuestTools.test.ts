@@ -85,11 +85,14 @@ const setup = (env: Record<string, string> = {}) => {
     getThreadRecords: (threadId) =>
       Effect.succeed({ messages: messagesByThread[threadId] ?? [] } as never),
   });
-  // Only Bia's bot has a host MCP server configured.
+  // Only Bia's bot has a host MCP server configured; forwarding for Ana's bot breaks outright.
   const hostMcp = Layer.succeed(
     HostMcpForward,
     HostMcpForward.of({
-      forBot: (botId) => Effect.succeed(botId === biaBot ? [{ server: "pluggy", tools: [] }] : []),
+      forBot: (botId) =>
+        botId === biaBot
+          ? Effect.succeed([{ server: "pluggy", tools: [] }])
+          : Effect.die(new Error("forwarding broke")),
     }),
   );
   const layer = guestToolsLayer.pipe(
@@ -169,6 +172,7 @@ describe("GuestTools", () => {
         servers.map((server) => server.server),
         ["t3-guest", "pluggy"],
       );
+      // A broken forward never costs the bot its own tools.
       const anaServers = (yield* service.forThread(anaThread)) ?? [];
       assert.deepStrictEqual(
         anaServers.map((server) => server.server),

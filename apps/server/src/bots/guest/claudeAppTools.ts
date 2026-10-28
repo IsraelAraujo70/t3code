@@ -41,9 +41,13 @@ export function claudeAppToolsServer(appTools: AppTools): McpSdkServerConfigWith
       ...(result.isError === true ? { isError: true } : {}),
     };
   });
-  // Not enumerable: the adapter keys live-query reuse on JSON of the MCP config, and the SDK
-  // finds the instance with `in`.
-  const config = { type: "sdk" as const, name: appTools.server };
+  // The adapter keys live-query reuse on JSON of the MCP config, so `identity` is enumerable and
+  // the instance is not; the SDK sends the CLI only the name and finds the instance with `in`.
+  const config = {
+    type: "sdk" as const,
+    name: appTools.server,
+    ...(appTools.identity === undefined ? {} : { identity: appTools.identity }),
+  };
   Object.defineProperty(config, "instance", { value: mcp, enumerable: false });
   return config as McpSdkServerConfigWithInstance;
 }

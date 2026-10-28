@@ -271,7 +271,7 @@ See [`apps/server/src/bots/webhookPublicBase.ts`](apps/server/src/bots/webhookPu
 
 A guest's bot can get the tools of an MCP server that runs on the host without the sandbox gaining a
 network route or a secret. `~/.t3-friend/bot-host-mcp.json` (or `T3CODE_BOT_HOST_MCP_FILE`) maps a
-bot id to loopback Streamable HTTP servers and their token files; T3 lists and calls their tools with
+bot id to Streamable HTTP servers on 127.0.0.1 or [::1] and their token files; T3 lists and calls their tools with
 the Bearer and offers them as one more in-process MCP server beside `t3-guest`. Only the listed bot
 gets them, and any failure leaves the bot without those tools for the turn, never without its turn.
 Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).

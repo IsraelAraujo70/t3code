@@ -46,6 +46,11 @@ describe("claudeAppToolsServer", () => {
     const config = claudeAppToolsServer(appTools);
     assert.isTrue("instance" in config);
     assert.strictEqual(JSON.stringify(config), '{"type":"sdk","name":"t3-guest"}');
+    // An identity joins the key, so a server whose backing changed opens a new query.
+    assert.strictEqual(
+      JSON.stringify(claudeAppToolsServer({ ...appTools, identity: "abc123" })),
+      '{"type":"sdk","name":"t3-guest","identity":"abc123"}',
+    );
   });
 });
 

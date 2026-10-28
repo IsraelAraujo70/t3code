@@ -401,7 +401,14 @@ const make = Effect.gen(function* () {
         run: runTool("html_render", decodeArgs(HtmlArgs), (args) => renderHtml(target, args)),
       },
     ];
-    const forwarded = yield* hostMcp.forBot(parsed.botId);
+    // Forwarding never costs the bot its own tools.
+    const forwarded = yield* hostMcp
+      .forBot(parsed.botId)
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Host MCP forwarding failed.", { cause }).pipe(Effect.as([])),
+        ),
+      );
     return [{ server: GUEST_TOOLS_SERVER, tools } satisfies AppTools, ...forwarded];
   });
 
