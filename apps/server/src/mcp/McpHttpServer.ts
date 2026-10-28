@@ -84,6 +84,7 @@ import * as BotMemoryHandlers from "../bots/mcp/handlers.ts";
 import { BotManagementToolkit, BotMemoryToolkit } from "../bots/mcp/tools.ts";
 import * as ThreadWatchHandlers from "../bots/threadWatch/handlers.ts";
 import { ThreadWatchToolkit } from "../bots/threadWatch/tools.ts";
+import * as BotLinkAccess from "../bots/linkAccess.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   HttpServerRequest.toURL(request).pipe(
@@ -207,6 +208,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+  // Fork (friend): optional here; PeerForwarding and PeerLinkRequests cannot be built without it.
+  const linkAccess = yield* Effect.serviceOption(BotLinkAccess.BotLinkAccess);
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const authorization = request.headers.authorization;
@@ -233,10 +236,14 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     if (limited === undefined) return invalidModeLimit;
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    // Fork (friend): a caller BotLinkAccess refuses sees no links and starts nothing over one.
+    const reachesLinks =
+      linkedEnvironments &&
+      (Option.isNone(linkAccess) || (yield* linkAccess.value.allows(limited)));
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
-        linkedEnvironments,
+        linkedEnvironments: reachesLinks,
       }),
       Effect.map(normalizeMcpHttpResponse),
     );

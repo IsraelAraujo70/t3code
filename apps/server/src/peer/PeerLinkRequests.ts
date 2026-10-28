@@ -33,6 +33,8 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+// Fork (friend): the gate on who may use links.
+import * as BotLinkAccess from "../bots/linkAccess.ts";
 
 type LinkRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>;
 
@@ -342,7 +344,8 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  return PeerLinkRequests.of({ request, answer });
+  // Fork (friend): only callers BotLinkAccess allows can ask for a link.
+  return PeerLinkRequests.of(yield* BotLinkAccess.gateLinkRequests({ request, answer }));
 });
 
 const pendingResult = (turnItemId: TurnItemId): OrchestratorMcpEnvironmentLinkResult => ({

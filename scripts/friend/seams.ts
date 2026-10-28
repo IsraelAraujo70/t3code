@@ -229,9 +229,34 @@ export const SEAMS: readonly Seam[] = [
     why: "bot instructions tests",
   },
   {
-    file: "apps/server/src/mcp/McpHttpServer.ts",
+    file: "apps/server/src/peer/PeerForwarding.test.ts",
     markers: 2,
-    why: "register bots memory, bot management and thread watch tools",
+    why: "provide BotLinkAccess.layerAllowingEveryone to the gated peer services",
+  },
+  {
+    file: "apps/server/src/peer/PeerLinkRequests.test.ts",
+    markers: 2,
+    why: "provide BotLinkAccess.layerAllowingEveryone to the gated peer services",
+  },
+  {
+    file: "apps/server/src/peer/RemoteDelegation.test.ts",
+    markers: 2,
+    why: "provide BotLinkAccess.layerAllowingEveryone to the gated peer services",
+  },
+  {
+    file: "apps/server/src/peer/PeerForwarding.ts",
+    markers: 2,
+    why: "every call to a linked environment passes BotLinkAccess",
+  },
+  {
+    file: "apps/server/src/peer/PeerLinkRequests.ts",
+    markers: 2,
+    why: "only callers BotLinkAccess allows ask for a link",
+  },
+  {
+    file: "apps/server/src/mcp/McpHttpServer.ts",
+    markers: 4,
+    why: "register bots memory, bot management and thread watch tools; BotLinkAccess narrows linkedEnvironments",
   },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
@@ -240,8 +265,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/server.ts",
-    markers: 7,
-    why: "bots layers, the Computer stream, the app update routes and the public webhook base",
+    markers: 8,
+    why: "bots layers, the Computer stream, the app update routes, the public webhook base and BotLinkAccess",
   },
   {
     file: "apps/web/src/components/Sidebar.tsx",
@@ -396,7 +421,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/features/workspace/AndroidWorkspaceNavigation.android.tsx",
     markers: 4,
-    why: "the phone bar ends in More, a menu of the tabs that do not fit and Settings",
+    why: "the phone bar and floating pill end in More, a menu of the tabs that do not fit and Settings",
   },
   {
     file: "apps/mobile/src/features/settings/SettingsNavigationRouteScreen.tsx",
@@ -410,8 +435,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
-    markers: 8,
-    why: "Bots and Kanban item titles and icons in the Android navigation bar and rail; the phone bar's More menu",
+    markers: 11,
+    why: "Bots and Kanban item titles and icons in the Android navigation bar and rail; More in the phone bar and the floating pill",
   },
   {
     file: "scripts/build-desktop-artifact.ts",

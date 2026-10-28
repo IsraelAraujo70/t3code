@@ -63,6 +63,8 @@ import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+// Fork (friend): these tests are not about who may use links.
+import * as BotLinkAccess from "../bots/linkAccess.ts";
 
 // The laptop's agent delegates a task to the box through a link. The box is
 // its real /mcp behind real OAuth, with one thread the test finishes; the
@@ -563,7 +565,10 @@ const makeLaptop = (
       Layer.provideMerge(McpServer.McpServer.layer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(
-          Layer.provideMerge(PeerForwarding.layer),
+          // Fork (friend): PeerForwarding and PeerLinkRequests need BotLinkAccess.
+          Layer.provideMerge(
+            PeerForwarding.layer.pipe(Layer.provide(BotLinkAccess.layerAllowingEveryone)),
+          ),
           Layer.provide(
             Layer.mock(ProjectService.ProjectService)({
               // A cold enrichment cache: the project itself reports no identity yet.

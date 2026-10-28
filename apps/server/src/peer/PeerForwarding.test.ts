@@ -40,6 +40,8 @@ import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
+// Fork (friend): these tests are not about who may use links.
+import * as BotLinkAccess from "../bots/linkAccess.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box");
@@ -275,7 +277,8 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
+    // Fork (friend): PeerForwarding and PeerLinkRequests need BotLinkAccess.
+    Layer.provide(PeerForwarding.layer.pipe(Layer.provide(BotLinkAccess.layerAllowingEveryone))),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(

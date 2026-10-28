@@ -61,6 +61,7 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 // Fork (friend): bots storage, per-turn instructions and management.
 import * as BotsLayer from "./bots/layer.ts";
+import * as BotLinkAccess from "./bots/linkAccess.ts";
 // Fork (friend): live view of the bots host screen and the fork apps' self-update.
 import * as BotsHttpRoutes from "./bots/httpRoutes.ts";
 // Fork (friend): webhook URLs from a public base when T3 Connect is off.
@@ -780,6 +781,8 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provideMerge(PeerLinks.layer),
     ),
   ),
+  // Fork (friend): who may use links, for /mcp, PeerForwarding and PeerLinkRequests above.
+  Layer.provide(BotLinkAccess.layer),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

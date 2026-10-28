@@ -24,6 +24,8 @@ import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
+// Fork (friend): the gate on who may use links.
+import * as BotLinkAccess from "../bots/linkAccess.ts";
 
 /**
  * A peer's `/mcp` holds a wait open for its whole timeout without sending
@@ -263,13 +265,16 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return PeerForwarding.of({
-    call,
-    readThread,
-    interruptThread,
-    waitForThread,
-    links: listLinks,
-  });
+  // Fork (friend): only callers BotLinkAccess allows reach a linked environment.
+  return PeerForwarding.of(
+    yield* BotLinkAccess.gateForwarding({
+      call,
+      readThread,
+      interruptThread,
+      waitForThread,
+      links: listLinks,
+    }),
+  );
 });
 
 export const layer = Layer.effect(PeerForwarding, make);

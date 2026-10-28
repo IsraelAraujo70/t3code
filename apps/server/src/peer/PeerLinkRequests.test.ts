@@ -65,6 +65,8 @@ import {
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+// Fork (friend): these tests are not about who may use links.
+import * as BotLinkAccess from "../bots/linkAccess.ts";
 
 // The laptop's agent asks the user to link the box. The laptop is its real
 // orchestrator and toolkit; the box is its real descriptor and MCP OAuth on a
@@ -153,7 +155,10 @@ const makeLaptop = Effect.gen(function* () {
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
-    Layer.provideMerge(PeerLinkRequests.layer),
+    // Fork (friend): PeerForwarding and PeerLinkRequests need BotLinkAccess.
+    Layer.provideMerge(
+      PeerLinkRequests.layer.pipe(Layer.provide(BotLinkAccess.layerAllowingEveryone)),
+    ),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
     Layer.provide(Layer.succeedContext(linking)),

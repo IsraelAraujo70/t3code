@@ -276,6 +276,19 @@ the Bearer and offers them as one more in-process MCP server beside `t3-guest`. 
 gets them, and any failure leaves the bot without those tools for the turn, never without its turn.
 Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).
 
+## Linked environments and bots
+
+Upstream's linked environments let agents here work on another machine; the owner's Mac is linked
+from the bots host with full access, which the Mac does not fence. The fork's
+[`BotLinkAccess`](apps/server/src/bots/linkAccess.ts) is therefore the only barrier. A bot's
+conversation may use links only when its id is in `T3CODE_LINKED_ENVIRONMENT_BOTS` (comma-separated;
+unset or empty allows none) and it belongs to no guest; a guest's bot is refused even when listed.
+Any other thread may when its parent, its root and every thread that messaged it may, so work an
+unlisted bot started, delegated or messaged is refused, and so is a scheduled task an agent made.
+PeerForwarding and PeerLinkRequests cannot be built without the gate, which rechecks every call,
+including the followers of remote tasks; `/mcp` also hides the link tools from refused callers. Any
+error reading a caller's origin refuses. The list is read at startup.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
