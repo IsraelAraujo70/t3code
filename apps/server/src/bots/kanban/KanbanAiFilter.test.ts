@@ -186,8 +186,11 @@ const layerService = (board: KanbanSnapshot, requests: Array<string>) =>
             }),
           ),
         ),
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { [OPENROUTER_KEY_ENV]: "sk-test" } })),
       ),
+    ),
+    // provideMerge: the key is read per call, in the test's context, not only while building.
+    Layer.provideMerge(
+      ConfigProvider.layer(ConfigProvider.fromEnv({ env: { [OPENROUTER_KEY_ENV]: "sk-test" } })),
     ),
   );
 
