@@ -1,7 +1,8 @@
 /**
  * Replays a Computer viewer's pointer, wheel and keyboard input on the bots host. The cursor is
  * placed with `hyprctl dispatch` (exact, unlike ydotool's accelerated moves), buttons
- * and the wheel go through `ydotool`, and keys and text through `wtype`.
+ * and the wheel go through `ydotool`, and keys and text through `wtype`. On an X11 host
+ * `X11Desktop` replays the same commands with `xdotool`.
  */
 import type {
   ComputerKeyInput,
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ScreenCapture from "./ScreenCapture.ts";
+import * as X11Desktop from "./X11Desktop.ts";
 
 const COMMAND_TIMEOUT_MS = 2000;
 
@@ -209,13 +211,32 @@ export const make = Effect.fn("ComputerInput.make")(function* (runCommand: Input
   });
 });
 
-/** The real commands. The session environment is refreshed after a failure. */
+/** The real commands, or `xdotool` on an X11 host. The session is re-read after a failure. */
 export const desktopRunner = (): InputCommandRunner => {
   let env: Record<string, string> | undefined;
+  let display: string | undefined;
   return (command, args) =>
     Effect.suspend(() => {
-      env ??= ScreenCapture.desktopEnv();
-      return ScreenCapture.runDesktopCommand(command, args, env, COMMAND_TIMEOUT_MS);
+      if (env === undefined) {
+        env = ScreenCapture.desktopEnv();
+        display = X11Desktop.x11Display(process.env, env.XDG_RUNTIME_DIR ?? "");
+      }
+      if (display === undefined) {
+        return ScreenCapture.runDesktopCommand(command, args, env, COMMAND_TIMEOUT_MS);
+      }
+      const xdotool = X11Desktop.xdotoolArgs(command, args);
+      return xdotool === undefined
+        ? Effect.fail(
+            new ScreenCapture.ScreenCaptureError({
+              message: `${command} ${args[0] ?? ""} has no X11 equivalent.`,
+            }),
+          )
+        : ScreenCapture.runDesktopCommand(
+            "xdotool",
+            xdotool,
+            { ...env, DISPLAY: display },
+            COMMAND_TIMEOUT_MS,
+          );
     }).pipe(
       Effect.asVoid,
       Effect.mapError((error) => {

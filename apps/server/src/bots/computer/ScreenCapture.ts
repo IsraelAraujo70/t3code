@@ -2,7 +2,7 @@
 /**
  * Captures the bots host's whole screen (every output) as JPEG with `grim`, for the Computer view.
  * One serial loop serves every viewer, runs only while someone watches, and reads the screen
- * geometry from `hyprctl monitors -j`.
+ * geometry from `hyprctl monitors -j`. On an X11 host the same commands run through `X11Desktop`.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -19,6 +19,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+
+import * as X11Desktop from "./X11Desktop.ts";
 
 /** About 8 frames per second. */
 export const FRAME_INTERVAL_MS = 125;
@@ -147,6 +149,7 @@ const DESKTOP_VARIABLES = [
   "LANG",
   "XDG_RUNTIME_DIR",
   "WAYLAND_DISPLAY",
+  "DISPLAY",
   "HYPRLAND_INSTANCE_SIGNATURE",
   // ydotool finds its daemon here when it is not at $XDG_RUNTIME_DIR/.ydotool_socket.
   "YDOTOOL_SOCKET",
@@ -210,7 +213,7 @@ export const runDesktopCommand = (
             if (error === null) return resolve(stdout);
             reject(
               error.code === "ENOENT"
-                ? `${command} is not installed. The Computer view needs ${command} on a Hyprland desktop.`
+                ? `${command} is not installed. The Computer view needs ${command} on the bots host.`
                 : `${command} failed: ${stderr.toString().trim() || error.message}`,
             );
           },
@@ -219,15 +222,41 @@ export const runDesktopCommand = (
     catch: (cause) => new ScreenCaptureError({ message: String(cause) }),
   });
 
-/** The real grim and hyprctl. The session environment is refreshed with every geometry read. */
+/**
+ * The real grim and hyprctl, or their X11 stand-ins when the host has no Wayland session. The
+ * session environment, and with it that choice, is refreshed with every geometry read.
+ */
 export const desktopCommands = (): ScreenCommands => {
   let env = desktopEnv();
+  let display = X11Desktop.x11Display(process.env, env.XDG_RUNTIME_DIR ?? "");
   return {
     monitors: Effect.suspend(() => {
       env = desktopEnv();
-      return runDesktopCommand("hyprctl", ["monitors", "-j"], env);
-    }).pipe(Effect.map((stdout) => stdout.toString())),
-    grim: (args) => Effect.suspend(() => runDesktopCommand("grim", args, env)),
+      display = X11Desktop.x11Display(process.env, env.XDG_RUNTIME_DIR ?? "");
+      if (display === undefined) {
+        return runDesktopCommand("hyprctl", ["monitors", "-j"], env).pipe(
+          Effect.map((stdout) => stdout.toString()),
+        );
+      }
+      return runDesktopCommand("xwininfo", ["-root", "-display", display], env).pipe(
+        Effect.flatMap((stdout) => {
+          const monitors = X11Desktop.monitorsFromXwininfo(stdout.toString());
+          return monitors === undefined
+            ? Effect.fail(
+                new ScreenCaptureError({
+                  message: "xwininfo returned a screen this server can't read.",
+                }),
+              )
+            : Effect.succeed(monitors);
+        }),
+      );
+    }),
+    grim: (args) =>
+      Effect.suspend(() =>
+        display === undefined
+          ? runDesktopCommand("grim", args, env)
+          : runDesktopCommand("ffmpeg", X11Desktop.ffmpegArgs(args, display), env),
+      ),
   };
 };
 
