@@ -50,6 +50,7 @@ import { CodexImages, type SourceImage } from "./CodexImages.ts";
 import { type GuestArtifact, GuestArtifacts } from "./GuestArtifacts.ts";
 import { GUEST_MESSAGE_ID_PREFIX, isGuestVisible } from "./guestSender.ts";
 import { GuestStore } from "./GuestStore.ts";
+import { HostMcpForward } from "./HostMcpForward.ts";
 
 /** The MCP server name: Claude Code shows the tools as `mcp__t3-guest__<tool>`. */
 export const GUEST_TOOLS_SERVER = "t3-guest";
@@ -166,8 +167,13 @@ const decodeArgs =
 export class GuestTools extends Context.Service<
   GuestTools,
   {
-    /** The tools of a guest-owned bot's thread; undefined for every other thread. */
-    readonly forThread: (threadId: ThreadId) => Effect.Effect<AppTools | undefined, BotsError>;
+    /**
+     * The tools of a guest-owned bot's thread, its own `t3-guest` server first, then the host MCP
+     * servers configured for that bot; undefined for every other thread.
+     */
+    readonly forThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<AppTools> | undefined, BotsError>;
   }
 >()("t3/bots/guest/GuestTools") {}
 
@@ -176,6 +182,7 @@ const make = Effect.gen(function* () {
   const guests = yield* GuestStore;
   const artifacts = yield* GuestArtifacts;
   const images = yield* CodexImages;
+  const hostMcp = yield* HostMcpForward;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -394,11 +401,19 @@ const make = Effect.gen(function* () {
         run: runTool("html_render", decodeArgs(HtmlArgs), (args) => renderHtml(target, args)),
       },
     ];
-    return { server: GUEST_TOOLS_SERVER, tools } satisfies AppTools;
+    // Forwarding never costs the bot its own tools.
+    const forwarded = yield* hostMcp
+      .forBot(parsed.botId)
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Host MCP forwarding failed.", { cause }).pipe(Effect.as([])),
+        ),
+      );
+    return [{ server: GUEST_TOOLS_SERVER, tools } satisfies AppTools, ...forwarded];
   });
 
   return GuestTools.of({ forThread });
 });
 
-/** Needs GuestStore, GuestArtifacts, CodexImages and the projection store. */
+/** Needs GuestStore, GuestArtifacts, CodexImages, HostMcpForward and the projection store. */
 export const layer = Layer.effect(GuestTools, make);

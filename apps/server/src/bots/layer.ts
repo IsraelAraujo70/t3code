@@ -23,6 +23,7 @@ import * as GuestService from "./guest/GuestService.ts";
 import * as GuestStore from "./guest/GuestStore.ts";
 import * as GuestVoice from "./guest/GuestVoice.ts";
 import * as GuestTools from "./guest/GuestTools.ts";
+import * as HostMcpForward from "./guest/HostMcpForward.ts";
 import * as KanbanPoller from "./kanban/KanbanPoller.ts";
 import * as KanbanService from "./kanban/KanbanService.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
@@ -198,6 +199,7 @@ export const layerCore = Layer.unwrap(
     Effect.map((host) =>
       host
         ? Layer.mergeAll(BotsInstructions.layer, GuestModelPin.layer, GuestTools.layer).pipe(
+            Layer.provide(HostMcpForward.layer),
             Layer.provideMerge(GuestArtifacts.layer),
             Layer.provide(CodexImages.layer),
             Layer.provide(ProjectionStore.layer),

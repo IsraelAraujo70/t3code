@@ -26,6 +26,7 @@ import { CodexImages, type SourceImage } from "./CodexImages.ts";
 import * as GuestArtifacts from "./GuestArtifacts.ts";
 import * as GuestStore from "./GuestStore.ts";
 import { GuestTools, layer as guestToolsLayer } from "./GuestTools.ts";
+import { HostMcpForward } from "./HostMcpForward.ts";
 
 const at = "2026-01-01T00:00:00.000Z";
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -84,7 +85,18 @@ const setup = (env: Record<string, string> = {}) => {
     getThreadRecords: (threadId) =>
       Effect.succeed({ messages: messagesByThread[threadId] ?? [] } as never),
   });
+  // Only Bia's bot has a host MCP server configured; forwarding for Ana's bot breaks outright.
+  const hostMcp = Layer.succeed(
+    HostMcpForward,
+    HostMcpForward.of({
+      forBot: (botId) =>
+        botId === biaBot
+          ? Effect.succeed([{ server: "pluggy", tools: [] }])
+          : Effect.die(new Error("forwarding broke")),
+    }),
+  );
   const layer = guestToolsLayer.pipe(
+    Layer.provide(hostMcp),
     Layer.provideMerge(GuestArtifacts.layerFromDb),
     Layer.provideMerge(GuestStore.layerFromDb),
     Layer.provideMerge(BotsDb.layerMemory),
@@ -132,7 +144,8 @@ const seed = Effect.gen(function* () {
 
 const toolsOf = (threadId: ThreadId) =>
   Effect.gen(function* () {
-    const tools = yield* (yield* GuestTools).forThread(threadId);
+    const servers = yield* (yield* GuestTools).forThread(threadId);
+    const tools = servers?.[0];
     if (tools === undefined) return yield* new BotsError({ message: "no tools" });
     return tools;
   });
@@ -152,6 +165,18 @@ describe("GuestTools", () => {
       assert.deepStrictEqual(
         tools.tools.map((tool) => tool.name),
         ["generate_image", "list_images", "html_render"],
+      );
+      // The bot's own server comes first, then its host MCP servers.
+      const servers = (yield* service.forThread(biaThread)) ?? [];
+      assert.deepStrictEqual(
+        servers.map((server) => server.server),
+        ["t3-guest", "pluggy"],
+      );
+      // A broken forward never costs the bot its own tools.
+      const anaServers = (yield* service.forThread(anaThread)) ?? [];
+      assert.deepStrictEqual(
+        anaServers.map((server) => server.server),
+        ["t3-guest"],
       );
     }).pipe(Effect.provide(layer));
   });

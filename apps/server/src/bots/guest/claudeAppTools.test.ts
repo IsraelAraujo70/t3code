@@ -46,15 +46,38 @@ describe("claudeAppToolsServer", () => {
     const config = claudeAppToolsServer(appTools);
     assert.isTrue("instance" in config);
     assert.strictEqual(JSON.stringify(config), '{"type":"sdk","name":"t3-guest"}');
+    // An identity joins the key, so a server whose backing changed opens a new query.
+    assert.strictEqual(
+      JSON.stringify(claudeAppToolsServer({ ...appTools, identity: "abc123" })),
+      '{"type":"sdk","name":"t3-guest","identity":"abc123"}',
+    );
   });
 });
 
 describe("withClaudeAppTools", () => {
   it("adds the server and pre-approves only its tools", () => {
-    const merged = withClaudeAppTools({ allowedTools: ["Read"] }, appTools);
+    const merged = withClaudeAppTools({ allowedTools: ["Read"] }, [appTools]);
     assert.deepStrictEqual(merged.allowedTools, ["Read", "mcp__t3-guest__*"]);
     assert.deepStrictEqual(Object.keys(merged.mcpServers ?? {}), ["t3-guest"]);
     const plain = { allowedTools: ["Read"] };
     assert.strictEqual(withClaudeAppTools(plain, undefined), plain);
+    assert.strictEqual(withClaudeAppTools(plain, []), plain);
+  });
+
+  it("adds every server with tools, leaving out empty and clashing ones", () => {
+    const pluggy: AppTools = { server: "pluggy", tools: appTools.tools };
+    const merged = withClaudeAppTools(
+      { allowedTools: ["Read"], mcpServers: { "t3-code": { type: "http", url: "http://x" } } },
+      [
+        appTools,
+        pluggy,
+        { server: "down", tools: [] },
+        { server: "t3-code", tools: appTools.tools },
+        { server: "pluggy", tools: [] },
+      ],
+    );
+    assert.deepStrictEqual(merged.allowedTools, ["Read", "mcp__t3-guest__*", "mcp__pluggy__*"]);
+    assert.deepStrictEqual(Object.keys(merged.mcpServers ?? {}), ["t3-code", "t3-guest", "pluggy"]);
+    assert.strictEqual(merged.mcpServers?.["t3-code"]?.type, "http");
   });
 });
