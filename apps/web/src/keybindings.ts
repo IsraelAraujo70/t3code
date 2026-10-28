@@ -175,6 +175,10 @@ export function resolveShortcutCommand(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
+  // Fork (friend): a raw key capture, such as the Computer tab in control, keeps every chord.
+  if (event instanceof Event && event.target instanceof Element) {
+    if (event.target.closest("[data-keybinding-capture]")) return null;
+  }
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
 

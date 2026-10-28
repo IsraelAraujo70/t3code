@@ -314,6 +314,11 @@ export const SEAMS: readonly Seam[] = [
     why: "reopen a closed Computer tab",
   },
   {
+    file: "apps/web/src/keybindings.ts",
+    markers: 1,
+    why: "app shortcuts leave keys to the Computer tab while it is in control",
+  },
+  {
     file: "apps/web/src/components/settings/SettingsSidebarNav.tsx",
     markers: 1,
     why: "Bots settings nav icon",

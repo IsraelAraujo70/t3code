@@ -191,10 +191,14 @@ function ComputerScreen(props: {
           {view.message}
         </div>
       ) : null}
-      {/* While in control the screen keeps focus so Escape and Tab reach the host; the outline says so. */}
+      {/* While in control the screen keeps focus so Escape and Tab reach the host; the outline says so.
+          `role="application"` keeps type-to-focus and window refocus off the composer, and
+          `data-keybinding-capture` turns off the app's shortcuts, so every key reaches the host. */}
       <div
         ref={screenRef}
         tabIndex={controlling ? 0 : -1}
+        role={controlling ? "application" : undefined}
+        data-keybinding-capture={controlling ? "" : undefined}
         aria-label={controlling ? `Controlling ${props.hostLabel}` : undefined}
         className={
           controlling
@@ -212,6 +216,14 @@ function ComputerScreen(props: {
             {paused ? "Paused" : "Waiting for the screen…"}
           </div>
         )}
+        {/* Without control, typing goes to the composer; say so where the viewer looks. */}
+        {hasFrame && !controlling && !paused && view.phase === "live" ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+            <span className="rounded-md bg-background/80 px-2 py-0.5 text-xs text-muted-foreground shadow-xs">
+              {canControl ? "Turn on Control to type on the host" : "View only"}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
