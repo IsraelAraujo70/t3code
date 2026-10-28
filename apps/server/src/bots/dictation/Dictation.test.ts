@@ -19,6 +19,7 @@ import {
 import { resolveAttachmentRelativePath } from "../../attachmentPaths.ts";
 import { createAttachmentId, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { OPENROUTER_KEY_ENV } from "../openRouter.ts";
 import * as Dictation from "./Dictation.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 
@@ -83,7 +84,7 @@ const layerTest = (
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );
 
-const KEY_ENV = { [Dictation.DICTATION_KEY_ENV]: "sk-test" };
+const KEY_ENV = { [OPENROUTER_KEY_ENV]: "sk-test" };
 const AUDIO = new TextEncoder().encode("fake-webm-bytes");
 
 /** Uploads `AUDIO` the way a client does, as a pending `file` attachment. */
@@ -188,10 +189,10 @@ describe("Dictation", () => {
         .transcribe({ attachmentId: recording.attachmentId })
         .pipe(Effect.flip);
 
-      assert.include(error.message, Dictation.DICTATION_KEY_ENV);
+      assert.include(error.message, OPENROUTER_KEY_ENV);
       assert.lengthOf(requests, 0);
       assert.isFalse(NodeFS.existsSync(recording.path));
-    }).pipe(Effect.provide(layerTest({ [Dictation.DICTATION_KEY_ENV]: "  " }, {}, requests)));
+    }).pipe(Effect.provide(layerTest({ [OPENROUTER_KEY_ENV]: "  " }, {}, requests)));
   });
 
   it.effect("never reads or deletes an attachment that belongs to a thread", () => {

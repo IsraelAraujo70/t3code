@@ -10,7 +10,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { KanbanSnapshot, ProjectId } from "@t3tools/contracts";
 
 import { BotsStore } from "../BotsStore.ts";
-import { DICTATION_KEY_ENV } from "../dictation/Dictation.ts";
+import { OPENROUTER_KEY_ENV } from "../openRouter.ts";
 import {
   buildAiFilterPrompt,
   KanbanAiFilter,
@@ -186,7 +186,7 @@ const layerService = (board: KanbanSnapshot, requests: Array<string>) =>
             }),
           ),
         ),
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { [DICTATION_KEY_ENV]: "sk-test" } })),
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { [OPENROUTER_KEY_ENV]: "sk-test" } })),
       ),
     ),
   );

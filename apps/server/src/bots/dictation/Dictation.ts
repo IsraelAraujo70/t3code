@@ -4,15 +4,13 @@
  * fixes punctuation. The key comes from `OPENROUTER_API_KEY`, is sent only to OpenRouter, and is
  * never logged. Every server holding the key may transcribe, not just the bots host.
  */
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import type * as Redacted from "effect/Redacted";
+import { HttpClient } from "effect/http";
 
 import {
   BotsError,
@@ -27,8 +25,13 @@ import {
   resolveAttachmentPathById,
 } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import {
+  completeOpenRouterChat,
+  OPENROUTER_KEY_ENV,
+  readOpenRouterKey,
+  readOpenRouterModel,
+} from "../openRouter.ts";
 
-export const DICTATION_KEY_ENV = "OPENROUTER_API_KEY";
 export const DICTATION_MODEL_ENV = "T3CODE_DICTATION_MODEL";
 const DICTATION_POLISH_MODEL_ENV = "T3CODE_DICTATION_POLISH_MODEL";
 export const DEFAULT_DICTATION_MODEL = "google/gemini-3.8-flash";
@@ -38,8 +41,6 @@ const DICTATION_POLISH_OFF = "off";
 
 /** About 10 minutes of the compressed audio clients record; the client stops at 5. */
 const MAX_DICTATION_BYTES = 20 * 1024 * 1024;
-
-const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 /** OpenRouter's `input_audio.format` per stored extension. Gemini also reads browser WebM. */
 const AUDIO_FORMATS: Readonly<Record<string, string>> = {
@@ -66,48 +67,10 @@ const POLISH_INSTRUCTION = [
   "Never answer, summarize or add anything. Reply with the cleaned message only.",
 ].join(" ");
 
-/** The key, or none when it is unset or blank. */
-const readKey: Effect.Effect<Option.Option<Redacted.Redacted>> = Config.Redacted(
-  DICTATION_KEY_ENV,
-).pipe(
-  Config.option,
-  Effect.map(Option.filter((key) => Redacted.value(key).trim().length > 0)),
-  Effect.orElseSucceed(() => Option.none()),
-);
-
 /** Whether this server can transcribe; decides the `dictation` capability. */
-export const isDictationConfigured: Effect.Effect<boolean> = readKey.pipe(
+export const isDictationConfigured: Effect.Effect<boolean> = readOpenRouterKey.pipe(
   Effect.map(Option.isSome),
 );
-
-const readModel = (name: string, fallback: string): Effect.Effect<string> =>
-  Config.String(name).pipe(
-    Config.withDefault(fallback),
-    Effect.map((model) => model.trim() || fallback),
-    Effect.orElseSucceed(() => fallback),
-  );
-
-const ChatResponse = Schema.Struct({
-  choices: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        message: Schema.optional(
-          Schema.Struct({
-            content: Schema.optional(
-              Schema.NullOr(
-                Schema.Union([
-                  Schema.String,
-                  Schema.Array(Schema.Struct({ text: Schema.optional(Schema.String) })),
-                ]),
-              ),
-            ),
-          }),
-        ),
-      }),
-    ),
-  ),
-  error: Schema.optional(Schema.Struct({ message: Schema.optional(Schema.String) })),
-});
 
 const failure = (message: string, cause?: unknown) =>
   new BotsError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -127,32 +90,15 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
 
-  const complete = Effect.fn("Dictation.complete")(function* (
-    key: Redacted.Redacted,
-    body: unknown,
-    timeout: "120 seconds" | "30 seconds",
-  ) {
-    const response = yield* HttpClientRequest.post(ENDPOINT).pipe(
-      HttpClientRequest.bearerToken(Redacted.value(key)),
-      HttpClientRequest.bodyJson(body),
-      Effect.flatMap((request) => httpClient.execute(request)),
-      Effect.timeout(timeout),
-      Effect.mapError((cause) => failure("Could not reach the transcription service.", cause)),
-    );
-    const decoded = yield* HttpClientResponse.schemaBodyJson(ChatResponse)(response).pipe(
-      Effect.orElseSucceed(() => null),
-    );
-    if (response.status < 200 || response.status >= 300 || decoded === null || decoded.error) {
-      const detail = decoded?.error?.message ?? `HTTP ${response.status}`;
-      return yield* failure(`The transcription service failed: ${detail}`);
-    }
-    const content = decoded.choices?.[0]?.message?.content;
-    const text =
-      typeof content === "string"
-        ? content
-        : (content ?? []).map((part) => part.text ?? "").join("");
-    return text.trim();
-  });
+  const complete = (key: Redacted.Redacted, body: unknown, timeout: "120 seconds" | "30 seconds") =>
+    completeOpenRouterChat({
+      httpClient,
+      key,
+      body,
+      timeout,
+      service: "transcription",
+      error: failure,
+    });
 
   const transcribeRecording = Effect.fn("Dictation.transcribeRecording")(function* (
     path: string,
@@ -178,7 +124,7 @@ const make = Effect.gen(function* () {
     const raw = yield* complete(
       key,
       {
-        model: yield* readModel(DICTATION_MODEL_ENV, DEFAULT_DICTATION_MODEL),
+        model: yield* readOpenRouterModel(DICTATION_MODEL_ENV, DEFAULT_DICTATION_MODEL),
         messages: [
           {
             role: "user",
@@ -196,7 +142,7 @@ const make = Effect.gen(function* () {
     );
     if (raw.length === 0) return { text: "" };
 
-    const polishModel = yield* readModel(
+    const polishModel = yield* readOpenRouterModel(
       DICTATION_POLISH_MODEL_ENV,
       DEFAULT_DICTATION_POLISH_MODEL,
     );
@@ -237,9 +183,9 @@ const make = Effect.gen(function* () {
     if (path === null) return yield* failure("The recording was not found.");
     const extension = parseAttachmentFileExtension(input.attachmentId) ?? "";
     return yield* Effect.gen(function* () {
-      const key = yield* readKey;
+      const key = yield* readOpenRouterKey;
       if (Option.isNone(key)) {
-        return yield* failure(`Dictation needs ${DICTATION_KEY_ENV} on the server.`);
+        return yield* failure(`Dictation needs ${OPENROUTER_KEY_ENV} on the server.`);
       }
       return yield* transcribeRecording(path, extension, key.value);
     }).pipe(Effect.ensuring(fileSystem.remove(path, { force: true }).pipe(Effect.ignore)));
