@@ -19,6 +19,7 @@ import {
   BOT_LIMITS,
   BotId,
   botThreadId,
+  GuestId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -35,7 +36,13 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { BotsService, layer as botsServiceLayer } from "./BotsService.ts";
-import { BotsStore, layerMemory as storeLayerMemory } from "./BotsStore.ts";
+import * as BotsDb from "./BotsDb.ts";
+import {
+  BotsStore,
+  layerFromDb as storeLayerFromDb,
+  layerMemory as storeLayerMemory,
+} from "./BotsStore.ts";
+import * as GuestStore from "./guest/GuestStore.ts";
 
 const SCRATCH = ProjectId.make("scratch-project");
 const CODEX = ProviderInstanceId.make("codex");
@@ -487,7 +494,13 @@ describe("BotsService", () => {
         Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot)),
         Effect.forkScoped,
       );
-      assert.deepStrictEqual(yield* Queue.take(snapshots), { sections: [], bots: [], aboutMe: "" });
+      assert.deepStrictEqual(yield* Queue.take(snapshots), {
+        sections: [],
+        bots: [],
+        aboutMe: "",
+        linkedEnvironmentBotIds: [],
+        guestBotIds: [],
+      });
 
       const write = yield* service.updateOwner({ aboutMe: "I build T3" }).pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
@@ -600,6 +613,55 @@ describe("BotsService.importFriend", () => {
       // Startup reconciliation may also run meanwhile; every later launch only replays.
       assert.isTrue(orchestration.launches.slice(launchesBefore).every((launch) => launch.resumed));
       assert.strictEqual(orchestration.threads.size, 3);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("only the user's switch lets a bot use linked environments, never a guest's bot", () =>
+    Effect.gen(function* () {
+      const orchestration = yield* makeOrchestration;
+      const stores = yield* Layer.build(
+        Layer.mergeAll(storeLayerFromDb, GuestStore.layerFromDb).pipe(
+          Layer.provide(BotsDb.layerMemory),
+        ),
+      );
+      const store = Context.get(stores, BotsStore);
+      const guests = Context.get(stores, GuestStore.GuestStore);
+      const service = yield* Layer.build(
+        botsServiceLayer.pipe(
+          Layer.provide(orchestration.layer),
+          Layer.provide(Layer.succeedContext(stores)),
+        ),
+      ).pipe(Effect.map((context) => Context.get(context, BotsService)));
+      const latest = Stream.runHead(service.directory).pipe(Effect.map(Option.getOrThrow));
+
+      // Fields a bot management tool could smuggle in are not the switch.
+      const smuggled = { linkedEnvironments: true, linkedEnvironmentBotIds: ["x"] };
+      const bot = yield* service.createBot({ ...input, ...smuggled } as BotCreateInput);
+      yield* service.updateBot({ botId: bot.id, role: "Still", ...smuggled } as never);
+      assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, []);
+      assert.deepStrictEqual((yield* latest).linkedEnvironmentBotIds, []);
+
+      yield* service.setBotLinkedEnvironments({ botId: bot.id, linkedEnvironments: true });
+      assert.deepStrictEqual((yield* latest).linkedEnvironmentBotIds, [bot.id]);
+      yield* service.setBotLinkedEnvironments({ botId: bot.id, linkedEnvironments: false });
+      assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, []);
+
+      const guestBot = yield* service.createBot({ ...input, name: "Bia's" });
+      yield* guests.insertGuest({
+        id: GuestId.make("bia"),
+        name: "Bia",
+        tokenHash: null,
+        tokenCreatedAt: null,
+        createdAt: "2026-10-28T00:00:00.000Z",
+        updatedAt: "2026-10-28T00:00:00.000Z",
+      });
+      yield* guests.assignBot(GuestId.make("bia"), guestBot.id, "2026-10-28T00:00:00.000Z");
+      const refused = yield* Effect.flip(
+        service.setBotLinkedEnvironments({ botId: guestBot.id, linkedEnvironments: true }),
+      );
+      assert.match(refused.message, /belongs to a guest/);
+      assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, []);
+      assert.deepStrictEqual((yield* latest).guestBotIds, [guestBot.id]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

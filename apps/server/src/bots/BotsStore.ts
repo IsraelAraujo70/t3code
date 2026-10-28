@@ -19,7 +19,7 @@ import {
   BotSection,
   BotsError,
   ModelSelection,
-  type BotId,
+  BotId,
   type BotMemoryId,
   type BotsArrangeInput,
   type BotSectionId,
@@ -86,6 +86,15 @@ export class BotsStore extends Context.Service<
     readonly deletePushDevice: (token: string) => Effect.Effect<void, BotsError>;
     /** Oldest first. */
     readonly listPushDevices: Effect.Effect<ReadonlyArray<BotPushDevice>, BotsError>;
+    /** The bots the user lets reach linked environments. */
+    readonly listLinkedEnvironmentBots: Effect.Effect<ReadonlyArray<BotId>, BotsError>;
+    /** Only the owner's RPC calls this; no MCP tool does (see linkAccess.test.ts). */
+    readonly setBotLinkedEnvironments: (
+      botId: BotId,
+      linkedEnvironments: boolean,
+    ) => Effect.Effect<void, BotsError>;
+    /** Every bot assigned to a guest. */
+    readonly listGuestBotIds: Effect.Effect<ReadonlyArray<BotId>, BotsError>;
   }
 >()("t3/bots/BotsStore") {}
 
@@ -109,6 +118,7 @@ const decodeMemories = Schema.decodeUnknownEffect(Schema.Array(MemoryRow));
 const decodeSections = Schema.decodeUnknownEffect(Schema.Array(SectionRow));
 const decodeAboutMe = Schema.decodeUnknownEffect(Schema.Array(AboutMeRow));
 const decodePushDevices = Schema.decodeUnknownEffect(Schema.Array(PushDeviceRow));
+const decodeBotIds = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ botId: BotId })));
 const encodeBot = Schema.encodeEffect(BotRow);
 const encodeMemory = Schema.encodeEffect(MemoryRow);
 
@@ -396,6 +406,27 @@ const make = Effect.gen(function* () {
     `.pipe(
       Effect.flatMap(decodePushDevices),
       Effect.mapError(failWith("Could not read push devices from bots.sqlite")),
+    ),
+    listLinkedEnvironmentBots:
+      sql`SELECT bot_id AS "botId" FROM linked_environment_bots ORDER BY rowid`.pipe(
+        Effect.flatMap(decodeBotIds),
+        Effect.map((rows) => rows.map((row) => row.botId)),
+        Effect.mapError(failWith("Could not read the bots allowed linked environments")),
+      ),
+    setBotLinkedEnvironments: Effect.fn("BotsStore.setBotLinkedEnvironments")(
+      (botId, linkedEnvironments) =>
+        (linkedEnvironments
+          ? sql`INSERT INTO linked_environment_bots (bot_id) VALUES (${botId}) ON CONFLICT DO NOTHING`
+          : sql`DELETE FROM linked_environment_bots WHERE bot_id = ${botId}`
+        ).pipe(
+          Effect.asVoid,
+          Effect.mapError(failWith("Could not change the bot's linked environments")),
+        ),
+    ),
+    listGuestBotIds: sql`SELECT bot_id AS "botId" FROM guest_bots ORDER BY bot_id`.pipe(
+      Effect.flatMap(decodeBotIds),
+      Effect.map((rows) => rows.map((row) => row.botId)),
+      Effect.mapError(failWith("Could not read the guests' bots")),
     ),
   });
 });

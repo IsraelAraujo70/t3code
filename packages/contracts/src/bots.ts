@@ -4,6 +4,7 @@
  * is `bot:<botId>:<generation>`; resetting the conversation archives it and starts the next
  * generation. Bot records live in the server's `bots.sqlite`, never in orchestration state.
  */
+import * as Effect from "effect/Effect";
 import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";
 
@@ -128,6 +129,12 @@ export const BotDirectory = Schema.Struct({
   sections: Schema.Array(BotSection),
   bots: Schema.Array(BotDirectoryEntry),
   aboutMe: BotsAboutMe,
+  /** Bots the user lets reach linked environments; only the user changes this list. */
+  linkedEnvironmentBotIds: Schema.Array(BotId).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+  /** Bots that belong to a guest: never allowed linked environments. */
+  guestBotIds: Schema.Array(BotId).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type BotDirectory = typeof BotDirectory.Type;
 
@@ -166,6 +173,13 @@ export type BotUpdateInput = typeof BotUpdateInput.Type;
 
 export const BotRef = Schema.Struct({ botId: BotId });
 export type BotRef = typeof BotRef.Type;
+
+/** Lets one bot use linked environments, or stops it. A guest's bot cannot be let. */
+export const BotLinkedEnvironmentsInput = Schema.Struct({
+  botId: BotId,
+  linkedEnvironments: Schema.Boolean,
+});
+export type BotLinkedEnvironmentsInput = typeof BotLinkedEnvironmentsInput.Type;
 
 export const BotSectionCreateInput = Schema.Struct({ name: BotSectionName });
 export type BotSectionCreateInput = typeof BotSectionCreateInput.Type;
@@ -249,6 +263,7 @@ export const BOTS_WS_METHODS = {
   botDelete: "bots.bot.delete",
   botResetConversation: "bots.bot.resetConversation",
   botRestartSession: "bots.bot.restartSession",
+  botLinkedEnvironments: "bots.bot.linkedEnvironments",
   memoryCreate: "bots.memory.create",
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
@@ -311,6 +326,11 @@ export type BotRestartSessionResult = typeof BotRestartSessionResult.Type;
 export const BotRestartSessionRpc = Rpc.make(BOTS_WS_METHODS.botRestartSession, {
   payload: BotRef,
   success: BotRestartSessionResult,
+  error: BotsRpcError,
+});
+export const BotLinkedEnvironmentsRpc = Rpc.make(BOTS_WS_METHODS.botLinkedEnvironments, {
+  payload: BotLinkedEnvironmentsInput,
+  success: BotLinkedEnvironmentsInput,
   error: BotsRpcError,
 });
 export const BotMemoryCreateRpc = Rpc.make(BOTS_WS_METHODS.memoryCreate, {
@@ -558,6 +578,7 @@ export const BOTS_RPCS = [
   BotDeleteRpc,
   BotResetConversationRpc,
   BotRestartSessionRpc,
+  BotLinkedEnvironmentsRpc,
   BotMemoryCreateRpc,
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
@@ -584,6 +605,8 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.botDelete]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.botResetConversation]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.botRestartSession]: AuthOrchestrationOperateScope,
+  // Lets a bot act on the user's other machines: the user's session only, never a tool.
+  [BOTS_WS_METHODS.botLinkedEnvironments]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,

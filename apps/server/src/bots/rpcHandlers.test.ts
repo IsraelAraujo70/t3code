@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   type AuthEnvironmentScope,
   BOTS_WS_METHODS,
+  BotId,
   LinearAccountId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,11 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
         BotsRpc.layerHandlers.pipe(
           Layer.provide(
             Layer.mock(BotsService.BotsService)({
+              setBotLinkedEnvironments: (input) =>
+                Effect.sync(() => {
+                  calls.push(`linked ${input.botId} ${input.linkedEnvironments}`);
+                  return input;
+                }),
               updateOwner: (input) =>
                 Effect.sync(() => {
                   calls.push(input.aboutMe);
@@ -123,6 +129,24 @@ describe("bots RPC handler layer", () => {
       );
       assert.equal(rejection._tag, "EnvironmentAuthorizationError");
       assert.deepStrictEqual(calls, ["register fcm-1 Pixel", "unregister fcm-1"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets only an operator's session turn on a bot's linked environments", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const input = { botId: BotId.make("b_father"), linkedEnvironments: true };
+      const reader = yield* connect([AuthOrchestrationReadScope], calls);
+      const rejection = yield* reader[BOTS_WS_METHODS.botLinkedEnvironments](input).pipe(
+        Effect.flip,
+      );
+      assert.equal(rejection._tag, "EnvironmentAuthorizationError");
+      const operator = yield* connect(
+        [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        calls,
+      );
+      assert.deepStrictEqual(yield* operator[BOTS_WS_METHODS.botLinkedEnvironments](input), input);
+      assert.deepStrictEqual(calls, ["linked b_father true"]);
     }).pipe(Effect.scoped),
   );
 

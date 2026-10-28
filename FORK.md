@@ -281,13 +281,16 @@ Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).
 Upstream's linked environments let agents here work on another machine; the owner's Mac is linked
 from the bots host with full access, which the Mac does not fence. The fork's
 [`BotLinkAccess`](apps/server/src/bots/linkAccess.ts) is therefore the only barrier. A bot's
-conversation may use links only when its id is in `T3CODE_LINKED_ENVIRONMENT_BOTS` (comma-separated;
-unset or empty allows none) and it belongs to no guest; a guest's bot is refused even when listed.
-Any other thread may when its parent, its root and every thread that messaged it may, so work an
-unlisted bot started, delegated or messaged is refused, and so is a scheduled task an agent made.
-PeerForwarding and PeerLinkRequests cannot be built without the gate, which rechecks every call,
-including the followers of remote tasks; `/mcp` also hides the link tools from refused callers. Any
-error reading a caller's origin refuses. The list is read at startup.
+conversation may use links only when the user turned it on in Settings → Bots → Linked
+environments (table `linked_environment_bots` in `bots.sqlite`, empty at first) and it belongs to
+no guest; a guest's bot is refused even when its row is there, and the server refuses to add one.
+Only the owner's `bots.bot.linkedEnvironments` RPC (`orchestration:operate`) writes the table: no
+MCP tool, `bot_update` included, can. Any other thread may when its parent, its root and every
+thread that messaged it may, so work an unlisted bot started, delegated or messaged is refused, and
+so is a scheduled task an agent made. The gate reads the table on every check, so a switch applies
+to the next call. PeerForwarding and PeerLinkRequests cannot be built without it, and it rechecks
+every call, including the followers of remote tasks; `/mcp` also hides the link tools from refused
+callers. Any error reading a caller's origin refuses.
 
 ## State and rollback
 

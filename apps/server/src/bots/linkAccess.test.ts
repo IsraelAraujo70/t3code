@@ -1,9 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - the last test reads the server's own sources.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  type Bot,
   BotId,
   botThreadId,
   CommandId,
@@ -20,7 +25,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -62,6 +66,8 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as BotsStoreModule from "./BotsStore.ts";
+import { BotsStore } from "./BotsStore.ts";
 import * as GuestStore from "./guest/GuestStore.ts";
 import * as BotLinkAccess from "./linkAccess.ts";
 
@@ -76,6 +82,7 @@ describe("originAllows", () => {
     senders: Record<string, ReadonlyArray<string>> = {},
     agentSchedules: ReadonlyArray<string> = [],
   ): BotLinkAccess.ThreadOrigins => ({
+    allowedBots: Effect.succeed([allowedBot, guestBot]),
     lineage: (threadId) => {
       const shell = shells[threadId];
       return Effect.succeed(
@@ -94,18 +101,20 @@ describe("originAllows", () => {
       }),
     isGuestBot: (botId) => Effect.succeed(botId === guestBot),
   });
-  const allowed = new Set<string>([allowedBot, guestBot]);
   const decide = (origin: BotLinkAccess.ThreadOrigins, threadId: string) =>
-    BotLinkAccess.originAllows(origin, allowed, thread(threadId));
+    BotLinkAccess.originAllows(origin, thread(threadId));
 
-  it("reads an empty or unset list as no bot", () => {
-    assert.equal(BotLinkAccess.parseLinkedEnvironmentBots("").size, 0);
-    assert.equal(BotLinkAccess.parseLinkedEnvironmentBots(" , ").size, 0);
-    assert.deepEqual([...BotLinkAccess.parseLinkedEnvironmentBots(" b_1 ,b_2,,")].toSorted(), [
-      "b_1",
-      "b_2",
-    ]);
-  });
+  it.effect("reads the allowed bots on every check, and none when the list is empty", () =>
+    Effect.gen(function* () {
+      const allowed = yield* Ref.make<ReadonlyArray<BotId>>([]);
+      const live = { ...origins({}), allowedBots: Ref.get(allowed) };
+      assert.isFalse(yield* decide(live, botThreadId(allowedBot, 1)));
+      yield* Ref.set(allowed, [allowedBot]);
+      assert.isTrue(yield* decide(live, botThreadId(allowedBot, 1)));
+      yield* Ref.set(allowed, []);
+      assert.isFalse(yield* decide(live, botThreadId(allowedBot, 1)));
+    }),
+  );
 
   it.effect("allows a listed bot and refuses an unlisted or guest one", () =>
     Effect.gen(function* () {
@@ -240,6 +249,29 @@ const layerOrchestration = ThreadManagement.layer.pipe(
   ),
 );
 
+const botRow = (id: BotId): Bot => ({
+  id,
+  name: id,
+  role: "",
+  model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+  homeGeneration: 1,
+  sectionId: null,
+  position: 0,
+  canManageBots: false,
+  createdAt: "2026-10-28T00:00:00.000Z",
+  updatedAt: "2026-10-28T00:00:00.000Z",
+});
+
+/** bots.sqlite with the user's switch on for the allowed bot and, wrongly, the guest's. */
+const layerBotsStore = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* BotsStore;
+    for (const id of [allowedBot, deniedBot, guestBot]) yield* store.insertBot(botRow(id));
+    yield* store.setBotLinkedEnvironments(allowedBot, true);
+    yield* store.setBotLinkedEnvironments(guestBot, true);
+  }),
+).pipe(Layer.provideMerge(BotsStoreModule.layerMemory));
+
 const layerPeerLinks = Layer.mock(PeerLinks.PeerLinks)({
   enabled: Effect.succeed(true),
   get: () => Effect.succeedNone,
@@ -269,14 +301,7 @@ const layerPeers = Layer.mergeAll(
         Effect.succeed(botId === guestBot ? Option.some(GuestId.make("bia")) : Option.none()),
     }),
   ),
-  Layer.provide(
-    ConfigProvider.layer(
-      ConfigProvider.fromEnv({
-        // The guest's bot is listed too: belonging to a guest refuses it anyway.
-        env: { [BotLinkAccess.LINKED_ENVIRONMENT_BOTS_ENV]: `${allowedBot}, ${guestBot}` },
-      }),
-    ),
-  ),
+  Layer.provideMerge(layerBotsStore),
 );
 
 const layerTools = Layer.mergeAll(
@@ -552,6 +577,28 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("reaching the Mac",
       assert.deepEqual(yield* Ref.get(macCalls), []);
     }),
   );
+
+  it.effect("applies the user's switch to the next call, without a restart", () =>
+    Effect.gen(function* () {
+      const macCalls = yield* MacCalls;
+      const store = yield* BotsStore;
+      const scope = yield* seedCaller(botThreadId(allowedBot, 3));
+      const launch = () =>
+        call(scope, "t3_thread_launch", {
+          environmentId: mac,
+          projectId: macProjectId,
+          title: "On the Mac",
+          modelSelection,
+          message: "Run it there.",
+        });
+      yield* store.setBotLinkedEnvironments(allowedBot, false);
+      assert.isTrue(refused(yield* launch()));
+      yield* store.setBotLinkedEnvironments(allowedBot, true);
+      yield* Ref.set(macCalls, []);
+      assert.equal(failureOf(yield* launch())?.message, peerAnswer);
+      assert.deepEqual(yield* Ref.get(macCalls), ["t3_thread_launch"]);
+    }),
+  );
 });
 
 it.effect("/mcp turns links off for a caller BotLinkAccess refuses, and only for it", () =>
@@ -647,3 +694,35 @@ it.effect("/mcp turns links off for a caller BotLinkAccess refuses, and only for
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+// Only the owner's RPC (bots.bot.linkedEnvironments, behind orchestration:operate) writes the
+// table. No MCP tool may: a bot with canManageBots could otherwise turn itself on.
+describe("who can let a bot use linked environments", () => {
+  const serverSource = NodePath.join(import.meta.dirname, "..");
+  const sources = (dir: string): ReadonlyArray<string> =>
+    NodeFS.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = NodePath.join(dir, entry.name);
+      if (entry.isDirectory()) return sources(path);
+      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [path] : [];
+    });
+  const referencing = (pattern: RegExp) =>
+    sources(serverSource)
+      .filter((path) => pattern.test(NodeFS.readFileSync(path, "utf8")))
+      .map((path) => NodePath.relative(serverSource, path))
+      .toSorted();
+
+  it("only the store writes the table, and only the owner's RPC reaches its writer", () => {
+    assert.deepEqual(referencing(/INTO linked_environment_bots|FROM linked_environment_bots/), [
+      "bots/BotsStore.ts",
+    ]);
+    assert.deepEqual(referencing(/setBotLinkedEnvironments/), [
+      "bots/BotsService.ts",
+      "bots/BotsStore.ts",
+      "bots/layer.ts",
+      "bots/rpcHandlers.ts",
+    ]);
+    assert.deepEqual(referencing(/BOTS_WS_METHODS\.botLinkedEnvironments/), [
+      "bots/rpcHandlers.ts",
+    ]);
+  });
+});

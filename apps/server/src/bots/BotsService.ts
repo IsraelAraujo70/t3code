@@ -36,6 +36,7 @@ import {
   type Bot,
   type BotCreateInput,
   type BotDirectory,
+  type BotLinkedEnvironmentsInput,
   type BotMemory,
   type BotMemoryCreateInput,
   type BotMemoryRef,
@@ -103,6 +104,13 @@ export class BotsService extends Context.Service<
      * otherwise only launch at the next start.
      */
     readonly ensureConversation: (input: BotRef) => Effect.Effect<Bot, BotsError>;
+    /**
+     * The user's switch for one bot's linked environments, from their session only: no MCP tool
+     * calls it. Turning it on for a guest's bot fails.
+     */
+    readonly setBotLinkedEnvironments: (
+      input: BotLinkedEnvironmentsInput,
+    ) => Effect.Effect<BotLinkedEnvironmentsInput, BotsError>;
     /** The bot a thread belongs to, from its id; none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
     /** Idempotent: the app repeats it on every connect and token rotation. */
@@ -253,6 +261,8 @@ const make = Effect.gen(function* () {
     const bots = yield* store.listBots;
     const memories = yield* store.listMemories();
     const aboutMe = yield* store.getAboutMe;
+    const linkedEnvironmentBotIds = yield* store.listLinkedEnvironmentBots;
+    const guestBotIds = yield* store.listGuestBotIds;
     const memoriesByBot = new Map<BotId, Array<BotMemory>>();
     for (const memory of memories) {
       const list = memoriesByBot.get(memory.botId);
@@ -267,6 +277,8 @@ const make = Effect.gen(function* () {
         memories: memoriesByBot.get(bot.id) ?? [],
       })),
       aboutMe,
+      linkedEnvironmentBotIds,
+      guestBotIds,
     };
   });
 
@@ -571,6 +583,20 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
+  const setBotLinkedEnvironments = Effect.fn("BotsService.setBotLinkedEnvironments")(function* (
+    input: BotLinkedEnvironmentsInput,
+  ) {
+    const bot = yield* requireBot(input.botId);
+    if (input.linkedEnvironments && (yield* store.listGuestBotIds).includes(bot.id)) {
+      return yield* new BotsError({
+        message: `${bot.name} belongs to a guest, so it cannot use linked environments.`,
+      });
+    }
+    yield* store.setBotLinkedEnvironments(bot.id, input.linkedEnvironments);
+    yield* publish;
+    return input;
+  });
+
   return BotsService.of({
     directory,
     createBot,
@@ -588,6 +614,7 @@ const make = Effect.gen(function* () {
     deleteSection,
     arrange,
     ensureConversation,
+    setBotLinkedEnvironments,
     botForThread,
     registerPushDevice,
     unregisterPushDevice,

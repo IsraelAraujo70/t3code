@@ -10,7 +10,6 @@ import {
   parseBotThreadId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,26 +22,16 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type * as PeerForwarding from "../peer/PeerForwarding.ts";
 import type * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { BotsStore } from "./BotsStore.ts";
 import * as GuestStore from "./guest/GuestStore.ts";
 import { withholdsGuestMcp } from "./guest/sandboxInstance.ts";
 
-/** Comma-separated bot ids whose conversations may use linked environments. Unset: none. */
-export const LINKED_ENVIRONMENT_BOTS_ENV = "T3CODE_LINKED_ENVIRONMENT_BOTS";
-
 type Scope = McpInvocationContext.McpInvocationScope;
 
-/** Pure. The listed bot ids; an unset or blank value lists none. */
-export function parseLinkedEnvironmentBots(raw: string): ReadonlySet<string> {
-  return new Set(
-    raw
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => id !== ""),
-  );
-}
-
-/** What deciding a thread's origin reads. A read that fails refuses. */
+/** What deciding a thread's origin reads, fresh on every check. A read that fails refuses. */
 export interface ThreadOrigins {
+  /** The bots the user turned linked environments on for (`linked_environment_bots`). */
+  readonly allowedBots: Effect.Effect<ReadonlyArray<BotId>, BotsError>;
   /** The thread's parent and root, or null when there is no such thread. */
   readonly lineage: (
     threadId: ThreadId,
@@ -72,9 +61,9 @@ const MAX_ORIGIN_THREADS = 64;
  */
 export const originAllows = Effect.fn("BotLinkAccess.originAllows")(function* (
   origins: ThreadOrigins,
-  allowed: ReadonlySet<string>,
   threadId: ThreadId,
 ) {
+  let allowed: ReadonlyArray<BotId> | undefined;
   const seen = new Set<ThreadId>();
   const pending: Array<ThreadId> = [threadId];
   while (pending.length > 0) {
@@ -84,7 +73,8 @@ export const originAllows = Effect.fn("BotLinkAccess.originAllows")(function* (
     if (seen.size > MAX_ORIGIN_THREADS) return false;
     const bot = parseBotThreadId(next);
     if (bot !== null) {
-      if (!allowed.has(bot.botId) || (yield* origins.isGuestBot(bot.botId))) return false;
+      allowed ??= yield* origins.allowedBots;
+      if (!allowed.includes(bot.botId) || (yield* origins.isGuestBot(bot.botId))) return false;
       continue;
     }
     const lineage = yield* origins.lineage(next);
@@ -157,18 +147,14 @@ export const gateLinkRequests = Effect.fn("BotLinkAccess.gateLinkRequests")(func
 });
 
 const make = Effect.gen(function* () {
-  const allowed = parseLinkedEnvironmentBots(
-    yield* Config.String(LINKED_ENVIRONMENT_BOTS_ENV).pipe(
-      Config.withDefault(""),
-      Effect.orElseSucceed(() => ""),
-    ),
-  );
+  const store = yield* BotsStore;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
   const guests = yield* GuestStore.GuestStore;
   const settings = yield* ServerSettings.ServerSettingsService;
 
   const origins: ThreadOrigins = {
+    allowedBots: store.listLinkedEnvironmentBots,
     lineage: (threadId) =>
       projections
         .getThreadShell(threadId)
@@ -203,7 +189,7 @@ const make = Effect.gen(function* () {
       if (yield* withholdsGuestMcp(Option.some(settings), scope.thread.providerInstanceId)) {
         return false;
       }
-      return yield* originAllows(origins, allowed, scope.thread.threadId);
+      return yield* originAllows(origins, scope.thread.threadId);
     },
     Effect.catchCause((cause) =>
       Effect.logWarning("Refused linked environments: the caller's origin could not be read", {
@@ -212,11 +198,14 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  yield* Effect.logInfo(`Linked environments: ${allowed.size} bot(s) allowed`);
+  yield* store.listLinkedEnvironmentBots.pipe(
+    Effect.flatMap((bots) => Effect.logInfo(`Linked environments: ${bots.length} bot(s) allowed`)),
+    Effect.ignore,
+  );
   return BotLinkAccess.of({ allows });
 });
 
-/** Reads LINKED_ENVIRONMENT_BOTS_ENV once; a changed list takes a restart. */
+/** Reads the allowed bots on every check, so a switch in Settings applies to the next call. */
 export const layer = Layer.effect(BotLinkAccess, make).pipe(Layer.provide(ProjectionStore.layer));
 
 /** For tests of upstream link code that is not about who may use links. */

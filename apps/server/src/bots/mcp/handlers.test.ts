@@ -68,7 +68,13 @@ const makeBots = () => {
   const createdBots: Array<BotCreateInput> = [];
   const updatedBots: Array<BotUpdateInput> = [];
   const deletedBots: Array<BotId> = [];
+  const linkedEnvironmentSwitches: Array<unknown> = [];
   const layer = Layer.mock(BotsService.BotsService)({
+    setBotLinkedEnvironments: (input) =>
+      Effect.sync(() => {
+        linkedEnvironmentSwitches.push(input);
+        return input;
+      }),
     directory: Stream.suspend(() =>
       Stream.succeed({
         sections: [],
@@ -78,6 +84,8 @@ const makeBots = () => {
           memories: memories.filter((m) => m.botId === b.id),
         })),
         aboutMe: "",
+        linkedEnvironmentBotIds: [],
+        guestBotIds: [],
       }),
     ),
     createBot: (input) =>
@@ -131,6 +139,7 @@ const makeBots = () => {
     createdBots,
     updatedBots,
     deletedBots,
+    linkedEnvironmentSwitches,
     memoriesOf: (botId: BotId) => memories.filter((m) => m.botId === botId),
   };
 };
@@ -309,7 +318,17 @@ const managementTools = (
             ...(memories !== undefined ? { memories } : {}),
           }),
         ),
-      update: (botId: BotId, role: string) => run(toolkit.handle("bot_update", { botId, role })),
+      update: (botId: BotId, role: string, extra: Record<string, unknown> = {}) =>
+        run(toolkit.handle("bot_update", { botId, role, ...extra })),
+      createWith: (extra: Record<string, unknown>) =>
+        run(
+          toolkit.handle("bot_create", {
+            name: "Scout",
+            role: "Finds jobs.",
+            model: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+            ...extra,
+          }),
+        ),
       remove: (botId: BotId) => run(toolkit.handle("bot_delete", { botId })),
     };
   });
@@ -406,5 +425,22 @@ it.effect("bot_delete deletes another bot but never the caller", () =>
     expect(bots.deletedBots).toEqual([]);
     expect(yield* tools.remove(bob)).toEqual({ botId: bob });
     expect(bots.deletedBots).toEqual([bob]);
+  }),
+);
+
+// Linked environments reach the user's other machines; only the user's own session turns them on
+// (bots.bot.linkedEnvironments). A managing bot passing the field anyway changes nothing.
+it.effect("bot_update and bot_create never turn on linked environments", () =>
+  Effect.gen(function* () {
+    const bots = makeBots();
+    const tools = yield* managementTools(bots.layer, threadScope(botThreadId(alice, 1)));
+    const smuggled = { linkedEnvironments: true, linkedEnvironmentBotIds: [alice] };
+    yield* tools.update(alice, "Reaches the Mac.", smuggled);
+    yield* tools.createWith(smuggled);
+    expect(bots.linkedEnvironmentSwitches).toEqual([]);
+    expect(bots.updatedBots).toEqual([{ botId: alice, role: "Reaches the Mac." }]);
+    expect(bots.createdBots).toEqual([
+      { name: "Scout", role: "Finds jobs.", model: { instanceId: "codex", model: "gpt-6-luna" } },
+    ]);
   }),
 );

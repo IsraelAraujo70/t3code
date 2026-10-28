@@ -84,6 +84,7 @@ export function createBotsEnvironmentAtoms<R, E>(
     deleteBot: command("delete-bot", BOTS_WS_METHODS.botDelete),
     resetConversation: command("reset-conversation", BOTS_WS_METHODS.botResetConversation),
     restartSession: command("restart-session", BOTS_WS_METHODS.botRestartSession),
+    setLinkedEnvironments: command("linked-environments", BOTS_WS_METHODS.botLinkedEnvironments),
     createMemory: command("create-memory", BOTS_WS_METHODS.memoryCreate),
     updateMemory: command("update-memory", BOTS_WS_METHODS.memoryUpdate),
     deleteMemory: command("delete-memory", BOTS_WS_METHODS.memoryDelete),

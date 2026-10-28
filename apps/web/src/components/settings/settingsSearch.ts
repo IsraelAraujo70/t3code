@@ -1168,6 +1168,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "bots-linked-environments",
+    title: "Bots on linked environments",
+    to: "/settings/bots",
+    searchTerms: ["friend bots other machines mac linked environments delegate allow"],
+    environmentOnly: true,
+  },
+  {
     id: "bots-import",
     title: "Import from friend",
     to: "/settings/bots",
