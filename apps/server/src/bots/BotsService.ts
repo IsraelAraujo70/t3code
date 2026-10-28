@@ -1,18 +1,5 @@
 /**
- * Owns bots: their rows in BotsStore, their main threads, and the directory clients render.
- *
- * Invariants:
- * - A bot's main thread is `botThreadId(bot.id, bot.homeGeneration)`, launched in the managed
- *   Scratch project with a deterministic launch command id, so a retry or the startup
- *   reconciliation converges on the same thread instead of creating another.
- * - The row is written before its thread is launched; reconciliation launches any missing
- *   main thread, so a crash between the two writes heals on the next start.
- * - Reset raises the generation, archives the previous thread, and launches the next one.
- *   Delete archives the main thread, then removes the row and its memories.
- * - A bot's main thread is titled with the bot's name; startup and renames retitle it.
- * - `arrange` names exactly the stored sections and bots, so a stale client fails instead of
- *   dropping a bot or a section from the sidebar.
- * - `directory` publishes only after a write commits.
+ * Rows commit before thread launches; deterministic thread and command ids let startup repair missing threads.
  */
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";

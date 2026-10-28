@@ -1,10 +1,5 @@
 /**
- * Rows of `bots.sqlite`: bots, their sidebar sections, their memories, the owner profile, and the
- * phones that get bot pushes. The store keeps rows only;
- * BotsService owns every rule about them (thread generations, limits, who may write what).
- *
- * The database is a separate file next to the upstream `statev2.sqlite`, with its own migration
- * ledger. Its SqlClient stays inside this layer so it never replaces the main one.
+ * The separate database keeps its SqlClient inside this layer so it cannot replace the main one.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

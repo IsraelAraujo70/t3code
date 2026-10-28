@@ -35,8 +35,8 @@ import { DICTATION_KEY_ENV } from "../dictation/Dictation.ts";
 import { BotsStore } from "../BotsStore.ts";
 import { KanbanService } from "./KanbanService.ts";
 
-export const KANBAN_AI_FILTER_MODEL_ENV = "T3CODE_KANBAN_AI_FILTER_MODEL";
-export const DEFAULT_KANBAN_AI_FILTER_MODEL = "anthropic/claude-haiku-5.5";
+const KANBAN_AI_FILTER_MODEL_ENV = "T3CODE_KANBAN_AI_FILTER_MODEL";
+const DEFAULT_KANBAN_AI_FILTER_MODEL = "anthropic/claude-haiku-5.5";
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -49,7 +49,7 @@ const unusable = () => new KanbanError({ message: "Could not turn that into filt
  * the board scope (`projectId` null = every project). Tickets themselves are never sent.
  */
 /** About 15k tokens: a filter request must stay cheap whatever the board's size. */
-export const AI_FILTER_PROMPT_MAX_CHARS = 60_000;
+const AI_FILTER_PROMPT_MAX_CHARS = 60_000;
 
 export function buildAiFilterPrompt(
   snapshot: KanbanSnapshot,

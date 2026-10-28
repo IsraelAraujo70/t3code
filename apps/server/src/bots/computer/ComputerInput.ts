@@ -212,7 +212,7 @@ export const make = Effect.fn("ComputerInput.make")(function* (runCommand: Input
 });
 
 /** The real commands, or `xdotool` on an X11 host. The session is re-read after a failure. */
-export const desktopRunner = (): InputCommandRunner => {
+const desktopRunner = (): InputCommandRunner => {
   let env: Record<string, string> | undefined;
   let display: string | undefined;
   return (command, args) =>

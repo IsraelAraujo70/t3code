@@ -363,7 +363,7 @@ const isStateType = Schema.is(LinearStateType);
 const failure = (message: string, cause?: unknown) =>
   new KanbanError({ message, ...(cause === undefined ? {} : { cause }) });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
 
   const request = Effect.fn("LinearClient.request")(function* <S extends Schema.Top>(

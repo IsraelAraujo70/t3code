@@ -14,14 +14,8 @@ const blocking = new Set<OrchestrationV2Run["status"]>([
 ]);
 
 /**
- * Pure. Whether a bot thread's held queue should run again, as the stable key of that resume.
- *
- * A restart or a stop holds a thread's queued messages until the user sends one from a client or
- * presses Resume. Messages the server sends a bot (thread-watch notices, scheduled tasks) start
- * right away on an idle thread and pass the held ones, which then wait for a person who may not
- * come for a day. Once the bot's latest run that actually started has completed, the bot works
- * again and nothing should keep its older messages waiting. A latest run that failed, was
- * interrupted or was cut by the restart leaves the hold in place.
+ * Resume held messages only after the latest started run completes successfully.
+ * Server messages can bypass a held queue; their completion releases older messages.
  */
 export function botQueueResumeKey(runs: ReadonlyArray<QueueRun>): string | null {
   let held: QueueRun | undefined;

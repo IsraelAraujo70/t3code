@@ -226,7 +226,7 @@ export const runDesktopCommand = (
  * The real grim and hyprctl, or their X11 stand-ins when the host has no Wayland session. The
  * session environment, and with it that choice, is refreshed with every geometry read.
  */
-export const desktopCommands = (): ScreenCommands => {
+const desktopCommands = (): ScreenCommands => {
   let env = desktopEnv();
   let display = X11Desktop.x11Display(process.env, env.XDG_RUNTIME_DIR ?? "");
   return {

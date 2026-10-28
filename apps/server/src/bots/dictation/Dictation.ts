@@ -30,14 +30,14 @@ import * as ServerConfig from "../../config.ts";
 
 export const DICTATION_KEY_ENV = "OPENROUTER_API_KEY";
 export const DICTATION_MODEL_ENV = "T3CODE_DICTATION_MODEL";
-export const DICTATION_POLISH_MODEL_ENV = "T3CODE_DICTATION_POLISH_MODEL";
+const DICTATION_POLISH_MODEL_ENV = "T3CODE_DICTATION_POLISH_MODEL";
 export const DEFAULT_DICTATION_MODEL = "google/gemini-3.8-flash";
 export const DEFAULT_DICTATION_POLISH_MODEL = "anthropic/claude-haiku-5.5";
 /** Setting the polish model to this skips the cleanup call. */
-export const DICTATION_POLISH_OFF = "off";
+const DICTATION_POLISH_OFF = "off";
 
 /** About 10 minutes of the compressed audio clients record; the client stops at 5. */
-export const MAX_DICTATION_BYTES = 20 * 1024 * 1024;
+const MAX_DICTATION_BYTES = 20 * 1024 * 1024;
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -122,7 +122,7 @@ export class Dictation extends Context.Service<
   }
 >()("t3/bots/dictation/Dictation") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;

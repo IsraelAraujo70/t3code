@@ -178,7 +178,7 @@ const make = Effect.gen(function* () {
   return { start, handle } satisfies ThreadWatchReactor["Service"];
 });
 
-export const layer = Layer.effect(ThreadWatchReactor, make);
+const layer = Layer.effect(ThreadWatchReactor, make);
 
 /** Starts the reactor with the server. */
 export const layerStart = Layer.effectDiscard(

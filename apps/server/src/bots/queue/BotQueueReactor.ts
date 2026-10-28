@@ -90,7 +90,7 @@ const make = Effect.gen(function* () {
   return { start } satisfies BotQueueReactor["Service"];
 });
 
-export const layer = Layer.effect(BotQueueReactor, make);
+const layer = Layer.effect(BotQueueReactor, make);
 
 /** Starts the reactor with the server. */
 export const layerStart = Layer.effectDiscard(

@@ -1,9 +1,5 @@
 /**
- * Voice sessions: a live spoken conversation with a thread, or one assistant reply read aloud,
- * through Codex realtime. See `VoiceSessionRpc` in the contracts for the protocol. The realtime
- * voice is only a receptionist: the thread's agent answers, and the session holds only what the user
- * said and the agent has not received yet. One app-server per session, closed when its stream ends;
- * one realtime session at a time on it, replaced when a conversation's voice changes.
+ * The thread agent answers; realtime only relays speech. Each session owns an app-server, closed with its stream.
  */
 import {
   BotsError,
@@ -133,7 +129,7 @@ Quando chegar uma mensagem marcada "Resposta do assistente", fale essa resposta 
 Se o usuário falar enquanto você fala, pare na hora e volte a escutar.`;
 
 /** Marks a message the user spoke. */
-export const VOICE_MESSAGE_PREFIX = "🎙️ ";
+const VOICE_MESSAGE_PREFIX = "🎙️ ";
 
 /** The voice when neither the setting nor `VOICE_ENV` picks one; Codex's own v3 default. */
 export const DEFAULT_VOICE = "cove";
@@ -151,7 +147,7 @@ const readVoice: Effect.Effect<string> = Config.String(VOICE_ENV).pipe(
 );
 
 /** The setting wins; unset, the voice `VOICE_ENV` picked (or the default) applies. */
-export const resolveVoice = (setting: RealtimeVoice | null, envVoice: string): string =>
+const resolveVoice = (setting: RealtimeVoice | null, envVoice: string): string =>
   setting ?? envVoice;
 
 /** How long the user stays silent before what they said goes to the agent, unless overridden. */
@@ -268,18 +264,8 @@ export const WAITING_ON_USER_SPEECH =
   "Resposta do assistente: Preciso que você responda uma coisa na tela.";
 
 /**
- * Text on its way to being spoken, what the user said that the agent has not received yet, and
- * whether a conversation's agent still has work as the client's `bot` event reports it. Realtime
- * folds text appended mid-turn into the turn under way (often one the client keeps silent) or
- * ignores it, so speech is appended only while the voice is quiet, appended once more if the voice
- * does not start, then given up. The agent's work lasts until its reply starts being spoken, so the
- * orb never shows "listening" in between.
- *
- * Realtime ends the user's turn at any pause and its turn detection cannot be configured, so what
- * the user says is held until they have been silent for the turn window and then posted as one
- * message; hanging up posts what is held. The text comes from the transcript deltas, which arrive
- * as the user speaks: an utterance's final transcript can lag by many seconds (while the voice talks
- * over it, until something else ends the realtime turn) and only marks where the utterance ends.
+ * Append speech only while realtime is quiet; mid-turn text can be folded into a silent turn or lost.
+ * Buffer transcript deltas through the silence window; final transcripts can lag by seconds.
  */
 export interface Handoff {
   /** The realtime session is being replaced: nothing is appended until the new one connects. */
@@ -337,7 +323,7 @@ export interface HandoffStep {
 }
 
 /** Appends of one speech before it is given up. */
-export const MAX_SPEECH_TRIES = 2;
+const MAX_SPEECH_TRIES = 2;
 
 export const idleHandoff: Handoff = {
   paused: false,
