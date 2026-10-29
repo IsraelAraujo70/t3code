@@ -108,6 +108,7 @@ const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string
 };
 
 const SIDEBAR_BOTS_LAYOUT_LABELS: Record<SidebarBotsLayout, string> = {
+  rail: "Rail",
   sections: "Sections",
   tabs: "Tabs",
   mixed: "Mixed",
@@ -868,7 +869,7 @@ export function GeneralSettingsPanel() {
         {/* Fork (friend): where bots sit in the sidebar. */}
         <SettingsRow
           {...searchableSetting("sidebar-bots-layout")}
-          description="Sections keep bots in their own block above threads. Tabs switch between the two lists. Mixed puts bot conversations in the thread list."
+          description="Rail keeps bot avatars in a column beside the threads. Sections keep bots in their own block above threads. Tabs switch between the two lists. Mixed puts bot conversations in the thread list."
           resetAction={
             settings.sidebarBotsLayout !== DEFAULT_UNIFIED_SETTINGS.sidebarBotsLayout ? (
               <SettingResetButton
@@ -883,7 +884,12 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.sidebarBotsLayout}
               onValueChange={(value) => {
-                if (value === "sections" || value === "tabs" || value === "mixed") {
+                if (
+                  value === "rail" ||
+                  value === "sections" ||
+                  value === "tabs" ||
+                  value === "mixed"
+                ) {
                   updateSettings({ sidebarBotsLayout: value });
                 }
               }}
@@ -892,6 +898,7 @@ export function GeneralSettingsPanel() {
                 <SelectValue>{SIDEBAR_BOTS_LAYOUT_LABELS[settings.sidebarBotsLayout]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="rail">{SIDEBAR_BOTS_LAYOUT_LABELS.rail}</SelectItem>
                 <SelectItem value="sections">{SIDEBAR_BOTS_LAYOUT_LABELS.sections}</SelectItem>
                 <SelectItem value="tabs">{SIDEBAR_BOTS_LAYOUT_LABELS.tabs}</SelectItem>
                 <SelectItem value="mixed">{SIDEBAR_BOTS_LAYOUT_LABELS.mixed}</SelectItem>

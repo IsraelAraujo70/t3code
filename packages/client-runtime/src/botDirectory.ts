@@ -100,6 +100,23 @@ export function countBotsNeedingYou(statuses: ReadonlyArray<BotStatus>): number 
     .length;
 }
 
+/**
+ * The one mark an avatar carries where the bot's name is not shown: a request or failure, an
+ * unseen reply, or a running turn. A quiet or settled bot carries none.
+ */
+export type BotSignal = "request" | "unseen" | "working" | null;
+
+export function botSignal(status: BotStatus): BotSignal {
+  switch (status.kind) {
+    case "needs-you":
+      return status.attention;
+    case "working":
+      return "working";
+    case "settled":
+      return null;
+  }
+}
+
 /** The latest run's completion, else the thread's last update. */
 export function botActivityAt(shell: BotThreadShell | null): string | null {
   if (shell === null) return null;
@@ -168,27 +185,29 @@ export const DEFAULT_BOT_GROUP = "default";
 export const botGroupKey = (section: BotSection | null): string => section?.id ?? DEFAULT_BOT_GROUP;
 
 /**
- * The user's sections in order, then the default list of bots in no section. Inside a group,
- * bots that need the user come first, then working ones, then settled ones; each keeps the
- * user's order within its status. The default list is left out when it is empty and sections
- * exist, so a fully sorted sidebar shows no empty "Bots" header.
+ * The user's sections in order, then bots in no section (left out when empty and sections exist).
+ * `byStatus` puts needs-you, then working, then settled bots first in a group, keeping the user's
+ * order within a status; `arranged` keeps the user's order alone, so an avatar never moves.
  */
 export function groupBotRows(
   sections: ReadonlyArray<BotSection>,
   rows: ReadonlyArray<BotRowModel>,
+  order: "byStatus" | "arranged" = "byStatus",
 ): BotGroup[] {
   const known = new Set<string>(sections.map((section) => section.id));
   // `filter` already copies, and a stable sort keeps the user's order within a status. Not
   // `toSorted`: the phone's Hermes engine lacks it.
-  const byStatus = (a: BotRowModel, b: BotRowModel) =>
-    STATUS_RANK[a.status.kind] - STATUS_RANK[b.status.kind];
+  const sort = (group: BotRowModel[]) =>
+    order === "arranged"
+      ? group
+      : group.sort((a, b) => STATUS_RANK[a.status.kind] - STATUS_RANK[b.status.kind]);
   const groups: BotGroup[] = sections.map((section) => ({
     section,
-    rows: rows.filter((row) => row.bot.sectionId === section.id).sort(byStatus),
+    rows: sort(rows.filter((row) => row.bot.sectionId === section.id)),
   }));
-  const rest = rows
-    .filter((row) => row.bot.sectionId === null || !known.has(row.bot.sectionId))
-    .sort(byStatus);
+  const rest = sort(
+    rows.filter((row) => row.bot.sectionId === null || !known.has(row.bot.sectionId)),
+  );
   if (rest.length > 0 || sections.length === 0) groups.push({ section: null, rows: rest });
   return groups;
 }

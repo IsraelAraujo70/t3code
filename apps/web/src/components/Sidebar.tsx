@@ -132,6 +132,7 @@ import {
   SidebarThreadsHeading,
   useSidebarBotsTab,
 } from "../bots/BotsSidebarSection";
+import { BotsRail } from "../bots/BotsRail";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -2886,6 +2887,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         className="min-h-full"
+        // Fork (friend): the "rail" layout's bot avatars beside the thread list.
+        aside={
+          botsLayout === "rail" ? (
+            <BotsRail
+              threads={allThreads}
+              activeThreadRef={routeThreadRef}
+              onOpenThread={navigateToThread}
+            />
+          ) : undefined
+        }
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader

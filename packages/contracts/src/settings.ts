@@ -75,7 +75,7 @@ export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
 /** Fork (friend): where bots sit in the sidebar relative to threads. */
-export const SidebarBotsLayout = Schema.Literals(["sections", "tabs", "mixed"]);
+export const SidebarBotsLayout = Schema.Literals(["rail", "sections", "tabs", "mixed"]);
 export type SidebarBotsLayout = typeof SidebarBotsLayout.Type;
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
