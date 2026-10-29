@@ -1174,13 +1174,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["friend bots other machines mac linked environments delegate allow"],
     environmentOnly: true,
   },
-  {
-    id: "bots-import",
-    title: "Import from friend",
-    to: "/settings/bots",
-    searchTerms: ["friend app migrate bots memories database"],
-    environmentOnly: true,
-  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
