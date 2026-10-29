@@ -267,14 +267,26 @@ Connect is on. The base must be https with no trailing slash; an invalid value i
 Setup and what the URL exposes: [`docs/friend/webhook-public-base.md`](docs/friend/webhook-public-base.md).
 See [`apps/server/src/bots/webhookPublicBase.ts`](apps/server/src/bots/webhookPublicBase.ts).
 
-## Host MCP servers for a guest's bot
+## Host MCP servers for a bot
 
-A guest's bot can get the tools of an MCP server that runs on the host without the sandbox gaining a
-network route or a secret. `~/.t3-friend/bot-host-mcp.json` (or `T3CODE_BOT_HOST_MCP_FILE`) maps a
+A bot can get the tools of an MCP server that runs on the host without the bot, or a guest's
+sandbox, holding its token. `~/.t3-friend/bot-host-mcp.json` (or `T3CODE_BOT_HOST_MCP_FILE`) maps a
 bot id to Streamable HTTP servers on 127.0.0.1 or [::1] and their token files; T3 lists and calls their tools with
-the Bearer and offers them as one more in-process MCP server beside `t3-guest`. Only the listed bot
-gets them, and any failure leaves the bot without those tools for the turn, never without its turn.
-Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).
+the Bearer and offers them as in-process MCP servers (beside `t3-guest` for a guest's bot). Only the
+listed bot gets them, only on a Claude instance, and any failure leaves the bot without those tools
+for the turn, never without its turn. Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).
+
+## Making a guest's bot the owner's
+
+Settings → Bots → a guest bot's menu → Make it a regular bot (`bots.bot.makeRegular`, the owner's
+session only, no MCP tool) removes the guest assignment and stores the chosen host instance with the
+same model and options in one `bots.sqlite` transaction, then moves the live conversation with
+`thread.model-selection.set`, upstream's provider switch. That order matters: GuestModelPin pins any
+model change back to the sandbox while the guest row exists. It refuses while the bot works and any
+target that names a guest or launches the sandbox; a retry converges. Plain edits (`bot_update`, the
+edit dialog) refuse a host model for a guest's bot, so this is the only way out of the sandbox.
+Afterwards the guest no longer sees the bot, gets no push for it, and its guest tools and artifacts
+are gone from its turns; its role, memories, conversation and listed host MCP servers stay.
 
 ## Linked environments and bots
 

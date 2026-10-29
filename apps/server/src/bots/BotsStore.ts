@@ -95,6 +95,11 @@ export class BotsStore extends Context.Service<
     ) => Effect.Effect<void, BotsError>;
     /** Every bot assigned to a guest. */
     readonly listGuestBotIds: Effect.Effect<ReadonlyArray<BotId>, BotsError>;
+    /**
+     * In one transaction, removes the bot from its guest (if any) and stores its new model and
+     * updatedAt. Fails when the bot does not exist, leaving both rows as they were.
+     */
+    readonly makeRegular: (bot: Bot) => Effect.Effect<void, BotsError>;
   }
 >()("t3/bots/BotsStore") {}
 
@@ -427,6 +432,37 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodeBotIds),
       Effect.map((rows) => rows.map((row) => row.botId)),
       Effect.mapError(failWith("Could not read the guests' bots")),
+    ),
+    makeRegular: Effect.fn("BotsStore.makeRegular")((bot) =>
+      encodeBot(bot).pipe(
+        Effect.flatMap((row) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DELETE FROM guest_bots WHERE bot_id = ${row.id}`;
+              return yield* sql`
+                UPDATE bots SET model_json = ${row.model}, updated_at = ${row.updatedAt}
+                WHERE id = ${row.id}
+                RETURNING id
+              `.pipe(
+                // Rolls the guest row back too.
+                Effect.filterOrFail(
+                  (rows) => rows.length > 0,
+                  () => new BotsError({ message: `Bot ${bot.id} does not exist` }),
+                ),
+              );
+            }),
+          ),
+        ),
+        Effect.asVoid,
+        Effect.mapError((error) =>
+          error._tag === "BotsError"
+            ? error
+            : new BotsError({
+                message: `Could not make bot ${bot.id} a regular bot`,
+                cause: error,
+              }),
+        ),
+      ),
     ),
   });
 });

@@ -113,3 +113,20 @@ export function isSandboxLauncher(binaryPath: string | undefined): boolean {
     return false;
   }
 }
+
+/**
+ * Whether the instance runs its agent on the host: it names no guest and its binary is not the
+ * sandbox launcher. Instances missing from the settings are host defaults.
+ */
+export function runsOnHost(instances: ProviderInstances, instanceId: ProviderInstanceId): boolean {
+  if (declaresGuest(instances, instanceId)) return false;
+  const config = instances[instanceId]?.config;
+  const binaryPath =
+    typeof config === "object" &&
+    config !== null &&
+    "binaryPath" in config &&
+    typeof config.binaryPath === "string"
+      ? config.binaryPath.trim()
+      : undefined;
+  return !isSandboxLauncher(binaryPath);
+}

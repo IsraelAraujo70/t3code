@@ -33,6 +33,7 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2
 const biaBot = BotId.make("b_bia");
 const anaBot = BotId.make("b_ana");
 const ownerBot = BotId.make("b_owner");
+const financeBot = BotId.make("b_finance");
 const biaThread = botThreadId(biaBot, 1);
 const anaThread = botThreadId(anaBot, 1);
 
@@ -85,12 +86,13 @@ const setup = (env: Record<string, string> = {}) => {
     getThreadRecords: (threadId) =>
       Effect.succeed({ messages: messagesByThread[threadId] ?? [] } as never),
   });
-  // Only Bia's bot has a host MCP server configured; forwarding for Ana's bot breaks outright.
+  // Bia's bot and the owner's finance bot have a host MCP server configured; forwarding for
+  // every other bot breaks outright.
   const hostMcp = Layer.succeed(
     HostMcpForward,
     HostMcpForward.of({
       forBot: (botId) =>
-        botId === biaBot
+        botId === biaBot || botId === financeBot
           ? Effect.succeed([{ server: "pluggy", tools: [] }])
           : Effect.die(new Error("forwarding broke")),
     }),
@@ -109,11 +111,11 @@ const setup = (env: Record<string, string> = {}) => {
   return { generated, layer };
 };
 
-/** Two guests, each with a bot, plus a bot only the owner uses; photos on disk. */
+/** Two guests, each with a bot, plus two bots only the owner uses; photos on disk. */
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const guests = yield* GuestStore.GuestStore;
-  for (const id of [biaBot, anaBot, ownerBot]) {
+  for (const id of [biaBot, anaBot, ownerBot, financeBot]) {
     yield* sql`
       INSERT INTO bots (id, name, role, model_json, home_generation, position, created_at, updated_at)
       VALUES (${id}, ${id}, 'Helps out.', '{}', 1, 0, ${at}, ${at})
@@ -154,7 +156,7 @@ const call = (tools: AppTools, name: string, args: unknown) =>
   Effect.promise(() => tools.tools.find((tool) => tool.name === name)!.run(args));
 
 describe("GuestTools", () => {
-  it.effect("offers tools only on guest bots' threads", () => {
+  it.effect("offers its tools only to guest bots and host MCP servers to any listed bot", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* seed;
@@ -177,6 +179,12 @@ describe("GuestTools", () => {
       assert.deepStrictEqual(
         anaServers.map((server) => server.server),
         ["t3-guest"],
+      );
+      // The owner's listed bot gets its host MCP servers and none of the guest tools.
+      const financeServers = (yield* service.forThread(botThreadId(financeBot, 1))) ?? [];
+      assert.deepStrictEqual(
+        financeServers.map((server) => server.server),
+        ["pluggy"],
       );
     }).pipe(Effect.provide(layer));
   });

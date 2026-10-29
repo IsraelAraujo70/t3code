@@ -69,11 +69,17 @@ const makeBots = () => {
   const updatedBots: Array<BotUpdateInput> = [];
   const deletedBots: Array<BotId> = [];
   const linkedEnvironmentSwitches: Array<unknown> = [];
+  const madeRegular: Array<unknown> = [];
   const layer = Layer.mock(BotsService.BotsService)({
     setBotLinkedEnvironments: (input) =>
       Effect.sync(() => {
         linkedEnvironmentSwitches.push(input);
         return input;
+      }),
+    makeRegular: (input) =>
+      Effect.sync(() => {
+        madeRegular.push(input);
+        return bot(input.botId);
       }),
     directory: Stream.suspend(() =>
       Stream.succeed({
@@ -140,6 +146,7 @@ const makeBots = () => {
     updatedBots,
     deletedBots,
     linkedEnvironmentSwitches,
+    madeRegular,
     memoriesOf: (botId: BotId) => memories.filter((m) => m.botId === botId),
   };
 };
@@ -428,19 +435,28 @@ it.effect("bot_delete deletes another bot but never the caller", () =>
   }),
 );
 
-// Linked environments reach the user's other machines; only the user's own session turns them on
-// (bots.bot.linkedEnvironments). A managing bot passing the field anyway changes nothing.
-it.effect("bot_update and bot_create never turn on linked environments", () =>
-  Effect.gen(function* () {
-    const bots = makeBots();
-    const tools = yield* managementTools(bots.layer, threadScope(botThreadId(alice, 1)));
-    const smuggled = { linkedEnvironments: true, linkedEnvironmentBotIds: [alice] };
-    yield* tools.update(alice, "Reaches the Mac.", smuggled);
-    yield* tools.createWith(smuggled);
-    expect(bots.linkedEnvironmentSwitches).toEqual([]);
-    expect(bots.updatedBots).toEqual([{ botId: alice, role: "Reaches the Mac." }]);
-    expect(bots.createdBots).toEqual([
-      { name: "Scout", role: "Finds jobs.", model: { instanceId: "codex", model: "gpt-6-luna" } },
-    ]);
-  }),
+// Linked environments reach the user's other machines, and making a guest's bot regular moves it
+// onto the host; only the user's own session does either (bots.bot.linkedEnvironments,
+// bots.bot.makeRegular). A managing bot passing the fields anyway changes nothing.
+it.effect(
+  "bot_update and bot_create never reach the owner's linked-environment or guest switches",
+  () =>
+    Effect.gen(function* () {
+      const bots = makeBots();
+      const tools = yield* managementTools(bots.layer, threadScope(botThreadId(alice, 1)));
+      const smuggled = {
+        linkedEnvironments: true,
+        linkedEnvironmentBotIds: [alice],
+        makeRegular: true,
+        guestBotIds: [],
+      };
+      yield* tools.update(alice, "Reaches the Mac.", smuggled);
+      yield* tools.createWith(smuggled);
+      expect(bots.linkedEnvironmentSwitches).toEqual([]);
+      expect(bots.madeRegular).toEqual([]);
+      expect(bots.updatedBots).toEqual([{ botId: alice, role: "Reaches the Mac." }]);
+      expect(bots.createdBots).toEqual([
+        { name: "Scout", role: "Finds jobs.", model: { instanceId: "codex", model: "gpt-6-luna" } },
+      ]);
+    }),
 );

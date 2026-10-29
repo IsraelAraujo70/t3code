@@ -15,6 +15,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   Trash2Icon,
+  UserRoundCheckIcon,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -36,8 +37,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../components/ui/empty";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../components/ui/menu";
 import { Textarea } from "../components/ui/textarea";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
@@ -142,6 +153,7 @@ function BotsEnvironmentSettings({
               environmentId={environmentId}
               connected={connected}
               bot={bot}
+              guest={directory.guestBotIds.includes(bot.id)}
               onEdit={() => setEditor({ botId: bot.id })}
             />
           ))
@@ -188,11 +200,13 @@ function BotRow({
   environmentId,
   connected,
   bot,
+  guest,
   onEdit,
 }: {
   readonly environmentId: EnvironmentId;
   readonly connected: boolean;
   readonly bot: BotDirectoryEntry;
+  readonly guest: boolean;
   readonly onEdit: () => void;
 }) {
   const providers =
@@ -206,6 +220,19 @@ function BotRow({
     label: "bot reset conversation",
   });
   const remove = useAtomCommand(botsEnvironment.deleteBot, { label: "bot delete" });
+  const canMakeRegular = useAtomValue(botsEnvironment.makeRegular.permissionAtom(environmentId));
+  const makeRegular = useAtomCommand(botsEnvironment.makeRegular, { label: "bot make regular" });
+  // Same driver keeps the model and its options valid; the server refuses sandbox instances.
+  const instances = guest ? deriveProviderInstanceEntries(providers) : [];
+  const currentDriver = instances.find(
+    (entry) => entry.instanceId === bot.model.instanceId,
+  )?.driverKind;
+  const hostTargets = instances.filter(
+    (entry) =>
+      entry.enabled &&
+      entry.driverKind === currentDriver &&
+      entry.instanceId !== bot.model.instanceId,
+  );
   const [busy, setBusy] = useState(false);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
   const enabledMemories = bot.memories.filter((memory) => memory.enabled).length;
@@ -228,6 +255,21 @@ function BotRow({
       action === "reset" ? "Could not reset conversation" : "Could not delete bot",
       result,
     );
+  };
+
+  const moveToHost = async (target: (typeof hostTargets)[number]) => {
+    if (busy) return;
+    const confirmed = await confirmDestructive(
+      `Make ${bot.name} your own bot?\nIt leaves its guest, who can no longer reach it, and runs on ${target.displayName} on this machine with full access. The conversation, role and memories stay.`,
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    const result = await makeRegular({
+      environmentId,
+      input: { botId: bot.id, model: { ...bot.model, instanceId: target.instanceId } },
+    });
+    setBusy(false);
+    reportCommandResult(`Could not make ${bot.name} a regular bot`, result);
   };
 
   return (
@@ -279,6 +321,21 @@ function BotRow({
                 <RotateCcwIcon />
                 Reset conversation
               </MenuItem>
+              {guest ? (
+                <MenuSub>
+                  <MenuSubTrigger disabled={!canMakeRegular || hostTargets.length === 0}>
+                    <UserRoundCheckIcon />
+                    Make it a regular bot
+                  </MenuSubTrigger>
+                  <MenuSubPopup>
+                    {hostTargets.map((target) => (
+                      <MenuItem key={target.instanceId} onClick={() => void moveToHost(target)}>
+                        {target.displayName}
+                      </MenuItem>
+                    ))}
+                  </MenuSubPopup>
+                </MenuSub>
+              ) : null}
               <MenuSeparator />
               <MenuItem disabled={!canDelete} onClick={() => void act("delete")}>
                 <Trash2Icon />

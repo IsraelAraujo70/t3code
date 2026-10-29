@@ -133,7 +133,7 @@ import {
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
-// Fork (friend): guest sandboxes discover no host skills and get their AppTools.
+// Fork (friend): guest sandboxes discover no host skills; bot threads get their AppTools.
 import { withClaudeAppTools } from "../../bots/guest/claudeAppTools.ts";
 import { isSandboxLauncher } from "../../bots/guest/sandboxInstance.ts";
 import {
@@ -9708,8 +9708,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
-          // Fork (friend): a guest sandbox's AppTools run in this process, reached over the
-          // CLI's stdio; other instances never get them.
+          // Fork (friend): a bot's AppTools (a guest's tools, forwarded host MCP servers) run in
+          // this process, reached over the CLI's stdio; only bot threads carry them.
           const mcpOverrides = withClaudeAppTools(
             claudeMcpQueryOverrides({
               mcpSession: yield* mcpSessions.read(turnInput.threadId),
@@ -9719,7 +9719,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? {}
                 : { allowedTools: queryPolicy.allowedTools }),
             }),
-            isSandboxLauncher(adapterOptions.settings.binaryPath) ? turnInput.appTools : undefined,
+            turnInput.appTools,
           );
           // Fork (friend): the system prompt is fixed when the query opens, so changed bot
           // instructions replace the query through the same path as a changed policy.

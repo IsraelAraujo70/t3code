@@ -1,6 +1,7 @@
 /**
- * Host MCP servers a guest's bot gets as AppTools: T3 calls them with the Bearer, so the sandbox
- * gains no route or secret. Config, rules and failure modes: docs/friend/bot-host-mcp.md.
+ * Host MCP servers a bot gets as AppTools: T3 calls them with the Bearer, so neither the bot nor a
+ * guest's sandbox is given a route or the secret. Config, rules and failure modes:
+ * docs/friend/bot-host-mcp.md.
  */
 // Files open with O_NOFOLLOW | O_NONBLOCK and requests go through a capped fetch, which the
 // Effect FileSystem and HttpClient cannot express; the MCP SDK takes a fetch function.

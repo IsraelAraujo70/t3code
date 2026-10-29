@@ -65,6 +65,7 @@ const layerStoreOff = Layer.succeed(
     listLinkedEnvironmentBots: notHost(),
     setBotLinkedEnvironments: notHost,
     listGuestBotIds: notHost(),
+    makeRegular: notHost,
   }),
 );
 
@@ -97,6 +98,7 @@ const layerServiceOff = Layer.succeed(
     arrange: notHost,
     ensureConversation: notHost,
     setBotLinkedEnvironments: notHost,
+    makeRegular: notHost,
     // Not a bots host: no thread belongs to a bot here.
     botForThread: Effect.fn("BotsService.BotsService.botForThread")(() => Effect.succeedNone),
     registerPushDevice: notHost,

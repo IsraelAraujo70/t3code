@@ -2,8 +2,9 @@
  * The tools a guest's bot gets besides Claude Code's own: generate or edit an image with the
  * owner's ChatGPT plan (CodexImages), publish an HTML page, and list the conversation's images.
  * They run in the T3 server process; the sandboxed Claude Code reaches them as an in-process MCP
- * server over its own stdin/stdout (ClaudeAdapterV2 attaches AppTools only to guest sandboxes), so
- * no network path or credential enters the sandbox.
+ * server over its own stdin/stdout (ClaudeAdapterV2 attaches the AppTools of bot threads), so no
+ * network path or credential enters the sandbox. The owner's bots get only the forwarded host MCP
+ * servers (HostMcpForward).
  *
  * What the bot can do with them, and nothing more:
  * - Each tool is bound to the thread the host resolved for the turn; no argument names a thread,
@@ -168,8 +169,9 @@ export class GuestTools extends Context.Service<
   GuestTools,
   {
     /**
-     * The tools of a guest-owned bot's thread, its own `t3-guest` server first, then the host MCP
-     * servers configured for that bot; undefined for every other thread.
+     * The in-process tools of a bot's thread: for a guest's bot its own `t3-guest` server first,
+     * then the host MCP servers configured for the bot; for the owner's bots only those servers.
+     * Undefined for threads that are not a bot's and for bots without any.
      */
     readonly forThread: (
       threadId: ThreadId,
@@ -337,8 +339,16 @@ const make = Effect.gen(function* () {
   const forThread = Effect.fn("GuestTools.forThread")(function* (threadId: ThreadId) {
     const parsed = parseBotThreadId(threadId);
     if (parsed === null) return undefined;
+    // Forwarding never costs the bot its own tools.
+    const forwarded = yield* hostMcp
+      .forBot(parsed.botId)
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Host MCP forwarding failed.", { cause }).pipe(Effect.as([])),
+        ),
+      );
     const guestId = yield* guests.guestOfBot(parsed.botId);
-    if (Option.isNone(guestId)) return undefined;
+    if (Option.isNone(guestId)) return forwarded.length === 0 ? undefined : forwarded;
     const target = { threadId, botId: parsed.botId, guestId: guestId.value };
     const tools: ReadonlyArray<AppTool> = [
       {
@@ -401,14 +411,6 @@ const make = Effect.gen(function* () {
         run: runTool("html_render", decodeArgs(HtmlArgs), (args) => renderHtml(target, args)),
       },
     ];
-    // Forwarding never costs the bot its own tools.
-    const forwarded = yield* hostMcp
-      .forBot(parsed.botId)
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("Host MCP forwarding failed.", { cause }).pipe(Effect.as([])),
-        ),
-      );
     return [{ server: GUEST_TOOLS_SERVER, tools } satisfies AppTools, ...forwarded];
   });
 
