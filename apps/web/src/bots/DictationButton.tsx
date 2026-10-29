@@ -70,11 +70,10 @@ export function DictationButton(props: {
     setPhase("idle");
   });
 
-  useEffect(() => cancel, [cancel]);
-  useEffect(() => {
-    if (sessionRef.current && sessionRef.current.draftKey !== props.draftKey) cancel();
-  }, [cancel, props.draftKey]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Releases the recorder and microphone when the draft changes or the button unmounts.
+  useEffect(() => cancel, [cancel, props.draftKey]); // oxlint-disable-line react/exhaustive-effect-dependencies -- Changing drafts must release the recorder and microphone.
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Ticks the elapsed-time clock while recording.
   useEffect(() => {
     if (phase !== "recording") return;
     const interval = setInterval(() => setNow(Date.now()), 1_000);

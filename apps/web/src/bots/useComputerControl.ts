@@ -28,6 +28,7 @@ export function useComputerControl(options: {
 }) {
   const { active, root, target, canvas, send, onLeave } = options;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Attaches pointer/keyboard listeners to the screen element while control is active.
   useEffect(() => {
     const element = target.current;
     const frame = canvas.current;
