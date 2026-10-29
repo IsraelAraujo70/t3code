@@ -60,6 +60,7 @@ const bot = (id: BotId): Bot => ({
   sectionId: null,
   position: 0,
   canManageBots: false,
+  rotation: "daily",
   createdAt: NOW,
   updatedAt: NOW,
 });

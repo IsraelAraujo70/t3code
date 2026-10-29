@@ -21,6 +21,7 @@ import * as KanbanService from "./kanban/KanbanService.ts";
 import * as KanbanThreadStarter from "./kanban/KanbanThreadStarter.ts";
 import * as BotsRpc from "./rpcHandlers.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
+import * as BotRotation from "./rotation/BotRotation.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 
 const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<string>) =>
@@ -60,6 +61,7 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
           Layer.provide(Layer.mock(Dictation.Dictation)({})),
           Layer.provide(Layer.mock(VoiceSession.VoiceSessions)({})),
           Layer.provide(Layer.mock(BotSessionRestart.BotSessionRestart)({})),
+          Layer.provide(Layer.mock(BotRotation.BotRotation)({})),
           Layer.provide(Layer.mock(KanbanThreadStarter.KanbanThreadStarter)({})),
           Layer.provide(Layer.mock(KanbanAiFilter.KanbanAiFilter)({})),
           Layer.provide(

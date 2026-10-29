@@ -240,6 +240,11 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
+    /** Fork (friend): moves every task bound to `from` to `to`, as a bot's conversation rotates. */
+    readonly rebindThread: (
+      from: ThreadId,
+      to: ThreadId,
+    ) => Effect.Effect<void, ScheduledTaskError>;
     /** The dispatched thread, or null if dispatch failed; leaves the task's binding unchanged. */
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
@@ -2138,6 +2143,14 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       deleteForThread,
+      // Fork (friend): runs re-read their task, so the next one dispatches to `to`.
+      rebindThread: Effect.fn("ScheduledTaskService.rebindThread")(function* (from, to) {
+        const moved = yield* sql`
+          UPDATE scheduled_tasks SET thread_id = ${to}, updated_at = ${iso(yield* localNow)}
+          WHERE thread_id = ${from} RETURNING task_id
+        `.pipe(Effect.mapError((cause) => taskError("Could not move thread's tasks.", { cause })));
+        if (moved.length > 0) yield* notifyChanged;
+      }),
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries,

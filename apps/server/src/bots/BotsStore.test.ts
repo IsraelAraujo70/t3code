@@ -1,15 +1,23 @@
 import {
   BotId,
   BotMemoryId,
+  botThreadId,
+  KanbanTicketId,
+  ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type Bot,
   type BotMemory,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { BotsStore, layerMemory } from "./BotsStore.ts";
+import * as BotsDb from "./BotsDb.ts";
+import { BotsStore, layerFromDb, layerMemory } from "./BotsStore.ts";
+import * as KanbanStore from "./kanban/KanbanStore.ts";
+import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 
 const makeBot = (id: string, overrides: Partial<Bot> = {}): Bot => ({
   id: BotId.make(id),
@@ -20,6 +28,7 @@ const makeBot = (id: string, overrides: Partial<Bot> = {}): Bot => ({
   sectionId: null,
   position: 0,
   canManageBots: false,
+  rotation: "daily",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   ...overrides,
@@ -195,4 +204,90 @@ it.effect("deletes a push device, and deleting it again succeeds", () =>
       );
     }),
   ),
+);
+
+it.effect(
+  "advancing a generation moves the bot's watches and ticket links and keeps its handoff; a stale one writes nothing",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* BotsStore;
+      const watches = yield* ThreadWatchStore.ThreadWatchStore;
+      const kanban = yield* KanbanStore.KanbanStore;
+      const at = "2026-01-01T00:00:00.000Z";
+      const old = botThreadId(BotId.make("b1"), 1);
+      const next = botThreadId(BotId.make("b1"), 2);
+      const peer = ThreadId.make("bot:peer:1");
+      const work = ThreadId.make("thread-work");
+      yield* store.insertBot(makeBot("b1"));
+      // The bot watches a work thread, and another bot watches the bot.
+      yield* watches.watch({ watcherThreadId: old, targetThreadId: work, createdAt: at });
+      yield* watches.watch({ watcherThreadId: peer, targetThreadId: old, createdAt: at });
+      // Already present on the new thread: the old duplicate is dropped, not doubled.
+      yield* watches.watch({ watcherThreadId: next, targetThreadId: peer, createdAt: at });
+      yield* watches.watch({ watcherThreadId: old, targetThreadId: peer, createdAt: at });
+      const ticket = KanbanTicketId.make("ticket-1");
+      yield* kanban.insertLocalTicket({
+        id: ticket,
+        projectId: ProjectId.make("project-1"),
+        localNumber: 1,
+        title: "Ticket",
+        state: "todo",
+        priority: 0,
+        assigneeId: null,
+        creatorId: "owner",
+        labelIds: [],
+        description: "",
+        sortOrder: 0,
+        createdAt: at,
+      });
+      yield* kanban.linkThread(ticket, old, at);
+      yield* kanban.linkThread(ticket, work, at);
+
+      const advance = {
+        bot: makeBot("b1", { homeGeneration: 2, updatedAt: "2026-01-02T00:00:00.000Z" }),
+        fromGeneration: 1,
+        fromThreadId: old,
+        toThreadId: next,
+        handoff: { generation: 1, text: "Follow thread-work.", createdAt: at },
+      };
+      assert.isTrue(yield* store.advanceGeneration(advance));
+
+      assert.strictEqual(
+        Option.getOrThrow(yield* store.getBot(BotId.make("b1"))).homeGeneration,
+        2,
+      );
+      assert.deepStrictEqual(yield* store.listHandoffs(BotId.make("b1")), [advance.handoff]);
+      assert.deepStrictEqual(
+        (yield* watches.list)
+          .map((watch) => [watch.watcherThreadId, watch.targetThreadId])
+          .toSorted(),
+        [
+          [next, peer],
+          [next, work],
+          [peer, next],
+        ].toSorted(),
+      );
+      const linked = Option.getOrThrow(yield* kanban.getTicket(ticket)).threadIds;
+      assert.deepStrictEqual([...linked].toSorted(), [next, work].toSorted());
+
+      // Decided from generation 1 again, after the bot moved on: nothing changes.
+      assert.isFalse(
+        yield* store.advanceGeneration({
+          ...advance,
+          bot: makeBot("b1", { homeGeneration: 3 }),
+          handoff: { generation: 1, text: "late", createdAt: at },
+        }),
+      );
+      assert.strictEqual(
+        Option.getOrThrow(yield* store.getBot(BotId.make("b1"))).homeGeneration,
+        2,
+      );
+      assert.deepStrictEqual(yield* store.listHandoffs(BotId.make("b1")), [advance.handoff]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layerFromDb, ThreadWatchStore.layerFromDb, KanbanStore.layerFromDb).pipe(
+          Layer.provideMerge(BotsDb.layerMemory),
+        ),
+      ),
+    ),
 );

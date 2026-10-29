@@ -15,6 +15,7 @@ import * as KanbanAiFilter from "./kanban/KanbanAiFilter.ts";
 import { KanbanService } from "./kanban/KanbanService.ts";
 import * as KanbanThreadStarter from "./kanban/KanbanThreadStarter.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
+import { BotRotation } from "./rotation/BotRotation.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 
 /** Tags ws.ts omits from upstream's handler group; their handlers come from `layer`. */
@@ -27,7 +28,8 @@ export const ServerBotsRpcGroup = RpcGroup.make(...BOTS_RPCS)
 
 /**
  * The handlers, with Dictation, VoiceSessions, BotSessionRestart, KanbanThreadStarter and
- * KanbanAiFilter left to the caller (tests mock them).
+ * KanbanAiFilter left to the caller (tests mock them). BotRotation comes from layer.ts's
+ * layerService, beside the reactor that shares it.
  */
 export const layerHandlers = ServerBotsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -35,6 +37,7 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
     const dictation = yield* Dictation.Dictation;
     const voice = yield* VoiceSession.VoiceSessions;
     const restarts = yield* BotSessionRestart.BotSessionRestart;
+    const rotation = yield* BotRotation;
     const kanban = yield* KanbanService;
     const threadStarter = yield* KanbanThreadStarter.KanbanThreadStarter;
     const aiFilter = yield* KanbanAiFilter.KanbanAiFilter;
@@ -43,7 +46,8 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
       [BOTS_WS_METHODS.botUpdate]: (input) => bots.updateBot(input),
       [BOTS_WS_METHODS.botDelete]: (input) => bots.deleteBot(input),
-      [BOTS_WS_METHODS.botResetConversation]: (input) => bots.resetConversation(input),
+      [BOTS_WS_METHODS.botResetConversation]: (input) => rotation.reset(input),
+      [BOTS_WS_METHODS.botHistory]: (input) => bots.history(input),
       [BOTS_WS_METHODS.botRestartSession]: (input) => restarts.restart(input),
       [BOTS_WS_METHODS.botLinkedEnvironments]: (input) => bots.setBotLinkedEnvironments(input),
       [BOTS_WS_METHODS.botMakeRegular]: (input) => bots.makeRegular(input),

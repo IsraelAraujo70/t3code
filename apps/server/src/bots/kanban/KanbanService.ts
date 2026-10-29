@@ -117,6 +117,8 @@ export class KanbanService extends Context.Service<
     /** The current snapshot on subscribe, then a fresh one after every committed change. */
     readonly snapshot: Stream.Stream<KanbanSnapshot, KanbanError>;
     readonly readSnapshot: Effect.Effect<KanbanSnapshot, KanbanError>;
+    /** Publishes a fresh snapshot after another service changed kanban rows (thread links). */
+    readonly refresh: Effect.Effect<void>;
     readonly addAccount: (
       input: LinearAccountAddInput,
     ) => Effect.Effect<LinearAccount, KanbanError>;
@@ -1518,6 +1520,7 @@ const make = Effect.gen(function* () {
   return KanbanService.of({
     snapshot,
     readSnapshot,
+    refresh: publish,
     addAccount,
     renameAccount,
     deleteAccount,

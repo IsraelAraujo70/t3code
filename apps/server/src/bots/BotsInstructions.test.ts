@@ -33,6 +33,7 @@ const bot: Bot = {
   sectionId: null,
   position: 0,
   canManageBots: false,
+  rotation: "daily",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -173,6 +174,27 @@ describe("buildBotInstructions", () => {
     assert.isDefined(others);
     assert.include(others!.text, `- Fin, thread bot:${peer.id}:3: Tracks spending and bills.\n`);
     assert.notInclude(others!.text, "Never pays anything.");
+  });
+
+  it("points a rotated bot at its earlier conversations and carries its handoff", () => {
+    const earlier = {
+      threadIds: [botThreadId(bot.id, 2), botThreadId(bot.id, 1)],
+      handoff: "Waiting on Ana for PR 12.",
+    };
+    const owner = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [], earlier });
+    const section = owner.sections.find((candidate) => candidate.key === "earlier");
+    assert.include(section!.text, `${botThreadId(bot.id, 2)}, ${botThreadId(bot.id, 1)}`);
+    assert.include(section!.text, "t3_thread_read");
+    assert.include(section!.text, "Waiting on Ana for PR 12.");
+
+    // A guest's bot has no thread tools: only its handoff.
+    const guest = buildGuestBotInstructions({ bot, memories: [], guestName: "Bia", earlier });
+    const guestSection = guest.sections.find((candidate) => candidate.key === "earlier");
+    assert.include(guestSection!.text, "Waiting on Ana for PR 12.");
+    assert.notInclude(guestSection!.text, "t3_thread_read");
+
+    const first = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [] });
+    assert.isUndefined(first.sections.find((candidate) => candidate.key === "earlier"));
   });
 });
 

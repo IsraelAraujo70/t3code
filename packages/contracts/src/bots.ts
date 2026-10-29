@@ -1,8 +1,8 @@
 /**
  * Bots (friend fork). A bot is a named, long-lived agent with a standing role, a default model,
  * its own memory, and one main conversation. That conversation is an ordinary T3 thread whose id
- * is `bot:<botId>:<generation>`; resetting the conversation archives it and starts the next
- * generation. Bot records live in the server's `bots.sqlite`, never in orchestration state.
+ * is `bot:<botId>:<generation>`; resetting or rotating the conversation archives it and starts
+ * the next generation. Bot records live in the server's `bots.sqlite`, never in orchestration state.
  */
 import * as Effect from "effect/Effect";
 import * as Rpc from "effect/rpc/Rpc";
@@ -85,6 +85,13 @@ export const enabledMemoryCharacters = (
 ): number =>
   memories.reduce((total, memory) => (memory.enabled ? total + memory.text.length : total), 0);
 
+/**
+ * How often the server starts a fresh conversation generation for a bot, after a handoff turn.
+ * Rotation waits for a quiet moment and skips a generation with little activity.
+ */
+export const BotRotation = Schema.Literals(["off", "daily", "weekly"]);
+export type BotRotation = typeof BotRotation.Type;
+
 export const Bot = Schema.Struct({
   id: BotId,
   name: BotName,
@@ -98,6 +105,7 @@ export const Bot = Schema.Struct({
   position: Schema.Int,
   /** The user lets this bot create, edit and delete bots through its MCP tools. */
   canManageBots: Schema.Boolean,
+  rotation: BotRotation.pipe(Schema.withDecodingDefaultKey(Effect.succeed("daily" as const))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -195,6 +203,7 @@ export const BotCreateInput = Schema.Struct({
   role: BotRole,
   model: ModelSelection,
   canManageBots: Schema.optionalKey(Schema.Boolean),
+  rotation: Schema.optionalKey(BotRotation),
 });
 export type BotCreateInput = typeof BotCreateInput.Type;
 
@@ -204,11 +213,31 @@ export const BotUpdateInput = Schema.Struct({
   role: Schema.optionalKey(BotRole),
   model: Schema.optionalKey(ModelSelection),
   canManageBots: Schema.optionalKey(Schema.Boolean),
+  rotation: Schema.optionalKey(BotRotation),
 });
 export type BotUpdateInput = typeof BotUpdateInput.Type;
 
 export const BotRef = Schema.Struct({ botId: BotId });
 export type BotRef = typeof BotRef.Type;
+
+/** An earlier, archived conversation generation of a bot. */
+export const BotHistoryEntry = Schema.Struct({
+  generation: PositiveInt,
+  threadId: ThreadId,
+  startedAt: IsoDateTime,
+  /** When it was archived; null when a generation was never archived (a crash mid-rotation). */
+  endedAt: Schema.NullOr(IsoDateTime),
+  /** What the bot wrote for its next conversation, when it got a handoff turn. */
+  handoff: Schema.NullOr(Schema.String),
+});
+export type BotHistoryEntry = typeof BotHistoryEntry.Type;
+
+/** A bot's earlier generations, newest first; the current one is the directory's homeThreadId. */
+export const BotHistory = Schema.Struct({
+  botId: BotId,
+  generations: Schema.Array(BotHistoryEntry),
+});
+export type BotHistory = typeof BotHistory.Type;
 
 /** Lets one bot use linked environments, or stops it. A guest's bot cannot be let. */
 export const BotLinkedEnvironmentsInput = Schema.Struct({
@@ -280,6 +309,7 @@ export const BOTS_WS_METHODS = {
   botUpdate: "bots.bot.update",
   botDelete: "bots.bot.delete",
   botResetConversation: "bots.bot.resetConversation",
+  botHistory: "bots.bot.history",
   botRestartSession: "bots.bot.restartSession",
   botLinkedEnvironments: "bots.bot.linkedEnvironments",
   botMakeRegular: "bots.bot.makeRegular",
@@ -327,6 +357,12 @@ export const BotDeleteRpc = Rpc.make(BOTS_WS_METHODS.botDelete, {
 export const BotResetConversationRpc = Rpc.make(BOTS_WS_METHODS.botResetConversation, {
   payload: BotRef,
   success: Bot,
+  error: BotsRpcError,
+});
+/** Loaded only when the user opens a bot's history, never with the directory. */
+export const BotHistoryRpc = Rpc.make(BOTS_WS_METHODS.botHistory, {
+  payload: BotRef,
+  success: BotHistory,
   error: BotsRpcError,
 });
 /**
@@ -576,6 +612,7 @@ export const BOTS_RPCS = [
   BotUpdateRpc,
   BotDeleteRpc,
   BotResetConversationRpc,
+  BotHistoryRpc,
   BotRestartSessionRpc,
   BotLinkedEnvironmentsRpc,
   BotMakeRegularRpc,
@@ -658,6 +695,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
 /** Every bots RPC's server scope. */
 export const BOTS_RPC_SCOPES = {
   [BOTS_WS_METHODS.directorySubscribe]: AuthOrchestrationReadScope,
+  [BOTS_WS_METHODS.botHistory]: AuthOrchestrationReadScope,
   [BOTS_WS_METHODS.kanbanSubscribe]: AuthOrchestrationReadScope,
   ...BOTS_GUARDED_RPC_SCOPES,
 } as const;

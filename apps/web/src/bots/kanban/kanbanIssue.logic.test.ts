@@ -219,6 +219,7 @@ describe("pickers", () => {
       sectionId: null,
       position: 0,
       canManageBots: false,
+      rotation: "daily" as const,
       createdAt: at,
       updatedAt: at,
       homeThreadId: ThreadId.make("t1"),

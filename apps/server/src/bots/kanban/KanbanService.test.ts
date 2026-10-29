@@ -335,6 +335,7 @@ const insertBot = (id: string, name: string) =>
       sectionId: null,
       position: 0,
       canManageBots: false,
+      rotation: "daily",
       createdAt: "2026-10-01T00:00:00.000Z",
       updatedAt: "2026-10-01T00:00:00.000Z",
     });
@@ -598,6 +599,7 @@ describe("KanbanService", () => {
         sectionId: null,
         position: 0,
         canManageBots: false,
+        rotation: "daily",
         createdAt: "2026-10-01T00:00:00.000Z",
         updatedAt: "2026-10-01T00:00:00.000Z",
       });
