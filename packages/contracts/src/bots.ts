@@ -28,11 +28,11 @@ export * from "./kanban.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Kept compatible with friend's own ids (`b_<hex>`) so imports keep them. */
+/** Also accepts the `b_<hex>` ids that bots imported from the friend app still carry. */
 export const BotId = Schema.String.check(Schema.isPattern(ID_PATTERN)).pipe(Schema.brand("BotId"));
 export type BotId = typeof BotId.Type;
 
-/** Kept compatible with friend's own ids (`mem_<hex>`) so imports keep them. */
+/** Also accepts the `mem_<hex>` ids that imported memories still carry. */
 export const BotMemoryId = Schema.String.check(Schema.isPattern(ID_PATTERN)).pipe(
   Schema.brand("BotMemoryId"),
 );
@@ -223,34 +223,6 @@ export type BotMemoryRef = typeof BotMemoryRef.Type;
 export const BotsOwnerUpdateInput = Schema.Struct({ aboutMe: BotsAboutMe });
 export type BotsOwnerUpdateInput = typeof BotsOwnerUpdateInput.Type;
 
-/** Import from the friend app's database on the server's machine. Without `apply` it only plans. */
-export const BotsImportInput = Schema.Struct({
-  /** Absolute path; defaults to friend's `~/.local/share/friend/friend.db` on the server host. */
-  path: Schema.optionalKey(TrimmedNonEmptyString),
-  apply: Schema.Boolean,
-});
-export type BotsImportInput = typeof BotsImportInput.Type;
-
-export const BotsImportBotPlan = Schema.Struct({
-  sourceId: BotId,
-  name: Schema.String,
-  /** `exists`: a bot with this id is already here and is left untouched. */
-  status: Schema.Literals(["new", "exists"]),
-  model: Schema.NullOr(ModelSelection),
-  memories: Schema.Int,
-});
-export type BotsImportBotPlan = typeof BotsImportBotPlan.Type;
-
-export const BotsImportResult = Schema.Struct({
-  path: Schema.String,
-  applied: Schema.Boolean,
-  bots: Schema.Array(BotsImportBotPlan),
-  /** `replace` only when the local profile is empty; a non-empty local profile is never overwritten. */
-  aboutMe: Schema.Literals(["none", "same", "replace", "keep-local"]),
-  warnings: Schema.Array(Schema.String),
-});
-export type BotsImportResult = typeof BotsImportResult.Type;
-
 export class BotsError extends Schema.TaggedError<BotsError>()("BotsError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -268,7 +240,6 @@ export const BOTS_WS_METHODS = {
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
   ownerUpdate: "bots.owner.update",
-  import: "bots.import",
   sectionCreate: "bots.section.create",
   sectionRename: "bots.section.rename",
   sectionDelete: "bots.section.delete",
@@ -351,11 +322,6 @@ export const BotMemoryDeleteRpc = Rpc.make(BOTS_WS_METHODS.memoryDelete, {
 export const BotsOwnerUpdateRpc = Rpc.make(BOTS_WS_METHODS.ownerUpdate, {
   payload: BotsOwnerUpdateInput,
   success: BotsOwnerUpdateInput,
-  error: BotsRpcError,
-});
-export const BotsImportRpc = Rpc.make(BOTS_WS_METHODS.import, {
-  payload: BotsImportInput,
-  success: BotsImportResult,
   error: BotsRpcError,
 });
 
@@ -564,7 +530,6 @@ export const BOTS_RPCS = [
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
   BotsOwnerUpdateRpc,
-  BotsImportRpc,
   BotSectionCreateRpc,
   BotSectionRenameRpc,
   BotSectionDeleteRpc,
@@ -592,7 +557,6 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.ownerUpdate]: AuthOrchestrationOperateScope,
-  [BOTS_WS_METHODS.import]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionRename]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionDelete]: AuthOrchestrationOperateScope,

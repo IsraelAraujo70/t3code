@@ -89,7 +89,6 @@ export function createBotsEnvironmentAtoms<R, E>(
     updateMemory: command("update-memory", BOTS_WS_METHODS.memoryUpdate),
     deleteMemory: command("delete-memory", BOTS_WS_METHODS.memoryDelete),
     updateOwner: command("update-owner", BOTS_WS_METHODS.ownerUpdate),
-    importFriend: command("import-friend", BOTS_WS_METHODS.import),
     createSection: command("create-section", BOTS_WS_METHODS.sectionCreate),
     renameSection: command("rename-section", BOTS_WS_METHODS.sectionRename),
     deleteSection: command("delete-section", BOTS_WS_METHODS.sectionDelete),

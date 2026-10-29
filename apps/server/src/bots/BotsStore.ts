@@ -22,14 +22,6 @@ import {
 
 import * as BotsDb from "./BotsDb.ts";
 
-/** One atomic import: rows whose id already exists are skipped, never overwritten. */
-export interface BotsImportBatch {
-  readonly bots: ReadonlyArray<Bot>;
-  readonly memories: ReadonlyArray<BotMemory>;
-  /** Written only when the stored profile is empty at commit time. */
-  readonly aboutMe: string | null;
-}
-
 /** A phone that gets a push when a bot replies or waits on the user. */
 export interface BotPushDevice {
   /** The device's FCM registration token. */
@@ -74,7 +66,6 @@ export class BotsStore extends Context.Service<
     /** Empty string when never set. */
     readonly getAboutMe: Effect.Effect<string, BotsError>;
     readonly setAboutMe: (text: string) => Effect.Effect<void, BotsError>;
-    readonly importBatch: (batch: BotsImportBatch) => Effect.Effect<void, BotsError>;
     /** Inserts the device, or refreshes its label and updatedAt, keeping its createdAt. */
     readonly upsertPushDevice: (device: BotPushDevice) => Effect.Effect<void, BotsError>;
     /** Deleting a missing token succeeds. */
@@ -152,7 +143,7 @@ const make = Effect.gen(function* () {
     FROM memories
   `;
 
-  const insertBotRow = (row: typeof BotRow.Encoded, onConflict: "fail" | "skip") => sql`
+  const insertBotRow = (row: typeof BotRow.Encoded) => sql`
     INSERT INTO bots (
       id, name, role, model_json, home_generation, section_id, position, can_manage_bots,
       created_at, updated_at
@@ -161,15 +152,13 @@ const make = Effect.gen(function* () {
       ${row.id}, ${row.name}, ${row.role}, ${row.model}, ${row.homeGeneration}, ${row.sectionId},
       ${row.position}, ${row.canManageBots}, ${row.createdAt}, ${row.updatedAt}
     )
-    ${onConflict === "skip" ? sql`ON CONFLICT DO NOTHING` : sql``}
   `;
-  const insertMemoryRow = (row: typeof MemoryRow.Encoded, onConflict: "fail" | "skip") => sql`
+  const insertMemoryRow = (row: typeof MemoryRow.Encoded) => sql`
     INSERT INTO memories (id, bot_id, text, source, enabled, created_at, updated_at)
     VALUES (
       ${row.id}, ${row.botId}, ${row.text}, ${row.source}, ${row.enabled}, ${row.createdAt},
       ${row.updatedAt}
     )
-    ${onConflict === "skip" ? sql`ON CONFLICT DO NOTHING` : sql``}
   `;
 
   const listMemories = (botId?: BotId) =>
@@ -195,7 +184,7 @@ const make = Effect.gen(function* () {
     ),
     insertBot: Effect.fn("BotsStore.insertBot")((bot) =>
       encodeBot(bot).pipe(
-        Effect.flatMap((row) => insertBotRow(row, "fail")),
+        Effect.flatMap((row) => insertBotRow(row)),
         Effect.asVoid,
         Effect.mapError(failWith(`Could not insert bot ${bot.id}`)),
       ),
@@ -309,7 +298,7 @@ const make = Effect.gen(function* () {
     ),
     insertMemory: Effect.fn("BotsStore.insertMemory")((memory) =>
       encodeMemory(memory).pipe(
-        Effect.flatMap((row) => insertMemoryRow(row, "fail")),
+        Effect.flatMap((row) => insertMemoryRow(row)),
         Effect.asVoid,
         Effect.mapError(failWith(`Could not insert memory ${memory.id} for bot ${memory.botId}`)),
       ),
@@ -354,30 +343,6 @@ const make = Effect.gen(function* () {
         INSERT INTO owner_profile (id, about_me) VALUES (1, ${text})
         ON CONFLICT (id) DO UPDATE SET about_me = excluded.about_me
       `.pipe(Effect.asVoid, Effect.mapError(failWith("Could not save the owner profile"))),
-    ),
-    importBatch: Effect.fn("BotsStore.importBatch")(
-      function* (batch: BotsImportBatch) {
-        const botRows = yield* Effect.forEach(batch.bots, (bot) => encodeBot(bot));
-        const memoryRows = yield* Effect.forEach(batch.memories, (memory) => encodeMemory(memory));
-        // ON CONFLICT DO NOTHING skips ids (and same-bot texts) already stored, while CHECK and
-        // foreign key violations still fail and roll the whole batch back.
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            yield* Effect.forEach(botRows, (row) => insertBotRow(row, "skip"), { discard: true });
-            yield* Effect.forEach(memoryRows, (row) => insertMemoryRow(row, "skip"), {
-              discard: true,
-            });
-            if (batch.aboutMe !== null) {
-              yield* sql`
-                INSERT INTO owner_profile (id, about_me) VALUES (1, ${batch.aboutMe})
-                ON CONFLICT (id) DO UPDATE SET about_me = excluded.about_me
-                WHERE owner_profile.about_me = ''
-              `;
-            }
-          }),
-        );
-      },
-      Effect.mapError(failWith("Could not import bots; nothing was written")),
     ),
     upsertPushDevice: Effect.fn("BotsStore.upsertPushDevice")((device) =>
       sql`
