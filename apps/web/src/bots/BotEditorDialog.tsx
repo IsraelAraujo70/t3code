@@ -34,7 +34,7 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { BotAvatar } from "./BotAvatar";
-import { BotsField, commandFailureMessage } from "./botsSettingsShared";
+import { BotsField, commandFailureMessage, reportCommandResult } from "./botsSettingsShared";
 
 interface BotDraft {
   readonly name: string;
@@ -42,23 +42,31 @@ interface BotDraft {
   /** Null until the user picks a model; the bot's own or the default model shows meanwhile. */
   readonly model: ModelSelection | null;
   readonly canManageBots: boolean;
+  readonly linkedEnvironments: boolean;
 }
 
 /**
  * Creates a bot (`bot` null) or edits one. `bot` is the live directory entry, so a bot deleted
- * elsewhere while the dialog is open shows as missing instead of saving into nothing.
+ * elsewhere while the dialog is open shows as missing instead of saving into nothing. The linked
+ * environments switch saves through its own owner-only command, never through `bots.bot.update`,
+ * which bot tools also reach; a guest's bot never gets it.
  */
 export function BotEditorDialog({
   environmentId,
   connected,
   bot,
   editing,
+  linkedEnvironments,
+  guest,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly connected: boolean;
   readonly bot: BotDirectoryEntry | null;
   readonly editing: boolean;
+  /** Whether the user lets this bot use linked environments today. */
+  readonly linkedEnvironments: boolean;
+  readonly guest: boolean;
   readonly onClose: () => void;
 }) {
   const settings = useEnvironmentSettings(environmentId);
@@ -68,11 +76,16 @@ export function BotEditorDialog({
   const canOperate = useAtomValue(command.permissionAtom(environmentId));
   const createBot = useAtomCommand(botsEnvironment.createBot, { label: "bot create" });
   const updateBot = useAtomCommand(botsEnvironment.updateBot, { label: "bot update" });
+  const canLink = useAtomValue(botsEnvironment.setLinkedEnvironments.permissionAtom(environmentId));
+  const setLinked = useAtomCommand(botsEnvironment.setLinkedEnvironments, {
+    label: "bot linked environments",
+  });
   const [draft, setDraft] = useState<BotDraft>(() => ({
     name: bot?.name ?? "",
     role: bot?.role ?? "",
     model: null,
     canManageBots: bot?.canManageBots ?? false,
+    linkedEnvironments,
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,12 +124,22 @@ export function BotEditorDialog({
     const result = bot
       ? await updateBot({ environmentId, input: { botId: bot.id, ...fields } })
       : await createBot({ environmentId, input: fields });
-    setSaving(false);
     if (result._tag === "Failure") {
+      setSaving(false);
       submissionPending.current = false;
       setError(commandFailureMessage(result));
       return;
     }
+    // The bot is saved, so a failed switch is reported apart instead of inviting a second save.
+    if (!guest && draft.linkedEnvironments !== linkedEnvironments)
+      reportCommandResult(
+        "Could not change the bot's linked environments",
+        await setLinked({
+          environmentId,
+          input: { botId: result.value.id, linkedEnvironments: draft.linkedEnvironments },
+        }),
+      );
+    setSaving(false);
     onClose();
   };
 
@@ -220,6 +243,25 @@ export function BotEditorDialog({
                 </p>
               </div>
             </div>
+            {guest ? null : (
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="bot-linked-environments"
+                  checked={draft.linkedEnvironments}
+                  disabled={!canLink}
+                  onCheckedChange={(checked) =>
+                    setDraft((current) => ({ ...current, linkedEnvironments: checked }))
+                  }
+                />
+                <div className="space-y-0.5">
+                  <Label htmlFor="bot-linked-environments">May work on linked environments</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Lets this bot, and the threads it starts, delegates or messages, work on your
+                    other machines (Settings → Environments), with each link's access.
+                  </p>
+                </div>
+              </div>
+            )}
             {error ? (
               <p className="text-sm text-destructive" role="alert">
                 {error}
