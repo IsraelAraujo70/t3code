@@ -245,7 +245,8 @@ describe("GuestVoice", () => {
 
       // A refused send says why, in the guest's words.
       const refused = yield* h.open(bia);
-      const reason = "Este assistente ainda não está pronto. Peça para o Israel dar uma olhada.";
+      const reason =
+        "Este assistente ainda não está pronto. Peça para quem te convidou dar uma olhada.";
       h.refusePosts(new GuestApiError({ status: 409, message: reason }));
       const postError = yield* Effect.flip(h.opened[1]!.post("🎙️ Oi"));
       yield* Queue.fail(h.sessions[1]!, postError);

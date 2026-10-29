@@ -7,7 +7,7 @@ import { useBotsEnvironmentId } from "../state/bots";
 import { desktopSelfUpdate, setDesktopSelfUpdateTarget } from "./desktopSelfUpdate";
 
 const day = (iso: string) =>
-  new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  new Date(iso).toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" });
 
 /**
  * The fork Mac app's "update available" line in the sidebar footer. It also runs the checks: when
