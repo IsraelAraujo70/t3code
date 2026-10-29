@@ -4,6 +4,7 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -48,6 +49,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { BotsStore } from "./BotsStore.ts";
+import { hostMcpConfigFile, readBotsHostStaticStatus, readHostMcpServers } from "./hostStatus.ts";
 
 export class BotsService extends Context.Service<
   BotsService,
@@ -124,6 +126,9 @@ const sameIds = (expected: ReadonlyArray<string>, given: ReadonlyArray<string>) 
   given.every((id) => expected.includes(id));
 
 const make = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const hostStatic = yield* readBotsHostStaticStatus;
+  const hostMcpFile = yield* hostMcpConfigFile;
   const store = yield* BotsStore;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
@@ -258,6 +263,12 @@ const make = Effect.gen(function* () {
       aboutMe,
       linkedEnvironmentBotIds,
       guestBotIds,
+      host: {
+        ...hostStatic,
+        hostMcp: yield* readHostMcpServers(hostMcpFile).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        ),
+      },
     };
   });
 

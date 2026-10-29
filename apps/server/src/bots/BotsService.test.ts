@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -135,6 +136,12 @@ const makeOrchestration = Effect.gen(function* () {
         Effect.succeed(instances.find((instance) => instance.instanceId === id)),
     } as unknown as ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]),
     NodeServices.layer,
+    // The host status reads the env at startup: keep it off the developer's machine config.
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({
+        env: { T3CODE_BOT_HOST_MCP_FILE: "/nonexistent/bot-host-mcp.json" },
+      }),
+    ),
   );
 
   return { threads, launches, commands, launched, retitled, layer };
@@ -494,6 +501,17 @@ describe("BotsService", () => {
         aboutMe: "",
         linkedEnvironmentBotIds: [],
         guestBotIds: [],
+        host: {
+          defaultVoice: "cove",
+          defaultVoiceLanguage: "en",
+          voiceSamplesUrl: null,
+          openRouter: false,
+          androidPush: false,
+          androidPushIssue: null,
+          webhookPublicBaseUrl: null,
+          kanbanPollSeconds: 60,
+          hostMcp: [],
+        },
       });
 
       const write = yield* service.updateOwner({ aboutMe: "I build T3" }).pipe(Effect.forkScoped);

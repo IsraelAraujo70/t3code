@@ -14,13 +14,16 @@ import { KanbanService } from "./KanbanService.ts";
 const KANBAN_POLL_ENV = "T3CODE_KANBAN_POLL_SECONDS";
 const DEFAULT_POLL_SECONDS = 60;
 
+/** Read the configured polling interval with the poller fallback. */
+export const readKanbanPollSeconds: Effect.Effect<number> = Config.Int(KANBAN_POLL_ENV).pipe(
+  Config.withDefault(DEFAULT_POLL_SECONDS),
+  Effect.orElseSucceed(() => DEFAULT_POLL_SECONDS),
+);
+
 export const layerStart = Layer.effectDiscard(
   Effect.gen(function* () {
     const kanban = yield* KanbanService;
-    const seconds = yield* Config.Int(KANBAN_POLL_ENV).pipe(
-      Config.withDefault(DEFAULT_POLL_SECONDS),
-      Effect.orElseSucceed(() => DEFAULT_POLL_SECONDS),
-    );
+    const seconds = yield* readKanbanPollSeconds;
     if (seconds <= 0) return;
     const tick = kanban.poll.pipe(
       Effect.catch((error) => Effect.logWarning("Kanban poll failed", error.message)),
