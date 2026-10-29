@@ -1,3 +1,5 @@
+// Fork (friend): Explain renewed bot conversations.
+import { BotRenewedNotice, useBotGenerationView } from "../../bots/BotGenerationNotice";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -700,6 +702,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
   // Fork (friend): bot conversations read as chat bubbles, without their work log.
   const rows = useStableRows(botChatRows(citationThreadRef?.threadId, rawRows), listIdentityKey);
+  // Fork (friend): Resolve the current bot generation for the empty state.
+  const botGeneration = useBotGenerationView(citationThreadRef?.threadId);
   const botBubbles = botBubbleLayout(citationThreadRef?.threadId, rows);
   const unmatchedPendingApprovals = new Map(pendingApprovalsByRequestId);
   if (unmatchedPendingApprovals.size > 0) {
@@ -1329,7 +1333,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
           className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
-          <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
+          {/* Fork (friend): Keep earlier messages discoverable after rotation. */}
+          {botGeneration?.kind === "current" && botGeneration.previousThreadId !== null ? (
+            <BotRenewedNotice threadId={citationThreadRef?.threadId} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Send a message to start the conversation.
+            </p>
+          )}
         </div>
       </>
     );

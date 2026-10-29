@@ -1,3 +1,5 @@
+// Fork (friend): Earlier bot generations are read only.
+import { BotEarlierConversationBar, useBotGenerationView } from "../bots/BotGenerationNotice";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -1662,7 +1664,9 @@ export default function ChatView(props: ChatViewProps) {
   const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
-  const composerMounted = !showProviderSubagentBar;
+  // Fork (friend): Unmount message entry for archived bot generations.
+  const isEarlierBotGeneration = useBotGenerationView(threadId)?.kind === "earlier";
+  const composerMounted = !showProviderSubagentBar && !isEarlierBotGeneration;
   const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
   // Providers can report dated model ids or aliases.
   const providerSubagentModelSlug = selectedProviderEntry
@@ -3411,6 +3415,10 @@ export default function ChatView(props: ChatViewProps) {
                         aria-busy={queuedRunEdit.isSaving}
                       >
                         <div className="relative z-10">
+                          {/* Fork (friend): Offer navigation to the writable generation. */}
+                          {isEarlierBotGeneration ? (
+                            <BotEarlierConversationBar threadId={threadId} />
+                          ) : null}
                           {showProviderSubagentBar ? (
                             <ProviderSubagentBar
                               provider={selectedProviderEntry ?? null}
