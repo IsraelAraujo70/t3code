@@ -5,7 +5,14 @@ import { HistoryIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { Menu, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+} from "../components/ui/menu";
 import { botsEnvironment, useBotDirectory, useBotsEnvironmentId } from "../state/bots";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -77,29 +84,31 @@ export function BotHistoryMenu(props: { readonly botId: BotId; readonly threadId
         <HistoryIcon />
       </MenuTrigger>
       <MenuPopup align="start">
-        <MenuGroupLabel>History</MenuGroupLabel>
-        <MenuItem
-          disabled={props.threadId === bot.homeThreadId}
-          onClick={() => go(bot.homeThreadId)}
-        >
-          Current conversation
-        </MenuItem>
-        {state.kind === "loading" ? <MenuItem disabled>Loading…</MenuItem> : null}
-        {state.kind === "failed" ? <MenuItem disabled>{state.message}</MenuItem> : null}
-        {state.kind === "ready" && state.generations.length === 0 ? (
-          <MenuItem disabled>No earlier conversations yet</MenuItem>
-        ) : null}
-        {state.kind === "ready"
-          ? state.generations.map((entry) => (
-              <MenuItem
-                key={entry.threadId}
-                disabled={entry.threadId === props.threadId}
-                onClick={() => go(entry.threadId)}
-              >
-                {entryLabel(entry)}
-              </MenuItem>
-            ))
-          : null}
+        <MenuGroup>
+          <MenuGroupLabel>History</MenuGroupLabel>
+          <MenuItem
+            disabled={props.threadId === bot.homeThreadId}
+            onClick={() => go(bot.homeThreadId)}
+          >
+            Current conversation
+          </MenuItem>
+          {state.kind === "loading" ? <MenuItem disabled>Loading…</MenuItem> : null}
+          {state.kind === "failed" ? <MenuItem disabled>{state.message}</MenuItem> : null}
+          {state.kind === "ready" && state.generations.length === 0 ? (
+            <MenuItem disabled>No earlier conversations yet</MenuItem>
+          ) : null}
+          {state.kind === "ready"
+            ? state.generations.map((entry) => (
+                <MenuItem
+                  key={entry.threadId}
+                  disabled={entry.threadId === props.threadId}
+                  onClick={() => go(entry.threadId)}
+                >
+                  {entryLabel(entry)}
+                </MenuItem>
+              ))
+            : null}
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
