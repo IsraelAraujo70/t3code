@@ -1,11 +1,4 @@
-/**
- * Every place the friend fork edits an upstream file. A source file must carry exactly `markers`
- * occurrences of FORK_MARKER (one per edited hunk), and no unlisted tracked file may carry it.
- * Files that cannot hold comments (JSON) list a `contains` snippet instead. A merge that drops or
- * duplicates a fork hunk fails `check-seams` instead of shipping silently.
- *
- * Fork-owned files (FORK_OWNED_PREFIXES) are not listed: upstream never touches them.
- */
+/** Exact marker counts protect upstream fork seams; comment-free files use a contains snippet. */
 export const FORK_MARKER = "Fork (friend)";
 
 export type Seam =
@@ -270,7 +263,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/Sidebar.tsx",
-    markers: 2,
+    markers: 4,
     why: "Bots block, tabs, bot threads kept out of the thread list",
   },
   {

@@ -7,7 +7,12 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  useSortable,
+  rectSortingStrategy,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -159,45 +164,23 @@ function BotRow(props: {
         }}
         aria-current={props.selected ? "page" : undefined}
         className={cn(
-          "group/bot flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          "group/bot flex w-full cursor-pointer flex-col items-center gap-1 rounded-lg px-1 py-2 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
           props.selected ? "bg-sidebar-row-selected" : "hover:bg-sidebar-row-hover",
         )}
       >
         <span className={cn("relative flex shrink-0", settled && "opacity-50")}>
           <BotAvatar
             botId={bot.id}
-            size={34}
+            size={32}
             alert={status.kind === "needs-you" && status.attention === "request"}
           />
           <StatusDot row={props.row} />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-2">
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate text-sm font-medium",
-                settled ? "text-sidebar-muted-foreground" : "text-sidebar-foreground",
-              )}
-            >
-              {bot.name}
-            </span>
-            {timeLabel !== "" ? (
-              <span className="shrink-0 text-2xs text-sidebar-muted-foreground">{timeLabel}</span>
-            ) : null}
-          </span>
-          {preview !== null ? (
-            <span
-              className={cn(
-                "block truncate text-xs",
-                status.kind === "needs-you" && status.attention === "request"
-                  ? "text-warning-foreground"
-                  : "text-sidebar-muted-foreground",
-                settled && "opacity-70",
-              )}
-            >
-              {preview}
-            </span>
-          ) : null}
+        <span
+          className="w-full truncate text-2xs font-medium text-sidebar-foreground"
+          aria-label={[bot.name, preview, timeLabel].filter(Boolean).join(" · ")}
+        >
+          {bot.name}
         </span>
       </button>
     </li>
@@ -279,14 +262,25 @@ function GroupHeader(props: {
             props.onMenu({ x: event.clientX, y: event.clientY });
           }}
           aria-expanded={!props.collapsed}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-xs font-medium text-sidebar-muted-foreground hover:text-sidebar-foreground"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-2xs font-medium uppercase tracking-wider text-sidebar-muted-foreground hover:text-sidebar-foreground"
         >
           <ChevronRightIcon
             className={cn("size-3 shrink-0 transition-transform", !props.collapsed && "rotate-90")}
           />
           <span className="truncate">{section?.name ?? "Bots"}</span>
           {props.collapsed && props.group.rows.length > 0 ? (
-            <span className="text-2xs font-normal">{props.group.rows.length}</span>
+            <span className="ml-auto flex -space-x-1.5">
+              {props.group.rows.map((row) => (
+                <span key={row.bot.id} className="relative">
+                  <BotAvatar
+                    botId={row.bot.id}
+                    size={16}
+                    alert={row.status.kind === "needs-you" && row.status.attention === "request"}
+                  />
+                  <StatusDot row={row} />
+                </span>
+              ))}
+            </span>
           ) : null}
         </button>
       )}
@@ -300,7 +294,10 @@ function GroupBody(props: { group: BotGroup; collapsed: boolean; children: React
   return (
     <ul
       ref={setNodeRef}
-      className={cn("flex min-h-1 flex-col gap-px rounded-lg", isOver && "bg-sidebar-row-hover/50")}
+      className={cn(
+        "grid min-h-1 grid-cols-[repeat(auto-fill,minmax(64px,1fr))] gap-1 rounded-lg",
+        isOver && "bg-sidebar-row-hover/50",
+      )}
     >
       {props.collapsed ? null : props.group.rows.length === 0 ? (
         <li className="px-2 py-1 text-2xs text-sidebar-muted-foreground">Drag bots here</li>
@@ -313,13 +310,7 @@ function GroupBody(props: { group: BotGroup; collapsed: boolean; children: React
 
 type Creating = { readonly moveBot: BotId | null };
 
-/**
- * The Bots block of the sidebar: the user's sections in their order, then bots in no section.
- * Inside a group, bots that need the user lead, then working ones, then settled ones, each in the
- * user's order; settled bots stay listed, dimmed. Rows drag between and within groups, section
- * headers drag to reorder sections, and right-click offers settle, reopen, and moving. The "tabs"
- * layout hides the collapsible header because the tab already names the list.
- */
+/** Bot grid and attention strip, sharing the directory and existing bot actions. */
 export function BotsSidebarSection(props: {
   collapsible: boolean;
   threads: ReadonlyArray<BotThreadShell>;
@@ -526,7 +517,43 @@ export function BotsSidebarSection(props: {
   const showGroupHeaders = shown !== null && shown.sections.length > 0;
 
   return (
-    <section aria-label="Bots" className="flex flex-col gap-px">
+    <section aria-label="Bots" className="flex flex-col gap-1">
+      {needsYou > 0 ? (
+        <div className="rounded-lg bg-warning-surface/40 p-1">
+          <div className="px-1 py-1 text-2xs font-medium uppercase tracking-wider text-warning-foreground">
+            Needs you · {needsYou}
+          </div>
+          {rows
+            ?.filter((row) => row.status.kind === "needs-you")
+            .map((row) => (
+              <button
+                key={row.bot.id}
+                type="button"
+                onClick={() => props.onOpenThread(row.threadRef)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  void showBotMenu(row, { x: event.clientX, y: event.clientY });
+                }}
+                className="flex w-full items-center gap-2 rounded px-1 py-1 text-left hover:bg-sidebar-row-hover"
+              >
+                <BotAvatar
+                  botId={row.bot.id}
+                  size={20}
+                  alert={row.status.kind === "needs-you" && row.status.attention === "request"}
+                />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                  {row.bot.name}
+                  <span className="ml-2 font-normal text-warning-foreground">
+                    {row.preview ?? "New reply"}
+                  </span>
+                </span>
+                <span className="shrink-0 text-3xs text-sidebar-muted-foreground">
+                  {row.activityAt === null ? "" : compactTimeLabel(row.activityAt)}
+                </span>
+              </button>
+            ))}
+        </div>
+      ) : null}
       {props.collapsible ? (
         <CollapsibleSectionHeader
           expanded={expanded}
@@ -554,7 +581,14 @@ export function BotsSidebarSection(props: {
             </span>
           }
         >
-          Bots
+          <span
+            onContextMenu={(event) => {
+              event.preventDefault();
+              if (canEditSections) setCreating({ moveBot: null });
+            }}
+          >
+            Bots
+          </span>
         </CollapsibleSectionHeader>
       ) : null}
       {!expanded ? null : rows === null ? (
@@ -612,7 +646,7 @@ export function BotsSidebarSection(props: {
                     ) : null}
                     <SortableContext
                       items={group.rows.map((row) => `bot:${row.bot.id}`)}
-                      strategy={verticalListSortingStrategy}
+                      strategy={rectSortingStrategy}
                     >
                       <GroupBody group={group} collapsed={collapsed}>
                         {group.rows.map((row) => (
@@ -647,11 +681,11 @@ export function BotsSidebarSection(props: {
           ) : canEditSections ? (
             <button
               type="button"
-              onClick={() => setCreating({ moveBot: null })}
+              onClick={openBotsSettings}
               className="flex cursor-pointer items-center gap-1 px-2 py-1 text-2xs text-sidebar-muted-foreground hover:text-sidebar-foreground"
             >
               <PlusIcon className="size-3" />
-              New section
+              New bot
             </button>
           ) : null}
         </DndContext>
