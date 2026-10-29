@@ -16,7 +16,6 @@ type Phase = "idle" | "starting" | "recording" | "transcribing";
 const RECORDING_LIMIT_SECONDS = 5 * 60;
 
 interface Session {
-  readonly draftKey: string;
   readonly type: RecordingType;
   readonly abort: AbortController;
   stream: MediaStream | null;
@@ -124,7 +123,6 @@ export function DictationButton(props: {
       return;
     }
     const session: Session = {
-      draftKey: props.draftKey,
       type,
       abort: new AbortController(),
       stream: null,
