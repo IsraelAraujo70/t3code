@@ -2,12 +2,10 @@
  * What the bots host was started with, for Settings → Bots → This host. Reads the same env vars
  * and files the features read, and reports only whether each is on, plus non-secret values.
  */
-import * as NodeOS from "node:os";
 import { BotId, type BotsHostStatus } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { readVoice } from "./voice/VoiceSession.ts";
 import { readVoiceLanguage, readVoiceSamplesUrl } from "./voice/voiceLanguage.ts";
@@ -15,7 +13,7 @@ import { isDictationConfigured } from "./dictation/Dictation.ts";
 import { FCM_SERVICE_ACCOUNT_ENV, readServiceAccount } from "./push/BotPushDelivery.ts";
 import { readWebhookPublicBaseUrl } from "./webhookPublicBase.ts";
 import { readKanbanPollSeconds } from "./kanban/KanbanPoller.ts";
-import { HOST_MCP_FILE_ENV, HostMcpConfig } from "./guest/HostMcpForward.ts";
+import { HostMcpConfig } from "./guest/HostMcpForward.ts";
 
 export type BotsHostStaticStatus = Omit<BotsHostStatus, "hostMcp">;
 
@@ -47,19 +45,6 @@ export const readBotsHostStaticStatus: Effect.Effect<
     webhookPublicBaseUrl: yield* readWebhookPublicBaseUrl,
     kanbanPollSeconds: Math.max(0, yield* readKanbanPollSeconds),
   };
-});
-
-/** The host MCP file HostMcpForward reads, resolved once at startup like the rest of the status. */
-export const hostMcpConfigFile: Effect.Effect<string, never, Path.Path> = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const home = NodeOS.homedir();
-  // This default must match HostMcpForward's default.
-  const defaultFile = path.join(home, ".t3-friend", "bot-host-mcp.json");
-  const file = yield* Config.String(HOST_MCP_FILE_ENV).pipe(
-    Config.withDefault(defaultFile),
-    Effect.orElseSucceed(() => defaultFile),
-  );
-  return file.startsWith("~/") ? path.join(home, file.slice(2)) : file;
 });
 
 /**

@@ -207,7 +207,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
     markers: 7,
-    why: "bot instructions in the system prompt; no host skills for guest sandboxes; guest app tools",
+    why: "bot instructions in the system prompt; no host skills for guest sandboxes; bot app tools",
   },
   {
     file: "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",

@@ -217,6 +217,16 @@ export const BotLinkedEnvironmentsInput = Schema.Struct({
 });
 export type BotLinkedEnvironmentsInput = typeof BotLinkedEnvironmentsInput.Type;
 
+/**
+ * Takes a bot away from its guest and runs it on a host provider instance. Without `model` it keeps
+ * its model and options on the first enabled host instance of the same driver.
+ */
+export const BotMakeRegularInput = Schema.Struct({
+  botId: BotId,
+  model: Schema.optionalKey(ModelSelection),
+});
+export type BotMakeRegularInput = typeof BotMakeRegularInput.Type;
+
 export const BotSectionCreateInput = Schema.Struct({ name: BotSectionName });
 export type BotSectionCreateInput = typeof BotSectionCreateInput.Type;
 
@@ -272,6 +282,7 @@ export const BOTS_WS_METHODS = {
   botResetConversation: "bots.bot.resetConversation",
   botRestartSession: "bots.bot.restartSession",
   botLinkedEnvironments: "bots.bot.linkedEnvironments",
+  botMakeRegular: "bots.bot.makeRegular",
   memoryCreate: "bots.memory.create",
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
@@ -338,6 +349,11 @@ export const BotRestartSessionRpc = Rpc.make(BOTS_WS_METHODS.botRestartSession, 
 export const BotLinkedEnvironmentsRpc = Rpc.make(BOTS_WS_METHODS.botLinkedEnvironments, {
   payload: BotLinkedEnvironmentsInput,
   success: BotLinkedEnvironmentsInput,
+  error: BotsRpcError,
+});
+export const BotMakeRegularRpc = Rpc.make(BOTS_WS_METHODS.botMakeRegular, {
+  payload: BotMakeRegularInput,
+  success: Bot,
   error: BotsRpcError,
 });
 export const BotMemoryCreateRpc = Rpc.make(BOTS_WS_METHODS.memoryCreate, {
@@ -562,6 +578,7 @@ export const BOTS_RPCS = [
   BotResetConversationRpc,
   BotRestartSessionRpc,
   BotLinkedEnvironmentsRpc,
+  BotMakeRegularRpc,
   BotMemoryCreateRpc,
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
@@ -589,6 +606,8 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.botRestartSession]: AuthOrchestrationOperateScope,
   // Lets a bot act on the user's other machines: the user's session only, never a tool.
   [BOTS_WS_METHODS.botLinkedEnvironments]: AuthOrchestrationOperateScope,
+  // Moves a guest's bot out of its sandbox onto the host: the user's session only, never a tool.
+  [BOTS_WS_METHODS.botMakeRegular]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,

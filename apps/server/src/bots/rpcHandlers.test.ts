@@ -35,6 +35,11 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
                   calls.push(`linked ${input.botId} ${input.linkedEnvironments}`);
                   return input;
                 }),
+              makeRegular: (input) =>
+                Effect.sync(() => {
+                  calls.push(`regular ${input.botId}`);
+                  return { id: input.botId } as never;
+                }),
               updateOwner: (input) =>
                 Effect.sync(() => {
                   calls.push(input.aboutMe);
@@ -147,6 +152,22 @@ describe("bots RPC handler layer", () => {
       );
       assert.deepStrictEqual(yield* operator[BOTS_WS_METHODS.botLinkedEnvironments](input), input);
       assert.deepStrictEqual(calls, ["linked b_father true"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets only an operator's session make a guest's bot regular", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const input = { botId: BotId.make("b_finance") };
+      const reader = yield* connect([AuthOrchestrationReadScope], calls);
+      const rejection = yield* reader[BOTS_WS_METHODS.botMakeRegular](input).pipe(Effect.flip);
+      assert.equal(rejection._tag, "EnvironmentAuthorizationError");
+      const operator = yield* connect(
+        [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        calls,
+      );
+      yield* operator[BOTS_WS_METHODS.botMakeRegular](input);
+      assert.deepStrictEqual(calls, ["regular b_finance"]);
     }).pipe(Effect.scoped),
   );
 

@@ -1673,7 +1673,7 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
-          // Fork (friend): only bot threads carry app instructions, only guest bots app tools.
+          // Fork (friend): only bot threads carry app instructions and app tools.
           ...(appInstructions === undefined ? {} : { appInstructions }),
           ...(appTools === undefined ? {} : { appTools }),
         };

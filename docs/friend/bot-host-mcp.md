@@ -1,10 +1,11 @@
-# Host MCP servers for a guest's bot
+# Host MCP servers for a bot
 
-A guest's bot runs Claude Code in a sandbox with no route to the host and no secrets. To give one bot
-the tools of an MCP server that runs on the host (say a read-only bank data server), list the server
-for that bot in a JSON file on the host. T3 connects to the server, sends its token, and offers its
-tools to the bot the same way it offers the guest tools (`mcp__t3-guest__*`): as an in-process MCP
-server over the CLI's stdin/stdout. The tools show up as `mcp__<name>__<tool>`, pre-approved.
+To give one bot the tools of an MCP server that runs on the host (say a read-only bank data server)
+without handing the bot its token, list the server for that bot in a JSON file on the host. T3
+connects to the server, sends its token, and offers its tools to the bot as an in-process MCP server
+over the Claude CLI's stdin/stdout. A guest's bot gets them beside its guest tools
+(`mcp__t3-guest__*`) without its sandbox gaining a route to the host. The tools show up as
+`mcp__<name>__<tool>`, pre-approved.
 
 ## Setup
 
@@ -25,7 +26,7 @@ server over the CLI's stdin/stdout. The tools show up as `mcp__<name>__<tool>`, 
    }
    ```
 
-3. Start a new turn of the bot. The file is read at every turn of a guest's bot, so no restart is
+3. Start a new turn of the bot. The file is read at every turn of a bot, so no restart is
    needed. When a server's address, token file or tool list changes, or a server appears or drops
    out, the bot's next turn opens a new Claude session with the new tools.
 
@@ -34,8 +35,8 @@ The server must speak MCP Streamable HTTP (`POST <url>`, stateless is fine) and 
 
 ## Rules
 
-- Only the bots listed get the servers, and only when they belong to a guest (other bots run
-  Claude Code on the host and do not need this). Another bot of the same guest gets nothing.
+- Only the bots listed get the servers; another bot, of the same guest or not, gets nothing. Only
+  Claude instances take them: a bot on Codex or another provider gets no forwarded tools.
 - `name` matches `[a-z0-9_-]+`, is unique per bot, and is neither `t3-guest` nor `t3-code`.
 - `url` is `http` or `https` on the literal address `127.0.0.1` or `[::1]`, without credentials.
   `localhost` is refused, since it resolves through DNS. Redirects are never followed.
@@ -51,6 +52,6 @@ The server must speak MCP Streamable HTTP (`POST <url>`, stateless is fine) and 
 - A server that is down, rejects the token, or does not list its tools within 5 seconds (token read
   included) gives the bot no tools from it for that turn. A missing, empty or refused token file does
   the same, without calling the server. A call that fails or takes more than 30 seconds returns an error result to the bot.
-  The turn and the `t3-guest` tools are never affected.
+  The turn and a guest bot's `t3-guest` tools are never affected.
 
 See [`apps/server/src/bots/guest/HostMcpForward.ts`](../../apps/server/src/bots/guest/HostMcpForward.ts).

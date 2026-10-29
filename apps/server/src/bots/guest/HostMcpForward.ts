@@ -1,6 +1,7 @@
 /**
- * Host MCP servers a guest's bot gets as AppTools: T3 calls them with the Bearer, so the sandbox
- * gains no route or secret. Config, rules and failure modes: docs/friend/bot-host-mcp.md.
+ * Host MCP servers a bot gets as AppTools: T3 calls them with the Bearer, so neither the bot nor a
+ * guest's sandbox is given a route or the secret. Config, rules and failure modes:
+ * docs/friend/bot-host-mcp.md.
  */
 // Files open with O_NOFOLLOW | O_NONBLOCK and requests go through a capped fetch, which the
 // Effect FileSystem and HttpClient cannot express; the MCP SDK takes a fetch function.
@@ -238,14 +239,19 @@ export class HostMcpForward extends Context.Service<
   }
 >()("t3/bots/guest/HostMcpForward") {}
 
-const make = Effect.gen(function* () {
-  const services = yield* Effect.context<never>();
-  const home = NodeOS.homedir();
-  const defaultFile = NodePath.join(home, ".t3-friend", "bot-host-mcp.json");
-  const configFile = yield* Config.String(HOST_MCP_FILE_ENV).pipe(
+/** The config file HostMcpForward reads: `T3CODE_BOT_HOST_MCP_FILE` or `~/.t3-friend/bot-host-mcp.json`. */
+export const hostMcpConfigFile = Effect.gen(function* () {
+  const defaultFile = NodePath.join(NodeOS.homedir(), ".t3-friend", "bot-host-mcp.json");
+  return yield* Config.String(HOST_MCP_FILE_ENV).pipe(
     Config.withDefault(defaultFile),
     Effect.orElseSucceed(() => defaultFile),
   );
+});
+
+const make = Effect.gen(function* () {
+  const services = yield* Effect.context<never>();
+  const home = NodeOS.homedir();
+  const configFile = yield* hostMcpConfigFile;
   const expandHome = (file: string) =>
     file.startsWith("~/") ? NodePath.join(home, file.slice(2)) : file;
 

@@ -1,5 +1,7 @@
 /**
  * Rows commit before thread launches; deterministic thread and command ids let startup repair missing threads.
+ * A guest's bot leaves its sandbox only through `makeRegular`, which commits the guest row and model together
+ * before moving the live thread: GuestModelPin pins any move back to the sandbox while the guest row exists.
  */
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +26,7 @@ import {
   type BotCreateInput,
   type BotDirectory,
   type BotLinkedEnvironmentsInput,
+  type BotMakeRegularInput,
   type BotMemory,
   type BotMemoryCreateInput,
   type BotMemoryRef,
@@ -40,16 +43,21 @@ import {
   type BotsOwnerUpdateInput,
   type BotUpdateInput,
   type ModelSelection,
+  type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { BotsStore } from "./BotsStore.ts";
-import { hostMcpConfigFile, readBotsHostStaticStatus, readHostMcpServers } from "./hostStatus.ts";
+import { runsOnHost } from "./guest/sandboxInstance.ts";
+import { hostMcpConfigFile } from "./guest/HostMcpForward.ts";
+import { readBotsHostStaticStatus, readHostMcpServers } from "./hostStatus.ts";
 
 export class BotsService extends Context.Service<
   BotsService,
@@ -93,6 +101,13 @@ export class BotsService extends Context.Service<
     readonly setBotLinkedEnvironments: (
       input: BotLinkedEnvironmentsInput,
     ) => Effect.Effect<BotLinkedEnvironmentsInput, BotsError>;
+    /**
+     * The user's action that turns a guest's bot into one of their own, from their session only:
+     * no MCP tool calls it. Removes the guest assignment and stores the host model in one
+     * transaction, then moves the live conversation to that model. Fails before writing while the
+     * bot works or when the target is not an enabled host instance. Retrying converges.
+     */
+    readonly makeRegular: (input: BotMakeRegularInput) => Effect.Effect<Bot, BotsError>;
     /** The bot a thread belongs to, from its id; none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
     /** Idempotent: the app repeats it on every connect and token rotation. */
@@ -134,6 +149,11 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const managed = yield* ManagedProjectFolders.ManagedProjectFolders;
   const providers = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const providerSettings = settings.getSettings.pipe(
+    Effect.map((current) => current.providerInstances),
+    Effect.mapError(botsError("Could not read the provider settings.")),
+  );
 
   // Sliding(1): every signal re-reads the whole directory, so only the latest one matters.
   const changes = yield* PubSub.sliding<void>(1);
@@ -318,7 +338,17 @@ const make = Effect.gen(function* () {
 
   const updateBot = Effect.fn("BotsService.updateBot")(function* (input: BotUpdateInput) {
     const current = yield* requireBot(input.botId);
-    if (input.model !== undefined) yield* requireEnabledInstance(input.model);
+    if (input.model !== undefined) {
+      yield* requireEnabledInstance(input.model);
+      if (
+        (yield* store.listGuestBotIds).includes(current.id) &&
+        runsOnHost(yield* providerSettings, input.model.instanceId)
+      ) {
+        return yield* new BotsError({
+          message: `${current.name} belongs to a guest and stays in its sandbox. Make it a regular bot in Settings → Bots to run it on the host.`,
+        });
+      }
+    }
     const bot: Bot = {
       ...current,
       ...(input.name !== undefined ? { name: input.name } : {}),
@@ -543,6 +573,70 @@ const make = Effect.gen(function* () {
     return input;
   });
 
+  const makeRegular = Effect.fn("BotsService.makeRegular")(function* (input: BotMakeRegularInput) {
+    const current = yield* requireBot(input.botId);
+    const configured = yield* providerSettings;
+    const instances = yield* providers.listInstances;
+    const driver = instances.find(
+      (instance) => instance.instanceId === current.model.instanceId,
+    )?.driverKind;
+    const isHost = (instanceId: ProviderInstanceId) =>
+      instances.some((instance) => instance.instanceId === instanceId && instance.enabled) &&
+      runsOnHost(configured, instanceId);
+    const fallback = instances.find(
+      (instance) => instance.driverKind === driver && isHost(instance.instanceId),
+    );
+    const model =
+      input.model ??
+      (fallback === undefined ? undefined : { ...current.model, instanceId: fallback.instanceId });
+    if (model === undefined) {
+      return yield* new BotsError({
+        message: `No enabled host provider instance runs ${current.model.instanceId}'s models. Pick one.`,
+      });
+    }
+    if (!isHost(model.instanceId)) {
+      return yield* new BotsError({
+        message: `${model.instanceId} is not an enabled provider instance on the host.`,
+      });
+    }
+    const threadId = botThreadId(current.id, current.homeGeneration);
+    const shell = yield* threads
+      .getThreadShell(threadId)
+      .pipe(Effect.mapError(botsError(`Could not read the conversation of ${current.name}.`)));
+    if (shell !== null && shell.activeRunId !== null) {
+      return yield* new BotsError({
+        message: `${current.name} is working. Try again when it finishes.`,
+      });
+    }
+    const bot: Bot = { ...current, model, updatedAt: yield* nowIso };
+    yield* store.makeRegular(bot);
+    yield* publish;
+    if (
+      shell !== null &&
+      shell.archivedAt === null &&
+      shell.deletedAt === null &&
+      !modelSelectionsEqual(shell.modelSelection, model)
+    ) {
+      yield* threads
+        .dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(
+            `bots:make-regular:${bot.id}:${bot.homeGeneration}:${yield* randomHex}`,
+          ),
+          threadId,
+          modelSelection: model,
+        })
+        .pipe(
+          Effect.mapError(
+            botsError(
+              `${bot.name} is now your bot, but its conversation is still on ${shell.modelSelection.instanceId}. Try again.`,
+            ),
+          ),
+        );
+    }
+    return bot;
+  });
+
   return BotsService.of({
     directory,
     createBot,
@@ -560,6 +654,7 @@ const make = Effect.gen(function* () {
     arrange,
     ensureConversation,
     setBotLinkedEnvironments,
+    makeRegular,
     botForThread,
     registerPushDevice,
     unregisterPushDevice,

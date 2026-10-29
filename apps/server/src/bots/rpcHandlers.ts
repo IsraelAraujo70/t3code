@@ -46,6 +46,7 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.botResetConversation]: (input) => bots.resetConversation(input),
       [BOTS_WS_METHODS.botRestartSession]: (input) => restarts.restart(input),
       [BOTS_WS_METHODS.botLinkedEnvironments]: (input) => bots.setBotLinkedEnvironments(input),
+      [BOTS_WS_METHODS.botMakeRegular]: (input) => bots.makeRegular(input),
       [BOTS_WS_METHODS.memoryCreate]: (input) => bots.createMemory(input, "user"),
       [BOTS_WS_METHODS.memoryUpdate]: (input) => bots.updateMemory(input),
       [BOTS_WS_METHODS.memoryDelete]: (input) => bots.deleteMemory(input),
