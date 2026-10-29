@@ -89,23 +89,23 @@ function useBotRows(threads: ReadonlyArray<BotThreadShell>): {
   return { environmentId, directory, rows, error };
 }
 
-function countRowsNeedingYou(rows: ReadonlyArray<BotRowModel> | null): number {
+export function countRowsNeedingYou(rows: ReadonlyArray<BotRowModel> | null): number {
   return rows === null ? 0 : countBotsNeedingYou(rows.map((row) => row.status));
 }
 
-function compactTimeLabel(isoDate: string): string {
+export function compactTimeLabel(isoDate: string): string {
   const label = formatRelativeTimeLabel(isoDate);
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
 }
 
-function useOpenBotsSettings() {
+export function useOpenBotsSettings() {
   const navigate = useNavigate();
   return () => void navigate({ to: "/settings/bots" });
 }
 
 /** A small dot on the avatar's corner: blue while working, amber for an unseen reply. */
-function StatusDot(props: { row: BotRowModel }) {
+export function BotStatusDot(props: { row: BotRowModel }) {
   const { status } = props.row;
   const tone =
     status.kind === "working"
@@ -169,7 +169,7 @@ function BotRow(props: {
             size={34}
             alert={status.kind === "needs-you" && status.attention === "request"}
           />
-          <StatusDot row={props.row} />
+          <BotStatusDot row={props.row} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline gap-2">
@@ -313,8 +313,120 @@ function GroupBody(props: { group: BotGroup; collapsed: boolean; children: React
 
 type Creating = { readonly moveBot: BotId | null };
 
+/**
+ * The bots directory as the sidebar shows it, plus the arrange command. A move shows at once and
+ * holds until the server's next directory replaces it: it is kept with the directory it was made
+ * from and ignored once another one arrives. The list and the rail each keep their own.
+ */
+export function useBotsArrangement(threads: ReadonlyArray<BotThreadShell>) {
+  const { environmentId, directory, rows: liveRows, error } = useBotRows(threads);
+  const arrange = useAtomCommand(botsEnvironment.arrange, { label: "bots arrange" });
+  const [pendingMove, setPendingMove] = useState<{
+    readonly from: BotDirectory;
+    readonly arrangement: BotsArrangeInput;
+  } | null>(null);
+  const pending =
+    pendingMove !== null && pendingMove.from === directory ? pendingMove.arrangement : null;
+  const shown =
+    directory === null ? null : applyArrangement(directory.sections, directory.bots, pending);
+  const rows =
+    shown === null || environmentId === null || liveRows === null
+      ? null
+      : resolveBotRows(shown.bots, environmentId, threads);
+
+  const applyMove = async (next: BotsArrangeInput) => {
+    if (environmentId === null || directory === null) return;
+    setPendingMove({ from: directory, arrangement: next });
+    const result = await arrange({ environmentId, input: next });
+    if (result._tag === "Failure") setPendingMove(null);
+  };
+
+  const baseArrangement = () =>
+    pending ?? (directory === null ? null : currentArrangement(directory.sections, directory.bots));
+
+  return { environmentId, directory, error, liveRows, shown, rows, applyMove, baseArrangement };
+}
+
+type BotsArrangement = ReturnType<typeof useBotsArrangement>;
+
+/**
+ * Right-click on a bot: settle or reopen, restart its session, and move it to another section.
+ * `onNewSection` adds "New section…" to the move list, for views that can name a section inline.
+ */
+export function useBotMenu(view: BotsArrangement, onNewSection: ((botId: BotId) => void) | null) {
+  const { settleThread, unsettleThread } = useThreadActions();
+  const canArrange = useAtomValue(botsEnvironment.arrange.permissionAtom(view.environmentId));
+  const canRestart = useAtomValue(
+    botsEnvironment.restartSession.permissionAtom(view.environmentId),
+  );
+  const canEditSections = useAtomValue(
+    botsEnvironment.createSection.permissionAtom(view.environmentId),
+  );
+  const restartSession = useRestartBotSession();
+  return async (row: BotRowModel, position: { x: number; y: number }) => {
+    const api = readLocalApi();
+    const { shown, environmentId } = view;
+    if (!api || shown === null) return;
+    const current = row.bot.sectionId;
+    const targets = [
+      ...shown.sections.map((section) => ({ id: section.id as string, label: section.name })),
+      { id: DEFAULT_BOT_GROUP, label: "Bots (no section)" },
+    ];
+    const clicked = await api.contextMenu.show(
+      [
+        row.status.kind === "settled"
+          ? { id: "reopen", label: "Reopen" }
+          : { id: "settle", label: "Settle", disabled: row.status.kind === "working" },
+        {
+          id: "restart",
+          label: "Restart session",
+          // Cutting a running turn short would lose its work; the server refuses it too.
+          disabled: !canRestart || row.status.kind === "working",
+        },
+        {
+          id: "move",
+          label: "Move to",
+          disabled: !canArrange,
+          children: [
+            ...targets.map((target) => ({
+              id: `move:${target.id}`,
+              label: target.label,
+              checked: (current ?? DEFAULT_BOT_GROUP) === target.id,
+            })),
+            ...(onNewSection === null
+              ? []
+              : [
+                  {
+                    id: "move:new",
+                    label: "New section…",
+                    separatorBefore: true,
+                    disabled: !canEditSections,
+                  },
+                ]),
+          ],
+        },
+      ],
+      position,
+    );
+    if (clicked === null) return;
+    if (clicked === "settle") void settleThread(row.threadRef);
+    else if (clicked === "reopen") void unsettleThread(row.threadRef);
+    else if (clicked === "restart") {
+      if (environmentId !== null) void restartSession(environmentId, row.bot);
+    } else if (clicked === "move:new") onNewSection?.(row.bot.id);
+    else if (clicked.startsWith("move:")) {
+      const target = clicked.slice("move:".length);
+      const base = view.baseArrangement();
+      if (base === null) return;
+      const sectionId = target === DEFAULT_BOT_GROUP ? null : BotSectionId.make(target);
+      if (sectionId !== current) void view.applyMove(moveBot(base, row.bot.id, sectionId, null));
+    }
+  };
+}
+
 export function BotsSidebarSection(props: {
   collapsible: boolean;
+  order?: "byStatus" | "arranged";
   threads: ReadonlyArray<BotThreadShell>;
   activeThreadRef: ScopedThreadRef | null;
   onOpenThread: (threadRef: ScopedThreadRef) => void;
@@ -329,10 +441,9 @@ export function BotsSidebarSection(props: {
     [],
     CollapsedGroups,
   );
-  const { environmentId, directory, rows: liveRows, error } = useBotRows(props.threads);
+  const view = useBotsArrangement(props.threads);
+  const { environmentId, error, liveRows, shown, rows, applyMove, baseArrangement } = view;
   const openBotsSettings = useOpenBotsSettings();
-  const { settleThread, unsettleThread } = useThreadActions();
-  const arrange = useAtomCommand(botsEnvironment.arrange, { label: "bots arrange" });
   const createSection = useAtomCommand(botsEnvironment.createSection, {
     label: "bot section create",
   });
@@ -343,43 +454,19 @@ export function BotsSidebarSection(props: {
     label: "bot section delete",
   });
   const canArrange = useAtomValue(botsEnvironment.arrange.permissionAtom(environmentId));
-  const canRestart = useAtomValue(botsEnvironment.restartSession.permissionAtom(environmentId));
-  const restartSession = useRestartBotSession();
   const canEditSections = useAtomValue(botsEnvironment.createSection.permissionAtom(environmentId));
-  // A move shows at once and holds until the server's next directory replaces it: it is kept
-  // with the directory it was made from and ignored once another one arrives.
-  const [pendingMove, setPendingMove] = useState<{
-    readonly from: BotDirectory;
-    readonly arrangement: BotsArrangeInput;
-  } | null>(null);
-  const pending =
-    pendingMove !== null && pendingMove.from === directory ? pendingMove.arrangement : null;
   const [creating, setCreating] = useState<Creating | null>(null);
   const [renamingId, setRenamingId] = useState<BotSectionId | null>(null);
+  const showBotMenu = useBotMenu(view, (botId) => setCreating({ moveBot: botId }));
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   // Re-renders the relative times once a minute.
   useNowMinute();
 
-  const shown =
-    directory === null ? null : applyArrangement(directory.sections, directory.bots, pending);
-  const rows =
-    shown === null || environmentId === null || liveRows === null
-      ? null
-      : resolveBotRows(shown.bots, environmentId, props.threads);
-  const groups = shown === null || rows === null ? [] : groupBotRows(shown.sections, rows);
+  const groups =
+    shown === null || rows === null ? [] : groupBotRows(shown.sections, rows, props.order);
   const needsYou = countRowsNeedingYou(liveRows);
   const expanded = !props.collapsible || storedExpanded;
   const activeThreadRef = props.activeThreadRef;
-
-  const applyMove = async (next: BotsArrangeInput) => {
-    if (environmentId === null || directory === null) return;
-    setPendingMove({ from: directory, arrangement: next });
-    const result = await arrange({ environmentId, input: next });
-    if (result._tag === "Failure") setPendingMove(null);
-  };
-
-  const baseArrangement = () =>
-    pending ?? (directory === null ? null : currentArrangement(directory.sections, directory.bots));
 
   const sectionOfBot = (botId: string): BotSectionId | null =>
     shown?.bots.find((bot) => bot.id === botId)?.sectionId ?? null;
@@ -432,61 +519,6 @@ export function BotsSidebarSection(props: {
         null,
       ),
     );
-  };
-
-  const showBotMenu = async (row: BotRowModel, position: { x: number; y: number }) => {
-    const api = readLocalApi();
-    if (!api || shown === null) return;
-    const current = row.bot.sectionId;
-    const targets = [
-      ...shown.sections.map((section) => ({ id: section.id as string, label: section.name })),
-      { id: DEFAULT_BOT_GROUP, label: "Bots (no section)" },
-    ];
-    const clicked = await api.contextMenu.show(
-      [
-        row.status.kind === "settled"
-          ? { id: "reopen", label: "Reopen" }
-          : { id: "settle", label: "Settle", disabled: row.status.kind === "working" },
-        {
-          id: "restart",
-          label: "Restart session",
-          // Cutting a running turn short would lose its work; the server refuses it too.
-          disabled: !canRestart || row.status.kind === "working",
-        },
-        {
-          id: "move",
-          label: "Move to",
-          disabled: !canArrange,
-          children: [
-            ...targets.map((target) => ({
-              id: `move:${target.id}`,
-              label: target.label,
-              checked: (current ?? DEFAULT_BOT_GROUP) === target.id,
-            })),
-            {
-              id: "move:new",
-              label: "New section…",
-              separatorBefore: true,
-              disabled: !canEditSections,
-            },
-          ],
-        },
-      ],
-      position,
-    );
-    if (clicked === null) return;
-    if (clicked === "settle") void settleThread(row.threadRef);
-    else if (clicked === "reopen") void unsettleThread(row.threadRef);
-    else if (clicked === "restart") {
-      if (environmentId !== null) void restartSession(environmentId, row.bot);
-    } else if (clicked === "move:new") setCreating({ moveBot: row.bot.id });
-    else if (clicked.startsWith("move:")) {
-      const target = clicked.slice("move:".length);
-      const base = baseArrangement();
-      if (base === null) return;
-      const sectionId = target === DEFAULT_BOT_GROUP ? null : BotSectionId.make(target);
-      if (sectionId !== current) void applyMove(moveBot(base, row.bot.id, sectionId, null));
-    }
   };
 
   const showSectionMenu = async (section: BotSection, position: { x: number; y: number }) => {

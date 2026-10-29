@@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyArrangement,
   botActivityAt,
+  botSignal,
   botStatusFromShell,
   countBotsNeedingYou,
   currentArrangement,
@@ -158,6 +159,16 @@ describe("countBotsNeedingYou", () => {
   });
 });
 
+describe("botSignal", () => {
+  it("marks requests, unseen replies, and running turns, and nothing on a quiet or settled bot", () => {
+    expect(botSignal(request)).toBe("request");
+    expect(botSignal({ kind: "needs-you", attention: "unseen" })).toBe("unseen");
+    expect(botSignal({ kind: "working" })).toBe("working");
+    expect(botSignal(quiet)).toBeNull();
+    expect(botSignal({ kind: "settled" })).toBeNull();
+  });
+});
+
 describe("botActivityAt", () => {
   it("prefers the latest run completion over the thread update", () => {
     expect(botActivityAt(shell({ latestRun: completedRun }))).toBe("2026-10-19T10:00:00.000Z");
@@ -237,6 +248,23 @@ describe("groupBotRows", () => {
     expect(groups[0]!.rows.map((r) => r.bot.id)).toEqual(["asks", "calm", "busy", "settled"]);
     expect(groups[1]!.rows).toEqual([]);
     expect(groups[2]!.rows.map((r) => r.bot.id)).toEqual(["loose", "orphan"]);
+  });
+
+  it("keeps the user's order inside a group when arranged, whatever each bot is doing", () => {
+    const groups = groupBotRows(
+      [section("s_work")],
+      [
+        row("settled", "s_work", { kind: "settled" }),
+        row("busy", "s_work", { kind: "working" }),
+        row("asks", "s_work", request),
+        row("loose", null, request),
+      ],
+      "arranged",
+    );
+    expect(groups.map((group) => group.rows.map((r) => r.bot.id))).toEqual([
+      ["settled", "busy", "asks"],
+      ["loose"],
+    ]);
   });
 
   it("drops an empty default list once sections exist, but keeps it when there are none", () => {

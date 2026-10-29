@@ -271,8 +271,13 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/Sidebar.tsx",
-    markers: 2,
-    why: "Bots block, tabs, bot threads kept out of the thread list",
+    markers: 3,
+    why: "Bots block, tabs, the bots rail, bot threads kept out of the thread list",
+  },
+  {
+    file: "apps/web/src/components/ui/sidebar.tsx",
+    markers: 1,
+    why: "aside slot beside the scrolling list for the bots rail",
   },
   {
     file: "apps/web/src/components/settings/SettingsPanels.tsx",

@@ -75,7 +75,7 @@ export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
 /** Fork (friend): where bots sit in the sidebar relative to threads. */
-export const SidebarBotsLayout = Schema.Literals(["sections", "tabs", "mixed"]);
+export const SidebarBotsLayout = Schema.Literals(["rail", "sections", "tabs", "mixed"]);
 export type SidebarBotsLayout = typeof SidebarBotsLayout.Type;
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
@@ -479,7 +479,7 @@ export const ClientSettingsSchema = Schema.Struct({
   // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarBotsLayout: SidebarBotsLayout.pipe(Schema.withDecodingDefault(Effect.succeed("sections"))),
+  sidebarBotsLayout: SidebarBotsLayout.pipe(Schema.withDecodingDefault(Effect.succeed("rail"))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
