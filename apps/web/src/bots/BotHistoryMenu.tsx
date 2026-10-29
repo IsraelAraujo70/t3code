@@ -1,3 +1,4 @@
+import { botHistoryRange } from "@t3tools/client-runtime/bot-chat";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { BotHistoryEntry, BotId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -22,19 +23,6 @@ type HistoryState =
   | { readonly kind: "loading" }
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "ready"; readonly generations: ReadonlyArray<BotHistoryEntry> };
-
-const dayAndTime = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-const entryLabel = (entry: BotHistoryEntry) =>
-  entry.endedAt === null
-    ? `From ${dayAndTime(entry.startedAt)}`
-    : `${dayAndTime(entry.startedAt)} – ${dayAndTime(entry.endedAt)}`;
 
 /**
  * A bot's earlier conversations, read from the server only when the menu opens, so the directory
@@ -104,7 +92,7 @@ export function BotHistoryMenu(props: { readonly botId: BotId; readonly threadId
                   disabled={entry.threadId === props.threadId}
                   onClick={() => go(entry.threadId)}
                 >
-                  {entryLabel(entry)}
+                  {botHistoryRange(entry)}
                 </MenuItem>
               ))
             : null}
