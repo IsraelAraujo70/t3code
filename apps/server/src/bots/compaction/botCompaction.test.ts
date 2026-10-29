@@ -47,6 +47,8 @@ describe("botCompactionStep", () => {
 
     // A compaction that left the context high must not start another flush by itself.
     assert.isNull(botCompactionStep(run("message:bot-compaction:compact:run-7"), over, false));
+    // Nor does a rotation's handoff turn: its conversation is archived next, not compacted.
+    assert.isNull(botCompactionStep(run("message:bot-rotation:handoff:b_a:1"), over, false));
   });
 
   it("does nothing for runs that did not complete, so an interrupted flush never compacts", () => {

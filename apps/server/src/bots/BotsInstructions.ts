@@ -31,6 +31,14 @@ import { GuestStore } from "./guest/GuestStore.ts";
 /** Section texts never exceed this, so adapters can deliver each section on its own. */
 export const BOT_INSTRUCTION_SECTION_LIMIT = 3_500;
 
+/** What a bot's current generation carries from the earlier ones. */
+export interface BotEarlierConversations {
+  /** The earlier generations' threads, newest first. */
+  readonly threadIds: ReadonlyArray<ThreadId>;
+  /** What the bot wrote at the end of the previous generation, if it got that turn. */
+  readonly handoff: string | null;
+}
+
 export interface BotInstructionInput {
   readonly bot: Bot;
   /** Only enabled memories, oldest first. */
@@ -38,6 +46,7 @@ export interface BotInstructionInput {
   readonly aboutMe: string;
   /** The user's other bots, in sidebar order. */
   readonly peers: ReadonlyArray<Bot>;
+  readonly earlier?: BotEarlierConversations | undefined;
 }
 
 export interface GuestBotInstructionInput {
@@ -48,6 +57,7 @@ export interface GuestBotInstructionInput {
   readonly guestName: string;
   /** The server owner's display name (`T3CODE_OWNER_NAME`), when configured. */
   readonly ownerName?: string | undefined;
+  readonly earlier?: BotEarlierConversations | undefined;
 }
 
 // Guest bots run in a Docker sandbox with no T3 MCP tools, so they get none of the owner's tool
@@ -103,6 +113,29 @@ const GUEST_REPLY_STYLE_TEXT = replyStyleText(
 const MANAGE_BOTS_TEXT =
   "The user lets you create, edit, and delete their bots with bot_list, bot_create, bot_update, and bot_delete. Change or delete another bot only when the user asks for it, and read a bot's role with bot_list before replacing it.";
 
+// Older generations stay readable by id; the newest few are the ones worth naming.
+const MAX_EARLIER_THREADS = 5;
+
+const earlierSection = (earlier: BotEarlierConversations | undefined, tools: boolean) => {
+  if (earlier === undefined || earlier.threadIds.length === 0) return [];
+  const intro =
+    "T3 starts a fresh conversation for you regularly so each one stays small; this is one of them.";
+  const threads = tools
+    ? `Your earlier conversations are archived threads. Read one with t3_thread_read only when you need its details: ${earlier.threadIds.slice(0, MAX_EARLIER_THREADS).join(", ")} (newest first).`
+    : null;
+  const handoff =
+    earlier.handoff === null
+      ? null
+      : `What you wrote for yourself at the end of the last one:\n${earlier.handoff}`;
+  return [
+    {
+      key: "earlier",
+      title: "Earlier conversations",
+      text: [intro, threads, handoff].filter((part) => part !== null).join("\n\n"),
+    },
+  ];
+};
+
 const MAX_PEER_SUMMARY = 160;
 
 /** The first non-empty line of a role, shortened, so a bot knows what each peer does. */
@@ -120,7 +153,7 @@ function peerLine(peer: Bot): string {
 
 /**
  * Pure. Sections, in order: identity and role, owner profile, memories (with ids, so the bot can
- * forget one), how to use the memory tools, how to hand off work through T3, how to manage bots
+ * forget one), how to use the memory tools, earlier conversations, how to hand off work through T3, how to manage bots
  * when the user allowed it, the other bots with how to ask them, and how to reply. Long texts split into
  * numbered sections under BOT_INSTRUCTION_SECTION_LIMIT. The fingerprint is a stable hash of every section.
  */
@@ -150,6 +183,7 @@ export function buildBotInstructions(input: BotInstructionInput): AppInstruction
       title: "Memory tools",
       text: `Save durable facts about the user and your work with memory_save. When a memory is wrong or stale, remove it with memory_forget using the id in brackets. Never store secrets such as passwords, tokens, or keys.\n\nYour enabled memories may hold ${BOT_LIMITS.memoryBudget} characters; they now use ${enabledMemoryCharacters(memories)}. Keep each one short, and merge related memories into one instead of adding near-duplicates. When memory_save says your memory is full, merge or forget before saving again.`,
     },
+    ...earlierSection(input.earlier, true),
     { key: "work-tools", title: "Handing off work", text: WORK_TOOLS_TEXT },
     ...(bot.canManageBots
       ? [{ key: "manage-bots", title: "Managing bots", text: MANAGE_BOTS_TEXT }]
@@ -204,6 +238,7 @@ export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppI
           },
         ]
       : []),
+    ...earlierSection(input.earlier, false),
     { key: "people", title: "Who is talking", text: peopleText(input) },
     { key: "workspace", title: "Where you work", text: GUEST_WORKSPACE_TEXT },
     { key: "helpers", title: "Helpers", text: GUEST_HELPERS_TEXT },
@@ -268,6 +303,18 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
     const store = yield* BotsStore;
     const guests = yield* GuestStore;
     const owner = Option.getOrUndefined(yield* ownerName);
+    // Runs inside forThread's span.
+    const earlierOf = Effect.fnUntraced(function* (bot: Bot) {
+      if (bot.homeGeneration <= 1) return undefined;
+      const handoffs = yield* store.listHandoffs(bot.id);
+      const previous = bot.homeGeneration - 1;
+      return {
+        threadIds: Array.from({ length: previous }, (_, index) =>
+          botThreadId(bot.id, previous - index),
+        ),
+        handoff: handoffs.find((handoff) => handoff.generation === previous)?.text ?? null,
+      } satisfies BotEarlierConversations;
+    });
     return BotsInstructions.of({
       forThread: Effect.fn("BotsInstructions.forThread")(function* (threadId: ThreadId) {
         const parsed = parseBotThreadId(threadId);
@@ -277,6 +324,7 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
         const memories = (yield* store.listMemories(parsed.botId)).filter(
           (memory) => memory.enabled,
         );
+        const earlier = yield* earlierOf(bot.value);
         const assignments = yield* guests.listAssignments;
         const guestId = assignments.get(parsed.botId);
         if (guestId !== undefined) {
@@ -286,6 +334,7 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
             memories,
             guestName: Option.isSome(guest) ? guest.value.name : guestId,
             ownerName: owner,
+            earlier,
           });
         }
         const aboutMe = yield* store.getAboutMe;
@@ -296,6 +345,7 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
           aboutMe,
           // A guest's bots are not the owner's to hand work to.
           peers: bots.filter((peer) => peer.id !== parsed.botId && !assignments.has(peer.id)),
+          earlier,
         });
       }),
     });

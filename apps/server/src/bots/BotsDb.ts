@@ -23,6 +23,7 @@ import Migration0009 from "./migrations/009_KanbanV2.ts";
 import Migration0010 from "./migrations/010_KanbanLocalClosedAt.ts";
 import Migration0011 from "./migrations/011_KanbanViewAuthorsAndAllWorkspaces.ts";
 import Migration0012 from "./migrations/012_LinkedEnvironmentBots.ts";
+import Migration0013 from "./migrations/013_BotRotation.ts";
 
 const runMigrations = Migrator.make({})({
   loader: Migrator.fromRecord({
@@ -38,6 +39,7 @@ const runMigrations = Migrator.make({})({
     "10_KanbanLocalClosedAt": Migration0010,
     "11_KanbanViewAuthorsAndAllWorkspaces": Migration0011,
     "12_LinkedEnvironmentBots": Migration0012,
+    "13_BotRotation": Migration0013,
   }),
 });
 

@@ -5,6 +5,8 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { BOT_ROTATION_MESSAGE_PREFIX } from "../rotation/rotationPolicy.ts";
+
 /** Opens the id of every message the server sends a bot to save its memory and then compact. */
 export const BOT_COMPACTION_MESSAGE_PREFIX = "message:bot-compaction:";
 const FLUSH_PREFIX = `${BOT_COMPACTION_MESSAGE_PREFIX}flush:`;
@@ -122,6 +124,8 @@ export function botCompactionStep(
 ): BotCompactionStep | null {
   if (run.status !== "completed") return null;
   if (run.userMessageId.startsWith(COMPACT_PREFIX)) return null;
+  // A rotation's handoff ends a conversation that is archived next, not compacted.
+  if (run.userMessageId.startsWith(BOT_ROTATION_MESSAGE_PREFIX)) return null;
   if (run.userMessageId.startsWith(FLUSH_PREFIX)) {
     // The text must be exactly the command RunExecutionService turns into a compaction.
     return {

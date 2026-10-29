@@ -237,6 +237,7 @@ const botCreate = Command.make(
           sectionId: null,
           position: Math.max(-1, ...bots.map((b) => b.position)) + 1,
           canManageBots: false,
+          rotation: "daily",
           createdAt: now,
           updatedAt: now,
         });

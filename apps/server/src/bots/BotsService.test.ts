@@ -108,6 +108,7 @@ const makeOrchestration = Effect.gen(function* () {
           ? null
           : ({
               title: thread.title,
+              createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
               archivedAt: thread.archived ? DateTime.nowUnsafe() : null,
               deletedAt: null,
             } as unknown as OrchestrationV2ThreadShell);
@@ -230,6 +231,7 @@ describe("BotsService", () => {
         sectionId: null,
         position: 0,
         canManageBots: false,
+        rotation: "daily",
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       };
@@ -269,35 +271,70 @@ describe("BotsService", () => {
       assert.strictEqual(orchestration.commands.length, commandsBefore);
       assert.strictEqual(orchestration.threads.get(threadId)!.model, "gpt-6.1-sol");
 
-      const reset = yield* service.resetConversation({ botId: updated.id });
+      const next = yield* service.advanceGeneration({
+        botId: updated.id,
+        fromGeneration: 1,
+        handoff: null,
+      });
       assert.strictEqual(
-        orchestration.threads.get(botThreadId(reset.id, 2))!.model,
+        orchestration.threads.get(botThreadId(Option.getOrThrow(next).id, 2))!.model,
         "claude-opus-5-5",
       );
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reset archives the current generation and launches the next", () =>
-    Effect.gen(function* () {
-      const { orchestration, store, startService } = yield* setup();
-      const service = yield* startService;
-      const bot = yield* service.createBot(input);
+  it.effect(
+    "advancing launches the next generation once; archiving and history follow the old one",
+    () =>
+      Effect.gen(function* () {
+        const { orchestration, store, startService } = yield* setup();
+        const service = yield* startService;
+        const bot = yield* service.createBot(input);
 
-      const reset = yield* service.resetConversation({ botId: bot.id });
-      assert.strictEqual(reset.homeGeneration, 2);
-      assert.strictEqual(Option.getOrThrow(yield* store.getBot(bot.id)).homeGeneration, 2);
-      assert.isTrue(orchestration.threads.get(botThreadId(bot.id, 1))!.archived);
-      assert.isFalse(orchestration.threads.get(botThreadId(bot.id, 2))!.archived);
-      assert.isTrue(
-        orchestration.launches.some(
-          (launch) => launch.commandId === `bots:launch:${bot.id}:2` && !launch.resumed,
-        ),
-      );
-      assert.deepStrictEqual(
-        Option.map(yield* service.botForThread(botThreadId(bot.id, 1)), (found) => found.id),
-        Option.some(bot.id),
-      );
-    }).pipe(Effect.scoped),
+        const next = yield* service.advanceGeneration({
+          botId: bot.id,
+          fromGeneration: 1,
+          handoff: "Waiting on Ana's review of PR 12.",
+        });
+        assert.strictEqual(Option.getOrThrow(next).homeGeneration, 2);
+        assert.strictEqual(Option.getOrThrow(yield* store.getBot(bot.id)).homeGeneration, 2);
+        assert.isTrue(
+          orchestration.launches.some(
+            (launch) => launch.commandId === `bots:launch:${bot.id}:2` && !launch.resumed,
+          ),
+        );
+        // The old thread stays live until BotRotation has moved the rest.
+        assert.isFalse(orchestration.threads.get(botThreadId(bot.id, 1))!.archived);
+
+        // A second rotation decided from the same generation changes nothing.
+        const stale = yield* service.advanceGeneration({
+          botId: bot.id,
+          fromGeneration: 1,
+          handoff: "late",
+        });
+        assert.isTrue(Option.isNone(stale));
+        assert.strictEqual(Option.getOrThrow(yield* store.getBot(bot.id)).homeGeneration, 2);
+
+        yield* service.archiveGeneration(bot.id, 1);
+        yield* service.archiveGeneration(bot.id, 1);
+        assert.isTrue(orchestration.threads.get(botThreadId(bot.id, 1))!.archived);
+        assert.isFalse(orchestration.threads.get(botThreadId(bot.id, 2))!.archived);
+        assert.strictEqual(
+          orchestration.commands.filter((command) => command.type === "thread.archive").length,
+          1,
+        );
+
+        const history = yield* service.history({ botId: bot.id });
+        assert.deepStrictEqual(
+          history.generations.map((entry) => [entry.generation, entry.threadId, entry.handoff]),
+          [[1, botThreadId(bot.id, 1), "Waiting on Ana's review of PR 12."]],
+        );
+        assert.isNotNull(history.generations[0]!.endedAt);
+        assert.deepStrictEqual(
+          Option.map(yield* service.botForThread(botThreadId(bot.id, 1)), (found) => found.id),
+          Option.some(bot.id),
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("delete archives the main thread and removes the row and its memories", () =>

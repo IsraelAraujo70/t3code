@@ -129,6 +129,24 @@ nothing is held or cancelled, and refuses while the bot has an unsettled run or 
 works. Codex shares one app-server across threads, so a Codex bot restarts it only while no thread
 uses it. See [`apps/server/src/bots/restart/`](apps/server/src/bots/restart/).
 
+## Rotating a bot's conversation
+
+A bot's conversation is generation `g` of `bot:<id>:<g>`. Each bot has a rotation policy (Daily,
+Weekly or Off, in the bot editor; Daily by default). A generation becomes due at the first 04:00
+host time after it started (six days later for Weekly) once it has at least 10 runs. The server
+then queues a handoff turn: the bot saves memories and replies with a short handoff. When that
+turn ends and nothing is running, waiting, queued, or delegated, the bot moves to `g + 1`, a fresh
+thread with no provider turn. Its instructions carry the handoff and the earlier thread ids, which
+it reads with `t3_thread_read` only when needed. One handoff runs at a time on the host.
+
+Thread watches and kanban links move in the same `bots.sqlite` transaction as the generation.
+Scheduled and webhook tasks then move through `ScheduledTaskService.rebindThread`, and the old
+thread is archived last. A restart finishes a rotation that stopped halfway. Everything else
+(peers, push, compaction, queue resume, link access) reads the current generation from the bot
+row. The manual reset takes the same path without the handoff turn. PR links stay on the old
+thread. Clients load earlier generations only from the History button in the bot's header
+(`bots.bot.history`). See [`apps/server/src/bots/rotation/`](apps/server/src/bots/rotation/).
+
 ## Guests
 
 A guest (Bia) talks to a few bots of their own through `apps/bia`, a separate Android app, and a

@@ -223,6 +223,7 @@ export function planFriendImport(input: FriendImportPlanInput): {
             sectionId: null,
             position: index,
             canManageBots: false,
+            rotation: "daily",
             createdAt: row.createdAt || now,
             updatedAt: row.updatedAt || now,
           };

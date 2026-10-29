@@ -21,6 +21,7 @@ const bot: BotDirectoryEntry = {
   homeGeneration: 1,
   position: 0,
   canManageBots: false,
+  rotation: "daily",
   createdAt: "2026-10-01T00:00:00.000Z",
   updatedAt: "2026-10-01T00:00:00.000Z",
   homeThreadId: botThreadId(botId, 1),

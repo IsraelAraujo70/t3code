@@ -29,6 +29,7 @@ import * as KanbanService from "./kanban/KanbanService.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
 import * as BotQueueReactor from "./queue/BotQueueReactor.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
+import * as BotRotation from "./rotation/BotRotation.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
@@ -39,6 +40,8 @@ const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE
 const layerStoreOff = Layer.succeed(
   BotsStore.BotsStore,
   BotsStore.BotsStore.of({
+    advanceGeneration: notHost,
+    listHandoffs: notHost,
     listBots: notHost(),
     getBot: notHost,
     insertBot: notHost,
@@ -84,7 +87,9 @@ const layerServiceOff = Layer.succeed(
     createBot: notHost,
     updateBot: notHost,
     deleteBot: notHost,
-    resetConversation: notHost,
+    advanceGeneration: notHost,
+    archiveGeneration: notHost,
+    history: notHost,
     createMemory: notHost,
     updateMemory: notHost,
     deleteMemory: notHost,
@@ -104,6 +109,15 @@ const layerServiceOff = Layer.succeed(
   }),
 );
 
+const layerRotationOff = Layer.succeed(
+  BotRotation.BotRotation,
+  BotRotation.BotRotation.of({
+    reset: notHost,
+    consider: Effect.fn("BotRotation.BotRotation.consider")(() => Effect.void),
+    start: Effect.fn("BotRotation.BotRotation.start")(() => Effect.void),
+  }),
+);
+
 const kanbanNotHost = () => Effect.fail(new KanbanError({ message: NOT_BOTS_HOST_MESSAGE }));
 
 // The kanban lives in bots.sqlite beside the bots it assigns.
@@ -112,6 +126,7 @@ const layerKanbanOff = Layer.succeed(
   KanbanService.KanbanService.of({
     snapshot: Stream.fail(new KanbanError({ message: NOT_BOTS_HOST_MESSAGE })),
     readSnapshot: kanbanNotHost(),
+    refresh: Effect.void,
     addAccount: kanbanNotHost,
     renameAccount: kanbanNotHost,
     deleteAccount: kanbanNotHost,
@@ -231,8 +246,9 @@ const layerGuests = Layer.merge(
 ).pipe(Layer.provide(ProjectionStore.layer));
 
 /**
- * BotsService, thread watches (store and waking reactor), bot compaction, held-queue resume, bot
- * push, and the kanban with its Linear poller, above the orchestration runtime.
+ * BotsService, thread watches (store and waking reactor), bot compaction, conversation rotation,
+ * held-queue resume, bot push, and the kanban with its Linear poller, above the orchestration
+ * runtime.
  */
 export const layerService = Layer.unwrap(
   isBotsHost.pipe(
@@ -242,15 +258,17 @@ export const layerService = Layer.unwrap(
             layerGuests,
             ThreadWatchReactor.layerStart,
             BotCompactionReactor.layerStart,
+            BotRotation.layerStart,
             BotQueueReactor.layerStart,
             BotPushReactor.layerStart,
             KanbanPoller.layerStart,
           ).pipe(
+            Layer.provideMerge(BotRotation.layer),
             Layer.provideMerge(BotsService.layer),
             Layer.provideMerge(ThreadWatchStore.layer),
             Layer.provideMerge(KanbanService.layer),
           )
-        : Layer.mergeAll(layerServiceOff, layerThreadWatchOff, layerKanbanOff),
+        : Layer.mergeAll(layerServiceOff, layerThreadWatchOff, layerKanbanOff, layerRotationOff),
     ),
   ),
 );

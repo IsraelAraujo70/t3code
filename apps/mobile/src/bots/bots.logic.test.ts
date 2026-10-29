@@ -98,6 +98,7 @@ function bot(id: string, sectionId: string | null): BotDirectoryEntry {
     homeGeneration: 1,
     position: 0,
     canManageBots: false,
+    rotation: "daily",
     createdAt: NOW,
     updatedAt: NOW,
     homeThreadId: botThreadId(botId, 1),

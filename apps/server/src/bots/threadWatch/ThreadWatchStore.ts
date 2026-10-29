@@ -90,3 +90,6 @@ export const layer = Layer.effect(ThreadWatchStore, make).pipe(Layer.provide(Bot
 export const layerMemory = Layer.effect(ThreadWatchStore, make).pipe(
   Layer.provide(BotsDb.layerMemory),
 );
+
+/** Over an existing bots database, for tests that share one with BotsStore. */
+export const layerFromDb = Layer.effect(ThreadWatchStore, make);

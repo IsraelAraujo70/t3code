@@ -83,6 +83,11 @@ export function createBotsEnvironmentAtoms<R, E>(
     updateBot: command("update-bot", BOTS_WS_METHODS.botUpdate),
     deleteBot: command("delete-bot", BOTS_WS_METHODS.botDelete),
     resetConversation: command("reset-conversation", BOTS_WS_METHODS.botResetConversation),
+    // A read, so it does not wait behind the bot mutations.
+    history: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:history",
+      tag: BOTS_WS_METHODS.botHistory,
+    }),
     restartSession: command("restart-session", BOTS_WS_METHODS.botRestartSession),
     setLinkedEnvironments: command("linked-environments", BOTS_WS_METHODS.botLinkedEnvironments),
     createMemory: command("create-memory", BOTS_WS_METHODS.memoryCreate),

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   BOT_LIMITS,
   type BotDirectoryEntry,
+  type BotRotation,
   type EnvironmentId,
   type ModelSelection,
 } from "@t3tools/contracts";
@@ -31,6 +32,13 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { BotAvatar } from "./BotAvatar";
@@ -42,7 +50,14 @@ interface BotDraft {
   /** Null until the user picks a model; the bot's own or the default model shows meanwhile. */
   readonly model: ModelSelection | null;
   readonly canManageBots: boolean;
+  readonly rotation: BotRotation;
 }
+
+const ROTATION_LABELS: Record<BotRotation, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  off: "Off",
+};
 
 /**
  * Creates a bot (`bot` null) or edits one. `bot` is the live directory entry, so a bot deleted
@@ -73,6 +88,7 @@ export function BotEditorDialog({
     role: bot?.role ?? "",
     model: null,
     canManageBots: bot?.canManageBots ?? false,
+    rotation: bot?.rotation ?? "daily",
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +123,7 @@ export function BotEditorDialog({
       role: draft.role.trim(),
       model: selection,
       canManageBots: draft.canManageBots,
+      rotation: draft.rotation,
     };
     const result = bot
       ? await updateBot({ environmentId, input: { botId: bot.id, ...fields } })
@@ -204,6 +221,29 @@ export function BotEditorDialog({
                   No provider is available on this environment.
                 </p>
               )}
+            </BotsField>
+            <BotsField label="New conversation">
+              <Select
+                value={draft.rotation}
+                onValueChange={(value) =>
+                  value && setDraft((current) => ({ ...current, rotation: value as BotRotation }))
+                }
+              >
+                <SelectTrigger aria-label="New conversation" className="w-40">
+                  <SelectValue>{ROTATION_LABELS[draft.rotation]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {(["daily", "weekly", "off"] as const).map((rotation) => (
+                    <SelectItem key={rotation} value={rotation}>
+                      {ROTATION_LABELS[rotation]}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Starts a fresh conversation after a quiet night, once the bot has written itself a
+                handoff. Earlier conversations stay under History in the bot's header.
+              </p>
             </BotsField>
             <div className="flex items-center gap-3">
               <Switch

@@ -229,6 +229,16 @@ export const SEAMS: readonly Seam[] = [
     why: "bot instructions tests",
   },
   {
+    file: "apps/server/src/scheduledTasks/ScheduledTaskService.ts",
+    markers: 2,
+    why: "rebindThread moves a bot's tasks to its next conversation generation",
+  },
+  {
+    file: "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts",
+    markers: 1,
+    why: "stub ScheduledTaskService.rebindThread",
+  },
+  {
     file: "apps/server/src/peer/PeerForwarding.test.ts",
     markers: 2,
     why: "provide BotLinkAccess.layerAllowingEveryone to the gated peer services",

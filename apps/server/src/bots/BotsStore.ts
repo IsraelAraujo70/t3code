@@ -1,6 +1,6 @@
 /**
- * Rows of `bots.sqlite`: bots, their sidebar sections, their memories, the owner profile, and the
- * phones that get bot pushes. The store keeps rows only;
+ * Rows of `bots.sqlite`: bots, sections, memories, the owner profile, push phones, and handoffs
+ * between conversation generations. The store keeps rows only;
  * BotsService owns every rule about them (thread generations, limits, who may write what).
  *
  * The database is a separate file next to the upstream `statev2.sqlite`, with its own migration
@@ -23,6 +23,7 @@ import {
   type BotMemoryId,
   type BotsArrangeInput,
   type BotSectionId,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import * as BotsDb from "./BotsDb.ts";
@@ -33,6 +34,24 @@ export interface BotsImportBatch {
   readonly memories: ReadonlyArray<BotMemory>;
   /** Written only when the stored profile is empty at commit time. */
   readonly aboutMe: string | null;
+}
+
+/** What a bot wrote at the end of one conversation generation for the next one. */
+export interface BotHandoff {
+  /** The generation that ended. */
+  readonly generation: number;
+  readonly text: string;
+  readonly createdAt: string;
+}
+
+/** One move of a bot to its next conversation generation; see `advanceGeneration`. */
+export interface BotGenerationAdvance {
+  /** The bot as it is after the move. */
+  readonly bot: Bot;
+  readonly fromGeneration: number;
+  readonly fromThreadId: ThreadId;
+  readonly toThreadId: ThreadId;
+  readonly handoff: BotHandoff | null;
 }
 
 /** A phone that gets a push when a bot replies or waits on the user. */
@@ -47,6 +66,16 @@ export interface BotPushDevice {
 export class BotsStore extends Context.Service<
   BotsStore,
   {
+    /**
+     * In one transaction: writes `bot` only if its stored generation is still `fromGeneration`,
+     * saves the handoff, and moves the thread watches (either side) and kanban ticket links of
+     * the old thread to the new one. False, with nothing written, when the generation moved on.
+     */
+    readonly advanceGeneration: (
+      advance: BotGenerationAdvance,
+    ) => Effect.Effect<boolean, BotsError>;
+    /** Oldest generation first. */
+    readonly listHandoffs: (botId: BotId) => Effect.Effect<ReadonlyArray<BotHandoff>, BotsError>;
     /** Bots in sidebar order (position, then createdAt). */
     readonly listBots: Effect.Effect<ReadonlyArray<Bot>, BotsError>;
     readonly getBot: (id: BotId) => Effect.Effect<Option.Option<Bot>, BotsError>;
@@ -103,6 +132,11 @@ const BotRow = Schema.Struct({
   model: Schema.fromJsonString(ModelSelection),
   canManageBots: Schema.BooleanFromBit,
 });
+const HandoffRow = Schema.Struct({
+  generation: Schema.Number,
+  text: Schema.String,
+  createdAt: Schema.String,
+});
 const MemoryRow = Schema.Struct({ ...BotMemory.fields, enabled: Schema.BooleanFromBit });
 const SectionRow = BotSection;
 const AboutMeRow = Schema.Struct({ aboutMe: Schema.String });
@@ -118,6 +152,7 @@ const decodeMemories = Schema.decodeUnknownEffect(Schema.Array(MemoryRow));
 const decodeSections = Schema.decodeUnknownEffect(Schema.Array(SectionRow));
 const decodeAboutMe = Schema.decodeUnknownEffect(Schema.Array(AboutMeRow));
 const decodePushDevices = Schema.decodeUnknownEffect(Schema.Array(PushDeviceRow));
+const decodeHandoffs = Schema.decodeUnknownEffect(Schema.Array(HandoffRow));
 const decodeBotIds = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ botId: BotId })));
 const encodeBot = Schema.encodeEffect(BotRow);
 const encodeMemory = Schema.encodeEffect(MemoryRow);
@@ -137,6 +172,7 @@ const make = Effect.gen(function* () {
       section_id AS "sectionId",
       position,
       can_manage_bots AS "canManageBots",
+      rotation,
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM bots
@@ -160,11 +196,12 @@ const make = Effect.gen(function* () {
   const insertBotRow = (row: typeof BotRow.Encoded, onConflict: "fail" | "skip") => sql`
     INSERT INTO bots (
       id, name, role, model_json, home_generation, section_id, position, can_manage_bots,
-      created_at, updated_at
+      rotation, created_at, updated_at
     )
     VALUES (
       ${row.id}, ${row.name}, ${row.role}, ${row.model}, ${row.homeGeneration}, ${row.sectionId},
-      ${row.position}, ${row.canManageBots}, ${row.createdAt}, ${row.updatedAt}
+      ${row.position}, ${row.canManageBots}, ${row.rotation ?? "daily"}, ${row.createdAt},
+      ${row.updatedAt}
     )
     ${onConflict === "skip" ? sql`ON CONFLICT DO NOTHING` : sql``}
   `;
@@ -186,7 +223,64 @@ const make = Effect.gen(function* () {
       Effect.mapError(failWith("Could not read bot memories from bots.sqlite")),
     );
 
+  // A watch or link the new thread already has stays; the old thread's duplicate is dropped.
+  const moveThread = (table: "thread_watches" | "kanban_ticket_threads", column: string) =>
+    Effect.fnUntraced(function* (from: ThreadId, to: ThreadId) {
+      const name = sql.literal(table);
+      const col = sql.literal(column);
+      yield* sql`UPDATE OR IGNORE ${name} SET ${col} = ${to} WHERE ${col} = ${from}`;
+      yield* sql`DELETE FROM ${name} WHERE ${col} = ${from}`;
+    });
+  const moveWatchers = moveThread("thread_watches", "watcher_thread_id");
+  const moveWatchTargets = moveThread("thread_watches", "target_thread_id");
+  const moveTicketLinks = moveThread("kanban_ticket_threads", "thread_id");
+
   return BotsStore.of({
+    advanceGeneration: Effect.fn("BotsStore.advanceGeneration")(
+      function* (advance: BotGenerationAdvance) {
+        const row = yield* encodeBot(advance.bot);
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const updated = yield* sql`
+              UPDATE bots
+              SET home_generation = ${row.homeGeneration}, updated_at = ${row.updatedAt}
+              WHERE id = ${row.id} AND home_generation = ${advance.fromGeneration}
+              RETURNING id
+            `;
+            if (updated.length === 0) return false;
+            if (advance.handoff !== null) {
+              yield* sql`
+                INSERT INTO bot_handoffs (bot_id, generation, text, created_at)
+                VALUES (
+                  ${row.id}, ${advance.handoff.generation}, ${advance.handoff.text},
+                  ${advance.handoff.createdAt}
+                )
+                ON CONFLICT DO NOTHING
+              `;
+            }
+            yield* moveWatchers(advance.fromThreadId, advance.toThreadId);
+            yield* moveWatchTargets(advance.fromThreadId, advance.toThreadId);
+            yield* moveTicketLinks(advance.fromThreadId, advance.toThreadId);
+            return true;
+          }),
+        );
+      },
+      (effect, advance) =>
+        effect.pipe(
+          Effect.mapError(
+            failWith(`Could not move bot ${advance.bot.id} to its next conversation`),
+          ),
+        ),
+    ),
+    listHandoffs: Effect.fn("BotsStore.listHandoffs")((botId) =>
+      sql`
+        SELECT generation, text, created_at AS "createdAt"
+        FROM bot_handoffs WHERE bot_id = ${botId} ORDER BY generation
+      `.pipe(
+        Effect.flatMap(decodeHandoffs),
+        Effect.mapError(failWith(`Could not read the handoffs of bot ${botId}`)),
+      ),
+    ),
     listBots: sql`${selectBots} ORDER BY position, created_at, id`.pipe(
       Effect.flatMap(decodeBots),
       Effect.mapError(failWith("Could not read bots from bots.sqlite")),
@@ -218,6 +312,7 @@ const make = Effect.gen(function* () {
               section_id = ${row.sectionId},
               position = ${row.position},
               can_manage_bots = ${row.canManageBots},
+              rotation = ${row.rotation ?? "daily"},
               created_at = ${row.createdAt},
               updated_at = ${row.updatedAt}
             WHERE id = ${row.id}

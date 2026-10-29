@@ -7,8 +7,8 @@
  *   reconciliation converges on the same thread instead of creating another.
  * - The row is written before its thread is launched; reconciliation launches any missing
  *   main thread, so a crash between the two writes heals on the next start.
- * - Reset raises the generation, archives the previous thread, and launches the next one.
- *   Delete archives the main thread, then removes the row and its memories.
+ * - `advanceGeneration` raises the generation and launches the next thread; BotRotation archives
+ *   the old one. Delete archives the main thread, then removes the row and its memories.
  * - A bot's main thread is titled with the bot's name; startup and renames retitle it.
  * - `arrange` names exactly the stored sections and bots, so a stale client fails instead of
  *   dropping a bot or a section from the sidebar.
@@ -36,6 +36,8 @@ import {
   type Bot,
   type BotCreateInput,
   type BotDirectory,
+  type BotHistory,
+  type BotHistoryEntry,
   type BotLinkedEnvironmentsInput,
   type BotMemory,
   type BotMemoryCreateInput,
@@ -65,7 +67,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { FRIEND_DB_RELATIVE_PATH, planFriendImport, readFriendDatabase } from "./BotsImport.ts";
-import { BotsStore } from "./BotsStore.ts";
+import { BotsStore, type BotHandoff } from "./BotsStore.ts";
 
 export class BotsService extends Context.Service<
   BotsService,
@@ -75,7 +77,23 @@ export class BotsService extends Context.Service<
     readonly createBot: (input: BotCreateInput) => Effect.Effect<Bot, BotsError>;
     readonly updateBot: (input: BotUpdateInput) => Effect.Effect<Bot, BotsError>;
     readonly deleteBot: (input: BotRef) => Effect.Effect<BotRef, BotsError>;
-    readonly resetConversation: (input: BotRef) => Effect.Effect<Bot, BotsError>;
+    /**
+     * Moves the bot to generation `fromGeneration + 1` and launches its thread. None, with nothing
+     * changed, when the bot is no longer on `fromGeneration`, so a repeated rotation is a no-op.
+     * The old thread stays live until `archiveGeneration`.
+     */
+    readonly advanceGeneration: (input: {
+      readonly botId: BotId;
+      readonly fromGeneration: number;
+      readonly handoff: string | null;
+    }) => Effect.Effect<Option.Option<Bot>, BotsError>;
+    /** Idempotent: an archived, deleted or missing thread is left as it is. */
+    readonly archiveGeneration: (
+      botId: BotId,
+      generation: number,
+    ) => Effect.Effect<void, BotsError>;
+    /** The bot's earlier generations, newest first, with their handoffs. */
+    readonly history: (input: BotRef) => Effect.Effect<BotHistory, BotsError>;
     /**
      * Duplicate text for the same bot fails with BotsError, and so does a bot's own save that
      * would take its enabled memories past BOT_LIMITS.memoryBudget.
@@ -317,6 +335,7 @@ const make = Effect.gen(function* () {
       sectionId: null,
       position: nextPosition(bots),
       canManageBots: input.canManageBots ?? false,
+      rotation: input.rotation ?? "daily",
       createdAt: now,
       updatedAt: now,
     };
@@ -336,6 +355,7 @@ const make = Effect.gen(function* () {
       // The live thread keeps its model; the next conversation generation starts with this one.
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.canManageBots !== undefined ? { canManageBots: input.canManageBots } : {}),
+      ...(input.rotation !== undefined ? { rotation: input.rotation } : {}),
       updatedAt: yield* nowIso,
     };
     yield* store.updateBot(bot);
@@ -352,18 +372,53 @@ const make = Effect.gen(function* () {
     return input;
   });
 
-  const resetConversation = Effect.fn("BotsService.resetConversation")(function* (input: BotRef) {
+  const advanceGeneration = Effect.fn("BotsService.advanceGeneration")(function* (input: {
+    readonly botId: BotId;
+    readonly fromGeneration: number;
+    readonly handoff: string | null;
+  }) {
     const current = yield* requireBot(input.botId);
-    const bot: Bot = {
-      ...current,
-      homeGeneration: current.homeGeneration + 1,
-      updatedAt: yield* nowIso,
-    };
-    yield* store.updateBot(bot);
+    if (current.homeGeneration !== input.fromGeneration) return Option.none<Bot>();
+    const now = yield* nowIso;
+    const bot: Bot = { ...current, homeGeneration: current.homeGeneration + 1, updatedAt: now };
+    const handoff: BotHandoff | null =
+      input.handoff === null
+        ? null
+        : { generation: current.homeGeneration, text: input.handoff, createdAt: now };
+    const moved = yield* store.advanceGeneration({
+      bot,
+      fromGeneration: current.homeGeneration,
+      fromThreadId: botThreadId(current.id, current.homeGeneration),
+      toThreadId: botThreadId(bot.id, bot.homeGeneration),
+      handoff,
+    });
+    if (!moved) return Option.none<Bot>();
     yield* publish;
-    yield* archiveThread(current.id, current.homeGeneration);
     yield* launchMainThread(bot);
-    return bot;
+    return Option.some(bot);
+  });
+
+  const history = Effect.fn("BotsService.history")(function* (input: BotRef) {
+    const bot = yield* requireBot(input.botId);
+    const handoffs = new Map(
+      (yield* store.listHandoffs(bot.id)).map((handoff) => [handoff.generation, handoff.text]),
+    );
+    const generations: Array<BotHistoryEntry> = [];
+    for (let generation = bot.homeGeneration - 1; generation >= 1; generation--) {
+      const threadId = botThreadId(bot.id, generation);
+      const shell = yield* threads
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(botsError(`Could not read the history of ${bot.name}.`)));
+      if (shell === null || shell.deletedAt !== null) continue;
+      generations.push({
+        generation,
+        threadId,
+        startedAt: DateTime.formatIso(shell.createdAt),
+        endedAt: shell.archivedAt === null ? null : DateTime.formatIso(shell.archivedAt),
+        handoff: handoffs.get(generation) ?? null,
+      });
+    }
+    return { botId: bot.id, generations } satisfies BotHistory;
   });
 
   // A full memory makes the bot merge or forget instead of growing every prompt; the bot reads
@@ -602,7 +657,9 @@ const make = Effect.gen(function* () {
     createBot,
     updateBot,
     deleteBot,
-    resetConversation,
+    advanceGeneration,
+    archiveGeneration: archiveThread,
+    history,
     createMemory,
     updateMemory,
     deleteMemory,

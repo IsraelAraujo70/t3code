@@ -34,6 +34,7 @@ const bot = (id: string): Bot => ({
   sectionId: null,
   position: 0,
   canManageBots: false,
+  rotation: "daily",
   createdAt: at,
   updatedAt: at,
 });
