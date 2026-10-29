@@ -1,3 +1,5 @@
+// Fork (friend): an earlier bot generation is archived but stays readable.
+import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
@@ -49,6 +51,10 @@ export function resolveThreadRouteRenderState(input: {
   const projection = Option.getOrNull(input.unlistedThreadDetail.data);
   if (projection === null) {
     return "loading";
+  }
+  // Fork (friend): an earlier bot generation is archived but opens from the bot's History.
+  if (projection.thread.archivedAt !== null && isBotChatThread(projection.thread.id)) {
+    return projection.thread.deletedAt !== null ? "missing" : "ready";
   }
   return projection.thread.deletedAt !== null || projection.thread.archivedAt !== null
     ? "missing"

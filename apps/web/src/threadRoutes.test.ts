@@ -182,6 +182,31 @@ describe("threadRoutes", () => {
     },
   );
 
+  // Fork (friend): an earlier bot generation is archived, and the bot's History opens it.
+  it("opens an unlisted archived bot generation", () => {
+    const projection = makeThreadProjectionFixture();
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: isThreadRouteSnapshotAuthoritative("live"),
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        draftThreadExists: false,
+        unlistedThreadDetail: {
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          status: "live",
+          data: Option.some({
+            ...projection,
+            thread: {
+              ...projection.thread,
+              id: ThreadId.make("bot:b_routes:1"),
+              archivedAt: DateTime.makeUnsafe("2026-10-29T07:00:00Z"),
+            },
+          }),
+        },
+      }),
+    ).toBe("ready");
+  });
+
   it("waits for the live shell before redirecting a deleted thread", () => {
     expect(
       resolveThreadRouteRenderState({

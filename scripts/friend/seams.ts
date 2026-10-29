@@ -496,6 +496,16 @@ export const SEAMS: readonly Seam[] = [
     markers: 1,
     why: "old Bots → Kanban links",
   },
+  {
+    file: "apps/web/src/threadRoutes.ts",
+    markers: 2,
+    why: "an archived earlier bot generation opens instead of redirecting home",
+  },
+  {
+    file: "apps/web/src/threadRoutes.test.ts",
+    markers: 1,
+    why: "an archived earlier bot generation opens instead of redirecting home",
+  },
 ];
 
 /** Paths the fork owns outright; markers there are allowed and not counted. */
