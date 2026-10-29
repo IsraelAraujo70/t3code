@@ -1,11 +1,4 @@
-/**
- * Every place the friend fork edits an upstream file. A source file must carry exactly `markers`
- * occurrences of FORK_MARKER (one per edited hunk), and no unlisted tracked file may carry it.
- * Files that cannot hold comments (JSON) list a `contains` snippet instead. A merge that drops or
- * duplicates a fork hunk fails `check-seams` instead of shipping silently.
- *
- * Fork-owned files (FORK_OWNED_PREFIXES) are not listed: upstream never touches them.
- */
+/** Registry of upstream fork markers. */
 export const FORK_MARKER = "Fork (friend)";
 
 export type Seam =
@@ -464,6 +457,11 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/_chat.kanban'",
     why: "generated route for the kanban page",
+  },
+  {
+    file: "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
+    markers: 2,
+    why: "Bot identity in the inbox",
   },
 ];
 

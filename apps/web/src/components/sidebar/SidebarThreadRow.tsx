@@ -1,3 +1,5 @@
+// Fork (friend): bot identity decorates mixed inbox rows.
+import { BotInboxTitle } from "../../bots/BotInboxTitle";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1037,7 +1039,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       )}
       dir={textDirection(thread.title)}
     >
-      {thread.title}
+      {/* Fork (friend): show bot identity in the inbox. */}
+      <BotInboxTitle
+        environmentId={thread.environmentId}
+        threadId={thread.id}
+        title={thread.title}
+      />
     </span>
   );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;

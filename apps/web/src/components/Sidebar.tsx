@@ -125,13 +125,7 @@ import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import {
-  BotsSidebarSection,
-  isBotThreadId,
-  SidebarBotsTabs,
-  SidebarThreadsHeading,
-  useSidebarBotsTab,
-} from "../bots/BotsSidebarSection";
+import { BotsSidebarSection } from "../bots/BotsSidebarSection";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -1071,10 +1065,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   // Fork (friend): bot conversations live in the Bots block unless the layout mixes them in.
-  const botsLayout = useClientSettings((s) => s.sidebarBotsLayout);
   const allThreads = useQuietThreadShells();
-  const threads =
-    botsLayout === "mixed" ? allThreads : allThreads.filter((thread) => !isBotThreadId(thread.id));
+  const threads = allThreads;
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1295,11 +1287,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
 
   // Fork (friend): Bots block placement. Search always shows the full thread results.
-  const [botsTab, setBotsTab] = useSidebarBotsTab();
-  const showBotsBlock =
-    !isSearchingThreads &&
-    (botsLayout === "sections" || (botsLayout === "tabs" && botsTab === "bots"));
-  const hideThreadList = !isSearchingThreads && botsLayout === "tabs" && botsTab === "bots";
+  const showBotsBlock = !isSearchingThreads;
+  const hideThreadList = false;
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -3075,26 +3064,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
-            {botsLayout === "tabs" ? (
-              <SidebarBotsTabs
-                value={botsTab}
-                onChange={setBotsTab}
-                threads={allThreads}
-                threadsNeedingYou={activeThreads.length}
-              />
-            ) : null}
           </SidebarGroup>
         }
       >
         {showBotsBlock ? (
           <SidebarGroup className="shrink-0">
             <BotsSidebarSection
-              collapsible={botsLayout === "sections"}
+              collapsible={false}
               threads={allThreads}
               activeThreadRef={routeThreadRef}
               onOpenThread={navigateToThread}
             />
-            {botsLayout === "sections" ? <SidebarThreadsHeading /> : null}
           </SidebarGroup>
         ) : null}
         <SidebarGroup className={cn("flex-1", hideThreadList && "hidden")} role="presentation">

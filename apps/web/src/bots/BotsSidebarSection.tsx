@@ -313,13 +313,7 @@ function GroupBody(props: { group: BotGroup; collapsed: boolean; children: React
 
 type Creating = { readonly moveBot: BotId | null };
 
-/**
- * The Bots block of the sidebar: the user's sections in their order, then bots in no section.
- * Inside a group, bots that need the user lead, then working ones, then settled ones, each in the
- * user's order; settled bots stay listed, dimmed. Rows drag between and within groups, section
- * headers drag to reorder sections, and right-click offers settle, reopen, and moving. The "tabs"
- * layout hides the collapsible header because the tab already names the list.
- */
+/** Bot dock and section management share the existing bot commands. */
 export function BotsSidebarSection(props: {
   collapsible: boolean;
   threads: ReadonlyArray<BotThreadShell>;
@@ -362,6 +356,7 @@ export function BotsSidebarSection(props: {
   const pending =
     pendingMove !== null && pendingMove.from === directory ? pendingMove.arrangement : null;
   const [creating, setCreating] = useState<Creating | null>(null);
+  const [manageDock, setManageDock] = useState(false);
   const [renamingId, setRenamingId] = useState<BotSectionId | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   // Re-renders the relative times once a minute.
@@ -525,8 +520,75 @@ export function BotsSidebarSection(props: {
   // Without sections the default list needs no header: it is the whole list.
   const showGroupHeaders = shown !== null && shown.sections.length > 0;
 
+  if (!manageDock && rows !== null) {
+    return (
+      <section aria-label="Bot dock" className="border-b border-sidebar-border pb-2">
+        <div className="flex max-h-20 flex-wrap gap-1 overflow-auto p-1">
+          {shown?.bots.map((bot, index) => {
+            const row = rows.find((entry) => entry.bot.id === bot.id);
+            if (!row) return null;
+            return (
+              <button
+                key={bot.id}
+                type="button"
+                aria-label={bot.name}
+                onClick={() => props.onOpenThread(row.threadRef)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  void showBotMenu(row, { x: event.clientX, y: event.clientY });
+                }}
+                className={cn(
+                  "relative flex size-8 shrink-0 items-center justify-center rounded-lg hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  row.status.kind === "settled" && "opacity-50",
+                  index > 0 && shown.bots[index - 1]?.sectionId !== bot.sectionId && "ml-2",
+                )}
+              >
+                <BotAvatar
+                  botId={bot.id}
+                  size={28}
+                  alert={row.status.kind === "needs-you" && row.status.attention === "request"}
+                />
+                <StatusDot row={row} />
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            aria-label="New bot"
+            onClick={openBotsSettings}
+            className="flex size-8 items-center justify-center rounded-lg text-sidebar-muted-foreground hover:bg-sidebar-row-hover"
+          >
+            <PlusIcon className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Manage bot sections"
+            onClick={() => setManageDock(true)}
+            className="size-8 rounded-lg text-sidebar-muted-foreground hover:bg-sidebar-row-hover"
+          >
+            …
+          </button>
+        </div>
+        {creating !== null && (
+          <SectionNameInput
+            initial=""
+            onSubmit={(name) => void submitNewSection(name)}
+            onCancel={() => setCreating(null)}
+          />
+        )}
+      </section>
+    );
+  }
+
   return (
     <section aria-label="Bots" className="flex flex-col gap-px">
+      <button
+        type="button"
+        onClick={() => setManageDock(false)}
+        className="px-2 py-1 text-left text-xs text-sidebar-muted-foreground"
+      >
+        ← Back to inbox dock
+      </button>
       {props.collapsible ? (
         <CollapsibleSectionHeader
           expanded={expanded}
