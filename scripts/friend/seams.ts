@@ -126,6 +126,11 @@ export const SEAMS: readonly Seam[] = [
     contains: '"./kanban-board"',
     why: "export the kanban board rules shared by the web and mobile boards",
   },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./kanban-display"',
+    why: "export the kanban display helpers shared by the web and mobile boards",
+  },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
   {
@@ -483,6 +488,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/botDirectory.",
   "packages/client-runtime/src/appSelfUpdate.",
   "packages/client-runtime/src/kanbanBoard.",
+  "packages/client-runtime/src/kanbanDisplay.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",
