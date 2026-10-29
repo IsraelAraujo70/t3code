@@ -160,8 +160,14 @@ Scheduled and webhook tasks then move through `ScheduledTaskService.rebindThread
 thread is archived last. A restart finishes a rotation that stopped halfway. Everything else
 (peers, push, compaction, queue resume, link access) reads the current generation from the bot
 row. The manual reset takes the same path without the handoff turn. PR links stay on the old
-thread. Clients load earlier generations only from the History button in the bot's header
-(`bots.bot.history`). See [`apps/server/src/bots/rotation/`](apps/server/src/bots/rotation/).
+thread. See [`apps/server/src/bots/rotation/`](apps/server/src/bots/rotation/).
+
+Clients load earlier generations only from the History button beside the bot's face in the
+conversation header (web, desktop and mobile; `bots.bot.history`). An earlier generation opens in
+the normal thread view without a composer, since only the current one takes messages. A new
+generation with no messages yet points back to the one before it. Both clients read these rules
+from `botGenerationView` in
+[`packages/client-runtime/src/botChat.ts`](packages/client-runtime/src/botChat.ts).
 
 ## Guests
 

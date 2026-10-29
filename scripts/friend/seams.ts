@@ -146,8 +146,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.tsx",
-    markers: 5,
-    why: "bot chats as bubbles: rows, bubble context, spacing, turn fold",
+    markers: 8,
+    why: "bot chats as bubbles: rows, bubble context, spacing, turn fold; a renewed bot conversation points to the previous one",
   },
   {
     file: "apps/mobile/src/components/ui/AppBar.types.ts",
@@ -186,8 +186,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/threads/ThreadFeed.tsx",
-    markers: 7,
-    why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles",
+    markers: 11,
+    why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles; a renewed bot conversation points to the previous one",
   },
   {
     file: "apps/server/src/orchestration-v2/Orchestrator.ts",
@@ -326,8 +326,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
-    markers: 2,
-    why: "voice orb in the feed slot",
+    markers: 5,
+    why: "voice orb in the feed slot; an earlier bot generation has no composer",
   },
   {
     file: "apps/mobile/src/components/ui/AppSymbol.tsx",
@@ -346,8 +346,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/ChatView.tsx",
-    markers: 1,
-    why: "open the Computer surface from the launchers",
+    markers: 4,
+    why: "open the Computer surface from the launchers; an earlier bot generation has no composer",
   },
   {
     file: "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
