@@ -188,8 +188,9 @@ export function BotsRail(props: {
           else moveRailFocus(event);
         }}
         className={cn(
-          "absolute inset-y-0 left-0 z-20 flex flex-col gap-0.5 overflow-x-hidden overflow-y-auto border-r border-sidebar-border bg-sidebar p-1 [scrollbar-width:none]",
-          peek ? "right-0 max-w-64 shadow-lg" : "w-12",
+          "absolute inset-y-0 left-0 z-20 flex flex-col gap-0.5 overflow-x-hidden overflow-y-auto border-r border-sidebar-border p-1 [scrollbar-width:none]",
+          // Opaque only while the names cover the threads; the sheet on phones has its own colour.
+          peek ? "right-0 max-w-64 bg-sidebar shadow-lg" : "w-12",
         )}
       >
         <Popover open={attentionOpen} onOpenChange={setAttentionOpen}>
