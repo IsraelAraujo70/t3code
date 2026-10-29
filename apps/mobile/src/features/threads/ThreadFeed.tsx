@@ -1,3 +1,6 @@
+// Fork (friend): Show bot generation navigation and read-only history.
+import { useBotGenerationView } from "../../bots/botGeneration";
+import { BotRenewedNotice } from "../../bots/BotGenerationNotices";
 // Fork (friend): name the bot that sent a message; read a reply aloud; bot chats use bubbles.
 import { useBotSender } from "../../bots/useBotSender";
 import { VoiceReaderMessageButton } from "../../bots/VoiceReaderMessageButton";
@@ -2223,6 +2226,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   ref,
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
+  // Fork (friend): Resolve renewed bot conversations.
+  const botGeneration = useBotGenerationView(props.threadId);
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
@@ -3413,16 +3418,29 @@ export const ThreadFeed = memo(function ThreadFeed({
         props.activeWorkStartedAt === null &&
         props.contentPresentation.kind === "ready" ? (
           <View
-            pointerEvents="none"
+            // Fork (friend): Let the previous-conversation action receive touches.
+            pointerEvents={
+              botGeneration?.kind === "current" && botGeneration.previousThreadId
+                ? "box-none"
+                : "none"
+            }
             style={[StyleSheet.absoluteFill, { left: contentLeftInset, right: contentRightInset }]}
           >
-            <ThreadFeedPlaceholder
-              title="No conversation yet"
-              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
-              topInset={topContentInset}
-              bottomInset={bottomContentInset}
-              horizontalPadding={horizontalPadding}
-            />
+            {/* Fork (friend): Link empty renewed conversations to their history. */}
+            {botGeneration?.kind === "current" && botGeneration.previousThreadId ? (
+              <BotRenewedNotice
+                environmentId={props.environmentId}
+                threadId={botGeneration.previousThreadId}
+              />
+            ) : (
+              <ThreadFeedPlaceholder
+                title="No conversation yet"
+                detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+                topInset={topContentInset}
+                bottomInset={bottomContentInset}
+                horizontalPadding={horizontalPadding}
+              />
+            )}
           </View>
         ) : null}
         <VideoPreviewModal source={expandedVideo} onRequestClose={closeVideoPreview} />

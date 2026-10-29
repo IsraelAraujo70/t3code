@@ -1,3 +1,6 @@
+// Fork (friend): Show bot generation navigation and read-only history.
+import { useBotGenerationView } from "../../bots/botGeneration";
+import { BotEarlierConversationBar } from "../../bots/BotGenerationNotices";
 // Fork (friend): voice conversations replace the feed while preserving its scroll state.
 import { VoiceOrb } from "../../bots/VoiceOrb";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -354,6 +357,8 @@ export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
 }
 
 function ThreadDetailBody(props: ThreadDetailScreenProps) {
+  // Fork (friend): Earlier generations cannot compose messages.
+  const botGeneration = useBotGenerationView(props.selectedThread.id);
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
@@ -1542,7 +1547,22 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 </View>
 
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
-                  {isProviderSubagent ? (
+                  {/* Fork (friend): Replace the composer for earlier bot generations. */}
+                  {botGeneration?.kind === "earlier" ? (
+                    <View
+                      className="self-center px-3 pt-1.5"
+                      style={{
+                        width: "100%",
+                        maxWidth: contentMaxWidth,
+                        paddingBottom: composerBottomInset + 6,
+                      }}
+                    >
+                      <BotEarlierConversationBar
+                        environmentId={props.environmentId}
+                        threadId={botGeneration.currentThreadId}
+                      />
+                    </View>
+                  ) : isProviderSubagent ? (
                     <View
                       className="self-center px-3 pt-1.5"
                       style={{
