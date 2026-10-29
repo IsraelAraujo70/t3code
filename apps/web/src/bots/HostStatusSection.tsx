@@ -19,7 +19,7 @@ export function HostStatusSection({
   const botName = (id: string) => bots.find((bot) => bot.id === id)?.name ?? id;
   return (
     <SettingsSection {...searchableSetting("bots-host")}>
-      <p className="px-1 text-xs text-muted-foreground">
+      <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
         Read when the bots host started. Change them in its environment and restart it.
       </p>
       <SettingsRow
@@ -60,7 +60,7 @@ export function HostStatusSection({
         status={<OnOff on={status.kanbanPollSeconds > 0} />}
         description={
           status.kanbanPollSeconds > 0
-            ? `Every ${status.kanbanPollSeconds} s (T3CODE_KANBAN_POLL_SECONDS).`
+            ? `Every ${status.kanbanPollSeconds} s once a Linear account is added (T3CODE_KANBAN_POLL_SECONDS).`
             : "Off: T3CODE_KANBAN_POLL_SECONDS is 0."
         }
       />

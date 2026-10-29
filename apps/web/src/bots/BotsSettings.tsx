@@ -178,7 +178,7 @@ function BotsEnvironmentSettings({
       />
       {guestBots.length > 0 ? (
         <SettingsSection {...searchableSetting("bots-guests")}>
-          <p className="px-1 text-xs text-muted-foreground">
+          <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
             Each runs in a sandbox for a guest, who talks to it from the guest app. Guests are
             created on the bots host with the guest CLI.
           </p>

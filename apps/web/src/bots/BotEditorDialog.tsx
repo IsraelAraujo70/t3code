@@ -42,7 +42,8 @@ interface BotDraft {
   /** Null until the user picks a model; the bot's own or the default model shows meanwhile. */
   readonly model: ModelSelection | null;
   readonly canManageBots: boolean;
-  readonly linkedEnvironments: boolean;
+  /** Null until the user flips the switch, so the live value shows and a save never resends it. */
+  readonly linkedEnvironments: boolean | null;
 }
 
 /**
@@ -85,7 +86,7 @@ export function BotEditorDialog({
     role: bot?.role ?? "",
     model: null,
     canManageBots: bot?.canManageBots ?? false,
-    linkedEnvironments,
+    linkedEnvironments: null,
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +132,11 @@ export function BotEditorDialog({
       return;
     }
     // The bot is saved, so a failed switch is reported apart instead of inviting a second save.
-    if (!guest && draft.linkedEnvironments !== linkedEnvironments)
+    if (
+      !guest &&
+      draft.linkedEnvironments !== null &&
+      draft.linkedEnvironments !== linkedEnvironments
+    )
       reportCommandResult(
         "Could not change the bot's linked environments",
         await setLinked({
@@ -247,7 +252,7 @@ export function BotEditorDialog({
               <div className="flex items-center gap-3">
                 <Switch
                   id="bot-linked-environments"
-                  checked={draft.linkedEnvironments}
+                  checked={draft.linkedEnvironments ?? linkedEnvironments}
                   disabled={!canLink}
                   onCheckedChange={(checked) =>
                     setDraft((current) => ({ ...current, linkedEnvironments: checked }))

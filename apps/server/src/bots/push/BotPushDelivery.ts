@@ -123,7 +123,7 @@ const disabled = BotPushDelivery.of({
   deliver: Effect.fn("BotPushDelivery.deliver")(() => Effect.void),
 });
 
-const readServiceAccount = Effect.fn("BotPushDelivery.readServiceAccount")(function* (
+export const readServiceAccount = Effect.fn("BotPushDelivery.readServiceAccount")(function* (
   path: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;

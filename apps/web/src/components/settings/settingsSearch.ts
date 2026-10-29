@@ -1250,13 +1250,13 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  "/settings/bots", // Fork (friend): its Kanban section moved to /settings/kanban.
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
 const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
   // Fork (friend): preserve moved bots settings links.
   kanban: "/settings/kanban",
-  "bots-linked-environments": "/settings/bots",
   "authorized-clients": "/settings/access",
   "legacy-features": "/settings/labs",
   "text-generation": "/settings/threads",

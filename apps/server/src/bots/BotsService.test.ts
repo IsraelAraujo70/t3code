@@ -495,24 +495,16 @@ describe("BotsService", () => {
         Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot)),
         Effect.forkScoped,
       );
-      assert.deepStrictEqual(yield* Queue.take(snapshots), {
+      const { host, ...first } = yield* Queue.take(snapshots);
+      assert.deepStrictEqual(first, {
         sections: [],
         bots: [],
         aboutMe: "",
         linkedEnvironmentBotIds: [],
         guestBotIds: [],
-        host: {
-          defaultVoice: "cove",
-          defaultVoiceLanguage: "en",
-          voiceSamplesUrl: null,
-          openRouter: false,
-          androidPush: false,
-          androidPushIssue: null,
-          webhookPublicBaseUrl: null,
-          kanbanPollSeconds: 60,
-          hostMcp: [],
-        },
       });
+      // hostStatus.test.ts covers the values; the directory only has to carry them.
+      assert.deepStrictEqual(host?.hostMcp, []);
 
       const write = yield* service.updateOwner({ aboutMe: "I build T3" }).pipe(Effect.forkScoped);
       yield* Deferred.await(entered);

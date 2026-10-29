@@ -47,14 +47,20 @@ it.effect("reports enabled configuration without MCP secrets", () =>
         alpha: [{ name: "three", url, tokenFile }],
       }),
     );
+    const fcmFile = `${dir}/fcm.json`;
+    yield* fs.writeFileString(fcmFile, "{}");
     const result = yield* run({
       T3CODE_BOT_HOST_MCP_FILE: file,
       T3CODE_VOICE_LANGUAGE: "pt-BR",
       T3CODE_WEBHOOK_PUBLIC_BASE_URL: "https://example.com",
-      T3CODE_FCM_SERVICE_ACCOUNT_FILE: `${dir}/missing`,
+      // A regular file that is no service account key: delivery would stay off.
+      T3CODE_FCM_SERVICE_ACCOUNT_FILE: fcmFile,
     });
     assert.strictEqual(result.androidPush, true);
-    assert.strictEqual(result.androidPushIssue, "The service account key file cannot be read.");
+    assert.strictEqual(
+      result.androidPushIssue,
+      "The service account key file cannot be read as a key.",
+    );
     assert.strictEqual(result.defaultVoiceLanguage, "pt-BR");
     assert.strictEqual(result.webhookPublicBaseUrl, "https://example.com");
     assert.deepStrictEqual(result.hostMcp, [

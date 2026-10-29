@@ -46,12 +46,6 @@ export const readVoiceSamplesUrl: Effect.Effect<string | null> = Config.String(
   }),
 );
 
-/** The setting wins; unset, the language `VOICE_LANGUAGE_ENV` picked (or English) applies. */
-export const resolveVoiceLanguage = (
-  setting: VoiceLanguage | null,
-  envLanguage: VoiceLanguage,
-): VoiceLanguage => setting ?? envLanguage;
-
 export interface VoiceScript {
   /** Instructions for reading one reply aloud. */
   readonly readerPrompt: string;

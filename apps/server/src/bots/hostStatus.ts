@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import { readVoice } from "./voice/VoiceSession.ts";
 import { readVoiceLanguage, readVoiceSamplesUrl } from "./voice/voiceLanguage.ts";
 import { isDictationConfigured } from "./dictation/Dictation.ts";
-import { FCM_SERVICE_ACCOUNT_ENV } from "./push/BotPushDelivery.ts";
+import { FCM_SERVICE_ACCOUNT_ENV, readServiceAccount } from "./push/BotPushDelivery.ts";
 import { readWebhookPublicBaseUrl } from "./webhookPublicBase.ts";
 import { readKanbanPollSeconds } from "./kanban/KanbanPoller.ts";
 import { HOST_MCP_FILE_ENV, HostMcpConfig } from "./guest/HostMcpForward.ts";
@@ -25,25 +25,25 @@ export const readBotsHostStaticStatus: Effect.Effect<
   never,
   FileSystem.FileSystem
 > = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
   const file = yield* Config.String(FCM_SERVICE_ACCOUNT_ENV).pipe(
     Config.withDefault(""),
     Effect.orElseSucceed(() => ""),
   );
   const androidPush = file.trim() !== "";
-  const readable =
+  // The loader delivery itself uses, so On means delivery could start.
+  const usable =
     !androidPush ||
-    (yield* Effect.gen(function* () {
-      if (!(yield* fs.exists(file))) return false;
-      return (yield* fs.stat(file)).type === "File";
-    }).pipe(Effect.orElseSucceed(() => false)));
+    (yield* readServiceAccount(file).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    ));
   return {
     defaultVoice: yield* readVoice,
     defaultVoiceLanguage: yield* readVoiceLanguage,
     voiceSamplesUrl: yield* readVoiceSamplesUrl,
     openRouter: yield* isDictationConfigured,
     androidPush,
-    androidPushIssue: readable ? null : "The service account key file cannot be read.",
+    androidPushIssue: usable ? null : "The service account key file cannot be read as a key.",
     webhookPublicBaseUrl: yield* readWebhookPublicBaseUrl,
     kanbanPollSeconds: Math.max(0, yield* readKanbanPollSeconds),
   };

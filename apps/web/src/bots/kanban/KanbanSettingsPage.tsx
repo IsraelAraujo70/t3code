@@ -27,8 +27,9 @@ export function KanbanSettingsPage() {
             </EmptyMedia>
             <EmptyTitle>Kanban needs a bots host</EmptyTitle>
             <EmptyDescription>
-              The kanban lives on the machine that hosts your bots. Turn bots on there, then connect
-              to it.
+              The kanban lives on the machine that hosts your bots: start its T3 server with{" "}
+              <code className="font-mono text-xs">T3CODE_BOTS_HOST=1</code>, then connect to it
+              here.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

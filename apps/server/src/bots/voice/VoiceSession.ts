@@ -33,12 +33,7 @@ import * as Stream from "effect/Stream";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 
 import * as CodexRealtime from "./CodexRealtime.ts";
-import {
-  readVoiceLanguage,
-  resolveVoiceLanguage,
-  VOICE_SCRIPTS,
-  type VoiceScript,
-} from "./voiceLanguage.ts";
+import { readVoiceLanguage, VOICE_SCRIPTS, type VoiceScript } from "./voiceLanguage.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -411,7 +406,8 @@ export const layer = Layer.effect(
       Effect.orElseSucceed(() => envVoice),
     );
     const currentScript = settings.getSettings.pipe(
-      Effect.map((current) => resolveVoiceLanguage(current.voiceLanguage, envLanguage)),
+      // The setting wins; unset, the language the env picked (or English) applies.
+      Effect.map((current) => current.voiceLanguage ?? envLanguage),
       Effect.orElseSucceed(() => envLanguage),
       Effect.map((language) => VOICE_SCRIPTS[language]),
     );

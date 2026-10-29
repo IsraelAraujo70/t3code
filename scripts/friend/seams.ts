@@ -276,8 +276,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/settings/settingsSearch.ts",
-    markers: 8,
-    why: "Bots in sidebar setting and the Bots settings page",
+    markers: 9,
+    why: "Bots in sidebar setting, the Bots and Kanban settings pages, and their moved anchors",
   },
   {
     file: "apps/web/src/rightPanelStore.ts",
@@ -474,7 +474,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/settings/settingsSearch.test.ts",
     markers: 1,
-    why: "Linear settings search",
+    why: "old Bots → Kanban links",
   },
 ];
 

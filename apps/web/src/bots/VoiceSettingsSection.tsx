@@ -62,6 +62,7 @@ export function VoiceSettingsSection({
   const currentLanguage = settings?.voiceLanguage ?? null;
   const samplesUrl = host?.voiceSamplesUrl ?? null;
   const disabled = !connected || !canUpdate || saving || settings === null;
+  const defaultLanguageLabel = defaultLabel(host && LANGUAGE_LABELS[host.defaultVoiceLanguage]);
 
   const save = async (
     patch: { voiceReaderVoice: RealtimeVoice | null } | { voiceLanguage: VoiceLanguage | null },
@@ -90,6 +91,7 @@ export function VoiceSettingsSection({
       setPlaying(null);
       return;
     }
+    // Play buttons render only with a samples URL; the check narrows its type.
     if (samplesUrl === null) return;
     const sample = new Audio(`${samplesUrl}${voice}.webm`);
     audio.current = sample;
@@ -104,24 +106,25 @@ export function VoiceSettingsSection({
     <SettingsSection {...searchableSetting("bots-voice")}>
       <SettingsRow
         title="Spoken language"
-        description="The language the voice speaks when it reads replies and in voice conversations. Applies from the next session."
+        description={
+          host === undefined
+            ? "Update the bots host to choose the language its voice speaks."
+            : "The language the voice speaks when it reads replies and in voice conversations. Applies from the next session."
+        }
         control={
           <Select
             value={currentLanguage ?? SERVER_DEFAULT}
-            disabled={disabled}
+            // A host without `host` status predates the setting and would drop it silently.
+            disabled={disabled || host === undefined}
             onValueChange={(value) => value && void chooseLanguage(value)}
           >
             <SelectTrigger aria-label="Spoken language" size="xs" className="min-w-40">
               <SelectValue>
-                {currentLanguage === null
-                  ? defaultLabel(host && LANGUAGE_LABELS[host.defaultVoiceLanguage])
-                  : LANGUAGE_LABELS[currentLanguage]}
+                {currentLanguage === null ? defaultLanguageLabel : LANGUAGE_LABELS[currentLanguage]}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup>
-              <SelectItem value={SERVER_DEFAULT}>
-                {defaultLabel(host && LANGUAGE_LABELS[host.defaultVoiceLanguage])}
-              </SelectItem>
+              <SelectItem value={SERVER_DEFAULT}>{defaultLanguageLabel}</SelectItem>
               {VOICE_LANGUAGES.map((language) => (
                 <SelectItem key={language} value={language}>
                   {LANGUAGE_LABELS[language]}
@@ -143,7 +146,7 @@ export function VoiceSettingsSection({
         >
           <label className="flex min-h-8 items-center gap-3 text-sm">
             <Radio value={SERVER_DEFAULT} />
-            <span className="capitalize">{defaultLabel(host?.defaultVoice)}</span>
+            <span>{defaultLabel(host?.defaultVoice)}</span>
           </label>
           {REALTIME_VOICES.map((voice) => (
             <div key={voice} className="flex min-h-8 items-center gap-3">
