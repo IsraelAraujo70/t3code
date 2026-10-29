@@ -479,7 +479,7 @@ export const ClientSettingsSchema = Schema.Struct({
   // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarBotsLayout: SidebarBotsLayout.pipe(Schema.withDecodingDefault(Effect.succeed("sections"))),
+  sidebarBotsLayout: SidebarBotsLayout.pipe(Schema.withDecodingDefault(Effect.succeed("rail"))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),

@@ -426,6 +426,7 @@ export function useBotMenu(view: BotsArrangement, onNewSection: ((botId: BotId) 
 
 export function BotsSidebarSection(props: {
   collapsible: boolean;
+  order?: "byStatus" | "arranged";
   threads: ReadonlyArray<BotThreadShell>;
   activeThreadRef: ScopedThreadRef | null;
   onOpenThread: (threadRef: ScopedThreadRef) => void;
@@ -461,7 +462,8 @@ export function BotsSidebarSection(props: {
   // Re-renders the relative times once a minute.
   useNowMinute();
 
-  const groups = shown === null || rows === null ? [] : groupBotRows(shown.sections, rows);
+  const groups =
+    shown === null || rows === null ? [] : groupBotRows(shown.sections, rows, props.order);
   const needsYou = countRowsNeedingYou(liveRows);
   const expanded = !props.collapsible || storedExpanded;
   const activeThreadRef = props.activeThreadRef;
