@@ -72,6 +72,8 @@ describe("searchSettings", () => {
     } finally {
       localeLowerCase.mockRestore();
     }
+    // Fork (friend): Linear configuration has its own page.
+    expect(searchSettings("linear").map((item) => item.to)).toContain("/settings/kanban");
     expect(searchSettings("xyzzy")).toEqual([]);
   });
 

@@ -43,6 +43,9 @@ import {
 } from "./settingsScopeAxis";
 
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
+  // Fork (friend): bots and the kanban always edit the bots host.
+  "/settings/bots",
+  "/settings/kanban",
   "/settings/general",
   "/settings/appearance",
   "/settings/chat",

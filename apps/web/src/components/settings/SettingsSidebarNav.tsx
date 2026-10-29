@@ -11,6 +11,8 @@ import {
   ArchiveIcon,
   FlaskConicalIcon,
   BotIcon,
+  // Fork (friend): kanban settings navigation.
+  SquareKanbanIcon,
   createLucideIcon,
   CalendarClockIcon,
   FileDiffIcon,
@@ -100,6 +102,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/scheduled-tasks": CalendarClockIcon,
   // Fork (friend): Settings → Bots.
   "/settings/bots": BotIcon,
+  "/settings/kanban": SquareKanbanIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/worktrees": FolderTreeIcon,
   "/settings/connections": ServerIcon,
