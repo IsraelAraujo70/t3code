@@ -245,17 +245,20 @@ export function BotsRail(props: {
         {groups.map((group, index) => (
           <div key={botGroupKey(group.section)} className="flex flex-col gap-0.5">
             {index > 0 || group.section !== null ? (
-              peek ? (
-                <span className="truncate px-1.5 pt-1.5 text-2xs font-medium text-sidebar-muted-foreground">
-                  {group.section?.name ?? "Bots"}
-                </span>
-              ) : (
-                <span
-                  role="separator"
-                  aria-label={group.section?.name ?? "Bots"}
-                  className="mx-auto my-1 h-px w-6 bg-sidebar-border"
-                />
-              )
+              // One fixed slot for the line and the name, so the peek never moves an avatar.
+              <span
+                role="separator"
+                aria-label={group.section?.name ?? "Bots"}
+                className="flex h-3 shrink-0 items-center px-1.5"
+              >
+                {peek ? (
+                  <span className="truncate text-2xs leading-none font-medium text-sidebar-muted-foreground">
+                    {group.section?.name ?? "Bots"}
+                  </span>
+                ) : (
+                  <span className="mx-auto h-px w-6 bg-sidebar-border" />
+                )}
+              </span>
             ) : null}
             {group.rows.map((row) => {
               const selected = isActive(row);
