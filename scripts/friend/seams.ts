@@ -51,8 +51,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "packages/contracts/src/settings.ts",
-    markers: 4,
-    why: "sidebarBotsLayout client setting; voiceReaderVoice server setting",
+    markers: 5,
+    why: "sidebarBotsLayout client setting; voiceReaderVoice and voiceLanguage server settings",
   },
   { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
   {
@@ -281,8 +281,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/settings/settingsSearch.ts",
-    markers: 6,
-    why: "Bots in sidebar setting and the Bots settings page",
+    markers: 9,
+    why: "Bots in sidebar setting, the Bots and Kanban settings pages, and their moved anchors",
   },
   {
     file: "apps/web/src/rightPanelStore.ts",
@@ -351,7 +351,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/settings/SettingsSidebarNav.tsx",
-    markers: 1,
+    markers: 2,
     why: "Bots settings nav icon",
   },
   {
@@ -463,8 +463,23 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.settings.kanban'",
+    why: "Kanban settings route",
+  },
+  {
+    file: "apps/web/src/components/settings/SettingsScopeSentence.tsx",
+    markers: 1,
+    why: "Bots host settings ignore scope",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/_chat.kanban'",
     why: "generated route for the kanban page",
+  },
+  {
+    file: "apps/web/src/components/settings/settingsSearch.test.ts",
+    markers: 1,
+    why: "old Bots → Kanban links",
   },
 ];
 

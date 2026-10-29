@@ -450,7 +450,7 @@ function KanbanBoardView(props: {
         <View className="px-4">
           <Notice
             icon="info.circle"
-            message="No Linear account yet. Add one in T3 Code on your computer: Settings → Bots → Kanban & Linear. Local boards work without one."
+            message="No Linear account yet. Add one in T3 Code on your computer: Settings → Kanban & Linear. Local boards work without one."
           />
         </View>
       ) : null}

@@ -1,5 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type EnvironmentId, REALTIME_VOICES, type RealtimeVoice } from "@t3tools/contracts";
+import {
+  type BotsHostStatus,
+  type EnvironmentId,
+  REALTIME_VOICES,
+  type RealtimeVoice,
+  VOICE_LANGUAGES,
+  type VoiceLanguage,
+} from "@t3tools/contracts";
 import { PauseIcon, PlayIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -9,27 +16,36 @@ import { searchableSetting } from "../components/settings/settingsSearch";
 import { SettingsRow, SettingsSection } from "../components/settings/settingsLayout";
 import { Button } from "../components/ui/button";
 import { Radio, RadioGroup } from "../components/ui/radio-group";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { reportCommandResult } from "./botsSettingsShared";
 
-/**
- * One reply read by each voice, recorded on the bots host and served over its tailnet. Outside the
- * tailnet a sample does not load, and only the preview is lost.
- */
-const SAMPLES_URL = "https://omarchy.taild92f5b.ts.net/vozes/";
-
-/** The radio value for an unset setting; voices never contain a colon. */
+/** The radio and select value for an unset setting; voices and languages never contain a colon. */
 const SERVER_DEFAULT = "server:default";
 
+const LANGUAGE_LABELS: Readonly<Record<VoiceLanguage, string>> = {
+  en: "English",
+  "pt-BR": "Português (Brasil)",
+};
+
 /**
- * Settings → Bots → Voice. Edits the voice of voice sessions on the bots host. The next read uses
- * it, and an open conversation switches to it once the voice falls quiet.
+ * Settings → Bots → Voice. Edits the voice of voice sessions on the bots host and the language it
+ * speaks. A new voice applies to the next read and to an open conversation once it falls quiet; a
+ * new language applies from the next session. `host` is absent on servers built before it.
  */
 export function VoiceSettingsSection({
   environmentId,
   connected,
+  host,
 }: {
   readonly environmentId: EnvironmentId;
   readonly connected: boolean;
+  readonly host: BotsHostStatus | undefined;
 }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const canUpdate = useAtomValue(serverEnvironment.updateSettings.permissionAtom(environmentId));
@@ -43,18 +59,31 @@ export function VoiceSettingsSection({
   useEffect(() => () => audio.current?.pause(), []);
 
   const current = settings?.voiceReaderVoice ?? null;
+  const currentLanguage = settings?.voiceLanguage ?? null;
+  const samplesUrl = host?.voiceSamplesUrl ?? null;
+  const disabled = !connected || !canUpdate || saving || settings === null;
+  const defaultLanguageLabel = defaultLabel(host && LANGUAGE_LABELS[host.defaultVoiceLanguage]);
 
-  const choose = async (value: string) => {
+  const save = async (
+    patch: { voiceReaderVoice: RealtimeVoice | null } | { voiceLanguage: VoiceLanguage | null },
+    failure: string,
+  ) => {
     if (saving) return;
-    const voiceReaderVoice = REALTIME_VOICES.find((voice) => voice === value) ?? null;
     setSaving(true);
-    const result = await updateSettings({
-      environmentId,
-      input: { patch: { voiceReaderVoice } },
-    });
+    const result = await updateSettings({ environmentId, input: { patch } });
     setSaving(false);
-    reportCommandResult("Could not change the voice", result);
+    reportCommandResult(failure, result);
   };
+  const choose = (value: string) =>
+    save(
+      { voiceReaderVoice: REALTIME_VOICES.find((voice) => voice === value) ?? null },
+      "Could not change the voice",
+    );
+  const chooseLanguage = (value: string) =>
+    save(
+      { voiceLanguage: VOICE_LANGUAGES.find((language) => language === value) ?? null },
+      "Could not change the language",
+    );
 
   const preview = (voice: RealtimeVoice) => {
     audio.current?.pause();
@@ -62,7 +91,9 @@ export function VoiceSettingsSection({
       setPlaying(null);
       return;
     }
-    const sample = new Audio(`${SAMPLES_URL}${voice}.webm`);
+    // Play buttons render only with a samples URL; the check narrows its type.
+    if (samplesUrl === null) return;
+    const sample = new Audio(`${samplesUrl}${voice}.webm`);
     audio.current = sample;
     setPlaying(voice);
     const stop = () => setPlaying((value) => (value === voice ? null : value));
@@ -74,21 +105,48 @@ export function VoiceSettingsSection({
   return (
     <SettingsSection {...searchableSetting("bots-voice")}>
       <SettingsRow
+        title="Spoken language"
+        description={
+          host === undefined
+            ? "Update the bots host to choose the language its voice speaks."
+            : "The language the voice speaks when it reads replies and in voice conversations. Applies from the next session."
+        }
+        control={
+          <Select
+            value={currentLanguage ?? SERVER_DEFAULT}
+            // A host without `host` status predates the setting and would drop it silently.
+            disabled={disabled || host === undefined}
+            onValueChange={(value) => value && void chooseLanguage(value)}
+          >
+            <SelectTrigger aria-label="Spoken language" size="xs" className="min-w-40">
+              <SelectValue>
+                {currentLanguage === null ? defaultLanguageLabel : LANGUAGE_LABELS[currentLanguage]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value={SERVER_DEFAULT}>{defaultLanguageLabel}</SelectItem>
+              {VOICE_LANGUAGES.map((language) => (
+                <SelectItem key={language} value={language}>
+                  {LANGUAGE_LABELS[language]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
         title="Voice"
         description="Reads replies aloud and talks in voice conversations. A new voice applies at once, also to a conversation already open."
       >
         <RadioGroup
           aria-label="Voice"
           value={current ?? SERVER_DEFAULT}
-          disabled={!connected || !canUpdate || saving || settings === null}
+          disabled={disabled}
           onValueChange={(value) => void choose(String(value))}
         >
           <label className="flex min-h-8 items-center gap-3 text-sm">
             <Radio value={SERVER_DEFAULT} />
-            <span>Server default</span>
-            <span className="text-xs text-muted-foreground">
-              T3CODE_VOICE_READER_VOICE, else cove
-            </span>
+            <span>{defaultLabel(host?.defaultVoice)}</span>
           </label>
           {REALTIME_VOICES.map((voice) => (
             <div key={voice} className="flex min-h-8 items-center gap-3">
@@ -96,14 +154,16 @@ export function VoiceSettingsSection({
                 <Radio value={voice} />
                 {voice}
               </label>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={playing === voice ? `Stop ${voice}` : `Listen to ${voice}`}
-                onClick={() => preview(voice)}
-              >
-                {playing === voice ? <PauseIcon /> : <PlayIcon />}
-              </Button>
+              {samplesUrl !== null ? (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={playing === voice ? `Stop ${voice}` : `Listen to ${voice}`}
+                  onClick={() => preview(voice)}
+                >
+                  {playing === voice ? <PauseIcon /> : <PlayIcon />}
+                </Button>
+              ) : null}
             </div>
           ))}
         </RadioGroup>
@@ -111,3 +171,7 @@ export function VoiceSettingsSection({
     </SettingsSection>
   );
 }
+
+/** "Default (cove)" once the host says what its default is; servers built before that say less. */
+const defaultLabel = (value: string | undefined) =>
+  value === undefined ? "Server default" : `Default (${value})`;

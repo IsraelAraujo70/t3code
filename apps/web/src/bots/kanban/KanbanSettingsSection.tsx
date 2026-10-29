@@ -34,7 +34,7 @@ import { BotAvatar } from "../BotAvatar";
 import { BotsField, confirmDestructive, reportCommandResult } from "../botsSettingsShared";
 
 /**
- * Settings → Bots → Kanban: Linear accounts (a name and a personal API key each), which project
+ * Settings → Kanban & Linear: Linear accounts (a name and a personal API key each), which project
  * shows which Linear team, and the bots responsible for each workspace.
  */
 export function KanbanSettingsSection(props: {

@@ -31,6 +31,7 @@ export type SettingsPath =
   | "/settings/scheduled-tasks"
   // Fork (friend): Settings → Bots.
   | "/settings/bots"
+  | "/settings/kanban"
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/connections"
@@ -101,6 +102,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/scheduled-tasks": "Scheduled tasks",
   // Fork (friend): Settings → Bots.
   "/settings/bots": "Bots",
+  "/settings/kanban": "Kanban & Linear",
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
   "/settings/connections": "Environments",
@@ -140,7 +142,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: "Code",
-    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
+    // Fork (friend): kanban configuration belongs with code.
+    paths: [
+      "/settings/projects",
+      "/settings/source-control",
+      "/settings/worktrees",
+      "/settings/kanban",
+    ],
   },
   { heading: "Connections", paths: ["/settings/connections", "/settings/access"] },
   {
@@ -1139,6 +1147,31 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   // Fork (friend): Settings → Bots anchors.
   {
+    id: "bots-host",
+    title: "This bots host",
+    to: "/settings/bots",
+    searchTerms: [
+      "friend dictation openrouter push fcm android webhook public url linear sync host mcp",
+    ],
+    environmentOnly: true,
+  },
+  {
+    id: "bots-guests",
+    title: "Guest bots",
+    to: "/settings/bots",
+    searchTerms: ["friend guest sandbox"],
+    environmentOnly: true,
+  },
+  {
+    id: "kanban",
+    title: "Kanban & Linear",
+    to: "/settings/kanban",
+    searchTerms: [
+      "friend linear tickets issues board projects teams api key responsible bots workspaces",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "bots",
     title: "Bots",
     to: "/settings/bots",
@@ -1164,14 +1197,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "bots-voice",
     title: "Voice",
     to: "/settings/bots",
-    searchTerms: ["friend bots read aloud conversation speak realtime codex arbor cove"],
-    environmentOnly: true,
-  },
-  {
-    id: "bots-linked-environments",
-    title: "Bots on linked environments",
-    to: "/settings/bots",
-    searchTerms: ["friend bots other machines mac linked environments delegate allow"],
+    searchTerms: ["friend bots read aloud conversation speak realtime codex arbor cove language"],
     environmentOnly: true,
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
@@ -1200,6 +1226,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/scheduled-tasks": null,
   // Fork (friend): Bots runs in single-environment scope, which renders at any selection.
   "/settings/bots": null,
+  "/settings/kanban": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
   "/settings/about": null,
@@ -1216,10 +1243,13 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  "/settings/bots", // Fork (friend): its Kanban section moved to /settings/kanban.
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
 const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
+  // Fork (friend): preserve moved bots settings links.
+  kanban: "/settings/kanban",
   "authorized-clients": "/settings/access",
   "legacy-features": "/settings/labs",
   "text-generation": "/settings/threads",

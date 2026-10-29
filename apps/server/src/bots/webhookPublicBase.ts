@@ -35,7 +35,7 @@ function webhookHookBaseUrl(input: {
 }
 
 /** Reads the env once; an invalid value is ignored with a warning. */
-const readWebhookPublicBaseUrl = Effect.gen(function* () {
+export const readWebhookPublicBaseUrl = Effect.gen(function* () {
   const raw = yield* Config.String(WEBHOOK_PUBLIC_BASE_URL_ENV).pipe(
     Config.withDefault(""),
     Effect.orElseSucceed(() => ""),

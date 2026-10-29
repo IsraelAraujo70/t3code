@@ -126,7 +126,7 @@ export function createGoogleForwarder({
       return {
         error:
           body?.error === "invalid_grant"
-            ? "O acesso ao Google expirou ou foi revogado. Peça ao Israel para refazer o login."
+            ? "O acesso ao Google expirou ou foi revogado. Peça para quem te convidou refazer o login."
             : "Não consegui renovar o acesso ao Google.",
         status: 502,
       };

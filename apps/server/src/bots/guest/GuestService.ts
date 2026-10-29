@@ -413,7 +413,8 @@ const make = Effect.gen(function* () {
       });
       return yield* new GuestApiError({
         status: 409,
-        message: "Este assistente ainda não está pronto. Peça para o Israel dar uma olhada.",
+        message:
+          "Este assistente ainda não está pronto. Peça para quem te convidou dar uma olhada.",
       });
     }
   });

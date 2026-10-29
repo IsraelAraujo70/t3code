@@ -158,7 +158,7 @@ function PageTitle() {
 
 function AccountsLink() {
   return (
-    <Button size="xs" variant="ghost-muted" render={<Link to="/settings/bots" hash="kanban" />}>
+    <Button size="xs" variant="ghost-muted" render={<Link to="/settings/kanban" />}>
       <SettingsIcon className="size-3.5" />
       Accounts & links
     </Button>

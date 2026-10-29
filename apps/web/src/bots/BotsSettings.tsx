@@ -28,6 +28,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../components/settings/settingsLayout";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
   Empty,
@@ -41,9 +42,8 @@ import { Textarea } from "../components/ui/textarea";
 import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
+import { HostStatusSection } from "./HostStatusSection";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
-import { KanbanSettingsSection } from "./kanban/KanbanSettingsSection";
-import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 import {
   confirmDestructive,
   modelLabel,
@@ -67,9 +67,12 @@ export function BotsSettings() {
             <EmptyMedia variant="icon">
               <BotIcon />
             </EmptyMedia>
-            <EmptyTitle>Bots host not connected</EmptyTitle>
+            <EmptyTitle>No bots host connected</EmptyTitle>
             <EmptyDescription>
-              Bots live on one machine. Connect to it to manage them.
+              Bots are long-lived agents with a role, a model, their own memories and one ongoing
+              conversation each. They live on one machine: start its T3 server with{" "}
+              <code className="font-mono text-xs">T3CODE_BOTS_HOST=1</code>, then connect to it
+              here.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -103,9 +106,26 @@ function BotsEnvironmentSettings({
   const [editor, setEditor] = useState<{ readonly botId: BotId | null } | null>(null);
   const editedBot =
     editor?.botId != null ? (directory?.bots.find((bot) => bot.id === editor.botId) ?? null) : null;
+  const guestBotIds = directory?.guestBotIds ?? [];
+  const ownBots = directory?.bots.filter((bot) => !guestBotIds.includes(bot.id)) ?? [];
+  const guestBots = directory?.bots.filter((bot) => guestBotIds.includes(bot.id)) ?? [];
+  const linkedIds = directory?.linkedEnvironmentBotIds ?? [];
+  const row = (bot: BotDirectoryEntry) => (
+    <BotRow
+      key={bot.id}
+      environmentId={environmentId}
+      connected={connected}
+      bot={bot}
+      linkedEnvironments={linkedIds.includes(bot.id)}
+      onEdit={() => setEditor({ botId: bot.id })}
+    />
+  );
 
   return (
     <SettingsPageContainer>
+      <p className="-mb-4 text-xs text-muted-foreground">
+        Bots and these settings live on {environmentLabel}.
+      </p>
       <SettingsSection
         {...searchableSetting("bots")}
         headerAction={
@@ -129,21 +149,19 @@ function BotsEnvironmentSettings({
           <SettingsRow title="Could not load bots" description={error} role="alert" />
         ) : directory === null ? (
           <SettingsRow title="Loading bots…" role="status" />
-        ) : directory.bots.length === 0 ? (
+        ) : ownBots.length === 0 ? (
           <SettingsRow
             title="No bots yet"
-            description="Create one to give it a role and a model."
+            description="A bot keeps one conversation, its own memories and a standing role. Give it a name, a role and a model."
+            control={
+              <Button size="xs" disabled={!canCreate} onClick={() => setEditor({ botId: null })}>
+                <PlusIcon className="size-3" />
+                Create a bot
+              </Button>
+            }
           />
         ) : (
-          directory.bots.map((bot) => (
-            <BotRow
-              key={bot.id}
-              environmentId={environmentId}
-              connected={connected}
-              bot={bot}
-              onEdit={() => setEditor({ botId: bot.id })}
-            />
-          ))
+          ownBots.map(row)
         )}
       </SettingsSection>
       {connected && directory !== null ? (
@@ -153,21 +171,21 @@ function BotsEnvironmentSettings({
           aboutMe={directory.aboutMe}
         />
       ) : null}
-      <VoiceSettingsSection environmentId={environmentId} connected={connected} />
-      {connected && directory !== null ? (
-        <LinkedEnvironmentsSection
-          environmentId={environmentId}
-          connected={connected}
-          directory={directory}
-        />
+      <VoiceSettingsSection
+        environmentId={environmentId}
+        connected={connected}
+        host={directory?.host}
+      />
+      {guestBots.length > 0 ? (
+        <SettingsSection {...searchableSetting("bots-guests")}>
+          <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
+            Each runs in a sandbox for a guest, who talks to it from the guest app. Guests are
+            created on the bots host with the guest CLI.
+          </p>
+          {guestBots.map(row)}
+        </SettingsSection>
       ) : null}
-      {connected ? (
-        <KanbanSettingsSection
-          environmentId={environmentId}
-          connected={connected}
-          bots={directory?.bots ?? []}
-        />
-      ) : null}
+      {directory?.host ? <HostStatusSection status={directory.host} bots={directory.bots} /> : null}
       {editor ? (
         <BotEditorDialog
           key={editor.botId ?? "new"}
@@ -175,6 +193,8 @@ function BotsEnvironmentSettings({
           connected={connected}
           bot={editedBot}
           editing={editor.botId !== null}
+          linkedEnvironments={editor.botId !== null && linkedIds.includes(editor.botId)}
+          guest={editor.botId !== null && guestBotIds.includes(editor.botId)}
           onClose={() => setEditor(null)}
         />
       ) : null}
@@ -182,15 +202,18 @@ function BotsEnvironmentSettings({
   );
 }
 
+/** One bot with its memories and actions; guest bots use it too, so actions added here reach both. */
 function BotRow({
   environmentId,
   connected,
   bot,
+  linkedEnvironments,
   onEdit,
 }: {
   readonly environmentId: EnvironmentId;
   readonly connected: boolean;
   readonly bot: BotDirectoryEntry;
+  readonly linkedEnvironments: boolean;
   readonly onEdit: () => void;
 }) {
   const providers =
@@ -234,6 +257,16 @@ function BotRow({
         <span className="flex items-center gap-2">
           <BotAvatar botId={bot.id} size={20} />
           {bot.name}
+          {bot.canManageBots ? (
+            <Badge variant="outline" size="sm">
+              Manages bots
+            </Badge>
+          ) : null}
+          {linkedEnvironments ? (
+            <Badge variant="outline" size="sm">
+              Linked environments
+            </Badge>
+          ) : null}
         </span>
       }
       description={modelLabel(providers, bot.model)}

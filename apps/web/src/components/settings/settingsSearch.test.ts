@@ -320,6 +320,10 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
     expect(movedSettingsPath("/settings/beta", "")).toBe("/settings/labs");
+    // Fork (friend): the Kanban section left Bots; Bots' own anchors stay.
+    expect(movedSettingsPath("/settings/bots", "kanban")).toBe("/settings/kanban");
+    expect(movedSettingsPath("/settings/bots", "bots-voice")).toBeNull();
+    expect(movedSettingsPath("/settings/bots", "")).toBeNull();
   });
 
   it("leaves current pages alone", () => {
