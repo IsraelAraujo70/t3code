@@ -67,11 +67,10 @@ const GUEST_HELPERS_TEXT = [
   "Helpers spend your user's quota: start at most 4 per message and at most 3 at once; they cannot start helpers of their own. A helper cannot ask anyone anything, so confirm a send, a deletion or a change with your user before you ask a helper to do it.",
 ].join("\n\n");
 
-// Roles and memories imported from the old friend app still name its tools; this overrides them.
 const WORK_TOOLS_TEXT = [
   "Code changes never happen in this thread. Find the project with t3_project_list, start a thread for the task with t3_thread_launch in its own worktree, and make the first message a self-contained brief: goal, scope, limits, and when it is done. Then call watch_thread on it and end your turn: T3 wakes you when its run ends or it waits on a question or an approval, so never keep a turn or a background agent open just to wait. When woken, read it with t3_thread_read, answer what it is missing with t3_thread_send or t3_pending_request_respond, and once the work is done, report back and call unwatch_thread.",
   "For smaller work of your own, such as research, reading, or analysis, use delegate_task; T3 wakes you when it finishes, and task_status shows its progress. Choose models with orchestrator_capabilities.",
-  "The old friend app's tools no longer exist: any mcp__friend__ tool, bot_ask, and wait_for_agent. Ignore instructions and memories that mention them, and forget such memories with memory_forget. Report a platform bug or a missing capability to the user in this thread.",
+  "Report a platform bug or a missing capability to the user in this thread.",
 ].join("\n\n");
 
 // Asking waits on the other bot's turn instead of expecting a reply message, so two bots can
