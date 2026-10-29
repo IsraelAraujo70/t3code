@@ -35,6 +35,7 @@ import { botsEnvironment, useBotDirectory, useBotsEnvironmentId } from "../state
 import { useAtomCommand } from "../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../components/ui/tooltip";
 import { BotAvatar } from "./BotAvatar";
 import {
   applyArrangement,
@@ -313,15 +314,10 @@ function GroupBody(props: { group: BotGroup; collapsed: boolean; children: React
 
 type Creating = { readonly moveBot: BotId | null };
 
-/**
- * The Bots block of the sidebar: the user's sections in their order, then bots in no section.
- * Inside a group, bots that need the user lead, then working ones, then settled ones, each in the
- * user's order; settled bots stay listed, dimmed. Rows drag between and within groups, section
- * headers drag to reorder sections, and right-click offers settle, reopen, and moving. The "tabs"
- * layout hides the collapsible header because the tab already names the list.
- */
+/** Bot directory with shared menus, rendered as a list or permanent avatar rail. */
 export function BotsSidebarSection(props: {
   collapsible: boolean;
+  rail?: boolean;
   threads: ReadonlyArray<BotThreadShell>;
   activeThreadRef: ScopedThreadRef | null;
   onOpenThread: (threadRef: ScopedThreadRef) => void;
@@ -525,6 +521,152 @@ export function BotsSidebarSection(props: {
   // Without sections the default list needs no header: it is the whole list.
   const showGroupHeaders = shown !== null && shown.sections.length > 0;
 
+  if (props.rail)
+    return (
+      <nav
+        aria-label="Bots"
+        className="flex h-full w-[52px] shrink-0 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto scrollbar-gutter-both border-r border-sidebar-border py-2"
+      >
+        {needsYou > 0 ? (
+          <span
+            className="rounded-full bg-warning-surface px-2 py-0.5 text-xs font-semibold text-warning-foreground"
+            aria-label={`${needsYou} bots need you`}
+          >
+            {needsYou}
+          </span>
+        ) : null}
+        {groups.map((group) => (
+          <div key={botGroupKey(group.section)} className="flex w-full flex-col items-center gap-1">
+            <button
+              type="button"
+              aria-label={group.section?.name ?? "Bots without section"}
+              className="my-1 h-2 w-7 border-t border-sidebar-border"
+              onContextMenu={(event) => {
+                event.preventDefault();
+                if (group.section)
+                  void showSectionMenu(group.section, { x: event.clientX, y: event.clientY });
+              }}
+            />
+            {group.rows
+              .toSorted(
+                (a, b) =>
+                  (shown?.bots.findIndex((bot) => bot.id === a.bot.id) ?? 0) -
+                  (shown?.bots.findIndex((bot) => bot.id === b.bot.id) ?? 0),
+              )
+              .map((row) => {
+                const selected =
+                  activeThreadRef?.environmentId === row.threadRef.environmentId &&
+                  activeThreadRef?.threadId === row.threadRef.threadId;
+                return (
+                  <Tooltip key={row.bot.id}>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          data-bot-rail
+                          aria-label={row.bot.name}
+                          aria-current={selected ? "page" : undefined}
+                          className={cn(
+                            "relative flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                            selected && "bg-sidebar-row-selected ring-1 ring-inset ring-primary",
+                            row.status.kind === "settled" && "opacity-50",
+                          )}
+                          onClick={() => props.onOpenThread(row.threadRef)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+                            event.preventDefault();
+                            const buttons = Array.from(
+                              event.currentTarget
+                                .closest("nav")
+                                ?.querySelectorAll<HTMLButtonElement>("[data-bot-rail]") ?? [],
+                            );
+                            buttons[
+                              (buttons.indexOf(event.currentTarget) +
+                                (event.key === "ArrowDown" ? 1 : -1) +
+                                buttons.length) %
+                                buttons.length
+                            ]?.focus();
+                          }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            void showBotMenu(row, { x: event.clientX, y: event.clientY });
+                          }}
+                        />
+                      }
+                    >
+                      {selected ? (
+                        <span className="absolute left-0 h-5 w-0.5 rounded-full bg-primary" />
+                      ) : null}
+                      <span className="relative">
+                        <BotAvatar
+                          botId={row.bot.id}
+                          size={34}
+                          alert={
+                            row.status.kind === "needs-you" && row.status.attention === "request"
+                          }
+                        />
+                        <StatusDot row={row} />
+                        {row.status.kind === "needs-you" && row.status.attention !== "unseen" ? (
+                          <span className="absolute -right-1 -top-1 rounded-full bg-warning-surface px-1 text-xs font-bold text-warning-foreground">
+                            !
+                          </span>
+                        ) : null}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipPopup side="right">
+                      <strong>{row.bot.name}</strong>
+                      <div>{row.preview ?? row.status.kind}</div>
+                      {row.activityAt ? <div>{compactTimeLabel(row.activityAt)}</div> : null}
+                    </TooltipPopup>
+                  </Tooltip>
+                );
+              })}
+          </div>
+        ))}
+        {error ? (
+          <span aria-label={error} className="text-warning-foreground">
+            !
+          </span>
+        ) : null}
+        <button
+          type="button"
+          aria-label="Create bot"
+
+          onClick={openBotsSettings}
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sidebar-muted-foreground hover:bg-sidebar-row-hover"
+        >
+          <PlusIcon className="size-4" />
+        </button>
+        {canEditSections ? (
+          <button
+            type="button"
+
+            aria-label="New section"
+            onClick={() => setCreating({ moveBot: null })}
+            className="text-xs text-sidebar-muted-foreground"
+          >
+            •••
+          </button>
+        ) : null}
+        {creating !== null || renamingId !== null ? (
+          <div className="fixed bottom-16 left-16 z-50 w-48 rounded-lg border border-sidebar-border bg-sidebar p-2">
+            <SectionNameInput
+              initial={shown?.sections.find((section) => section.id === renamingId)?.name ?? ""}
+              onCancel={() => {
+                setCreating(null);
+                setRenamingId(null);
+              }}
+              onSubmit={(name) => {
+                if (renamingId && environmentId) {
+                  void renameSection({ environmentId, input: { sectionId: renamingId, name } });
+                  setRenamingId(null);
+                } else void submitNewSection(name);
+              }}
+            />
+          </div>
+        ) : null}
+      </nav>
+    );
   return (
     <section aria-label="Bots" className="flex flex-col gap-px">
       {props.collapsible ? (
