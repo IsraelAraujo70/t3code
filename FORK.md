@@ -33,6 +33,17 @@ bots RPCs and memory tools, and does not advertise the `bots` environment capabi
 bots from the environment that advertises it, so a laptop connected to the host shows the host's
 bots. See [`apps/server/src/bots/BotsHost.ts`](apps/server/src/bots/BotsHost.ts).
 
+## Where the fork's settings live
+
+What a user chooses lives in Settings; what holds a secret or describes the machine stays in the
+host's environment. Settings → Bots edits the bots host whatever the settings scope says (it shows no
+scope bar): the bots, About you, Voice, guest bots (only when the host has some), and This host, a
+read-only list of the env-only features (dictation, Android push, public webhook URL, Linear sync,
+host MCP servers) with what turns each on. The host reads them once at startup into the bot
+directory's `host` field ([`hostStatus.ts`](apps/server/src/bots/hostStatus.ts)), never a secret, a
+token or a token path. Settings → Kanban & Linear (under Code) holds the kanban. `T3CODE_BOTS_HOST`
+stays an env switch: it decides which machine opens `bots.sqlite`, so no client may flip it.
+
 ## Dictation
 
 A server started with `OPENROUTER_API_KEY` advertises the `dictation` capability, whether or not it
@@ -50,7 +61,7 @@ provider instance's ChatGPT login. It uses only WebRTC, because the WebSocket/PC
 need an API key. Clients get two entry points (web, desktop, Android):
 
 - **Listen to a reply.** Each assistant reply has a listen button in its action row. Pressing it
-  speaks that reply whole in pt-BR, describing code and tables instead of reading them. The client
+  speaks that reply whole in the voice's language, describing code and tables instead of reading them. The client
   sends only the thread and message ids; the server loads the text and refuses anything but an
   assistant message of that thread.
 - **Talk to a bot.** A bot thread's composer has a voice button next to dictation. While a
@@ -82,15 +93,20 @@ starts by itself stay silent (`voiceAudible` in
 reach no agent, because the realtime thread's Codex cannot run turns.
 
 Each session runs its own `codex app-server` and realtime session, closed when the session ends, so
-nothing stays open while idle. Settings → Bots → Voice picks the voice on the bots host
-(`voiceReaderVoice` in the server settings, one of the nine v3 voices Codex 0.162 offers). The
+nothing stays open while idle. Settings → Bots → Voice picks the voice and the spoken language on
+the bots host (`voiceReaderVoice` and `voiceLanguage` in the server settings; the voice is one of
+the nine v3 voices Codex 0.162 offers). The
 next read uses a new choice. Realtime fixes its voice at the start, so an open conversation swaps
 its realtime session instead: once the voice is quiet the client opens a new peer and the server
 starts realtime in the new voice for it, keeping what the user said and the replies still to speak
 (`bots.voice.reconnect`). Clients built before this keep their voice until they hang up. Left on "Server default",
 `T3CODE_VOICE_READER_VOICE` picks it (default `cove`, Codex's own); a voice the installed Codex does
-not offer for v3 falls back to Codex's default with a warning in the log. The picker's previews load
-from the bots host's tailnet (`/vozes/`). The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
+not offer for v3 falls back to Codex's default with a warning in the log. A language is a whole
+script, both prompts and every framing text the server appends
+([`voiceLanguage.ts`](apps/server/src/bots/voice/voiceLanguage.ts)), fixed for a session: `pt-BR`
+is the probed one, `en` a translation not yet judged with `voiceProbe.ts`. Unset, the language
+comes from `T3CODE_VOICE_LANGUAGE`, else English. The picker offers previews only when the host
+sets `T3CODE_VOICE_SAMPLES_URL` to a directory serving `<voice>.webm`. The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
 is experimental in Codex. See [`apps/server/src/bots/voice/`](apps/server/src/bots/voice/)
 and `VoiceSessionRpc` in [`packages/contracts/src/bots.ts`](packages/contracts/src/bots.ts). On
 Android, `plugins/withFriendVoiceReaderWebrtc.cjs` plays the voice as media rather than as a call.
@@ -245,7 +261,7 @@ whatever the bots host publishes: writing that directory on omarchy is shipping 
 ## Kanban and Linear
 
 The sidebar footer's Kanban button (after Pull Requests, only while a bots host is connected) opens a
-board of tickets per project. A project linked to a Linear team (Settings → Bots → Kanban & Linear)
+board of tickets per project. A project linked to a Linear team (Settings → Kanban & Linear)
 shows that team's issues with its workflow states as columns; any other project has a local board
 with five columns. Dragging a card moves the issue in Linear first. Linear accounts are personal API
 keys kept in the server secret store, never sent to clients. The bots host has no public URL, so it
@@ -281,8 +297,9 @@ Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).
 Upstream's linked environments let agents here work on another machine; the owner's Mac is linked
 from the bots host with full access, which the Mac does not fence. The fork's
 [`BotLinkAccess`](apps/server/src/bots/linkAccess.ts) is therefore the only barrier. A bot's
-conversation may use links only when the user turned it on in Settings → Bots → Linked
-environments (table `linked_environment_bots` in `bots.sqlite`, empty at first) and it belongs to
+conversation may use links only when the user turned it on in the bot's editor (Settings → Bots,
+"May work on linked environments"; table `linked_environment_bots` in `bots.sqlite`, empty at
+first) and it belongs to
 no guest; a guest's bot is refused even when its row is there, and the server refuses to add one.
 Only the owner's `bots.bot.linkedEnvironments` RPC (`orchestration:operate`) writes the table: no
 MCP tool, `bot_update` included, can. Any other thread may when its parent, its root and every
