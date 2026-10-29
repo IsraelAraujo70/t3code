@@ -1,8 +1,13 @@
+import {
+  dateFromIsoDay,
+  formatKanbanDate,
+  personDisplay,
+  statusDisplay,
+} from "@t3tools/client-runtime/kanban-display";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import {
-  formatKanbanDate,
   KanbanLabelList,
   KanbanTicketMenu,
   responsibleBots,
@@ -10,7 +15,6 @@ import {
   ticketOpenHandlers,
   type KanbanTicketViewProps,
 } from "./KanbanCard";
-import { personDisplay, ticketStatusDisplay } from "./kanbanLookups";
 import {
   KanbanAvatar,
   KanbanChip,
@@ -25,7 +29,7 @@ import {
 /** One ticket as a dense list line: priority, identifier, status, title, then its properties. */
 export const KanbanListRow = memo(function KanbanListRow(props: KanbanTicketViewProps) {
   const { ticket, lookups, properties: show } = props;
-  const status = ticketStatusDisplay(lookups, ticket);
+  const status = statusDisplay(lookups, ticket.status);
   const linearProject =
     ticket.linearProjectId === null ? undefined : lookups.projectsById.get(ticket.linearProjectId);
   const labels = show.has("labels") ? ticketLabels(ticket, lookups) : [];
@@ -86,12 +90,16 @@ export const KanbanListRow = memo(function KanbanListRow(props: KanbanTicketView
         ) : null}
         {show.has("assignee") ? (
           <KanbanAvatar
-            person={ticket.assigneeId === null ? null : personDisplay(lookups, ticket.assigneeId)}
+            person={
+              ticket.assigneeId === null
+                ? null
+                : personDisplay(lookups, ticket.assigneeId, ticket.assigneeName)
+            }
           />
         ) : null}
         {show.has("created") ? (
           <span className="w-12 text-right text-2xs text-muted-foreground">
-            {formatKanbanDate(new Date(ticket.createdAt))}
+            {formatKanbanDate(new Date(ticket.createdAt), dateFromIsoDay(props.today))}
           </span>
         ) : null}
         <span className="opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100">

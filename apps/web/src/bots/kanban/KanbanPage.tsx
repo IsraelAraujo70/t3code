@@ -1,3 +1,4 @@
+import { buildKanbanLookups, isoDay, personDisplay } from "@t3tools/client-runtime/kanban-display";
 import { useAtomValue } from "@effect/atom-react";
 import {
   buildKanbanView,
@@ -82,9 +83,9 @@ import { KanbanBoard, KanbanNewTicketInput } from "./KanbanBoard";
 import type { KanbanThreadOption, KanbanTicketViewProps } from "./KanbanCard";
 import { KanbanDisplayMenu } from "./KanbanDisplayMenu";
 import { KanbanFilterBar, type KanbanAiFilterOutcome } from "./KanbanFilterBar";
+import { minuteEpoch } from "./kanbanIssue.logic";
 import { KanbanIssueView } from "./KanbanIssueView";
 import { KanbanList } from "./KanbanList";
-import { buildKanbanLookups, personDisplay } from "./kanbanLookups";
 import {
   applyPendingDrops,
   draftOf,
@@ -221,7 +222,8 @@ function KanbanWorkspace(props: {
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const projectTitles = new Map(projects.map((project) => [project.id, project.title]));
   const shells = useThreadShells();
-  const nowMinute = useNowMinute();
+  const now = minuteEpoch(useNowMinute());
+  const today = isoDay(new Date(now));
 
   const [initialRemembered] = useState((): KanbanRemembered => ({
     project: getLocalStorageItem(LEGACY_FILTER_KEY, LegacyFilter)?.projectId ?? null,
@@ -283,7 +285,7 @@ function KanbanWorkspace(props: {
       .map((shell) => [shell.id, shell]),
   );
   const context: KanbanViewContext = {
-    now: Date.parse(`${nowMinute}:00Z`),
+    now,
     threadStatus: (threadId) => {
       const shell = threadsById.get(threadId);
       return shell === undefined ? null : threadCardStatus(shell);
@@ -533,6 +535,7 @@ function KanbanWorkspace(props: {
       environmentId,
       ticket,
       lookups,
+      today,
       properties,
       workspaceBots: workspaceBots.get(workspaceOf(snapshot, ticket)) ?? NO_BOTS,
       threads: links?.threads ?? NO_THREADS,

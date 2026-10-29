@@ -1,3 +1,4 @@
+import { isoDay } from "@t3tools/client-runtime/kanban-display";
 import {
   KANBAN_DEFAULT_VIEW_CONFIG,
   KANBAN_LIMITS,
@@ -9,7 +10,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   configEquals,
   datePresets,
-  isoDay,
   mergeClauses,
   removeClause,
   setClauseOp,

@@ -1,3 +1,4 @@
+import { isoDay, type KanbanLookups } from "@t3tools/client-runtime/kanban-display";
 /**
  * The kanban's Linear-style filters: an "Add filter" menu (fields, values, dates, flags, AI
  * filter), one chip per clause, and the issue search. Controlled: the page owns the filters.
@@ -68,7 +69,6 @@ import { weekStartsOn } from "~/timestampFormat";
 
 import {
   datePresets,
-  isoDay,
   mergeClauses,
   removeClause,
   replaceClause,
@@ -82,7 +82,6 @@ import {
   toggleSetValue,
   type KanbanDateOp,
 } from "./kanbanFilterEdit";
-import type { KanbanLookups } from "./kanbanLookups";
 import { KanbanGroupIconView } from "./KanbanPrimitives";
 
 export type KanbanAiFilterOutcome =

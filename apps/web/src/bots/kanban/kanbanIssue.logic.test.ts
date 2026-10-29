@@ -1,12 +1,13 @@
+import { buildKanbanLookups } from "@t3tools/client-runtime/kanban-display";
 import {
   BotId,
+  ProviderInstanceId,
+  ThreadId,
   KanbanTicketId,
   LinearAccountId,
   linearWorkspaceId,
   LOCAL_KANBAN_WORKSPACE_ID,
   ProjectId,
-  type KanbanActivity,
-  type KanbanComment,
   type KanbanLabel,
   type KanbanSnapshot,
   type KanbanTicket,
@@ -16,18 +17,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   assigneeOptions,
   cycleOptions,
-  dateFromKey,
-  dateKey,
-  formatDueDate,
-  isOverdue,
-  issueTimeline,
-  labelOptions,
   minuteEpoch,
   nextLabelColor,
   parsePullRequestUrl,
   relativeTimeLabel,
-  statusOptions,
-  statusPresentation,
 } from "./kanbanIssue.logic";
 
 const ACCOUNT = LinearAccountId.make("la_1");
@@ -155,42 +148,6 @@ const snapshot: KanbanSnapshot = {
   allWorkspacesBotIds: [],
 };
 
-const activity = (id: string, createdAt: string): KanbanActivity => ({
-  id,
-  actorId: null,
-  actorName: "Ann",
-  actorAvatarUrl: null,
-  text: "changed status",
-  createdAt,
-});
-
-const comment = (id: string, createdAt: string): KanbanComment => ({
-  id,
-  authorId: null,
-  authorName: "Ann",
-  authorAvatarUrl: null,
-  body: "hi",
-  parentId: null,
-  createdAt,
-  editedAt: null,
-  deletable: false,
-});
-
-describe("issueTimeline", () => {
-  it("merges history and comments oldest first, history first on a tie", () => {
-    const timeline = issueTimeline(
-      [activity("a1", "2026-10-01T00:00:00.000Z"), activity("a2", "2026-10-03T00:00:00.000Z")],
-      [comment("c1", "2026-10-02T00:00:00.000Z"), comment("c2", "2026-10-03T00:00:00.000Z")],
-    );
-    expect(timeline.map((entry) => entry.id)).toEqual(["a:a1", "c:c1", "a:a2", "c:c2"]);
-  });
-
-  it("keeps an id shared by a history line and a comment distinct", () => {
-    const timeline = issueTimeline([activity("x", at)], [comment("x", at)]);
-    expect(new Set(timeline.map((entry) => entry.id)).size).toBe(2);
-  });
-});
-
 describe("relativeTimeLabel", () => {
   it("reads recent times relative to now", () => {
     expect(relativeTimeLabel("2026-10-24T11:59:30.000Z", NOW)).toBe("now");
@@ -218,28 +175,6 @@ describe("minuteEpoch", () => {
   });
 });
 
-describe("due dates", () => {
-  it("is overdue only after the due day", () => {
-    const now = new Date(2026, 9, 24, 15).getTime();
-    expect(isOverdue("2026-10-23", now)).toBe(true);
-    expect(isOverdue("2026-10-24", now)).toBe(false);
-    expect(isOverdue("2026-10-25", now)).toBe(false);
-    expect(isOverdue(null, now)).toBe(false);
-  });
-
-  it("round-trips a calendar day", () => {
-    expect(dateKey(dateFromKey("2026-03-09"))).toBe("2026-03-09");
-    expect(dateKey(new Date(2026, 0, 5, 23, 59))).toBe("2026-01-05");
-  });
-
-  it("shows a stored due date that is not a real day as written", () => {
-    const format = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format;
-    expect(formatDueDate("2026-10-24", format)).toBe("Oct 24");
-    expect(formatDueDate("2026-99-99", format)).toBe("2026-99-99");
-    expect(formatDueDate("2026-02-30", format)).toBe("2026-02-30");
-  });
-});
-
 describe("parsePullRequestUrl", () => {
   it("reads the repository and number of a GitHub pull request", () => {
     expect(parsePullRequestUrl("https://github.com/Moneria-Brasil/moneria-api/pull/191")).toEqual({
@@ -259,71 +194,46 @@ describe("parsePullRequestUrl", () => {
   });
 });
 
-describe("statusPresentation", () => {
-  const statesById = new Map(snapshot.states.map((state) => [state.id, state]));
-
-  it("draws a Linear state with its own color and a fuller fill for review", () => {
-    expect(statusPresentation({ kind: "linear", stateId: "s-review" }, statesById)).toEqual({
-      name: "In Review",
-      stateType: "started",
-      color: "#00f",
-      progress: 0.75,
-    });
-    expect(statusPresentation({ kind: "linear", stateId: "missing" }, statesById)).toBeNull();
-  });
-
-  it("draws a local state in its category", () => {
-    expect(statusPresentation({ kind: "local", state: "done" }, statesById)).toMatchObject({
-      name: "Done",
-      stateType: "completed",
-    });
-  });
-});
-
 describe("pickers", () => {
-  it("offers the team's states in board order, or the local ones", () => {
-    expect(statusOptions(snapshot, ticket())).toEqual([
-      { kind: "linear", stateId: "s-todo" },
-      { kind: "linear", stateId: "s-doing" },
-      { kind: "linear", stateId: "s-review" },
-      { kind: "linear", stateId: "s-done" },
-    ]);
-    expect(statusOptions(snapshot, ticket({ linear: null }))).toHaveLength(5);
-  });
-
   it("assigns among the organization's active people, me first", () => {
-    expect(assigneeOptions(snapshot, ticket(), [], "Owner").map((option) => option.id)).toEqual([
-      "me-id",
-      "ann",
-      "zed",
-    ]);
+    expect(
+      assigneeOptions(snapshot, ticket(), buildKanbanLookups(snapshot, [], "Owner"), []).map(
+        (option) => option.id,
+      ),
+    ).toEqual(["me-id", "ann", "zed"]);
     const assignedToGone = ticket({ assigneeId: "gone" });
-    expect(assigneeOptions(snapshot, assignedToGone, [], "Owner").map((o) => o.id)).toContain(
-      "gone",
-    );
+    expect(
+      assigneeOptions(snapshot, assignedToGone, buildKanbanLookups(snapshot, [], "Owner"), []).map(
+        (o) => o.id,
+      ),
+    ).toContain("gone");
   });
 
   it("assigns a local ticket to the owner or a bot", () => {
-    const bot = { id: BotId.make("b1"), name: "Ada" };
+    const bot = {
+      id: BotId.make("b1"),
+      name: "Ada",
+      role: "",
+      model: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+      homeGeneration: 1,
+      sectionId: null,
+      position: 0,
+      canManageBots: false,
+      createdAt: at,
+      updatedAt: at,
+      homeThreadId: ThreadId.make("t1"),
+      memories: [],
+    };
+    const lookups = buildKanbanLookups(snapshot, [], "Owner");
+    const localLookups = buildKanbanLookups(snapshot, [bot], lookups.ownerName);
     expect(
-      assigneeOptions(snapshot, ticket({ linear: null }), [bot], "Owner").map((option) => [
+      assigneeOptions(snapshot, ticket({ linear: null }), localLookups, [bot]).map((option) => [
         option.id,
         option.name,
       ]),
     ).toEqual([
       ["owner", "Owner"],
       ["bot:b1", "Ada"],
-    ]);
-  });
-
-  it("offers the team's and workspace's labels but not groups or other teams'", () => {
-    expect(labelOptions(snapshot, ticket()).map((option) => option.id)).toEqual([
-      "team-bug",
-      "org-wide",
-      "child",
-    ]);
-    expect(labelOptions(snapshot, ticket({ linear: null })).map((option) => option.id)).toEqual([
-      "local-a",
     ]);
   });
 

@@ -1,3 +1,12 @@
+import {
+  dateFromIsoDay,
+  formatDueDate,
+  formatKanbanDate,
+  isOverdue,
+  personDisplay,
+  statusDisplay,
+  type KanbanLookups,
+} from "@t3tools/client-runtime/kanban-display";
 import { useDraggable } from "@dnd-kit/core";
 import { KANBAN_PRIORITY_LABELS } from "@t3tools/client-runtime/kanban-board";
 import type {
@@ -40,8 +49,6 @@ import {
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { formatDueDate, isOverdue } from "./kanbanIssue.logic";
-import { personDisplay, ticketStatusDisplay, type KanbanLookups } from "./kanbanLookups";
 import {
   KanbanAvatar,
   KanbanChip,
@@ -66,6 +73,8 @@ export interface KanbanTicketViewProps {
   readonly environmentId: EnvironmentId;
   readonly ticket: KanbanTicket;
   readonly lookups: KanbanLookups;
+  /** Today as a local `YYYY-MM-DD`; changes once a day, so memoized cards keep their render. */
+  readonly today: string;
   readonly properties: ReadonlySet<KanbanDisplayProperty>;
   /** The ticket's workspace bots, shown when the ticket has no bot of its own. */
   readonly workspaceBots: ReadonlyArray<BotDirectoryEntry>;
@@ -83,23 +92,6 @@ export interface KanbanTicketViewProps {
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly onDelete: () => void;
 }
-
-const SHORT_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
-const SHORT_DATE_WITH_YEAR = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-/** "Oct 26", with the year when it is not this year. */
-export function formatKanbanDate(date: Date): string {
-  return date.getFullYear() === new Date().getFullYear()
-    ? SHORT_DATE.format(date)
-    : SHORT_DATE_WITH_YEAR.format(date);
-}
-
-const isTicketOverdue = (ticket: KanbanTicket) =>
-  ticket.closedAt === null && isOverdue(ticket.dueDate, Date.now());
 
 /** The ticket's own bot when it has one, else its workspace's bots. */
 export function responsibleBots(
@@ -271,8 +263,12 @@ export const KanbanCard = memo(function KanbanCard(
     data: { ticketId: ticket.id },
     disabled: !props.canEdit,
   });
-  const status = ticketStatusDisplay(lookups, ticket);
-  const assignee = ticket.assigneeId === null ? null : personDisplay(lookups, ticket.assigneeId);
+  const now = dateFromIsoDay(props.today);
+  const status = statusDisplay(lookups, ticket.status);
+  const assignee =
+    ticket.assigneeId === null
+      ? null
+      : personDisplay(lookups, ticket.assigneeId, ticket.assigneeName);
   const linearProject =
     ticket.linearProjectId === null ? undefined : lookups.projectsById.get(ticket.linearProjectId);
   const cycle = ticket.cycleId === null ? undefined : lookups.cyclesById.get(ticket.cycleId);
@@ -332,9 +328,9 @@ export const KanbanCard = memo(function KanbanCard(
   }
   if (show.has("dueDate") && ticket.dueDate !== null) {
     chips.push(
-      <KanbanChip key="due" tone={isTicketOverdue(ticket) ? "danger" : "default"}>
+      <KanbanChip key="due" tone={isOverdue(ticket, now) ? "danger" : "default"}>
         <CalendarIcon aria-hidden className="size-3 shrink-0" />
-        {formatDueDate(ticket.dueDate, formatKanbanDate)}
+        {formatDueDate(ticket.dueDate, (date) => formatKanbanDate(date, now))}
       </KanbanChip>,
     );
   }
@@ -364,7 +360,7 @@ export const KanbanCard = memo(function KanbanCard(
   }
 
   const dates = [
-    show.has("created") ? `Created ${formatKanbanDate(new Date(ticket.createdAt))}` : null,
+    show.has("created") ? `Created ${formatKanbanDate(new Date(ticket.createdAt), now)}` : null,
     show.has("updated") ? `Updated ${formatRelativeTimeLabel(ticket.updatedAt)}` : null,
   ].filter((part) => part !== null);
   const showHeader = show.has("id") || ticket.parent !== null || show.has("assignee");

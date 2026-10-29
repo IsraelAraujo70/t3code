@@ -1,3 +1,11 @@
+import {
+  personDisplay,
+  priorityGlyph,
+  pullRequestBadge,
+  statusGlyph,
+  type KanbanLookups,
+  type KanbanPersonDisplay,
+} from "@t3tools/client-runtime/kanban-display";
 /**
  * The kanban's small Linear-style pieces: status and priority icons, avatars, label pills and PR
  * badges. Shared by cards, list rows, column headers, pickers and the issue view.
@@ -29,9 +37,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { PullRequestActorAvatar } from "../../components/pullRequest/pullRequestPresentation";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../components/pullRequest/pullRequestIcons";
 import { BotAvatar } from "../BotAvatar";
-import { personDisplay, type KanbanLookups, type KanbanPersonDisplay } from "./kanbanLookups";
-
-const round = (value: number) => Math.round(value * 1000) / 1000;
 
 /** Inner controls of a draggable card must not start a drag. */
 export const stopDragStart = (event: PointerEvent) => event.stopPropagation();
@@ -63,12 +68,6 @@ function CutoutMask(props: { readonly id: string; readonly children: ReactNode }
   );
 }
 
-const STATUS_MARKS: Partial<Record<LinearStateType, string>> = {
-  completed: "M4.4 7.3 6.2 9.1 9.7 5.3",
-  canceled: "M5 5 9 9M9 5 5 9",
-  duplicate: "M4.3 7h5.2M7.6 5l2 2-2 2",
-};
-
 /** Linear's status glyphs: dotted circle (backlog/triage), empty, half-filled, check, x, duplicate. */
 export function KanbanStatusIcon(props: {
   readonly stateType: LinearStateType;
@@ -80,43 +79,32 @@ export function KanbanStatusIcon(props: {
   const maskId = useId();
   const size = props.size ?? 14;
   const { color } = props;
-  switch (props.stateType) {
-    case "triage":
-    case "backlog":
+  const glyph = statusGlyph(props.stateType, props.progress);
+  switch (glyph.kind) {
+    case "dashed":
       return (
         <SvgIcon size={size}>
           <circle cx="7" cy="7" r="6" stroke={color} strokeWidth="1.5" strokeDasharray="1.4 1.74" />
         </SvgIcon>
       );
-    case "unstarted":
+    case "ring": {
       return (
         <SvgIcon size={size}>
           <circle cx="7" cy="7" r="6" stroke={color} strokeWidth="1.5" />
-        </SvgIcon>
-      );
-    case "started": {
-      const progress = Math.min(1, Math.max(0, props.progress ?? 0.5));
-      const angle = progress * 2 * Math.PI;
-      const end = `${round(7 + 3.5 * Math.sin(angle))} ${round(7 - 3.5 * Math.cos(angle))}`;
-      return (
-        <SvgIcon size={size}>
-          <circle cx="7" cy="7" r="6" stroke={color} strokeWidth="1.5" />
-          {progress >= 1 ? (
+          {glyph.fill === "full" ? (
             <circle cx="7" cy="7" r="3.5" fill={color} />
-          ) : progress > 0 ? (
-            <path d={`M7 7V3.5A3.5 3.5 0 ${progress > 0.5 ? 1 : 0} 1 ${end}Z`} fill={color} />
+          ) : glyph.fill !== "none" ? (
+            <path d={glyph.fill.path} fill={color} />
           ) : null}
         </SvgIcon>
       );
     }
-    case "completed":
-    case "canceled":
-    case "duplicate":
+    case "disc":
       return (
         <SvgIcon size={size}>
           <CutoutMask id={maskId}>
             <path
-              d={STATUS_MARKS[props.stateType]}
+              d={glyph.mark}
               stroke="currentColor"
               strokeWidth="1.5"
               strokeLinecap="round"
@@ -139,7 +127,8 @@ const PRIORITY_BARS = [
 export function KanbanPriorityIcon(props: { readonly priority: number; readonly size?: number }) {
   const maskId = useId();
   const size = props.size ?? 14;
-  if (props.priority === 1) {
+  const glyph = priorityGlyph(props.priority);
+  if (glyph.kind === "urgent") {
     return (
       <SvgIcon size={size} className="text-warning">
         <CutoutMask id={maskId}>
@@ -158,7 +147,7 @@ export function KanbanPriorityIcon(props: { readonly priority: number; readonly 
       </SvgIcon>
     );
   }
-  if (props.priority < 2 || props.priority > 4) {
+  if (glyph.kind === "none") {
     return (
       <SvgIcon size={size} className="text-muted-foreground" fill="currentColor">
         {PRIORITY_BARS.map((bar) => (
@@ -167,7 +156,7 @@ export function KanbanPriorityIcon(props: { readonly priority: number; readonly 
       </SvgIcon>
     );
   }
-  const filled = 5 - props.priority;
+  const { filled } = glyph;
   return (
     <SvgIcon size={size} className="text-muted-foreground" fill="currentColor">
       {PRIORITY_BARS.map((bar, index) => (
@@ -268,27 +257,14 @@ export function KanbanLabelPill(props: {
   );
 }
 
-const PULL_REQUEST_RANK: Record<KanbanPullRequestRef["state"], number> = {
-  merged: 3,
-  open: 2,
-  draft: 1,
-  closed: 0,
-};
-
 /** The PR number for one PR, "N PRs" for several, colored by the most advanced state. */
 export function KanbanPullRequestBadge(props: {
   readonly pullRequests: ReadonlyArray<KanbanPullRequestRef>;
 }) {
   const { pullRequests } = props;
-  const lead = pullRequests.reduce<KanbanPullRequestRef | null>(
-    (best, pullRequest) =>
-      best === null || PULL_REQUEST_RANK[pullRequest.state] > PULL_REQUEST_RANK[best.state]
-        ? pullRequest
-        : best,
-    null,
-  );
-  if (lead === null) return null;
-  const presentation = PULL_REQUEST_STATE_PRESENTATION[lead.state];
+  const badge = pullRequestBadge(pullRequests);
+  if (badge === null) return null;
+  const presentation = PULL_REQUEST_STATE_PRESENTATION[badge.state];
   return (
     <Tooltip>
       <TooltipTrigger render={<span className={CHIP_CLASS} />}>
@@ -296,7 +272,7 @@ export function KanbanPullRequestBadge(props: {
           aria-hidden
           className={cn("size-3 shrink-0", presentation.toneClassName)}
         />
-        <span>{pullRequests.length === 1 ? `#${lead.number}` : `${pullRequests.length} PRs`}</span>
+        <span>{badge.text}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">
         {pullRequests.map((pullRequest) => (

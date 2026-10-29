@@ -1,4 +1,16 @@
 import {
+  dateFromIsoDay,
+  formatDueDate,
+  isOverdue,
+  isoDay,
+  labelChoices,
+  personDisplay,
+  statusChoices,
+  statusDisplay,
+  ticketOrganizationId,
+  type KanbanLookups,
+} from "@t3tools/client-runtime/kanban-display";
+import {
   isCalendarDay,
   type EnvironmentId,
   type KanbanLabel,
@@ -43,19 +55,10 @@ import { reportCommandResult } from "../botsSettingsShared";
 import {
   assigneeOptions,
   cycleOptions,
-  dateFromKey,
-  dateKey,
-  formatDueDate,
-  isOverdue,
-  labelOptions,
   matchesQuery,
   minuteEpoch,
   nextLabelColor,
-  statusOptions,
-  statusPresentation,
-  ticketOrganizationId,
 } from "./kanbanIssue.logic";
-import { personDisplay, type KanbanLookups } from "./kanbanLookups";
 import {
   KanbanAvatar,
   KanbanGroupIconView,
@@ -88,8 +91,11 @@ export function KanbanIssueProperties(props: {
   const bots = directory?.bots ?? [];
   const now = minuteEpoch(useNowMinute());
 
-  const status = statusPresentation(ticket.status, lookups.statesById);
-  const assignee = ticket.assigneeId === null ? null : personDisplay(lookups, ticket.assigneeId);
+  const status = statusDisplay(lookups, ticket.status);
+  const assignee =
+    ticket.assigneeId === null
+      ? null
+      : personDisplay(lookups, ticket.assigneeId, ticket.assigneeName);
   const bot = ticket.botId === null ? null : (lookups.botsById.get(ticket.botId) ?? null);
   const project =
     ticket.linearProjectId === null
@@ -100,7 +106,7 @@ export function KanbanIssueProperties(props: {
   const cycles = synced && ticket.linear ? cycleOptions(snapshot, ticket.linear.teamId, now) : [];
   const cycle = cycles.find((option) => option.cycle.id === ticket.cycleId) ?? null;
   const organizationId = ticketOrganizationId(snapshot, ticket);
-  const overdue = ticket.closedAt === null && isOverdue(ticket.dueDate, now);
+  const overdue = isOverdue(ticket, new Date(now));
 
   const rows = (
     <>
@@ -108,31 +114,25 @@ export function KanbanIssueProperties(props: {
         label="Status"
         canEdit={canEdit}
         icon={
-          status ? (
-            <KanbanStatusIcon
-              stateType={status.stateType}
-              color={status.color}
-              {...(status.progress === undefined ? {} : { progress: status.progress })}
-            />
-          ) : null
+          <KanbanStatusIcon
+            stateType={status.stateType}
+            color={status.color}
+            progress={status.progress}
+          />
         }
-        value={status?.name ?? "Unknown status"}
+        value={status.name}
       >
-        {statusOptions(snapshot, ticket).map((option) => {
-          const presentation = statusPresentation(option, lookups.statesById);
+        {statusChoices(snapshot, ticket).map((option) => {
+          const presentation = statusDisplay(lookups, option);
           const key = option.kind === "local" ? option.state : option.stateId;
           return (
             <MenuItem key={key} onClick={() => void props.onMove(option)}>
-              {presentation ? (
-                <KanbanStatusIcon
-                  stateType={presentation.stateType}
-                  color={presentation.color}
-                  {...(presentation.progress === undefined
-                    ? {}
-                    : { progress: presentation.progress })}
-                />
-              ) : null}
-              <span className="flex-1">{presentation?.name ?? key}</span>
+              <KanbanStatusIcon
+                stateType={presentation.stateType}
+                color={presentation.color}
+                progress={presentation.progress}
+              />
+              <span className="flex-1">{presentation.name}</span>
               {sameStatus(option, ticket.status) ? <CheckIcon /> : null}
             </MenuItem>
           );
@@ -176,7 +176,7 @@ export function KanbanIssueProperties(props: {
                 {ticket.assigneeId === null ? <CheckIcon /> : null}
               </MenuItem>
             ) : null}
-            {assigneeOptions(snapshot, ticket, bots, lookups.ownerName)
+            {assigneeOptions(snapshot, ticket, lookups, bots)
               .filter((option) => matchesQuery(option.name, query))
               .map((option) => (
                 <MenuItem key={option.id} onClick={() => void onPatch({ assigneeId: option.id })}>
@@ -495,7 +495,9 @@ function DueDatePicker(props: {
           date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
         );
   const day =
-    props.dueDate !== null && isCalendarDay(props.dueDate) ? dateFromKey(props.dueDate) : undefined;
+    props.dueDate !== null && isCalendarDay(props.dueDate)
+      ? dateFromIsoDay(props.dueDate)
+      : undefined;
   const value = (
     <PropertyValue
       icon={
@@ -535,7 +537,7 @@ function DueDatePicker(props: {
           {...(day === undefined ? {} : { defaultMonth: day })}
           onSelect={(selected: Date | undefined) => {
             setOpen(false);
-            props.onChange(selected === undefined ? null : dateKey(selected));
+            props.onChange(selected === undefined ? null : isoDay(selected));
           }}
         />
         {props.dueDate !== null ? (
@@ -578,7 +580,7 @@ function LabelsField(props: {
   const inFlight = useRef(0);
   const [query, setQuery] = useState("");
   const labelIds = draft ?? ticket.labelIds;
-  const options = labelOptions(snapshot, ticket);
+  const options = labelChoices(snapshot, ticket);
   const shown = labelIds.flatMap((id) => {
     const label = lookups.labelsById.get(id);
     return label === undefined ? [] : [label];
