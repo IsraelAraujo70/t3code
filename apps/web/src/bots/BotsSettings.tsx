@@ -42,8 +42,6 @@ import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
-import { KanbanSettingsSection } from "./kanban/KanbanSettingsSection";
-import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 import {
   confirmDestructive,
   modelLabel,
@@ -154,20 +152,6 @@ function BotsEnvironmentSettings({
         />
       ) : null}
       <VoiceSettingsSection environmentId={environmentId} connected={connected} />
-      {connected && directory !== null ? (
-        <LinkedEnvironmentsSection
-          environmentId={environmentId}
-          connected={connected}
-          directory={directory}
-        />
-      ) : null}
-      {connected ? (
-        <KanbanSettingsSection
-          environmentId={environmentId}
-          connected={connected}
-          bots={directory?.bots ?? []}
-        />
-      ) : null}
       {editor ? (
         <BotEditorDialog
           key={editor.botId ?? "new"}

@@ -128,7 +128,7 @@ export const DEFAULT_VOICE = "cove";
  */
 export const VOICE_ENV = "T3CODE_VOICE_READER_VOICE";
 
-const readVoice: Effect.Effect<string> = Config.String(VOICE_ENV).pipe(
+export const readVoice: Effect.Effect<string> = Config.String(VOICE_ENV).pipe(
   Config.withDefault(DEFAULT_VOICE),
   Effect.map((voice) => voice.trim().toLowerCase() || DEFAULT_VOICE),
   Effect.orElseSucceed(() => DEFAULT_VOICE),
