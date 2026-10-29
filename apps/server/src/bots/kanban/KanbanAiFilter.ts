@@ -3,15 +3,13 @@
  * through the server's OpenRouter key, the same key dictation uses. The answer is decoded as
  * `KanbanFilterClause`s; nothing the model says reaches the board unchecked.
  */
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient } from "effect/http";
 
 import {
   KANBAN_DATE_FILTER_FIELDS,
@@ -31,26 +29,29 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 
-import { DICTATION_KEY_ENV } from "../dictation/Dictation.ts";
+import {
+  completeOpenRouterChat,
+  OPENROUTER_KEY_ENV,
+  readOpenRouterKey,
+  readOpenRouterModel,
+} from "../openRouter.ts";
 import { BotsStore } from "../BotsStore.ts";
 import { KanbanService } from "./KanbanService.ts";
 
-export const KANBAN_AI_FILTER_MODEL_ENV = "T3CODE_KANBAN_AI_FILTER_MODEL";
-export const DEFAULT_KANBAN_AI_FILTER_MODEL = "anthropic/claude-haiku-5.5";
-
-const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const KANBAN_AI_FILTER_MODEL_ENV = "T3CODE_KANBAN_AI_FILTER_MODEL";
+const DEFAULT_KANBAN_AI_FILTER_MODEL = "anthropic/claude-haiku-5.5";
 
 const encodeCatalog = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const unusable = () => new KanbanError({ message: "Could not turn that into filters." });
 
+/** About 15k tokens: a filter request must stay cheap whatever the board's size. */
+const AI_FILTER_PROMPT_MAX_CHARS = 60_000;
+
 /**
  * The system prompt: clause shapes, value encodings, and the catalog (states, people, labels…) of
  * the board scope (`projectId` null = every project). Tickets themselves are never sent.
  */
-/** About 15k tokens: a filter request must stay cheap whatever the board's size. */
-export const AI_FILTER_PROMPT_MAX_CHARS = 60_000;
-
 export function buildAiFilterPrompt(
   snapshot: KanbanSnapshot,
   projectId: ProjectId | null,
@@ -164,42 +165,6 @@ export function parseAiFilterAnswer(
   return filters.length === 0 ? Effect.fail(unusable()) : Effect.succeed({ filters });
 }
 
-const readKey: Effect.Effect<Option.Option<Redacted.Redacted>> = Config.Redacted(
-  DICTATION_KEY_ENV,
-).pipe(
-  Config.option,
-  Effect.map(Option.filter((key) => Redacted.value(key).trim().length > 0)),
-  Effect.orElseSucceed(() => Option.none()),
-);
-
-const readModel: Effect.Effect<string> = Config.String(KANBAN_AI_FILTER_MODEL_ENV).pipe(
-  Config.withDefault(DEFAULT_KANBAN_AI_FILTER_MODEL),
-  Effect.map((model) => model.trim() || DEFAULT_KANBAN_AI_FILTER_MODEL),
-  Effect.orElseSucceed(() => DEFAULT_KANBAN_AI_FILTER_MODEL),
-);
-
-const ChatResponse = Schema.Struct({
-  choices: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        message: Schema.optional(
-          Schema.Struct({
-            content: Schema.optional(
-              Schema.NullOr(
-                Schema.Union([
-                  Schema.String,
-                  Schema.Array(Schema.Struct({ text: Schema.optional(Schema.String) })),
-                ]),
-              ),
-            ),
-          }),
-        ),
-      }),
-    ),
-  ),
-  error: Schema.optional(Schema.Struct({ message: Schema.optional(Schema.String) })),
-});
-
 export class KanbanAiFilter extends Context.Service<
   KanbanAiFilter,
   {
@@ -215,10 +180,10 @@ const make = Effect.gen(function* () {
   const store = yield* BotsStore;
 
   const filter = Effect.fn("KanbanAiFilter.filter")(function* (input: KanbanAiFilterInput) {
-    const key = yield* readKey;
+    const key = yield* readOpenRouterKey;
     if (Option.isNone(key)) {
       return yield* new KanbanError({
-        message: `The AI filter needs ${DICTATION_KEY_ENV} on the server.`,
+        message: `The AI filter needs ${OPENROUTER_KEY_ENV} on the server.`,
       });
     }
     const snapshot = yield* kanban.readSnapshot;
@@ -236,39 +201,24 @@ const make = Effect.gen(function* () {
         message: "This board's catalog is too large for the AI filter. Pick one project first.",
       });
     }
-    const exchange = HttpClientRequest.post(ENDPOINT).pipe(
-      HttpClientRequest.bearerToken(Redacted.value(key.value)),
-      HttpClientRequest.bodyJson({
-        model: yield* readModel,
+    const text = yield* completeOpenRouterChat({
+      httpClient,
+      key: key.value,
+      body: {
+        model: yield* readOpenRouterModel(
+          KANBAN_AI_FILTER_MODEL_ENV,
+          DEFAULT_KANBAN_AI_FILTER_MODEL,
+        ),
         messages: [
           { role: "system", content: prompt },
           { role: "user", content: input.text },
         ],
-      }),
-      Effect.flatMap((request) => httpClient.execute(request)),
-      Effect.flatMap((response) =>
-        HttpClientResponse.schemaBodyJson(ChatResponse)(response).pipe(
-          Effect.map((decoded) => ({ response, decoded })),
-          Effect.orElseSucceed(() => ({ response, decoded: null })),
-        ),
-      ),
-    );
-    // The deadline covers the body too: headers can arrive and the body then stall.
-    const { response, decoded } = yield* exchange.pipe(
-      Effect.timeout("30 seconds"),
-      Effect.mapError(
-        (cause) => new KanbanError({ message: "Could not reach the AI filter service.", cause }),
-      ),
-    );
-    if (response.status < 200 || response.status >= 300 || decoded === null || decoded.error) {
-      const detail = decoded?.error?.message ?? `HTTP ${response.status}`;
-      return yield* new KanbanError({ message: `The AI filter service failed: ${detail}` });
-    }
-    const content = decoded.choices?.[0]?.message?.content;
-    const text =
-      typeof content === "string"
-        ? content
-        : (content ?? []).map((part) => part.text ?? "").join("");
+      },
+      timeout: "30 seconds",
+      service: "AI filter",
+      error: (message, cause) =>
+        new KanbanError({ message, ...(cause === undefined ? {} : { cause }) }),
+    });
     return yield* parseAiFilterAnswer(text);
   });
 

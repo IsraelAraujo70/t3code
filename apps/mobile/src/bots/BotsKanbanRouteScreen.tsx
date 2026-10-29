@@ -46,7 +46,7 @@ import {
   type TicketMenuThread,
 } from "./kanban.logic";
 import { KanbanCard, type KanbanCardThread } from "./kanban/KanbanCard";
-import { buildKanbanLookups, type KanbanLookups } from "./kanban/kanbanDisplay.logic";
+import { buildKanbanLookups, type KanbanLookups } from "@t3tools/client-runtime/kanban-display";
 import {
   applyFilterOverlay,
   filterChipLabel,
@@ -59,7 +59,8 @@ import {
   type KanbanOverlayField,
 } from "./kanban/kanbanFilters.logic";
 import { KanbanGroupIconView, type KanbanGlyphColors } from "./kanban/KanbanGlyphs";
-import { responsibleBotIds } from "./kanban/kanbanIssue.logic";
+import { responsibleBotIds } from "@t3tools/client-runtime/kanban-display";
+
 import { KanbanPickerSheet, reportKanbanResult } from "./kanban/KanbanPickerSheet";
 import { botsEnvironment, useBotDirectory, useKanbanSnapshot } from "./state";
 import type { ThreadReturnTab } from "./threadReturnTab";

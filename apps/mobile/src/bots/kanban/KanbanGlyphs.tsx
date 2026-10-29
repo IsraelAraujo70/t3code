@@ -16,7 +16,7 @@ import {
   statusGlyph,
   type KanbanLookups,
   type KanbanPersonDisplay,
-} from "./kanbanDisplay.logic";
+} from "@t3tools/client-runtime/kanban-display";
 
 /** Theme colors the glyphs need, read once by the screen rather than per glyph. */
 export interface KanbanGlyphColors {

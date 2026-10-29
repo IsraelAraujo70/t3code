@@ -1,15 +1,8 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off - runs without workspace packages, only git and Node.
 /**
- * Merges the newest stable upstream release (a `vX.Y.Z` tag on pingdotgg/t3code) into a fresh
- * integration worktree branched from the fork's main branch, then checks the fork seams.
- * Nothing is pushed and the fork's main branch is not moved; review the integration branch,
- * run its tests, then fast-forward `friend/main` by hand.
- *
- *   node scripts/friend/merge-upstream.ts [--tag vX.Y.Z] [--base friend/main] [--dir <path>]
- *
- * Exit codes: 0 merged and seams OK, or already up to date; 2 merge conflicts (the worktree is
- * kept for resolution); 1 any other failure, including seam drift after a clean merge.
+ * Conflicts keep the integration worktree for resolution and exit with code 2.
+ * The fork main branch is never moved or pushed.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

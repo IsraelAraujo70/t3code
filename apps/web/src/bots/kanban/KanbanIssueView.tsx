@@ -1,4 +1,9 @@
 import {
+  personDisplay,
+  statusDisplay,
+  type KanbanLookups,
+} from "@t3tools/client-runtime/kanban-display";
+import {
   KanbanTicketTitle,
   KANBAN_LIMITS,
   type EnvironmentId,
@@ -34,8 +39,6 @@ import {
 import { KanbanIssueActivity } from "./KanbanIssueActivity";
 import { KanbanIssueLinks } from "./KanbanIssueLinks";
 import { KanbanIssueProperties } from "./KanbanIssueProperties";
-import { statusPresentation } from "./kanbanIssue.logic";
-import { personDisplay, type KanbanLookups } from "./kanbanLookups";
 import { KanbanAvatar, KanbanPriorityIcon, KanbanStatusIcon } from "./KanbanPrimitives";
 
 const isTitle = Schema.is(KanbanTicketTitle);
@@ -112,7 +115,7 @@ export function KanbanIssueView(props: {
   );
   const close = useEffectEvent(() => props.onClose());
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- reads the issue detail from the server when a ticket opens
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the issue detail from the server when a ticket opens
   useEffect(() => {
     activeKey.current = key;
     const current = ++request.current;
@@ -123,7 +126,7 @@ export function KanbanIssueView(props: {
     });
   }, [key]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Esc anywhere outside a field or popup closes the issue
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Esc anywhere outside a field or popup closes the issue
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -423,8 +426,7 @@ function ParentLine(props: {
       ? undefined
       : props.snapshot.tickets.find((candidate) => candidate.id === parent.ticketId);
   const status = parent.status ?? parentTicket?.status ?? null;
-  const presentation =
-    status === null ? null : statusPresentation(status, props.lookups.statesById);
+  const presentation = status === null ? null : statusDisplay(props.lookups, status);
   const progress = parentTicket?.subIssues ?? null;
   const linearUrl = props.ticket.linear?.url;
   const open = () => {
@@ -448,7 +450,7 @@ function ParentLine(props: {
             stateType={presentation.stateType}
             color={presentation.color}
             size={14}
-            {...(presentation.progress === undefined ? {} : { progress: presentation.progress })}
+            progress={presentation.progress}
           />
         ) : null}
         <span className="shrink-0">{parent.identifier}</span>
@@ -550,7 +552,7 @@ function SubIssues(props: {
       </h2>
       <ul className="flex flex-col">
         {children.map((child) => {
-          const presentation = statusPresentation(child.status, props.lookups.statesById);
+          const presentation = statusDisplay(props.lookups, child.status);
           const assignee =
             child.assigneeId === null ? null : personDisplay(props.lookups, child.assigneeId);
           const open = () => {
@@ -564,16 +566,12 @@ function SubIssues(props: {
                 className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
                 onClick={open}
               >
-                {presentation ? (
-                  <KanbanStatusIcon
-                    stateType={presentation.stateType}
-                    color={presentation.color}
-                    size={14}
-                    {...(presentation.progress === undefined
-                      ? {}
-                      : { progress: presentation.progress })}
-                  />
-                ) : null}
+                <KanbanStatusIcon
+                  stateType={presentation.stateType}
+                  color={presentation.color}
+                  size={14}
+                  progress={presentation.progress}
+                />
                 <span className="shrink-0 text-muted-foreground text-xs">{child.identifier}</span>
                 <span className="min-w-0 flex-1 truncate">{child.title}</span>
                 <KanbanPriorityIcon priority={child.priority} size={14} />

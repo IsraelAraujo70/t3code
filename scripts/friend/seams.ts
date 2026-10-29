@@ -1,10 +1,6 @@
 /**
- * Every place the friend fork edits an upstream file. A source file must carry exactly `markers`
- * occurrences of FORK_MARKER (one per edited hunk), and no unlisted tracked file may carry it.
- * Files that cannot hold comments (JSON) list a `contains` snippet instead. A merge that drops or
- * duplicates a fork hunk fails `check-seams` instead of shipping silently.
- *
- * Fork-owned files (FORK_OWNED_PREFIXES) are not listed: upstream never touches them.
+ * Tracked upstream files must contain exactly the listed marker count.
+ * JSON files use contains snippets; fork-owned files are exempt.
  */
 export const FORK_MARKER = "Fork (friend)";
 
@@ -129,6 +125,11 @@ export const SEAMS: readonly Seam[] = [
     file: "packages/client-runtime/package.json",
     contains: '"./kanban-board"',
     why: "export the kanban board rules shared by the web and mobile boards",
+  },
+  {
+    file: "packages/client-runtime/package.json",
+    contains: '"./kanban-display"',
+    why: "export the kanban display helpers shared by the web and mobile boards",
   },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
@@ -487,6 +488,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/botDirectory.",
   "packages/client-runtime/src/appSelfUpdate.",
   "packages/client-runtime/src/kanbanBoard.",
+  "packages/client-runtime/src/kanbanDisplay.",
   "scripts/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",

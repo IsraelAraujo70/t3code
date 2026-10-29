@@ -1,9 +1,5 @@
 /**
- * Compacts a bot's conversation once its context passes the threshold in botCompaction.ts. The
- * bot first gets a turn to save what it needs to its memory, which survives compaction because
- * it rides in the system prompt; when that turn completes, the server sends `/compact`. Both
- * queue behind whatever the bot is doing, and stable command ids keep each to one message. One
- * cycle runs at a time, however many runs complete past the threshold before it ends.
+ * Memory survives compaction in the system prompt. Stable command ids deduplicate queued work; only one cycle runs at a time.
  */
 import {
   botThreadId,
@@ -120,7 +116,7 @@ const make = Effect.gen(function* () {
   return { start } satisfies BotCompactionReactor["Service"];
 });
 
-export const layer = Layer.effect(BotCompactionReactor, make);
+const layer = Layer.effect(BotCompactionReactor, make);
 
 /** Starts the reactor with the server. */
 export const layerStart = Layer.effectDiscard(

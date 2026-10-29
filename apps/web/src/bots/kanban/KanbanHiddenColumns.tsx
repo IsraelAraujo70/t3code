@@ -1,8 +1,8 @@
+import { type KanbanLookups } from "@t3tools/client-runtime/kanban-display";
 import type { KanbanGroup } from "@t3tools/client-runtime/kanban-board";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
-import type { KanbanLookups } from "./kanbanLookups";
 import { KanbanGroupIconView } from "./KanbanPrimitives";
 
 /** Columns folded out of the board (empty or hidden), one row each; a row shows its column again. */

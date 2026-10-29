@@ -1,3 +1,4 @@
+import { isoDay, type KanbanLookups } from "@t3tools/client-runtime/kanban-display";
 /**
  * The kanban's Linear-style filters: an "Add filter" menu (fields, values, dates, flags, AI
  * filter), one chip per clause, and the issue search. Controlled: the page owns the filters.
@@ -68,7 +69,6 @@ import { weekStartsOn } from "~/timestampFormat";
 
 import {
   datePresets,
-  isoDay,
   mergeClauses,
   removeClause,
   replaceClause,
@@ -82,7 +82,6 @@ import {
   toggleSetValue,
   type KanbanDateOp,
 } from "./kanbanFilterEdit";
-import type { KanbanLookups } from "./kanbanLookups";
 import { KanbanGroupIconView } from "./KanbanPrimitives";
 
 export type KanbanAiFilterOutcome =
@@ -474,7 +473,7 @@ function AddFilterMenu(
     aiRequest.current += 1;
     setAiBusy(false);
   };
-  // oxlint-disable-next-line t3code/react-effect-budget -- an AI answer that lands after unmount must not edit the filters.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- an AI answer that lands after unmount must not edit the filters.
   useEffect(
     () => () => {
       aiRequest.current += 1;
@@ -721,7 +720,7 @@ function FilterChip(
 
 function IssueSearch(props: { readonly value: string; readonly onChange: (text: string) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- "/" focuses the search from anywhere on the page (a window key listener).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- "/" focuses the search from anywhere on the page (a window key listener).
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;

@@ -46,7 +46,7 @@ import { botsEnvironment, useBotDirectory, useKanbanSnapshot } from "../state";
 import type { ThreadReturnTab } from "../threadReturnTab";
 import {
   buildKanbanLookups,
-  dueDateOf,
+  dateFromIsoDay,
   dueDatePresets,
   formatDueDate,
   formatKanbanDate,
@@ -55,7 +55,7 @@ import {
   personDisplay,
   statusDisplay,
   type KanbanLookups,
-} from "./kanbanDisplay.logic";
+} from "@t3tools/client-runtime/kanban-display";
 import {
   KanbanAvatar,
   KanbanDot,
@@ -65,15 +65,17 @@ import {
   type KanbanGlyphColors,
 } from "./KanbanGlyphs";
 import {
-  addPendingWrite,
   assigneeChoices,
-  draftedLabelIds,
   issueTimeline,
   labelChoices,
-  reconcileLabelDraft,
-  removePendingWrite,
   responsibleBotIds,
   statusChoices,
+} from "@t3tools/client-runtime/kanban-display";
+import {
+  addPendingWrite,
+  draftedLabelIds,
+  reconcileLabelDraft,
+  removePendingWrite,
   toggleDraftLabel,
   type KanbanLabelDraft,
   type PendingWrites,
@@ -173,7 +175,7 @@ function useTicketDetail(environmentId: EnvironmentId, ticketId: KanbanTicketId)
       }));
     }
   }, [fetchDetail, environmentId, ticketId, key]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- reads the issue from the server (Linear) when it opens
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the issue from the server (Linear) when it opens
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- the read's answer arrives after an await, never synchronously
     void refresh();
@@ -464,7 +466,9 @@ function IssueBody(props: {
             onPress={() => setSheet("due")}
           >
             <PropertyValue muted={ticket.dueDate === null} danger={isOverdue(ticket, now)}>
-              {ticket.dueDate === null ? "No due date" : formatDueDate(ticket.dueDate, now)}
+              {ticket.dueDate === null
+                ? "No due date"
+                : formatDueDate(ticket.dueDate, (date) => formatKanbanDate(date, now))}
             </PropertyValue>
           </PropertyRow>
           <PropertyRow
@@ -724,9 +728,9 @@ function IssueBody(props: {
         <KanbanPickerSheet
           title="Status"
           options={statusChoices(snapshot, ticket).map((choice) => {
-            const display = statusDisplay(lookups, choice.status);
+            const display = statusDisplay(lookups, choice);
             return {
-              value: choice.id,
+              value: choice.kind === "local" ? choice.state : choice.stateId,
               label: display.name,
               leading: (
                 <KanbanStatusIcon
@@ -742,11 +746,12 @@ function IssueBody(props: {
           onPick={(value) => {
             setSheet(null);
             const choice = statusChoices(snapshot, ticket).find(
-              (candidate) => candidate.id === value,
+              (candidate) =>
+                (candidate.kind === "local" ? candidate.state : candidate.stateId) === value,
             );
             if (choice === undefined) return;
             void write("status", `Could not move ${ticket.identifier}`, () =>
-              move({ environmentId, input: { ticketId: ticket.id, to: choice.status } }),
+              move({ environmentId, input: { ticketId: ticket.id, to: choice } }),
             );
           }}
           onClose={() => setSheet(null)}
@@ -822,7 +827,7 @@ function IssueBody(props: {
             ...dueDatePresets(now).map((preset) => ({
               value: preset.value,
               label: preset.label,
-              subtitle: formatKanbanDate(dueDateOf(preset.value), now),
+              subtitle: formatKanbanDate(dateFromIsoDay(preset.value), now),
             })),
             { value: "custom", label: "Pick a date…" },
             ...(ticket.dueDate === null ? [] : [{ value: NONE, label: "Remove due date" }]),

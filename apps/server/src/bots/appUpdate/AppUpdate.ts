@@ -1,13 +1,6 @@
 /**
- * Serves the fork's own app updates: the owner's Android APK (`MOBILE_UPDATE_PATH`) and the Mac
- * app's zip (`DESKTOP_UPDATE_PATH`), each from its own directory. The build scripts in
- * `~/.t3-friend` copy a good build into the directory and then replace `latest.json` atomically, so
- * a reader sees the previous build or the new one, never a half-written manifest. The server trusts
- * the manifest's sha256 (hashing a 100+ MB file per check would be wasteful); the app checks it
- * after downloading.
- *
- * These routes live on the main listener only, behind the owner's environment auth. The guest
- * listener has its own router (`GuestApi`) and its own app update.
+ * Build scripts replace latest.json atomically. The server trusts its sha256; clients verify downloads.
+ * These routes require owner auth on the main listener; GuestApi owns guest updates.
  */
 import * as NodeOS from "node:os";
 

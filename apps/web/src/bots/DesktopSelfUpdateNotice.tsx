@@ -22,11 +22,13 @@ function Notice({ update }: { readonly update: SelfUpdate }) {
   const environmentId = useBotsEnvironmentId();
   const snapshot = useSyncExternalStore(update.subscribe, update.getSnapshot);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Points the self-updater at the connected bots host and checks it when it connects.
   useEffect(() => {
     setDesktopSelfUpdateTarget(environmentId);
     if (environmentId !== null) void update.check("launch");
   }, [update, environmentId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Window focus listener re-checks for updates.
   useEffect(() => {
     const onFocus = () => void update.check("foreground");
     window.addEventListener("focus", onFocus);

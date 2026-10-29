@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 
 import { KanbanService } from "./KanbanService.ts";
 
-export const KANBAN_POLL_ENV = "T3CODE_KANBAN_POLL_SECONDS";
+const KANBAN_POLL_ENV = "T3CODE_KANBAN_POLL_SECONDS";
 const DEFAULT_POLL_SECONDS = 60;
 
 export const layerStart = Layer.effectDiscard(

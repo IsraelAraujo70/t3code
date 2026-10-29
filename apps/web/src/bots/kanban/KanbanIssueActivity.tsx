@@ -1,3 +1,4 @@
+import { issueTimeline, type KanbanPersonDisplay } from "@t3tools/client-runtime/kanban-display";
 import {
   KANBAN_LIMITS,
   type EnvironmentId,
@@ -11,8 +12,7 @@ import ChatMarkdown from "../../components/ChatMarkdown";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
-import { issueTimeline, minuteEpoch, relativeTimeLabel } from "./kanbanIssue.logic";
-import type { KanbanPersonDisplay } from "./kanbanLookups";
+import { minuteEpoch, relativeTimeLabel } from "./kanbanIssue.logic";
 import { KanbanAvatar } from "./KanbanPrimitives";
 
 const personOf = (
@@ -35,7 +35,7 @@ export function KanbanIssueActivity(props: {
   readonly onDeleteComment: (comment: KanbanComment) => void;
 }) {
   const now = minuteEpoch(useNowMinute());
-  const timeline = issueTimeline(props.detail.activity, props.detail.comments);
+  const timeline = issueTimeline(props.detail);
   return (
     <section aria-label="Activity" className="flex flex-col gap-3">
       <h2 className="font-medium text-sm">Activity</h2>

@@ -14,6 +14,7 @@ const labels = {
 /** Audio levels update only the circle's transform, without rendering React each tick. */
 export function VoiceOrb({ snapshot }: { readonly snapshot: VoiceSnapshot }) {
   const orb = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribes to voice audio levels and writes the orb's transform without re-rendering.
   useEffect(() => {
     const update = () => {
       const levels = voiceController.getLevels();

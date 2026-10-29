@@ -242,10 +242,3 @@ const NEXT_PRESETS: ReadonlyArray<KanbanDatePreset> = [
 export function datePresets(field: KanbanDateFilterField): ReadonlyArray<KanbanDatePreset> {
   return field === "dueDate" ? [...PAST_PRESETS, ...NEXT_PRESETS] : PAST_PRESETS;
 }
-
-/** A calendar day as the `YYYY-MM-DD` a before/after clause stores (local time). */
-export function isoDay(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}

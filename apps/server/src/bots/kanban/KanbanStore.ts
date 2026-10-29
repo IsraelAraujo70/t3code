@@ -1304,8 +1304,5 @@ const make = Effect.gen(function* () {
 /** Over `bots.sqlite` in the server state directory. */
 export const layer = Layer.effect(KanbanStore, make).pipe(Layer.provide(BotsDb.layer));
 
-/** A migrated in-memory database, for tests. */
-export const layerMemory = Layer.effect(KanbanStore, make).pipe(Layer.provide(BotsDb.layerMemory));
-
 /** Over an existing bots database, for tests that share one with BotsStore. */
 export const layerFromDb = Layer.effect(KanbanStore, make);

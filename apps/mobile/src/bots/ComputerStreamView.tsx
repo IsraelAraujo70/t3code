@@ -18,11 +18,10 @@ import {
   computerPress,
   computerStreamMaxWidth,
   computerStreamRetryDelayMs,
-  computerWheelNotches,
+  createComputerGestureSession,
   createComputerMoveThrottle,
   parseComputerDocumentMessage,
   parseComputerStreamMessage,
-  type ComputerPoint,
   type ComputerSize,
 } from "./computer.logic";
 import {
@@ -114,6 +113,7 @@ export function ComputerStreamView({
     );
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the viewer page's socket lifecycle, stopping its script and retry timer on unmount.
   useLayoutEffect(() => {
     active.current = true;
     const view = webView.current;
@@ -212,10 +212,6 @@ function useComputerGestures({
   readonly layout: { readonly current: ComputerSize };
   readonly send: (input: ComputerStreamInput) => void;
 }) {
-  const drag = useRef<{ last: ComputerPoint } | null>(null);
-  const wheel = useRef<{ at: ComputerPoint; x: number; y: number; dx: number; dy: number } | null>(
-    null,
-  );
   const throttle = useMemo(
     () =>
       createComputerMoveThrottle({
@@ -229,15 +225,17 @@ function useComputerGestures({
       }),
     [send],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancels a held drag move's timer on unmount.
   useEffect(() => () => throttle.cancel(), [throttle]);
 
-  // Turning control off mid-drag releases the button instead of leaving it held on the host.
+  // A held button must outlive any memo cache drop, so the session is created once.
+  const [session] = useState(() =>
+    createComputerGestureSession({ send, throttle, wheelNotchPx: WHEEL_NOTCH_PX }),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Releases the host's held mouse button when control turns off mid-drag.
   useEffect(() => {
-    if (control || drag.current === null) return;
-    throttle.cancel();
-    send({ type: "pointer", action: "up", button: "left", ...drag.current.last });
-    drag.current = null;
-  }, [control, send, throttle]);
+    if (!control) session.release();
+  }, [control, session]);
 
   return useMemo(() => {
     const pointAt = (x: number, y: number) =>
@@ -247,6 +245,7 @@ function useComputerGestures({
       if (point) for (const input of computerPress(point, button)) send(input);
     };
 
+    // oxlint-disable-next-line react/capitalized-calls -- Gesture.Tap is a gesture factory, not a component.
     const tap = Gesture.Tap()
       .runOnJS(true)
       .enabled(control)
@@ -254,11 +253,13 @@ function useComputerGestures({
       .onEnd((event, success) => {
         if (success) press(event.x, event.y, "left");
       });
+    // oxlint-disable-next-line react/capitalized-calls -- Gesture.LongPress is a gesture factory, not a component.
     const longPress = Gesture.LongPress()
       .runOnJS(true)
       .enabled(control)
       .minDuration(LONG_PRESS_MS)
       .onStart((event) => press(event.x, event.y, "right"));
+    // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a component.
     const dragPan = Gesture.Pan()
       .runOnJS(true)
       .enabled(control)
@@ -266,68 +267,25 @@ function useComputerGestures({
       .maxPointers(1)
       .minDistance(8)
       .onStart((event) => {
-        const start = pointAt(event.x - event.translationX, event.y - event.translationY);
-        if (start === null) return;
-        send({ type: "pointer", action: "move", button: "left", ...start });
-        send({ type: "pointer", action: "down", button: "left", ...start });
-        drag.current = { last: start };
-        const now = pointAt(event.x, event.y);
-        if (now) {
-          drag.current.last = now;
-          throttle.push(now);
-        }
+        session.dragStart(
+          pointAt(event.x - event.translationX, event.y - event.translationY),
+          pointAt(event.x, event.y),
+        );
       })
-      .onUpdate((event) => {
-        const current = drag.current;
-        const point = current ? pointAt(event.x, event.y) : null;
-        if (current === null || point === null) return;
-        current.last = point;
-        throttle.push(point);
-      })
-      .onFinalize(() => {
-        const current = drag.current;
-        if (current === null) return;
-        drag.current = null;
-        throttle.flush();
-        send({ type: "pointer", action: "up", button: "left", ...current.last });
-      });
+      .onUpdate((event) => session.dragMove(pointAt(event.x, event.y)))
+      .onFinalize(() => session.dragEnd());
+    // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a component.
     const scrollPan = Gesture.Pan()
       .runOnJS(true)
       .enabled(control)
       .minPointers(2)
       .onStart((event) => {
-        const at = pointAt(event.x, event.y);
-        wheel.current = at
-          ? { at, x: event.translationX, y: event.translationY, dx: 0, dy: 0 }
-          : null;
+        session.scrollStart(pointAt(event.x, event.y), event.translationX, event.translationY);
       })
-      .onUpdate((event) => {
-        const state = wheel.current;
-        if (state === null) return;
-        const horizontal = computerWheelNotches(
-          state.dx + event.translationX - state.x,
-          WHEEL_NOTCH_PX,
-        );
-        const vertical = computerWheelNotches(
-          state.dy + event.translationY - state.y,
-          WHEEL_NOTCH_PX,
-        );
-        state.x = event.translationX;
-        state.y = event.translationY;
-        state.dx = horizontal.remainderPx;
-        state.dy = vertical.remainderPx;
-        if (horizontal.notches === 0 && vertical.notches === 0) return;
-        send({
-          type: "wheel",
-          ...state.at,
-          deltaX: horizontal.notches,
-          deltaY: vertical.notches,
-        });
-      })
-      .onFinalize(() => {
-        wheel.current = null;
-      });
+      .onUpdate((event) => session.scrollMove(event.translationX, event.translationY))
+      .onFinalize(() => session.scrollEnd());
 
+    // oxlint-disable-next-line react/capitalized-calls -- Gesture.Race is a gesture factory, not a component.
     return Gesture.Race(scrollPan, dragPan, Gesture.Race(longPress, tap));
-  }, [control, drag, frame, layout, send, throttle, wheel]);
+  }, [control, frame, layout, send, session]);
 }

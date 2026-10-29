@@ -7,7 +7,7 @@
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 
-export const BOTS_HOST_ENV = "T3CODE_BOTS_HOST";
+const BOTS_HOST_ENV = "T3CODE_BOTS_HOST";
 
 /** Whether this server hosts bots. Read once per use; unset or invalid means no. */
 export const isBotsHost: Effect.Effect<boolean> = Config.Boolean(BOTS_HOST_ENV).pipe(

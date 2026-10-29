@@ -1,7 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { View } from "react-native";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { AppText as Text } from "../components/ui/AppText";
 import { useVoiceSnapshot } from "./voiceController";
 
@@ -20,13 +20,11 @@ export function VoiceOrb({ environmentId, threadId, children }: Props) {
     snapshot.target.mode.type === "conversation";
   const phase = active ? snapshot.phase : null;
   const muted = active && snapshot.muted;
-  const scale = useSharedValue(1);
   // The phase sizes the orb: on Android a live session reads no audio levels (`liveStats`).
   const target = phase === "speaking" ? 1.2 : phase === "listening" && !muted ? 1 : 0.9;
-  useEffect(() => {
-    scale.set(withTiming(target, { duration: 250 }));
-  }, [target, scale]);
-  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: withTiming(target, { duration: 250 }) }],
+  }));
   const label = muted
     ? "Microfone desligado"
     : phase === "connecting"

@@ -16,7 +16,6 @@ type Phase = "idle" | "starting" | "recording" | "transcribing";
 const RECORDING_LIMIT_SECONDS = 5 * 60;
 
 interface Session {
-  readonly draftKey: string;
   readonly type: RecordingType;
   readonly abort: AbortController;
   stream: MediaStream | null;
@@ -70,11 +69,10 @@ export function DictationButton(props: {
     setPhase("idle");
   });
 
-  useEffect(() => cancel, [cancel]);
-  useEffect(() => {
-    if (sessionRef.current && sessionRef.current.draftKey !== props.draftKey) cancel();
-  }, [cancel, props.draftKey]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Releases the recorder and microphone when the draft changes or the button unmounts.
+  useEffect(() => cancel, [cancel, props.draftKey]); // oxlint-disable-line react/exhaustive-effect-dependencies -- Changing drafts must release the recorder and microphone.
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Ticks the elapsed-time clock while recording.
   useEffect(() => {
     if (phase !== "recording") return;
     const interval = setInterval(() => setNow(Date.now()), 1_000);
@@ -125,7 +123,6 @@ export function DictationButton(props: {
       return;
     }
     const session: Session = {
-      draftKey: props.draftKey,
       type,
       abort: new AbortController(),
       stream: null,

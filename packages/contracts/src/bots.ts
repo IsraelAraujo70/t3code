@@ -28,11 +28,11 @@ export * from "./kanban.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Kept compatible with friend's own ids (`b_<hex>`) so imports keep them. */
+/** Also accepts the `b_<hex>` ids that bots imported from the friend app still carry. */
 export const BotId = Schema.String.check(Schema.isPattern(ID_PATTERN)).pipe(Schema.brand("BotId"));
 export type BotId = typeof BotId.Type;
 
-/** Kept compatible with friend's own ids (`mem_<hex>`) so imports keep them. */
+/** Also accepts the `mem_<hex>` ids that imported memories still carry. */
 export const BotMemoryId = Schema.String.check(Schema.isPattern(ID_PATTERN)).pipe(
   Schema.brand("BotMemoryId"),
 );
@@ -223,34 +223,6 @@ export type BotMemoryRef = typeof BotMemoryRef.Type;
 export const BotsOwnerUpdateInput = Schema.Struct({ aboutMe: BotsAboutMe });
 export type BotsOwnerUpdateInput = typeof BotsOwnerUpdateInput.Type;
 
-/** Import from the friend app's database on the server's machine. Without `apply` it only plans. */
-export const BotsImportInput = Schema.Struct({
-  /** Absolute path; defaults to friend's `~/.local/share/friend/friend.db` on the server host. */
-  path: Schema.optionalKey(TrimmedNonEmptyString),
-  apply: Schema.Boolean,
-});
-export type BotsImportInput = typeof BotsImportInput.Type;
-
-export const BotsImportBotPlan = Schema.Struct({
-  sourceId: BotId,
-  name: Schema.String,
-  /** `exists`: a bot with this id is already here and is left untouched. */
-  status: Schema.Literals(["new", "exists"]),
-  model: Schema.NullOr(ModelSelection),
-  memories: Schema.Int,
-});
-export type BotsImportBotPlan = typeof BotsImportBotPlan.Type;
-
-export const BotsImportResult = Schema.Struct({
-  path: Schema.String,
-  applied: Schema.Boolean,
-  bots: Schema.Array(BotsImportBotPlan),
-  /** `replace` only when the local profile is empty; a non-empty local profile is never overwritten. */
-  aboutMe: Schema.Literals(["none", "same", "replace", "keep-local"]),
-  warnings: Schema.Array(Schema.String),
-});
-export type BotsImportResult = typeof BotsImportResult.Type;
-
 export class BotsError extends Schema.TaggedError<BotsError>()("BotsError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -268,7 +240,6 @@ export const BOTS_WS_METHODS = {
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
   ownerUpdate: "bots.owner.update",
-  import: "bots.import",
   sectionCreate: "bots.section.create",
   sectionRename: "bots.section.rename",
   sectionDelete: "bots.section.delete",
@@ -353,11 +324,6 @@ export const BotsOwnerUpdateRpc = Rpc.make(BOTS_WS_METHODS.ownerUpdate, {
   success: BotsOwnerUpdateInput,
   error: BotsRpcError,
 });
-export const BotsImportRpc = Rpc.make(BOTS_WS_METHODS.import, {
-  payload: BotsImportInput,
-  success: BotsImportResult,
-  error: BotsRpcError,
-});
 
 export const BotSectionCreateRpc = Rpc.make(BOTS_WS_METHODS.sectionCreate, {
   payload: BotSectionCreateInput,
@@ -433,28 +399,9 @@ export const BotPushDeviceUnregisterRpc = Rpc.make(BOTS_WS_METHODS.pushDeviceUnr
 });
 
 /**
- * Voice (friend fork): a live spoken conversation with a thread, or one assistant reply read
- * aloud, through a Codex realtime session (the `codex` provider instance's ChatGPT login, never an
- * API key). Any server of the fork offers it, bots host or not.
- *
- * The voice is only a receptionist. It acknowledges, relays and reads; the thread's own agent
- * answers. In a conversation the server posts each finished user utterance to the thread as a
- * normal user message (queued behind a running turn), and reads aloud every assistant reply that
- * completes while the session is open. The session holds no conversation state: hanging up loses
- * nothing. Pending approvals and questions are never answered by voice.
- *
- * The client owns the WebRTC peer; the server only signals. The client opens a peer (its
- * microphone track, silent until the session is live, plus the `oai-events` data channel) and
- * calls `session` with the SDP offer. The server starts a realtime session and emits one `answer`;
- * once the peer connects the client calls `ready`, and only then does the server relay or speak.
- * The stream stays open until the client ends it (hanging up, or a read whose reply was spoken),
- * realtime closes, or it fails with a `BotsError` whose message the client shows.
- *
- * Realtime fixes the voice when it starts. When the `voiceReaderVoice` setting changes during a
- * conversation whose client sent `liveVoiceChange`, the server emits `voice-changed`; once the voice
- * is quiet the client opens a new peer and calls `reconnect` with its offer. The server swaps in a
- * realtime session with the new voice, answers, and holds speech until the client calls `ready`
- * again. The session, what the user said, and the agent's pending replies carry over.
+ * Voice uses the Codex ChatGPT login, never an API key. The client owns WebRTC: `session` carries
+ * its offer, the server emits one `answer`, and relays or speaks only after `ready`. On
+ * `voice-changed` the client calls `reconnect` with a new offer and `ready` again.
  */
 
 /** The v3 voices Codex 0.162 realtime offers. The `voiceReaderVoice` server setting picks one. */
@@ -583,7 +530,6 @@ export const BOTS_RPCS = [
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
   BotsOwnerUpdateRpc,
-  BotsImportRpc,
   BotSectionCreateRpc,
   BotSectionRenameRpc,
   BotSectionDeleteRpc,
@@ -611,7 +557,6 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.ownerUpdate]: AuthOrchestrationOperateScope,
-  [BOTS_WS_METHODS.import]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionRename]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.sectionDelete]: AuthOrchestrationOperateScope,
@@ -670,21 +615,8 @@ export const BOTS_RPC_AGGREGATES = Object.fromEntries(
 ) as { readonly [Method in BotsWsMethod]: "bots" };
 
 /**
- * Live view of the bots host's whole screen (the "Computer" right-panel tab). A WebSocket at
- * this path, served only by the bots host; viewing needs the `terminal:read` scope.
- *
- * Server → client: a JSON text message `ComputerStreamInfo` first and whenever the screen size
- * changes, then one binary JPEG per frame. The server keeps at most one frame in flight: it sends
- * the next frame only after the client answers `ComputerStreamAck` for the previous one, so a slow
- * viewer gets fewer frames instead of a growing backlog. Capture runs only while a viewer is
- * attached. A JSON `ComputerStreamError` precedes a close when capture cannot run.
- *
- * Taking control: the first text message is `ComputerStreamAccess`. When `canControl` is true
- * (the session also holds `terminal:operate`), the client may send `ComputerStreamInput`
- * messages, which the host replays as real pointer and keyboard input. Input from a viewer
- * without control is dropped.
- *
- * Query parameters: `maxWidth` (default 1600) and `quality` (1–100, default 70).
+ * Frames require acknowledgment before the next send to bound the backlog.
+ * Viewing requires terminal:read; control also requires terminal:operate.
  */
 export const COMPUTER_STREAM_PATH = "/api/computer-stream/ws";
 
@@ -784,13 +716,8 @@ export const ComputerStreamClientMessage = Schema.Union([ComputerStreamAck, Comp
 export type ComputerStreamClientMessage = typeof ComputerStreamClientMessage.Type;
 
 /**
- * The friend Android app (the `preview` variant) updates itself from the bots host. A build
- * publishes its APK and a `latest.json` manifest into the server's update directory;
- * `GET MOBILE_UPDATE_PATH` answers `MobileUpdateInfo`, whose `latest` is null while nothing valid
- * is published, and `GET MOBILE_UPDATE_APK_PATH` sends that APK. With `?commit=<sha>` the APK route
- * answers 409 when another build has been published since the client checked. Both need
- * `orchestration:read`, from a header or a `wsTicket` query like the other media routes, because
- * the app downloads with a plain GET.
+ * APK requests with a stale commit return 409.
+ * Both routes require orchestration:read via a header or wsTicket.
  */
 export const MOBILE_UPDATE_PATH = "/api/friend/mobile-update";
 export const MOBILE_UPDATE_APK_PATH = "/api/friend/mobile-update/apk";

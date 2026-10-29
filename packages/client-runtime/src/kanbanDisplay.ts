@@ -1,12 +1,19 @@
+// @effect-diagnostics globalDate:off -- Due dates and labels are local calendar days for React views.
 /**
- * How the phone kanban draws tickets: lookups built once per snapshot, people, status and
- * priority glyph geometry (Linear's), PR badges, and dates. Mirrors web's kanbanLookups.
+ * How the web and mobile kanban draw tickets: lookups built once per snapshot, people, statuses,
+ * Linear's status and priority glyphs, PR badges, due dates, and the issue pickers' choices.
  */
 import {
   isCalendarDay,
   KANBAN_LOCAL_STATE_LABELS,
+  KANBAN_LOCAL_STATES,
   KANBAN_OWNER_PERSON_ID,
+  kanbanBotPersonId,
+  kanbanStateTypeOf,
+  linearWorkspaceId,
   type BotDirectoryEntry,
+  type KanbanActivity,
+  type KanbanComment,
   type KanbanCycle,
   type KanbanLabel,
   type KanbanLinearProject,
@@ -16,10 +23,13 @@ import {
   type KanbanPullRequestRef,
   type KanbanSnapshot,
   type KanbanTicket,
+  type KanbanTicketDetail,
   type KanbanTicketStatus,
   type LinearStateType,
   type LinearWorkflowState,
 } from "@t3tools/contracts";
+
+import { KANBAN_LOCAL_COLUMN_COLORS, sortStates, workspaceOf } from "./kanbanBoard.ts";
 
 export interface KanbanLookups {
   readonly peopleById: ReadonlyMap<string, KanbanPerson>;
@@ -31,7 +41,7 @@ export interface KanbanLookups {
   readonly milestonesById: ReadonlyMap<string, KanbanMilestone>;
   readonly cyclesById: ReadonlyMap<string, KanbanCycle>;
   readonly botsById: ReadonlyMap<string, BotDirectoryEntry>;
-  /** How `owner` (the T3 user) reads. */
+  /** The T3 user's name for `owner` ("You" when unknown). */
   readonly ownerName: string;
 }
 
@@ -62,7 +72,7 @@ function startedProgressById(
 export function buildKanbanLookups(
   snapshot: KanbanSnapshot,
   bots: ReadonlyArray<BotDirectoryEntry>,
-  ownerName = "You",
+  ownerName: string | null = null,
 ): KanbanLookups {
   return {
     peopleById: byId(snapshot.people),
@@ -73,7 +83,7 @@ export function buildKanbanLookups(
     milestonesById: byId(snapshot.milestones),
     cyclesById: byId(snapshot.cycles),
     botsById: byId(bots),
-    ownerName,
+    ownerName: ownerName ?? "You",
   };
 }
 
@@ -149,12 +159,12 @@ export interface KanbanStatusDisplay {
   readonly progress: number;
 }
 
-const LOCAL_STATE_DISPLAY: Record<KanbanLocalState, Omit<KanbanStatusDisplay, "name">> = {
-  backlog: { stateType: "backlog", color: "#95a2b3", progress: 0 },
-  todo: { stateType: "unstarted", color: "#95a2b3", progress: 0 },
-  in_progress: { stateType: "started", color: "#f2c94c", progress: 0.5 },
-  in_review: { stateType: "started", color: "#5e6ad2", progress: 0.75 },
-  done: { stateType: "completed", color: "#4cb782", progress: 1 },
+const LOCAL_STATE_PROGRESS: Record<KanbanLocalState, number> = {
+  backlog: 0,
+  todo: 0,
+  in_progress: 0.5,
+  in_review: 0.75,
+  done: 1,
 };
 
 /** A status for its glyph; a Linear state missing from the snapshot reads as backlog. */
@@ -163,11 +173,21 @@ export function statusDisplay(
   status: KanbanTicketStatus,
 ): KanbanStatusDisplay {
   if (status.kind === "local") {
-    return { name: KANBAN_LOCAL_STATE_LABELS[status.state], ...LOCAL_STATE_DISPLAY[status.state] };
+    return {
+      name: KANBAN_LOCAL_STATE_LABELS[status.state],
+      stateType: kanbanStateTypeOf(status, lookups.statesById) ?? "backlog",
+      color: KANBAN_LOCAL_COLUMN_COLORS[status.state],
+      progress: LOCAL_STATE_PROGRESS[status.state],
+    };
   }
   const state = lookups.statesById.get(status.stateId);
   if (state === undefined) {
-    return { name: "Unknown status", stateType: "backlog", color: "#95a2b3", progress: 0 };
+    return {
+      name: "Unknown status",
+      stateType: "backlog",
+      color: KANBAN_LOCAL_COLUMN_COLORS.canceled,
+      progress: 0,
+    };
   }
   return {
     name: state.name,
@@ -265,27 +285,26 @@ export function formatKanbanDate(date: Date, now: Date): string {
   return date.getFullYear() === now.getFullYear() ? day : `${day}, ${date.getFullYear()}`;
 }
 
-/** A `YYYY-MM-DD` due date at local midnight. */
-export const dueDateOf = (dueDate: string): Date => {
-  const [year = 0, month = 1, day = 1] = dueDate.split("-").map(Number);
-  return new Date(year, month - 1, day);
-};
-
-/** A due date as `formatKanbanDate` writes it; a stored value that is not a real day shows as is. */
-export const formatDueDate = (dueDate: string, now: Date): string =>
-  isCalendarDay(dueDate) ? formatKanbanDate(dueDateOf(dueDate), now) : dueDate;
-
-/** `YYYY-MM-DD` of a local date. */
+/** `YYYY-MM-DD` of a local date, the format of due dates and before/after filter clauses. */
 export const isoDay = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
-/** An open ticket whose due day is before today. */
+/** A `YYYY-MM-DD` day at local midnight. */
+export const dateFromIsoDay = (day: string): Date => {
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+  return new Date(year, month - 1, date);
+};
+
+/** A due date written by `format`; a stored value that is not a real day shows as is. */
+export const formatDueDate = (dueDate: string, format: (date: Date) => string): string =>
+  isCalendarDay(dueDate) ? format(dateFromIsoDay(dueDate)) : dueDate;
+
+/** An open ticket whose due day is before today (local time); the due day itself is not overdue. */
 export function isOverdue(ticket: Pick<KanbanTicket, "dueDate" | "closedAt">, now: Date): boolean {
   if (ticket.dueDate === null || ticket.closedAt !== null || !isCalendarDay(ticket.dueDate)) {
     return false;
   }
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return dueDateOf(ticket.dueDate).getTime() < today.getTime();
+  return ticket.dueDate < isoDay(now);
 }
 
 /** Due date shortcuts from today, in local days. */
@@ -301,4 +320,108 @@ export function dueDatePresets(
     { label: "In two weeks", value: inDays(14) },
     { label: "In one month", value: inDays(30) },
   ];
+}
+
+export type KanbanTimelineEntry =
+  | { readonly kind: "activity"; readonly id: string; readonly activity: KanbanActivity }
+  | { readonly kind: "comment"; readonly id: string; readonly comment: KanbanComment };
+
+/** History lines and comments in one list, oldest first; at the same instant history comes first. */
+export function issueTimeline(
+  detail: Pick<KanbanTicketDetail, "activity" | "comments">,
+): ReadonlyArray<KanbanTimelineEntry> {
+  const entries = [
+    ...detail.activity.map((activity) => ({
+      at: Date.parse(activity.createdAt),
+      entry: { kind: "activity", id: `a:${activity.id}`, activity } as const,
+    })),
+    ...detail.comments.map((comment) => ({
+      at: Date.parse(comment.createdAt),
+      entry: { kind: "comment", id: `c:${comment.id}`, comment } as const,
+    })),
+  ];
+  // Array sort is stable, so entries at the same instant keep activity-then-comment order.
+  return entries.sort((a, b) => a.at - b.at).map(({ entry }) => entry);
+}
+
+/** The statuses a ticket can move to, in board order: its team's states, or the local ones. */
+export function statusChoices(
+  snapshot: KanbanSnapshot,
+  ticket: KanbanTicket,
+): ReadonlyArray<KanbanTicketStatus> {
+  const linear = ticket.linear;
+  if (linear === null) return KANBAN_LOCAL_STATES.map((state) => ({ kind: "local", state }));
+  return sortStates(snapshot.states.filter((state) => state.teamId === linear.teamId)).map(
+    (state) => ({ kind: "linear", stateId: state.id }),
+  );
+}
+
+/** The Linear organization of a synced ticket's account; null for a local ticket. */
+export function ticketOrganizationId(
+  snapshot: KanbanSnapshot,
+  ticket: KanbanTicket,
+): string | null {
+  const linear = ticket.linear;
+  if (linear === null) return null;
+  return (
+    snapshot.accounts.find((account) => account.id === linear.accountId)?.organizationId ?? null
+  );
+}
+
+/**
+ * People a ticket can be assigned to, as person ids: the active Linear users of its workspace
+ * (its account's own user first, then by name), or the owner and the bots for a local ticket.
+ */
+export function assigneeChoices(
+  snapshot: KanbanSnapshot,
+  ticket: KanbanTicket,
+  botIds: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const linear = ticket.linear;
+  if (linear === null) {
+    return [KANBAN_OWNER_PERSON_ID, ...botIds.map((botId) => kanbanBotPersonId(botId))];
+  }
+  const organizationId = ticketOrganizationId(snapshot, ticket);
+  const me = snapshot.accounts.find((account) => account.id === linear.accountId)?.userId ?? null;
+  return snapshot.people
+    .filter(
+      (person) =>
+        person.organizationId === organizationId &&
+        (person.active || person.id === ticket.assigneeId),
+    )
+    .sort((a, b) => Number(b.id === me) - Number(a.id === me) || a.name.localeCompare(b.name))
+    .map((person) => person.id);
+}
+
+/**
+ * Labels a ticket can carry: its team's and its workspace's Linear labels (not label groups,
+ * which Linear does not assign), or the local labels for a local ticket.
+ */
+export function labelChoices(
+  snapshot: KanbanSnapshot,
+  ticket: KanbanTicket,
+): ReadonlyArray<KanbanLabel> {
+  const linear = ticket.linear;
+  if (linear === null) return snapshot.labels.filter((label) => label.source === "local");
+  const organizationId = ticketOrganizationId(snapshot, ticket);
+  if (organizationId === null) return [];
+  const workspaceId = linearWorkspaceId(organizationId);
+  const groupIds = new Set(snapshot.labels.flatMap((label) => label.parentId ?? []));
+  return snapshot.labels.filter(
+    (label) =>
+      label.source === "linear" &&
+      label.workspaceId === workspaceId &&
+      (label.teamId === null || label.teamId === linear.teamId) &&
+      !groupIds.has(label.id),
+  );
+}
+
+/** The ticket's own bot when it has one, else the bots responsible for its workspace. */
+export function responsibleBotIds(
+  snapshot: KanbanSnapshot,
+  ticket: KanbanTicket,
+): ReadonlyArray<string> {
+  if (ticket.botId !== null) return [ticket.botId];
+  const workspaceId = workspaceOf(snapshot, ticket);
+  return snapshot.workspaces.find((workspace) => workspace.id === workspaceId)?.botIds ?? [];
 }

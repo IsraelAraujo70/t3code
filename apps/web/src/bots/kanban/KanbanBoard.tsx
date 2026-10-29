@@ -1,3 +1,4 @@
+import { type KanbanLookups } from "@t3tools/client-runtime/kanban-display";
 import {
   DndContext,
   DragOverlay,
@@ -30,7 +31,6 @@ import { Input } from "../../components/ui/input";
 import { KanbanCard, type KanbanTicketViewProps } from "./KanbanCard";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanHiddenColumns } from "./KanbanHiddenColumns";
-import type { KanbanLookups } from "./kanbanLookups";
 import { cellDropActions } from "./kanbanPageState";
 import { KanbanGroupIconView } from "./KanbanPrimitives";
 

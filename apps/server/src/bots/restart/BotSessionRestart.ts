@@ -1,11 +1,5 @@
 /**
- * Restarts a bot's provider process without touching its conversation. The idle bot's live
- * provider session is released the way the idle timeout releases it, so the next message opens a
- * fresh process (which reads MCP servers, skills and config again) that resumes the same native
- * provider thread. Nothing is held or cancelled: there is no run in flight to cut.
- *
- * Codex keeps one app-server per provider instance for every thread, so restarting a Codex bot
- * restarts that shared process, which is allowed only while none of its threads works.
+ * Codex shares one app-server per provider instance, so restarting it requires all its threads to be idle.
  */
 import {
   type BotRef,

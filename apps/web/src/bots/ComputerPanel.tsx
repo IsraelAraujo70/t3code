@@ -1,9 +1,8 @@
 import type { ComputerStreamInfo, ComputerStreamInput, EnvironmentId } from "@t3tools/contracts";
-import { MonitorIcon, MousePointerClickIcon, PauseIcon, PlayIcon } from "lucide-react";
+import { MonitorIcon, MousePointerClickIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import {
   Empty,
   EmptyDescription,
@@ -33,8 +32,8 @@ const isPageVisible = () => document.visibilityState === "visible";
 
 /**
  * The right panel's Computer tab: the bots host's whole screen, live. It streams only while
- * `visible`, the page is visible, and the viewer has not paused it. A viewer the host lets
- * control it can turn on Control; every connection starts with it off.
+ * `visible` and the page is visible. A viewer the host lets control it can turn on Control;
+ * every connection starts with it off.
  */
 export function ComputerPanel({ visible }: { readonly visible: boolean }) {
   const environmentId = useBotsEnvironmentId();
@@ -68,9 +67,8 @@ function ComputerScreen(props: {
   readonly visible: boolean;
 }) {
   const { environmentId } = props;
-  const [paused, setPaused] = useState(false);
   const pageVisible = useSyncExternalStore(subscribeToPageVisibility, isPageVisible);
-  const streaming = props.visible && pageVisible && !paused;
+  const streaming = props.visible && pageVisible;
   const [view, setView] = useState<ComputerView>(CONNECTING);
   const [hasFrame, setHasFrame] = useState(false);
   const [canControl, setCanControl] = useState(false);
@@ -93,6 +91,7 @@ function ComputerScreen(props: {
     onLeave: leaveControl,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the stream socket open while streaming
   useEffect(() => {
     if (!streaming) return;
     const canvas = canvasRef.current;
@@ -145,22 +144,21 @@ function ComputerScreen(props: {
     };
   }, [environmentId, streaming]);
 
-  const status = paused ? (
-    <span className="text-muted-foreground">Paused</span>
-  ) : view.phase === "live" ? (
-    <>
-      <Badge variant="success" size="sm">
-        Live
-      </Badge>
-      <span className="text-muted-foreground tabular-nums">
-        {view.info.screenWidth} × {view.info.screenHeight}
+  const status =
+    view.phase === "live" ? (
+      <>
+        <Badge variant="success" size="sm">
+          Live
+        </Badge>
+        <span className="text-muted-foreground tabular-nums">
+          {view.info.screenWidth} × {view.info.screenHeight}
+        </span>
+      </>
+    ) : (
+      <span className="text-muted-foreground">
+        {view.phase === "error" ? "Reconnecting…" : "Connecting…"}
       </span>
-    </>
-  ) : (
-    <span className="text-muted-foreground">
-      {view.phase === "error" ? "Reconnecting…" : "Connecting…"}
-    </span>
-  );
+    );
 
   return (
     <div ref={rootRef} className="flex size-full min-h-0 flex-col">
@@ -168,8 +166,8 @@ function ComputerScreen(props: {
         <MonitorIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate font-medium text-foreground">{props.hostLabel}</span>
         {status}
-        <div className="ml-auto flex items-center gap-1">
-          {canControl ? (
+        {canControl ? (
+          <div className="ml-auto">
             <Toggle
               variant="ghost"
               size="compact"
@@ -179,14 +177,10 @@ function ComputerScreen(props: {
               <MousePointerClickIcon />
               Control
             </Toggle>
-          ) : null}
-          <Button variant="ghost-muted" size="xs" onClick={() => setPaused((value) => !value)}>
-            {paused ? <PlayIcon /> : <PauseIcon />}
-            {paused ? "Resume" : "Pause"}
-          </Button>
-        </div>
+          </div>
+        ) : null}
       </div>
-      {view.phase === "error" && !paused ? (
+      {view.phase === "error" ? (
         <div role="alert" className="border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {view.message}
         </div>
@@ -213,11 +207,11 @@ function ComputerScreen(props: {
         />
         {hasFrame ? null : (
           <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
-            {paused ? "Paused" : "Waiting for the screen…"}
+            Waiting for the screen…
           </div>
         )}
         {/* Without control, typing goes to the composer; say so where the viewer looks. */}
-        {hasFrame && !controlling && !paused && view.phase === "live" ? (
+        {hasFrame && !controlling && view.phase === "live" ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
             <span className="rounded-md bg-background/80 px-2 py-0.5 text-xs text-muted-foreground shadow-xs">
               {canControl ? "Turn on Control to type on the host" : "View only"}

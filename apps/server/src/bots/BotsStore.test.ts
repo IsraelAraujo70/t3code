@@ -144,54 +144,6 @@ it.effect("returns an empty profile until one is set", () =>
   ),
 );
 
-it.effect("imports new rows, leaves existing ids untouched, and fills only an empty profile", () =>
-  withStore((store) =>
-    Effect.gen(function* () {
-      const existingBot = makeBot("b1", { name: "Local" });
-      const existingMemory = makeMemory("m1", "b1", { text: "Local memory" });
-      yield* store.insertBot(existingBot);
-      yield* store.insertMemory(existingMemory);
-
-      const newBot = makeBot("b2", { position: 1 });
-      const newMemory = makeMemory("m2", "b2", { source: "import" });
-      yield* store.importBatch({
-        bots: [makeBot("b1", { name: "Imported" }), newBot],
-        memories: [makeMemory("m1", "b1", { text: "Imported memory" }), newMemory],
-        aboutMe: "Imported profile",
-      });
-
-      assert.deepStrictEqual(yield* store.listBots, [existingBot, newBot]);
-      assert.deepStrictEqual(yield* store.listMemories(), [existingMemory, newMemory]);
-      assert.strictEqual(yield* store.getAboutMe, "Imported profile");
-
-      yield* store.importBatch({ bots: [], memories: [], aboutMe: "Second import" });
-      assert.strictEqual(yield* store.getAboutMe, "Imported profile");
-
-      yield* store.importBatch({ bots: [], memories: [], aboutMe: null });
-      assert.strictEqual(yield* store.getAboutMe, "Imported profile");
-    }),
-  ),
-);
-
-it.effect("writes nothing when any row of an import fails", () =>
-  withStore((store) =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        store.importBatch({
-          bots: [makeBot("b1")],
-          memories: [makeMemory("m1", "b1"), makeMemory("m2", "unknown")],
-          aboutMe: "Imported profile",
-        }),
-      );
-      assert.strictEqual(error._tag, "BotsError");
-
-      assert.deepStrictEqual(yield* store.listBots, []);
-      assert.deepStrictEqual(yield* store.listMemories(), []);
-      assert.strictEqual(yield* store.getAboutMe, "");
-    }),
-  ),
-);
-
 it.effect("registers a push device once, refreshing its label and keeping createdAt", () =>
   withStore((store) =>
     Effect.gen(function* () {

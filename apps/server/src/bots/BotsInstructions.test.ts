@@ -70,10 +70,9 @@ describe("buildBotInstructions", () => {
     assert.include(full.sections[3]!.text, "memory_forget");
     // The bot sees how much of its memory budget it uses, here 9 + 8 characters.
     assert.include(full.sections[3]!.text, "now use 17.");
-    // Code goes to its own T3 thread, and the old friend app's tools are named as gone.
+    // Code goes to its own T3 thread.
     assert.include(full.sections[4]!.text, "t3_thread_launch");
     assert.include(full.sections[4]!.text, "watch_thread");
-    assert.include(full.sections[4]!.text, "mcp__friend__");
 
     const bare = buildBotInstructions({ bot, memories: [], aboutMe: "  ", peers: [] });
     assert.deepStrictEqual(

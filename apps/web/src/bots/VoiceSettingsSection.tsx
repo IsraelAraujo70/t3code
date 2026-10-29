@@ -39,6 +39,7 @@ export function VoiceSettingsSection({
   const [saving, setSaving] = useState(false);
   const [playing, setPlaying] = useState<RealtimeVoice | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Stops the voice sample's audio element on unmount.
   useEffect(() => () => audio.current?.pause(), []);
 
   const current = settings?.voiceReaderVoice ?? null;

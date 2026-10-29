@@ -313,13 +313,6 @@ function GroupBody(props: { group: BotGroup; collapsed: boolean; children: React
 
 type Creating = { readonly moveBot: BotId | null };
 
-/**
- * The Bots block of the sidebar: the user's sections in their order, then bots in no section.
- * Inside a group, bots that need the user lead, then working ones, then settled ones, each in the
- * user's order; settled bots stay listed, dimmed. Rows drag between and within groups, section
- * headers drag to reorder sections, and right-click offers settle, reopen, and moving. The "tabs"
- * layout hides the collapsible header because the tab already names the list.
- */
 export function BotsSidebarSection(props: {
   collapsible: boolean;
   threads: ReadonlyArray<BotThreadShell>;

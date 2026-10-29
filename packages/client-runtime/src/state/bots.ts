@@ -89,7 +89,6 @@ export function createBotsEnvironmentAtoms<R, E>(
     updateMemory: command("update-memory", BOTS_WS_METHODS.memoryUpdate),
     deleteMemory: command("delete-memory", BOTS_WS_METHODS.memoryDelete),
     updateOwner: command("update-owner", BOTS_WS_METHODS.ownerUpdate),
-    importFriend: command("import-friend", BOTS_WS_METHODS.import),
     createSection: command("create-section", BOTS_WS_METHODS.sectionCreate),
     renameSection: command("rename-section", BOTS_WS_METHODS.sectionRename),
     deleteSection: command("delete-section", BOTS_WS_METHODS.sectionDelete),
@@ -187,7 +186,7 @@ export interface VoiceSessionProgress {
 }
 
 /** Folds one event in; nothing is emitted before the answer, which the server sends first. */
-export function foldVoiceSession(
+function foldVoiceSession(
   progress: VoiceSessionProgress | null,
   event: VoiceSessionEvent,
 ): readonly [VoiceSessionProgress | null, ReadonlyArray<VoiceSessionProgress>] {
@@ -299,11 +298,8 @@ function failureMessage(error: unknown): string | null {
 }
 
 /**
- * Dictation on a T3 server, for clients without on-device transcription. The recording goes up
- * as a pending `file` attachment over the same signed upload URL images use, so it works over
- * every connection mode; then `bots.dictation.transcribe` returns the text and deletes it.
- * `environmentId` is read on each use and is null when no connected server advertises
- * `dictation`.
+ * Recordings use signed attachment uploads across connection modes.
+ * Transcription deletes the uploaded recording.
  */
 export function createServerVoiceTranscriber<E, RE, TE>(input: {
   readonly registry: AtomRegistry.AtomRegistry;

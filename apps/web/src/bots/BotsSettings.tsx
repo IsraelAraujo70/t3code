@@ -41,7 +41,6 @@ import { Textarea } from "../components/ui/textarea";
 import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
-import { BotsImportSection } from "./BotsImportSection";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import { KanbanSettingsSection } from "./kanban/KanbanSettingsSection";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
@@ -169,7 +168,6 @@ function BotsEnvironmentSettings({
           bots={directory?.bots ?? []}
         />
       ) : null}
-      <BotsImportSection environmentId={environmentId} connected={connected} />
       {editor ? (
         <BotEditorDialog
           key={editor.botId ?? "new"}

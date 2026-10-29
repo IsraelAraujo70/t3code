@@ -1,9 +1,9 @@
+import { type KanbanLookups } from "@t3tools/client-runtime/kanban-display";
 import type { KanbanGroupIcon } from "@t3tools/client-runtime/kanban-board";
 import { EyeOffIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
-import type { KanbanLookups } from "./kanbanLookups";
 import { KanbanGroupIconView } from "./KanbanPrimitives";
 
 /** A column's title row: icon, name, muted count, and its menu and add button. */

@@ -211,3 +211,61 @@ const decodeServerMessage = Schema.decodeUnknownOption(
 /** A text frame from the Computer stream, or null when it is not one the contract defines. */
 export const parseComputerStreamMessage = (text: string): ComputerStreamServerMessage | null =>
   Option.getOrNull(decodeServerMessage(text));
+
+/** Owns held pointer and scroll remainders across native gesture callbacks. */
+export function createComputerGestureSession({
+  send,
+  throttle,
+  wheelNotchPx,
+}: {
+  readonly send: (input: ComputerStreamInput) => void;
+  readonly throttle: ReturnType<typeof createComputerMoveThrottle>;
+  readonly wheelNotchPx: number;
+}) {
+  let drag: { last: ComputerPoint } | null = null;
+  let wheel: { at: ComputerPoint; x: number; y: number; dx: number; dy: number } | null = null;
+  return {
+    dragStart(start: ComputerPoint | null, now: ComputerPoint | null) {
+      if (start === null) return;
+      send({ type: "pointer", action: "move", button: "left", ...start });
+      send({ type: "pointer", action: "down", button: "left", ...start });
+      drag = { last: now ?? start };
+      if (now) throttle.push(now);
+    },
+    dragMove(point: ComputerPoint | null) {
+      if (drag === null || point === null) return;
+      drag.last = point;
+      throttle.push(point);
+    },
+    dragEnd() {
+      if (drag === null) return;
+      const current = drag;
+      drag = null;
+      throttle.flush();
+      send({ type: "pointer", action: "up", button: "left", ...current.last });
+    },
+    release() {
+      if (drag === null) return;
+      throttle.cancel();
+      send({ type: "pointer", action: "up", button: "left", ...drag.last });
+      drag = null;
+    },
+    scrollStart(at: ComputerPoint | null, x: number, y: number) {
+      wheel = at ? { at, x, y, dx: 0, dy: 0 } : null;
+    },
+    scrollMove(x: number, y: number) {
+      if (wheel === null) return;
+      const horizontal = computerWheelNotches(wheel.dx + x - wheel.x, wheelNotchPx);
+      const vertical = computerWheelNotches(wheel.dy + y - wheel.y, wheelNotchPx);
+      wheel.x = x;
+      wheel.y = y;
+      wheel.dx = horizontal.remainderPx;
+      wheel.dy = vertical.remainderPx;
+      if (horizontal.notches === 0 && vertical.notches === 0) return;
+      send({ type: "wheel", ...wheel.at, deltaX: horizontal.notches, deltaY: vertical.notches });
+    },
+    scrollEnd() {
+      wheel = null;
+    },
+  };
+}

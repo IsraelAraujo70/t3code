@@ -478,7 +478,7 @@ export const KanbanView = Schema.Struct({
 });
 export type KanbanView = typeof KanbanView.Type;
 
-export const KANBAN_DEFAULT_PROPERTIES: ReadonlyArray<KanbanDisplayProperty> = [
+const KANBAN_DEFAULT_PROPERTIES: ReadonlyArray<KanbanDisplayProperty> = [
   "id",
   "status",
   "assignee",

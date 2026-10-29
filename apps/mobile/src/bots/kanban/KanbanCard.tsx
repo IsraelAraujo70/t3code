@@ -24,7 +24,7 @@ import {
   pullRequestBadge,
   statusDisplay,
   type KanbanLookups,
-} from "./kanbanDisplay.logic";
+} from "@t3tools/client-runtime/kanban-display";
 import {
   KanbanAvatar,
   KanbanBotFaces,
@@ -154,7 +154,9 @@ export const KanbanCard = memo(function KanbanCard(props: {
           size={11}
           tintColorClassName={overdue ? "accent-danger-foreground" : "accent-icon-muted"}
         />
-        <KanbanPillText tone={tone}>{formatDueDate(ticket.dueDate, now)}</KanbanPillText>
+        <KanbanPillText tone={tone}>
+          {formatDueDate(ticket.dueDate, (date) => formatKanbanDate(date, now))}
+        </KanbanPillText>
       </KanbanPill>,
     );
   }

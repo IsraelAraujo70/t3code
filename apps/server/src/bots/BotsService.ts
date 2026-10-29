@@ -1,25 +1,11 @@
 /**
- * Owns bots: their rows in BotsStore, their main threads, and the directory clients render.
- *
- * Invariants:
- * - A bot's main thread is `botThreadId(bot.id, bot.homeGeneration)`, launched in the managed
- *   Scratch project with a deterministic launch command id, so a retry or the startup
- *   reconciliation converges on the same thread instead of creating another.
- * - The row is written before its thread is launched; reconciliation launches any missing
- *   main thread, so a crash between the two writes heals on the next start.
- * - Reset raises the generation, archives the previous thread, and launches the next one.
- *   Delete archives the main thread, then removes the row and its memories.
- * - A bot's main thread is titled with the bot's name; startup and renames retitle it.
- * - `arrange` names exactly the stored sections and bots, so a stale client fails instead of
- *   dropping a bot or a section from the sidebar.
- * - `directory` publishes only after a write commits.
+ * Rows commit before thread launches; deterministic thread and command ids let startup repair missing threads.
  */
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
@@ -50,21 +36,17 @@ import {
   type BotSectionRef,
   type BotSectionRenameInput,
   type BotsArrangeInput,
-  type BotsImportInput,
-  type BotsImportResult,
   type BotsOwnerUpdateInput,
   type BotUpdateInput,
   type ModelSelection,
   type ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
-import { FRIEND_DB_RELATIVE_PATH, planFriendImport, readFriendDatabase } from "./BotsImport.ts";
 import { BotsStore } from "./BotsStore.ts";
 
 export class BotsService extends Context.Service<
@@ -90,8 +72,6 @@ export class BotsService extends Context.Service<
     readonly updateOwner: (
       input: BotsOwnerUpdateInput,
     ) => Effect.Effect<BotsOwnerUpdateInput, BotsError>;
-    /** Plans an import from friend's database; with `apply`, commits it and launches threads. */
-    readonly importFriend: (input: BotsImportInput) => Effect.Effect<BotsImportResult, BotsError>;
     readonly createSection: (input: BotSectionCreateInput) => Effect.Effect<BotSection, BotsError>;
     readonly renameSection: (input: BotSectionRenameInput) => Effect.Effect<BotSection, BotsError>;
     /** Its bots go back to the default list. */
@@ -149,7 +129,6 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const managed = yield* ManagedProjectFolders.ManagedProjectFolders;
   const providers = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-  const path = yield* Path.Path;
 
   // Sliding(1): every signal re-reads the whole directory, so only the latest one matters.
   const changes = yield* PubSub.sliding<void>(1);
@@ -428,50 +407,6 @@ const make = Effect.gen(function* () {
   const updateOwner = (input: BotsOwnerUpdateInput) =>
     store.setAboutMe(input.aboutMe).pipe(Effect.andThen(publish), Effect.as(input));
 
-  const importFriend = Effect.fn("BotsService.importFriend")(function* (input: BotsImportInput) {
-    const friendPath =
-      input.path ?? path.join(yield* HostProcess.HomeDirectory, FRIEND_DB_RELATIVE_PATH);
-    const snapshot = yield* readFriendDatabase(friendPath);
-    const existing = yield* store.listBots;
-    const instances = yield* providers.listInstances;
-    const { result, batch } = planFriendImport({
-      snapshot,
-      path: friendPath,
-      existingBotIds: new Set(existing.map((bot) => bot.id)),
-      existingAboutMe: yield* store.getAboutMe,
-      instances: instances
-        .filter((instance) => instance.enabled)
-        .map((instance) => ({
-          instanceId: instance.instanceId,
-          driver: instance.driverKind,
-          enabled: instance.enabled,
-        })),
-      now: yield* nowIso,
-    });
-    if (!input.apply) return result;
-    // Imported bots go after the ones already here, keeping friend's order among themselves.
-    const firstPosition = nextPosition(existing);
-    const bots = batch.bots.map((bot, index) => ({ ...bot, position: firstPosition + index }));
-    yield* store.importBatch({ ...batch, bots });
-    yield* publish;
-    const launchWarnings = yield* Effect.forEach(bots, (bot) =>
-      launchMainThread(bot).pipe(
-        Effect.as(Option.none<string>()),
-        Effect.catch((error) =>
-          Effect.logWarning("Could not start an imported bot's conversation", {
-            botId: bot.id,
-            error,
-          }).pipe(Effect.as(Option.some(error.message))),
-        ),
-      ),
-    );
-    return {
-      ...result,
-      applied: true,
-      warnings: [...result.warnings, ...launchWarnings.flatMap(Option.toArray)],
-    } satisfies BotsImportResult;
-  });
-
   const requireSection = (sectionId: BotSectionId) =>
     store.getSection(sectionId).pipe(
       Effect.flatMap(
@@ -608,7 +543,6 @@ const make = Effect.gen(function* () {
     deleteMemory,
     memoriesOf: Effect.fn("BotsService.memoriesOf")((botId) => store.listMemories(botId)),
     updateOwner,
-    importFriend,
     createSection,
     renameSection,
     deleteSection,

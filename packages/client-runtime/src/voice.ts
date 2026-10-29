@@ -1,12 +1,7 @@
 // @effect-diagnostics globalTimers:off - The shared controller runs without an Effect runtime.
 // @effect-diagnostics globalDate:off - Diagnostics carry client wall-clock times for the server log.
 /**
- * Voice sessions (friend fork), shared by web, mobile and the guest app: a live conversation with a
- * thread, or one assistant reply read aloud. Each platform supplies `openPeer` (DOM
- * `RTCPeerConnection` on web, `react-native-webrtc` on mobile and in the guest app) and a transport
- * for its target; this module owns the session's state machine, the audio gate and the order
- * offer → answer → ready → end, and never touches a platform API. See `VoiceSessionRpc` in the
- * contracts for the server's half.
+ * Platforms supply the peer and transport; signaling must follow offer, answer, ready, end.
  */
 import type {
   EnvironmentId,
@@ -214,7 +209,7 @@ export function voiceAudible(state: VoiceState): boolean {
  * Whether the voice can be swapped without cutting anything the user hears or says. Text sent for
  * the voice to speak needs no wait: the server speaks it with the new voice.
  */
-export function voiceSwappable(state: VoiceState): boolean {
+function voiceSwappable(state: VoiceState): boolean {
   return (
     state.connection === "live" &&
     !state.userSpeaking &&

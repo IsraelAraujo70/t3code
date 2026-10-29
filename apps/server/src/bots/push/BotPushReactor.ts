@@ -168,7 +168,7 @@ const make = Effect.gen(function* () {
   return { start, handle } satisfies BotPushReactor["Service"];
 });
 
-export const layer = Layer.effect(BotPushReactor, make);
+const layer = Layer.effect(BotPushReactor, make);
 
 /** Starts the reactor with the server; it stays idle when push is off. */
 export const layerStart = Layer.effectDiscard(

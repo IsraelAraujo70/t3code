@@ -1,5 +1,3 @@
-import * as NodeSqlite from "node:sqlite";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -7,10 +5,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -47,8 +43,6 @@ import * as GuestStore from "./guest/GuestStore.ts";
 const SCRATCH = ProjectId.make("scratch-project");
 const CODEX = ProviderInstanceId.make("codex");
 const CLAUDE = ProviderInstanceId.make("claude");
-const FRIEND_BOT_A = `b_${"a".repeat(32)}`;
-const FRIEND_BOT_B = `b_${"b".repeat(32)}`;
 
 const input: BotCreateInput = {
   name: "Al",
@@ -525,97 +519,7 @@ describe("BotsService", () => {
   );
 });
 
-/** A friend.db with the columns the import reads. */
-function writeFriendFixture(path: string): void {
-  const db = new NodeSqlite.DatabaseSync(path);
-  db.exec(`
-    CREATE TABLE bots (
-      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL, emoji TEXT NOT NULL, role TEXT NOT NULL, model TEXT NOT NULL,
-      mcp_servers TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, effort TEXT
-    );
-    CREATE TABLE memories (
-      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, bot_id TEXT NOT NULL,
-      text TEXT NOT NULL, source TEXT NOT NULL, enabled INTEGER NOT NULL,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  `);
-  const insertBot = db.prepare(
-    `INSERT INTO bots (id, name, emoji, role, model, mcp_servers, created_at, updated_at, effort)
-     VALUES (?, ?, ?, ?, ?, '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ?)`,
-  );
-  insertBot.run(FRIEND_BOT_A, "Al", "🤖", "Codes", "claude-opus-5-5", "high");
-  insertBot.run(FRIEND_BOT_B, "Bea", "🐝", "Writes", "gpt-6.1-sol", null);
-  db.prepare(
-    `INSERT INTO memories (id, bot_id, text, source, enabled, created_at, updated_at)
-     VALUES (?, ?, 'Likes tea', 'user', 1, '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z')`,
-  ).run(`mem_${"1".repeat(32)}`, FRIEND_BOT_A);
-  db.prepare("INSERT INTO settings (key, value) VALUES ('aboutMe', 'I am Israel')").run();
-  db.close();
-}
-
-describe("BotsService.importFriend", () => {
-  it.effect("a dry run writes nothing; apply writes and launches once", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const friendPath = path.join(
-        yield* fs.makeTempDirectoryScoped({ prefix: "bots-svc-" }),
-        "friend.db",
-      );
-      writeFriendFixture(friendPath);
-
-      const { orchestration, store, startService } = yield* setup();
-      const service = yield* startService;
-      const existing = yield* service.createBot(input);
-
-      const plan = yield* service.importFriend({ path: friendPath, apply: false });
-      assert.isFalse(plan.applied);
-      assert.deepStrictEqual(
-        plan.bots.map((bot) => [bot.sourceId, bot.status]),
-        [
-          [FRIEND_BOT_A, "new"],
-          [FRIEND_BOT_B, "new"],
-        ],
-      );
-      assert.strictEqual((yield* store.listBots).length, 1);
-      assert.strictEqual(yield* store.getAboutMe, "");
-      assert.strictEqual(orchestration.threads.size, 1);
-
-      const applied = yield* service.importFriend({ path: friendPath, apply: true });
-      assert.isTrue(applied.applied);
-      const bots = yield* store.listBots;
-      assert.deepStrictEqual(
-        bots.map((bot) => bot.id),
-        [existing.id, FRIEND_BOT_A, FRIEND_BOT_B],
-      );
-      assert.deepStrictEqual(
-        bots.map((bot) => bot.position),
-        [0, 1, 2],
-      );
-      assert.strictEqual((yield* store.listMemories(BotId.make(FRIEND_BOT_A))).length, 1);
-      assert.strictEqual(yield* store.getAboutMe, "I am Israel");
-      assert.strictEqual(
-        orchestration.threads.get(botThreadId(BotId.make(FRIEND_BOT_A), 1))!.model,
-        "claude-opus-5-5",
-      );
-      assert.isTrue(orchestration.threads.has(botThreadId(BotId.make(FRIEND_BOT_B), 1)));
-
-      const launchesBefore = orchestration.launches.length;
-      const again = yield* service.importFriend({ path: friendPath, apply: true });
-      assert.deepStrictEqual(
-        again.bots.map((bot) => bot.status),
-        ["exists", "exists"],
-      );
-      assert.strictEqual((yield* store.listBots).length, 3);
-      assert.strictEqual((yield* store.listMemories()).length, 1);
-      // Startup reconciliation may also run meanwhile; every later launch only replays.
-      assert.isTrue(orchestration.launches.slice(launchesBefore).every((launch) => launch.resumed));
-      assert.strictEqual(orchestration.threads.size, 3);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
+describe("BotsService linked environments", () => {
   it.effect("only the user's switch lets a bot use linked environments, never a guest's bot", () =>
     Effect.gen(function* () {
       const orchestration = yield* makeOrchestration;
