@@ -296,8 +296,8 @@ export interface FileRoutesByFullPath {
   '/settings/diffs': typeof ChatSettingsDiffsRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
-  '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/kanban': typeof ChatSettingsKanbanRoute
+  '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
@@ -331,7 +331,6 @@ export interface FileRoutesByTo {
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/bots': typeof ChatSettingsBotsRoute
-  '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -340,6 +339,7 @@ export interface FileRoutesByTo {
   '/settings/diffs': typeof ChatSettingsDiffsRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
@@ -384,8 +384,8 @@ export interface FileRoutesById {
   '/_chat/settings/diffs': typeof ChatSettingsDiffsRoute
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
-  '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/kanban': typeof ChatSettingsKanbanRoute
+  '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/labs': typeof ChatSettingsLabsRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
@@ -429,8 +429,8 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/integrations'
-    | '/settings/keybindings'
     | '/settings/kanban'
+    | '/settings/keybindings'
     | '/settings/labs'
     | '/settings/maintenance'
     | '/settings/open-source-licenses'
@@ -464,7 +464,6 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/beta'
     | '/settings/bots'
-    | '/settings/kanban'
     | '/settings/browser'
     | '/settings/chat'
     | '/settings/connections'
@@ -473,6 +472,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/integrations'
+    | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
     | '/settings/maintenance'
@@ -516,8 +516,8 @@ export interface FileRouteTypes {
     | '/_chat/settings/diffs'
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
-    | '/_chat/settings/keybindings'
     | '/_chat/settings/kanban'
+    | '/_chat/settings/keybindings'
     | '/_chat/settings/labs'
     | '/_chat/settings/maintenance'
     | '/_chat/settings/open-source-licenses'
@@ -855,8 +855,8 @@ interface ChatSettingsRouteChildren {
   ChatSettingsDiffsRoute: typeof ChatSettingsDiffsRoute
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
-  ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsKanbanRoute: typeof ChatSettingsKanbanRoute
+  ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsLabsRoute: typeof ChatSettingsLabsRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
@@ -885,8 +885,8 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
-  ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsKanbanRoute: ChatSettingsKanbanRoute,
+  ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsLabsRoute: ChatSettingsLabsRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
