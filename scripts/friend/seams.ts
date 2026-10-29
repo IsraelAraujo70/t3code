@@ -51,8 +51,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "packages/contracts/src/settings.ts",
-    markers: 4,
-    why: "sidebarBotsLayout client setting; voiceReaderVoice server setting",
+    markers: 5,
+    why: "sidebarBotsLayout client setting; voiceReaderVoice and voiceLanguage server settings",
   },
   { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
   {

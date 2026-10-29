@@ -114,6 +114,40 @@ export const BotSection = Schema.Struct({
 });
 export type BotSection = typeof BotSection.Type;
 
+/**
+ * Languages voice sessions speak, each with its own prompts and framing. `pt-BR` keeps the prompts
+ * proven with `voiceProbe.ts`; add a language only with its own probe run.
+ */
+export const VOICE_LANGUAGES = ["en", "pt-BR"] as const;
+export const VoiceLanguage = Schema.Literals(VOICE_LANGUAGES);
+export type VoiceLanguage = typeof VoiceLanguage.Type;
+
+/**
+ * What the bots host was started with, for Settings to show what is on and how to turn the rest on.
+ * Read from the host's environment; never carries a secret, a token or a token path.
+ */
+export const BotsHostStatus = Schema.Struct({
+  /** The voice when `voiceReaderVoice` is unset: `T3CODE_VOICE_READER_VOICE`, else Codex's default. */
+  defaultVoice: Schema.String,
+  /** The language when `voiceLanguage` is unset: `T3CODE_VOICE_LANGUAGE`, else English. */
+  defaultVoiceLanguage: VoiceLanguage,
+  /** Where voice previews load from (`T3CODE_VOICE_SAMPLES_URL`); null hides them. */
+  voiceSamplesUrl: Schema.NullOr(Schema.String),
+  /** `OPENROUTER_API_KEY` is set: dictation and the kanban AI filter work on this host. */
+  openRouter: Schema.Boolean,
+  /** `T3CODE_FCM_SERVICE_ACCOUNT_FILE` is set. */
+  androidPush: Schema.Boolean,
+  /** Why push is off although configured (an unreadable key file), or null. */
+  androidPushIssue: Schema.NullOr(Schema.String),
+  /** The public origin webhook tasks use without T3 Connect, or null. */
+  webhookPublicBaseUrl: Schema.NullOr(Schema.String),
+  /** Linear sync interval; 0 when polling is off. */
+  kanbanPollSeconds: Schema.Int,
+  /** Host MCP servers forwarded to bots, by server name only. */
+  hostMcp: Schema.Array(Schema.Struct({ botId: BotId, servers: Schema.Array(Schema.String) })),
+});
+export type BotsHostStatus = typeof BotsHostStatus.Type;
+
 export const BotDirectoryEntry = Schema.Struct({
   ...Bot.fields,
   homeThreadId: ThreadId,
@@ -135,6 +169,8 @@ export const BotDirectory = Schema.Struct({
   ),
   /** Bots that belong to a guest: never allowed linked environments. */
   guestBotIds: Schema.Array(BotId).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** Absent from servers built before it. */
+  host: Schema.optionalKey(BotsHostStatus),
 });
 export type BotDirectory = typeof BotDirectory.Type;
 
