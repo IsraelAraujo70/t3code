@@ -23,6 +23,10 @@
       "types": "./src/kanbanBoard.ts",
       "default": "./src/kanbanBoard.ts"
     },
+    "./kanban-display": {
+      "types": "./src/kanbanDisplay.ts",
+      "default": "./src/kanbanDisplay.ts"
+    },
     "./app-self-update": {
       "types": "./src/appSelfUpdate.ts",
       "default": "./src/appSelfUpdate.ts"
