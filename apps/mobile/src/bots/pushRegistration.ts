@@ -54,11 +54,13 @@ export function BotPushRegistration() {
     : null;
   const connectedId = connection?.connectionState === "connected" ? environmentId : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Registers or unregisters this device push token as the preference and connection change.
   useEffect(() => {
     if (Platform.OS !== "android" || enabled === null) return;
     void controller.update(enabled, connectedId);
   }, [controller, enabled, connectedId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns native foreground and push-token listeners for the registration controller.
   useEffect(() => {
     if (Platform.OS !== "android") return;
     const appState = AppState.addEventListener("change", (state) => {

@@ -7,6 +7,7 @@ import {
   computerTypingInputs,
   computerWheelNotches,
   createComputerMoveThrottle,
+  createComputerGestureSession,
   parseComputerDocumentMessage,
   parseComputerStreamMessage,
   type ComputerPoint,
@@ -180,5 +181,74 @@ describe("message parsing", () => {
       canControl: true,
     });
     expect(parseComputerStreamMessage('{"type":"access"}')).toBeNull();
+  });
+});
+
+describe("computer gesture session", () => {
+  it("flushes drag moves and releases a held button only once", () => {
+    const sent: unknown[] = [];
+    let scheduled: (() => void) | null = null;
+    const throttle = createComputerMoveThrottle({
+      intervalMs: 33,
+      now: () => 0,
+      schedule: (run) => {
+        scheduled = run;
+        return () => {
+          scheduled = null;
+        };
+      },
+      send: (point) => sent.push({ type: "pointer", action: "move", button: "left", ...point }),
+    });
+    const session = createComputerGestureSession({
+      send: (input) => sent.push(input),
+      throttle,
+      wheelNotchPx: 32,
+    });
+    const start = { x: 0, y: 0 };
+    const last = { x: 1, y: 1 };
+    session.dragStart(start, start);
+    session.dragMove(last);
+    expect(sent).toHaveLength(3);
+    expect(scheduled).not.toBeNull();
+    session.dragEnd();
+    expect(sent).toEqual([
+      { type: "pointer", action: "move", button: "left", ...start },
+      { type: "pointer", action: "down", button: "left", ...start },
+      { type: "pointer", action: "move", button: "left", ...start },
+      { type: "pointer", action: "move", button: "left", ...last },
+      { type: "pointer", action: "up", button: "left", ...last },
+    ]);
+    session.dragStart(start, null);
+    session.dragMove(last);
+    session.release();
+    const released = sent.length;
+    session.release();
+    session.dragEnd();
+    expect(sent).toHaveLength(released);
+    expect(sent.at(-1)).toEqual({ type: "pointer", action: "up", button: "left", ...last });
+    expect(scheduled).toBeNull();
+  });
+  it("carries scroll remainders between updates", () => {
+    const sent: unknown[] = [];
+    const throttle = createComputerMoveThrottle({
+      intervalMs: 33,
+      now: () => 0,
+      schedule: () => () => {},
+      send: () => {},
+    });
+    const session = createComputerGestureSession({
+      send: (input) => sent.push(input),
+      throttle,
+      wheelNotchPx: 32,
+    });
+    session.scrollStart({ x: 0.5, y: 0.5 }, 0, 0);
+    session.scrollMove(20, 40);
+    session.scrollMove(40, 64);
+    session.scrollEnd();
+    session.scrollMove(100, 100);
+    expect(sent).toEqual([
+      { type: "wheel", x: 0.5, y: 0.5, deltaX: 0, deltaY: -1 },
+      { type: "wheel", x: 0.5, y: 0.5, deltaX: -1, deltaY: -1 },
+    ]);
   });
 });

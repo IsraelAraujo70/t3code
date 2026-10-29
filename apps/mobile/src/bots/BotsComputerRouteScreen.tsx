@@ -1,9 +1,9 @@
+import { useAppForeground } from "../lib/appState";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, type ComputerStreamInput } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AppState,
   Keyboard,
   Platform,
   ScrollView,
@@ -72,7 +72,7 @@ function ComputerScreen({
   const insets = useSafeAreaInsets();
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState !== "background");
+  const foreground = useAppForeground();
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [canControl, setCanControl] = useState(false);
@@ -81,12 +81,6 @@ function ComputerScreen({
   const [typed, setTyped] = useState("");
   const stream = useRef<ComputerStreamRef>(null);
   const input = useRef<TextInputInstance>(null);
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) =>
-      setForeground(state !== "background"),
-    );
-    return () => subscription.remove();
-  }, []);
   // Capture runs on the host only while a viewer is attached, so a hidden screen detaches.
   const attached = focused && foreground;
 
@@ -109,6 +103,7 @@ function ComputerScreen({
     [changeControl],
   );
   // Android's back gesture hides the keyboard without blurring the field.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Android's back gesture hides the keyboard without blurring the field.
   useEffect(() => {
     const subscription = Keyboard.addListener("keyboardDidHide", () => input.current?.blur());
     return () => subscription.remove();

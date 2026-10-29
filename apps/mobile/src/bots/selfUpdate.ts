@@ -151,12 +151,14 @@ export function useSelfUpdateChecks() {
   const connectedId = connection?.connectionState === "connected" ? environmentId : null;
   const enabled = selfUpdate.getSnapshot().embedded !== null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Points the self-updater at the connected bots host and checks it when it connects.
   useEffect(() => {
     if (!enabled) return;
     target = connectedId;
     if (connectedId !== null) void selfUpdate.check("launch");
   }, [enabled, connectedId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-checks for an update when the app returns to the foreground.
   useEffect(() => {
     if (!enabled) return;
     const subscription = AppState.addEventListener("change", (state) => {
