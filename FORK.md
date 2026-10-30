@@ -372,9 +372,16 @@ The server proxies `/vscode/*`, HTTP and WebSocket, to Microsoft's `code serve-w
 CLI, licence accepted with `--accept-server-license-terms`). The first request starts it as a
 transient `systemd-run --user` unit with `MemoryMax=$T3CODE_VSCODE_MEMORY_MAX` (default `3G`),
 `CPUWeight=20` and `IOWeight=20`; one unit serves every tab and stops after
-`T3CODE_VSCODE_IDLE_MS` (default 30 minutes) with no open connection, or when T3 stops. The CLI is
-`T3CODE_VSCODE_CLI` (default `~/.t3-friend/vscode/bin/code`), its data `T3CODE_VSCODE_DATA_DIR`
-(default `~/.t3-friend/vscode`). A missing CLI shows its path in the tab.
+`T3CODE_VSCODE_IDLE_MS` (default 30 minutes) with no open connection, or when T3 stops. Where no
+systemd user manager answers (macOS, a Linux without one), checked once on the first start, it runs
+instead as T3's child in its own process group under `nice -n 10`, with no memory cap, its stderr in
+`$T3CODE_VSCODE_DATA_DIR/run/*.log`. A small `sh` wrapper kills that group when T3's end of its stdin
+closes, so it dies with T3 even when T3 is killed outright.
+
+The CLI is `T3CODE_VSCODE_CLI` when set. Otherwise the server looks in `~/.t3-friend/vscode/bin/code`,
+then on macOS in `Visual Studio Code.app`'s `code-tunnel` (`/Applications` or `~/Applications`), then
+for `code` on `PATH`. The tab names the standalone CLI download for the machine's platform when none is
+found. Its data is `T3CODE_VSCODE_DATA_DIR` (default `~/.t3-friend/vscode`).
 
 serve-web listens on a unix socket in a 0700 directory and runs without a connection token: its
 client repeats the token inside the socket protocol, so the token would have to reach the browser.

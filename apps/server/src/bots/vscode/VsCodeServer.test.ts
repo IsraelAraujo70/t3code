@@ -94,3 +94,59 @@ it.effect("a lost server is started again on the next request", () =>
     expect(calls.launches).toBe(2);
   }).pipe(Effect.scoped),
 );
+
+it("looks for the CLI in the fork's folder, the macOS app, then PATH; an override is the only place", () => {
+  const app = "Visual Studio Code.app/Contents/Resources/app/bin/code-tunnel";
+  expect(
+    VsCodeServer.cliCandidates(undefined, "/Users/me", "darwin", "/opt/bin::/usr/bin"),
+  ).toEqual([
+    "/Users/me/.t3-friend/vscode/bin/code",
+    `/Applications/${app}`,
+    `/Users/me/Applications/${app}`,
+    "/opt/bin/code",
+    "/usr/bin/code",
+  ]);
+  expect(VsCodeServer.cliCandidates(undefined, "/home/me", "linux", "/usr/bin")).toEqual([
+    "/home/me/.t3-friend/vscode/bin/code",
+    "/usr/bin/code",
+  ]);
+  expect(VsCodeServer.cliCandidates("/x/code", "/home/me", "darwin", "/usr/bin")).toEqual([
+    "/x/code",
+  ]);
+});
+
+it.effect("uses systemd only when systemd-run exists and the user manager answers", () =>
+  Effect.gen(function* () {
+    const runner =
+      (failing: string | undefined) => (command: string, _args: ReadonlyArray<string>) =>
+        command === failing
+          ? Effect.fail(new VsCodeServer.VsCodeError({ message: `spawn ${command} ENOENT` }))
+          : Effect.succeed("");
+    expect(yield* VsCodeServer.canUseSystemd(runner(undefined))).toBe(true);
+    expect(yield* VsCodeServer.canUseSystemd(runner("systemd-run"))).toBe(false);
+    expect(yield* VsCodeServer.canUseSystemd(runner("systemctl"))).toBe(false);
+  }),
+);
+
+it.effect("decides between systemd and a direct child once, on the first start", () =>
+  Effect.gen(function* () {
+    let checks = 0;
+    const systemd = makeLauncher();
+    const direct = makeLauncher();
+    const launcher = VsCodeServer.pickLauncher(
+      Effect.sync(() => {
+        checks += 1;
+        return false;
+      }),
+      () => systemd.launcher,
+      () => direct.launcher,
+    );
+    yield* launcher.stop;
+    yield* launcher.launch;
+    yield* launcher.stop;
+    yield* launcher.launch;
+    expect(checks).toBe(1);
+    expect(direct.calls).toEqual({ launches: 2, stops: 1 });
+    expect(systemd.calls).toEqual({ launches: 0, stops: 0 });
+  }),
+);
