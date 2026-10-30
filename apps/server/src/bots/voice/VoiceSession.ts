@@ -33,6 +33,8 @@ import * as Stream from "effect/Stream";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 
 import * as CodexRealtime from "./CodexRealtime.ts";
+import { speakable } from "./speakable.ts";
+import { VOICE_MESSAGE_PREFIX } from "./voiceMessage.ts";
 import { readVoiceLanguage, VOICE_SCRIPTS, type VoiceScript } from "./voiceLanguage.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -109,10 +111,7 @@ export const CODEX_SPEECH_MAX_BYTES = 4_000;
  * staying under `CODEX_SPEECH_MAX_BYTES` with its framing, a shorter turn is read more faithfully,
  * and a false barge-in silences only the rest of its part.
  */
-export const SPEECH_PART_BYTES = 1_800;
-
-/** Marks a message the user spoke. */
-const VOICE_MESSAGE_PREFIX = "🎙️ ";
+export const SPEECH_PART_BYTES = 1_000;
 
 /** The voice when neither the setting nor `VOICE_ENV` picks one; Codex's own v3 default. */
 export const DEFAULT_VOICE = "cove";
@@ -215,13 +214,55 @@ export const speechParts = (reply: string, max: number = SPEECH_PART_BYTES): str
   return parts;
 };
 
-/** What the reader receives for a reply, one append per part, framed in the session's language. */
-export const voiceReaderSpeeches = (reply: string, script: VoiceScript): string[] =>
-  speechParts(reply).map((part, index, parts) => script.readerSpeech(part, index, parts.length));
+/** A reply as the plain-speech parts the voice reads, one realtime turn each. */
+const voiceParts = (reply: string, script: VoiceScript): string[] =>
+  speechParts(speakable(reply, script.standIns));
 
-/** What the receptionist receives for a reply, one append per part; its prompt says to speak these. */
-export const voiceReplySpeeches = (reply: string, script: VoiceScript): string[] =>
-  speechParts(reply).map((part, index, parts) => script.replySpeech(part, index, parts.length));
+/** What the voice receives for a reply, one append per part, framed in the session's language. */
+export const voiceSpeeches = (reply: string, script: VoiceScript): string[] =>
+  voiceParts(reply, script).map((part, index, parts) =>
+    script.readSpeech(part, index, parts.length),
+  );
+
+/** Unsaid words below this many are not worth another turn. */
+const RESUME_MIN_WORDS = 8;
+
+const spokenTokens = (text: string) =>
+  Array.from(text.matchAll(/[\p{L}\p{N}]+/gu), (match) => ({
+    word: match[0].toLowerCase().normalize("NFD").replace(/\p{M}/gu, ""),
+    at: match.index,
+  }));
+
+/**
+ * What is left of `part` when the voice ended its turn having said only `said`, from the start of
+ * the sentence where it stopped; null when it said the part. The voice sometimes ends a turn
+ * halfway through a part, and nothing then reads the rest. A transcript about as long as the part
+ * is a reading with other words, not a stop, and is left alone.
+ */
+export const unsaid = (part: string, said: string): string | null => {
+  const source = spokenTokens(part);
+  const heard = spokenTokens(said).map((token) => token.word);
+  if (heard.length >= source.length * 0.8) return null;
+  // reached[i]: words of the first i source words the voice said in order (longest common subsequence).
+  let previous = Array.from({ length: heard.length + 1 }, () => 0);
+  const reached = [0];
+  for (const { word } of source) {
+    const row = [0];
+    for (let j = 1; j <= heard.length; j++)
+      row[j] = word === heard[j - 1] ? previous[j - 1]! + 1 : Math.max(previous[j]!, row[j - 1]!);
+    previous = row;
+    reached.push(row[heard.length]!);
+  }
+  const next = reached.indexOf(reached.at(-1)!);
+  const left = source.length - next;
+  if (left < RESUME_MIN_WORDS || left < source.length * 0.2) return null;
+  const before = part.slice(0, source[next]!.at);
+  const sentence = Math.max(
+    0,
+    ...Array.from(before.matchAll(/[.!?…:;]\s+|\n/gu), (m) => m.index + m[0].length),
+  );
+  return part.slice(sentence).trim();
+};
 
 /**
  * Append speech only while realtime is quiet; mid-turn text can be folded into a silent turn or lost.
@@ -254,7 +295,8 @@ export type HandoffInput =
   | { readonly type: "running"; readonly running: boolean }
   | { readonly type: "speak"; readonly speech: string }
   | { readonly type: "voice-talking" }
-  | { readonly type: "voice-done" }
+  /** The voice's turn ended; `rest` is what it left unsaid of the part it was reading. */
+  | { readonly type: "voice-done"; readonly rest?: string | null }
   | { readonly type: "start-timeout"; readonly attempt: number }
   | { readonly type: "user-delta"; readonly delta: string }
   | { readonly type: "user-said"; readonly text: string }
@@ -339,7 +381,11 @@ export function handoffReducer(state: Handoff, input: HandoffInput): HandoffStep
       // Speech goes out only while the voice is quiet, so the turn that starts is speaking it.
       return settle({ ...state, voiceTalking: true, inFlight: null });
     case "voice-done":
-      return pump({ ...state, voiceTalking: false });
+      return pump({
+        ...state,
+        voiceTalking: false,
+        queued: input.rest == null ? state.queued : [input.rest, ...state.queued],
+      });
     case "start-timeout": {
       const inFlight = state.inFlight;
       if (inFlight === null || inFlight.attempt !== input.attempt) return settle(state);
@@ -445,6 +491,21 @@ export const layer = Layer.effect(
               fork(Effect.sleep(duration).pipe(Effect.andThen(ending)));
 
             let handoff = idleHandoff;
+            // The plain part behind each reading appended, the one being read, and whether the
+            // user spoke during the voice's turn (then it was cut short on purpose).
+            const partOf = new Map<string, string>();
+            let reading: string | null = null;
+            let interrupted = false;
+            const speakReply = (reply: string) => {
+              const parts = voiceParts(reply, script);
+              if (parts.length === 0 && mode.type === "read")
+                return end("This reply has nothing to read aloud.").pipe(Effect.asVoid);
+              return Effect.forEach(parts, (part, index) => {
+                const speech = script.readSpeech(part, index, parts.length);
+                partOf.set(speech, part);
+                return step({ type: "speak", speech });
+              });
+            };
             let reported: boolean | null = null;
             let silenceTimer: Fiber.Fiber<void> | null = null;
             const postText = options.post ?? ((text: string) => threads.post(threadId, text));
@@ -460,6 +521,7 @@ export const layer = Layer.effect(
                   reported = working;
                   report = Queue.offer(events, { type: "bot", working });
                 }
+                if (next.append !== null) reading = partOf.get(next.append.speech) ?? null;
                 const append =
                   next.append === null
                     ? Effect.void
@@ -537,16 +599,28 @@ export const layer = Layer.effect(
                 Stream.runForEach(session.events, (event) => {
                   switch (event.type) {
                     case "transcript":
-                      return handoff.voiceTalking
-                        ? Effect.void
-                        : Effect.logInfo(`Voice ${id} started talking.`).pipe(
-                            Effect.andThen(step({ type: "voice-talking" })),
-                          );
+                      if (handoff.voiceTalking) return Effect.void;
+                      interrupted = false;
+                      return Effect.logInfo(`Voice ${id} started talking.`).pipe(
+                        Effect.andThen(step({ type: "voice-talking" })),
+                      );
                     case "transcript-done": {
                       // What the voice generated, to compare with what a client played.
                       const said = Effect.logInfo(`Voice ${id} said: ${event.text}`);
+                      const left =
+                        reading === null || interrupted ? null : unsaid(reading, event.text);
+                      reading = null;
+                      // Read once more from where it stopped; that reading is not resumed again.
+                      const rest = left === null ? null : script.readSpeech(left, 0, 1);
+                      // A whole part left unsaid frames to the same speech as the part itself.
+                      if (rest !== null) partOf.delete(rest);
+                      const resumed =
+                        rest === null
+                          ? Effect.void
+                          : Effect.logInfo(`Voice ${id} stopped early; reading the rest again.`);
                       return said.pipe(
-                        Effect.andThen(step({ type: "voice-done" })),
+                        Effect.andThen(resumed),
+                        Effect.andThen(step({ type: "voice-done", rest })),
                         Effect.andThen(
                           Effect.suspend(() =>
                             mode.type === "read" && !handoffWorking(handoff)
@@ -558,6 +632,7 @@ export const layer = Layer.effect(
                     }
                     // The microphone stays silent until the client is ready.
                     case "user-transcript-delta":
+                      if (handoff.voiceTalking) interrupted = true;
                       return mode.type === "conversation"
                         ? step({ type: "user-delta", delta: event.delta })
                         : Effect.void;
@@ -585,21 +660,19 @@ export const layer = Layer.effect(
             yield* awaitReady(1, "The voice connection did not come up.");
             const start =
               text !== null
-                ? Effect.forEach(voiceReaderSpeeches(text, script), (speech) =>
-                    step({ type: "speak", speech }),
-                  ).pipe(Effect.andThen(endAfter(MAX_READ, end(null))))
+                ? speakReply(text).pipe(Effect.andThen(endAfter(MAX_READ, end(null))))
                 : fork(
                     Stream.runForEach(threads.activity(threadId), (activity) => {
                       switch (activity.type) {
                         case "working":
                           return step({ type: "running", running: activity.working });
                         case "reply":
-                          return Effect.forEach(
-                            voiceReplySpeeches(activity.text, script),
-                            (speech) => step({ type: "speak", speech }),
-                          );
+                          return speakReply(activity.text);
                         case "waiting-on-user":
-                          return step({ type: "speak", speech: script.waitingOnUserSpeech });
+                          return step({
+                            type: "speak",
+                            speech: script.readSpeech(script.waitingOnUser, 0, 1),
+                          });
                       }
                     }).pipe(Effect.catch((error) => end(error.message))),
                   );

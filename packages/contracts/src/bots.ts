@@ -124,7 +124,7 @@ export type BotSection = typeof BotSection.Type;
 
 /**
  * Languages voice sessions speak, each with its own prompts and framing. `pt-BR` keeps the prompts
- * proven with `voiceProbe.ts`; add a language only with its own probe run.
+ * measured with `voiceBench.ts`; add a language only with its own bench run.
  */
 export const VOICE_LANGUAGES = ["en", "pt-BR"] as const;
 export const VoiceLanguage = Schema.Literals(VOICE_LANGUAGES);

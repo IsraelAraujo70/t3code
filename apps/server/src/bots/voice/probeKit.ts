@@ -138,12 +138,13 @@ export type ClientReport = typeof ClientReport.Type;
 
 /** Words compared without case, accents, code blocks or links, which the voice does not read. */
 export const words = (text: string) =>
+  // Code and links go before accents: a backtick is a diacritic too.
   text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/https?:\/\/\S+/g, " ")
     .split(/[^\p{L}\p{N}]+/u)
     .filter((word) => word.length > 0);
 

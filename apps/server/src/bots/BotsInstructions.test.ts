@@ -23,6 +23,7 @@ import {
 } from "./BotsInstructions.ts";
 import { BotsStore, layerFromDb as storeLayerFromDb } from "./BotsStore.ts";
 import { GuestStore, layerFromDb as guestLayerFromDb } from "./guest/GuestStore.ts";
+import { VOICE_MESSAGE_PREFIX } from "./voice/voiceMessage.ts";
 
 const bot: Bot = {
   id: BotId.make(`b_${"a".repeat(32)}`),
@@ -213,6 +214,9 @@ describe("reply style", () => {
       assert.include(style.text, "not your tool calls or their output");
       // Coding-agent config on the host asks for a closing DONE; a chat reply never has one.
       assert.include(style.text, "status label meant for coding reports such as DONE");
+      // The voice reads a reply to a spoken message word for word, so it must be speech already.
+      assert.include(style.text, `starts with "${VOICE_MESSAGE_PREFIX.trim()}" was spoken`);
+      assert.include(style.text, "Use no lists, headings, tables, links, code");
     }
     // Only the owner's bots can hand long material to a T3 thread.
     assert.include(owner.sections.at(-1)!.text, "a file or a T3 thread");

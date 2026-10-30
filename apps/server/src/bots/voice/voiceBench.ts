@@ -1,24 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalDateInEffect:off globalConsole:off globalConsoleInEffect:off effectFnOpportunity:off preferSchemaOverJson:off - a live benchmark that times the voice in wall-clock seconds and writes its evidence to files.
 /**
- * Scores the real voice against scripted cases (`bench/cases.ts`): the voice session runs in
- * process against the installed Codex's realtime voice, with a headless Chromium as the WebRTC
- * client. Tests fake realtime, so only this shows what the model does with the prompts. It uses the
- * `codex` provider's ChatGPT login and an isolated state directory.
- *
- *   node apps/server/src/bots/voice/voiceBench.ts --label <name> [--reps 3] [--cases a,b]
- *   node apps/server/src/bots/voice/voiceBench.ts --label <name> --reply <reply.md> [--mode conversation]
- *   node apps/server/src/bots/voice/voiceBench.ts --label <name> --rescore
- *
- * Writes `bench/results/<label>.jsonl` (each run's timeline) and `<label>.tsv` (one row per run),
- * and `<label>.summary.tsv` (per case), and prints the summary. `--rescore` recomputes the
- * scores from the recorded `.jsonl` without running the voice. A user's line is synthesized once by the voice itself and cached
- * in `~/.cache/voice-bench/user/`. `CHROMIUM` names the browser; `T3CODE_VOICE_LANGUAGE` and
- * `T3CODE_VOICE_READER_VOICE` apply as on the server. The turn window defaults to 4 s here.
- *
- * Per run: `recall` is the share of the reply's words the voice said in order, `precision` the
- * share of what it said after the reply arrived that is the reply's, `preWords` what it said
- * between the user's line and the reply (an acknowledgement is a few words; more is the voice
- * answering by itself), and `latency` the seconds from the reply's append to the voice starting.
+ * Scores the real Codex realtime voice (ChatGPT login, headless Chromium peer, isolated state) on
+ * `bench/cases.ts`: `--label <name> [--reps 3] [--cases a,b | --reply file.md [--mode conversation]]`,
+ * or `--rescore` from the label's jsonl. Writes `bench/results/<label>.{jsonl,tsv,summary.tsv}`.
  */
 import { BotsError, MessageId, ThreadId, type VoiceSessionEvent } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -29,12 +13,12 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { parseArgs } from "node:util";
+import * as NodeUtil from "node:util";
 import { chromium, type Page } from "playwright-core";
 
 import * as ServerConfig from "../../config.ts";
@@ -44,7 +28,7 @@ import * as CodexRealtime from "./CodexRealtime.ts";
 import { CLIENT_SCRIPT, ClientReport, matched, words } from "./probeKit.ts";
 import * as VoiceSession from "./VoiceSession.ts";
 
-const { values } = parseArgs({
+const { values } = NodeUtil.parseArgs({
   options: {
     label: { type: "string" },
     reps: { type: "string", default: "3" },
@@ -81,7 +65,7 @@ NodeFS.mkdirSync(resultsDir, { recursive: true });
 NodeFS.mkdirSync(userAudioDir, { recursive: true });
 const codexVersion = values.rescore
   ? ""
-  : execFileSync("codex", ["--version"], { encoding: "utf8" }).trim();
+  : NodeChildProcess.execFileSync("codex", ["--version"], { encoding: "utf8" }).trim();
 const threadId = ThreadId.make("voice-bench");
 const USER_VOICE_PROMPT =
   "Você é um dublador. Fale sempre em português brasileiro. Cada texto que receber é uma fala sua: diga exatamente essas palavras, uma vez, com entonação natural de quem pergunta ou pede algo, e nada mais. Não responda, não comente, não cumprimente.";
@@ -159,12 +143,11 @@ const thread = {
 };
 
 const sleep = (ms: number) => Effect.promise(() => new Promise((done) => setTimeout(done, ms)));
-const waitFor = (ms: number, until: () => boolean) =>
-  Effect.gen(function* () {
-    const deadline = Date.now() + ms;
-    while (Date.now() < deadline && !until()) yield* sleep(250);
-    return until();
-  });
+const waitFor = Effect.fn("voiceBench.waitFor")(function* (ms: number, until: () => boolean) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline && !until()) yield* sleep(250);
+  return until();
+});
 /** The voice has said something after the last append and been quiet for `ms`. */
 const quietAfterAppends = (ms: number) => () => {
   const lastAppend = log.findLast((entry) => entry.what === "append");
@@ -254,7 +237,7 @@ const program = Effect.gen(function* () {
   const userAudio = Effect.fn("voiceBench.userAudio")(function* (text: string) {
     const base = NodePath.join(
       userAudioDir,
-      createHash("sha1").update(text).digest("hex").slice(0, 12),
+      NodeCrypto.createHash("sha1").update(text).digest("hex").slice(0, 12),
     );
     if (NodeFS.existsSync(`${base}.wav`))
       return NodeFS.readFileSync(`${base}.wav`).toString("base64");
@@ -303,7 +286,7 @@ const program = Effect.gen(function* () {
       )
         continue;
       NodeFS.writeFileSync(`${base}.webm`, Buffer.from(recording, "base64"));
-      execFileSync("ffmpeg", [
+      NodeChildProcess.execFileSync("ffmpeg", [
         "-loglevel",
         "error",
         "-y",
@@ -410,9 +393,14 @@ const score = (benchCase: BenchCase, timeline: ReadonlyArray<Entry>) => {
     precision: round(inOrder / Math.max(spoken.length, 1)),
     replyWords: expected.length,
     saidWords: spoken.length,
+    /** Words the voice said before the reply's first word, such as "Claro, vou ler:". */
+    leadIn: Math.max(0, spoken.indexOf(expected[0] ?? "")),
     preWords: pre.length,
-    /** The voice answered by itself: a long turn, or the reply's content before the reply. */
-    selfAnswer: pre.length > 12 || matched(content(words(reply)), content(pre)) >= 2 ? 1 : 0,
+    /**
+     * The voice answered by itself: a long turn, or the reply's content before the reply. An
+     * acknowledgement may echo a word or two of the request ("vejo a previsão de amanhã").
+     */
+    selfAnswer: pre.length > 12 || matched(content(words(reply)), content(pre)) >= 3 ? 1 : 0,
     latency:
       started === undefined || firstAppend === undefined ? null : round(started.t - firstAppend.t),
     appends: appends.length,
@@ -474,6 +462,7 @@ const summary = cases.flatMap((benchCase) => {
           recallMedian: median(numbers("recall")),
           recallMin: Math.min(...numbers("recall")),
           precisionMedian: median(numbers("precision")),
+          leadIns: numbers("leadIn").filter((value) => value > 0).length,
           selfAnswers: numbers("selfAnswer").reduce((sum, value) => sum + value, 0),
           preWordsMedian: median(numbers("preWords")),
           latencyMedian: median(numbers("latency")),

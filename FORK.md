@@ -61,7 +61,7 @@ provider instance's ChatGPT login. It uses only WebRTC, because the WebSocket/PC
 need an API key. Clients get two entry points (web, desktop, Android):
 
 - **Listen to a reply.** Each assistant reply has a listen button in its action row. Pressing it
-  speaks that reply whole in the voice's language, describing code and tables instead of reading them. The client
+  reads that reply aloud word for word in the voice's language. The client
   sends only the thread and message ids; the server loads the text and refuses anything but an
   assistant message of that thread.
 - **Talk to a bot.** A bot thread's composer has a voice button next to dictation. While a
@@ -75,18 +75,30 @@ until they have been silent for `T3CODE_VOICE_TURN_SILENCE_MS` (default 10000) a
 the thread as one normal user message starting with 🎙️, queued behind a running turn. Hanging up
 posts what is still waiting. The server reads aloud every reply that completes while the call is
 open. Approvals and questions are never answered by voice: the voice only says that one is waiting
-on screen.
+on screen. Every bot's instructions say that a 🎙️ message is answered for the ear: a few sentences
+of plain prose, with no lists, links, code or markdown (`VOICE_REPLY_TEXT` in
+[`BotsInstructions.ts`](apps/server/src/bots/BotsInstructions.ts)).
 
-Replies are spoken whole. Codex cuts the middle out of any appended speech over about 4,000 bytes,
-so the server speaks a reply longer than `SPEECH_PART_BYTES` in parts, one realtime turn each, the
-next appended when the voice falls quiet; a read ends after its last part. The prompts are judged
-with [`voiceProbe.ts`](apps/server/src/bots/voice/voiceProbe.ts), which speaks a reply through the
-real voice and reports how much of it was said. The model varies between runs, so compare several.
+Replies are read word for word. The realtime model paraphrases text it is told to "speak", answers
+text it is merely given, and summarizes what it is asked to describe. So the server turns the reply
+into plain speech first ([`speakable.ts`](apps/server/src/bots/voice/speakable.ts): markdown dropped,
+a short phrase in place of a code block, a table, a URL or long inline code) and appends each part
+as a request to read a quoted text exactly as written. Codex cuts the middle out of any appended
+speech over about 4,000 bytes, so the server reads a reply longer than `SPEECH_PART_BYTES` in parts,
+one realtime turn each, the next appended when the voice falls quiet; a read ends after its last
+part. The voice sometimes ends a turn partway through a part; unless the user talked over it, the
+server appends the rest once more, from the sentence where it stopped (`unsaid` in
+[`VoiceSession.ts`](apps/server/src/bots/voice/VoiceSession.ts)). The prompts and framing are judged with
+[`voiceBench.ts`](apps/server/src/bots/voice/voiceBench.ts), which runs scripted replies and spoken
+requests (`bench/cases.ts`) through the real voice and scores word recall, self-answers and latency
+into `bench/results/`. The model varies between runs, and its behavior changed under unchanged
+prompts on 2026-10-29, so rerun the bench before changing a prompt and after a Codex upgrade.
 The realtime model cannot be chosen: with a ChatGPT login the backend ignores `thread/realtime/start`'s
 `model` and accepts any name.
 
 The realtime model answers simple questions by itself even when told not to. Its prompt therefore
-tells it to delegate everything, and after a delegation it only acknowledges. The client plays the
+tells it to delegate everything with GPT-Live's `<|SpawnThinking|>` token, and after a delegation
+it only acknowledges. The client plays the
 voice's audio only for that acknowledgement and for the replies the server sends; turns the voice
 starts by itself stay silent (`voiceAudible` in
 [`packages/client-runtime/src/voice.ts`](packages/client-runtime/src/voice.ts)). The delegations
@@ -104,7 +116,7 @@ starts realtime in the new voice for it, keeping what the user said and the repl
 not offer for v3 falls back to Codex's default with a warning in the log. A language is a whole
 script, both prompts and every framing text the server appends
 ([`voiceLanguage.ts`](apps/server/src/bots/voice/voiceLanguage.ts)), fixed for a session: `pt-BR`
-is the probed one, `en` a translation not yet judged with `voiceProbe.ts`. Unset, the language
+is the measured one, `en` a translation not yet judged with `voiceBench.ts`. Unset, the language
 comes from `T3CODE_VOICE_LANGUAGE`, else English. The picker offers previews only when the host
 sets `T3CODE_VOICE_SAMPLES_URL` to a directory serving `<voice>.webm`. The locale voices (`porto`, `rio`, …) need Codex 0.163.0 or newer. The protocol
 is experimental in Codex. See [`apps/server/src/bots/voice/`](apps/server/src/bots/voice/)

@@ -1,0 +1,22 @@
+label	case	rep	codex	recall	precision	replyWords	saidWords	leadIn	preWords	selfAnswer	latency	appends	parts	seconds
+v3	read-plain	1	codex-cli 0.165.0	0.917	0.945	132	128	0	0	0	1.17	1	1	41.118
+v3	read-list	1	codex-cli 0.165.0	1	1	127	127	0	0	0	1.389	1	1	42.112
+v3	read-markdown	1	codex-cli 0.165.0	1	0.843	70	83	6	0	0	1.362	1	1	32.118
+v3	read-long	1	codex-cli 0.165.0	0.997	0.96	390	405	16	0	0	1.174	3	3	126.547
+v3	conv-story	1	codex-cli 0.165.0	0.953	0.89	127	136	0	7	0	0.834	1	1	42.439
+v3	conv-math	1	codex-cli 0.165.0	1	1	19	19	0	3	0	0.743	1	1	7.995
+v3	conv-plain	1	codex-cli 0.165.0	1	1	132	132	0	7	0	1.131	1	1	39.832
+v3	read-plain	2	codex-cli 0.165.0	1	1	132	132	0	0	0	1.663	1	1	43.532
+v3	read-list	2	codex-cli 0.165.0	1	0.962	127	132	0	0	0	2.243	1	1	50.703
+v3	read-markdown	2	codex-cli 0.165.0	0.457	0.821	70	39	6	0	0	1.119	1	1	17.516
+v3	read-long	2	codex-cli 0.165.0	0.995	0.99	390	392	4	0	0	1.134	3	3	125.854
+v3	conv-story	2	codex-cli 0.165.0	0.976	1	127	124	0	10	0	1.358	1	1	37.72
+v3	conv-math	2	codex-cli 0.165.0	1	1	19	19	0	7	1	0.736	1	1	8.173
+v3	conv-plain	2	codex-cli 0.165.0	1	1	132	132	0	6	0	0.867	1	1	39.985
+v3	read-plain	3	codex-cli 0.165.0	1	0.978	132	135	3	0	0	1.187	1	1	38.892
+v3	read-list	3	codex-cli 0.165.0	0.976	0.939	127	132	0	0	0	1.317	1	1	47.923
+v3	read-markdown	3	codex-cli 0.165.0	1	0.814	70	86	8	0	0	1.089	1	1	33.877
+v3	read-long	3	codex-cli 0.165.0	0.997	0.995	390	391	2	0	0	1.184	3	3	122.924
+v3	conv-story	3	codex-cli 0.165.0	1	1	127	127	0	6	0	0.885	1	1	45.618
+v3	conv-math	3	codex-cli 0.165.0	1	1	19	19	0	3	0	0.77	1	1	6.762
+v3	conv-plain	3	codex-cli 0.165.0	1	1	132	132	0	5	0	1.154	1	1	40.55

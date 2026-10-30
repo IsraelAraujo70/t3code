@@ -1,0 +1,8 @@
+case	runs	recallMedian	recallMin	precisionMedian	leadIns	selfAnswers	preWordsMedian	latencyMedian
+read-plain	3	1	1	0.992	3	0	0	1.342
+read-list	3	0.969	0.772	0.932	0	0	0	1.574
+read-markdown	3	1	1	0.886	2	0	0	1.917
+read-long	3	0.997	0.995	0.995	2	0	0	1.182
+conv-story	3	0.929	0.921	0.873	0	0	9	0.927
+conv-math	3	1	0.895	1	0	2	7	0.857
+conv-plain	3	1	0.985	1	0	1	6	1.042

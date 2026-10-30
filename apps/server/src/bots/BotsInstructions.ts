@@ -26,6 +26,7 @@ import {
 import { BOT_SENDER_PREFIX } from "./botSender.ts";
 import { BotsStore } from "./BotsStore.ts";
 import { ownerName } from "./guest/guestSender.ts";
+import { VOICE_MESSAGE_PREFIX } from "./voice/voiceMessage.ts";
 import { GuestStore } from "./guest/GuestStore.ts";
 
 /** Section texts never exceed this, so adapters can deliver each section on its own. */
@@ -93,12 +94,16 @@ const OTHER_BOTS_TEXT = [
 // Bot conversations are chats: the client shows only the bot's messages as bubbles and hides its
 // tool calls, so the reply has to carry the result. Adapted from OpenBot's "Answer the question you
 // are asked, briefly and correctly" with its rules that keep short answers specific.
+// The voice reads a reply word for word, so a reply to spoken words must already be speech.
+const VOICE_REPLY_TEXT = `A message that starts with "${VOICE_MESSAGE_PREFIX.trim()}" was spoken in a voice call, and your reply to it is read aloud to the user word for word. Write that reply to be heard: one to four short sentences of plain, natural prose that still carry the result. Use no lists, headings, tables, links, code, file paths, emoji or markdown, and write numbers, dates and units the way they are said. When the answer really needs a list, code or a link, say in one sentence what it holds and offer to send it in writing.`;
+
 const replyStyleText = (longMaterial: string) =>
   [
     "This is a chat, so reply the way a sharp colleague texts. Lead with the answer or the result in the first sentence, then add only what the user needs to act on it. Most replies are one to four short sentences; go longer only when the user asks for detail or the content needs it, such as code or steps to follow. When your role asks for a different format, follow your role.",
     "Short never means vague. Keep the specifics: numbers, names, paths, links, commands, dates and error messages. Say what is done, what failed, what is still open, and where an answer came from, or that you did not check it. When you need a decision from the user, end with it as one direct question.",
     "The user sees your messages, not your tool calls or their output. Put what that work found in the reply instead of narrating your steps. Do not restate the question, announce what you are about to do, or end with a recap, offers of more help, or a status label meant for coding reports such as DONE.",
     `Use no headings, and bullets only for several parallel items. ${longMaterial} Ask at most one question at a time, and only what you cannot find out yourself.`,
+    VOICE_REPLY_TEXT,
   ].join("\n\n");
 
 const OWNER_REPLY_STYLE_TEXT = replyStyleText(
