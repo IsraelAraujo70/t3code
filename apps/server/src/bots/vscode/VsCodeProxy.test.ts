@@ -16,6 +16,8 @@ import { GRANT_COOKIE, routes } from "./VsCodeProxy.ts";
 import * as VsCodeServer from "./VsCodeServer.ts";
 
 const OWNER = AuthSessionId.make("owner-session");
+const WORKBENCH_PAGE =
+  '<html><head><script nonce="n0">mark()</script><meta id="vscode-workbench-web-configuration"></head></html>';
 
 interface Upstreamed {
   readonly url: string;
@@ -65,7 +67,7 @@ const makeHarness = (options: {
       });
       headers.append("set-cookie", "vscode-secret-key-path=/vscode/mint; Path=/; SameSite=Strict");
       return Effect.succeed(
-        HttpClientResponse.fromWeb(request, new Response("<html>workbench</html>", { headers })),
+        HttpClientResponse.fromWeb(request, new Response(WORKBENCH_PAGE, { headers })),
       );
     });
     const server = Layer.succeed(VsCodeServer.VsCodeServer, {
@@ -145,6 +147,9 @@ it.effect(
       expect(upstream?.headers.authorization).toBeUndefined();
       expect(upstream?.headers["x-forwarded-host"]).toBe("box.example.ts.net");
 
+      expect(yield* Effect.promise(() => page.text())).toMatch(
+        /^<html><head><script nonce="n0">\(\(\) => \{[\s\S]*t3-color-scheme[\s\S]*<\/script><script nonce="n0">mark\(\)/,
+      );
       expect(page.headers.get("x-frame-options")).toBeNull();
       expect(page.headers.get("content-security-policy")).toBe(
         "default-src 'self', frame-ancestors 'self' t3code://app t3code-dev://app",

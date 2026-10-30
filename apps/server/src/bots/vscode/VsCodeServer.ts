@@ -28,6 +28,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import type * as Socket from "effect/socket/Socket";
 
 import * as ServerConfig from "../../config.ts";
+import { installTheme } from "./VsCodeTheme.ts";
 
 export const VSCODE_CLI_ENV = "T3CODE_VSCODE_CLI";
 export const VSCODE_DATA_DIR_ENV = "T3CODE_VSCODE_DATA_DIR";
@@ -275,6 +276,7 @@ export const systemdLauncher = (settings: VsCodeSettings): VsCodeLauncher => {
       catch: (cause) =>
         new VsCodeError({ message: `Cannot prepare ${runDir} for VS Code's socket: ${cause}` }),
     });
+    yield* installTheme(NodePath.join(settings.dataDir, "server", "extensions"));
     const env = ["PATH", "LANG", "SHELL"].flatMap((name) => {
       const value = process.env[name];
       return value === undefined ? [] : ["-E", `${name}=${value}`];

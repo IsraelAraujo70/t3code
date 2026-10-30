@@ -1,5 +1,5 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { type EnvironmentId, VSCODE_COLOR_SCHEME_MESSAGE } from "@t3tools/contracts";
+import { useEffect, useRef, useState } from "react";
 
 import { VisualStudioCode } from "../../components/Icons";
 import {
@@ -9,6 +9,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../../components/ui/empty";
+import { getRenderedAppearance, useRenderedAppearance } from "../../hooks/useTheme";
 import { readVsCodeUrl } from "./vsCodeUrl";
 
 type FrameSource =
@@ -30,10 +31,19 @@ function VsCodeEmpty(props: { readonly title: string; readonly description: stri
   );
 }
 
+/** Tells the frame's color-scheme shim (see the server's colorScheme.ts) which mode T3 shows. */
+function postColorScheme(frame: HTMLIFrameElement | null, url: string, scheme: "light" | "dark") {
+  frame?.contentWindow?.postMessage(
+    { type: VSCODE_COLOR_SCHEME_MESSAGE, scheme },
+    new URL(url).origin,
+  );
+}
+
 /**
  * The right panel's VS Code tab: the thread's environment runs `code serve-web` and serves it
  * under `/vscode`, opened on the thread's worktree (or the project root). Keys typed in the frame
- * stay in its document, so the app's shortcuts never see them.
+ * stay in its document, so the app's shortcuts never see them. VS Code follows T3's light or dark
+ * mode: the URL carries it when the frame opens and a message switches it without a reload.
  */
 export function VsCodePanel(props: {
   readonly environmentId: EnvironmentId;
@@ -42,12 +52,16 @@ export function VsCodePanel(props: {
   const { environmentId, folder } = props;
   const key = `${environmentId}:${folder ?? ""}`;
   const [source, setSource] = useState<FrameSource>({ key, phase: "loading" });
+  const appearance = useRenderedAppearance();
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const frameUrl = source.phase === "ready" ? source.url : undefined;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches a one-time access ticket from the environment for each folder the frame opens
   useEffect(() => {
     if (folder === undefined) return;
     let current = true;
-    void readVsCodeUrl(environmentId, folder).then((url) => {
+    // The mode at open time; later changes go through postColorScheme, so they never reload VS Code.
+    void readVsCodeUrl(environmentId, folder, getRenderedAppearance()).then((url) => {
       if (!current) return;
       setSource(url === null ? { key, phase: "offline" } : { key, phase: "ready", url });
     });
@@ -55,6 +69,11 @@ export function VsCodePanel(props: {
       current = false;
     };
   }, [environmentId, folder, key]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes T3's mode into the cross-document VS Code frame
+  useEffect(() => {
+    if (frameUrl !== undefined) postColorScheme(frameRef.current, frameUrl, appearance);
+  }, [appearance, frameUrl]);
 
   if (folder === undefined) {
     return <VsCodeEmpty title="No folder to open" description="Open a project to use VS Code." />;
@@ -70,8 +89,10 @@ export function VsCodePanel(props: {
   }
   return (
     <iframe
+      ref={frameRef}
       title="VS Code"
       src={source.url}
+      onLoad={(event) => postColorScheme(event.currentTarget, source.url, appearance)}
       className="size-full border-0 bg-background"
       allow="clipboard-read; clipboard-write"
     />

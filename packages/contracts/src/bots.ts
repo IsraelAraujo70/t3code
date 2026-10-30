@@ -719,6 +719,12 @@ export const COMPUTER_STREAM_PATH = "/api/computer-stream/ws";
  * add a media `wsTicket`, which the server trades for a cookie scoped to this path.
  */
 export const VSCODE_BASE_PATH = "/vscode";
+/**
+ * T3's light or dark mode for the VS Code frame: this query parameter when it opens, then
+ * `postMessage({ type: VSCODE_COLOR_SCHEME_MESSAGE, scheme })` whenever it changes.
+ */
+export const VSCODE_COLOR_SCHEME_PARAM = "t3-color-scheme";
+export const VSCODE_COLOR_SCHEME_MESSAGE = "t3:color-scheme";
 
 export const ComputerStreamInfo = Schema.Struct({
   type: Schema.Literal("info"),

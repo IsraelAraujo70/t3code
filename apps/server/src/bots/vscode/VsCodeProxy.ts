@@ -24,6 +24,7 @@ import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest } from "../../auth/http.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
+import { withColorSchemeShim } from "./colorScheme.ts";
 import * as VsCodeServer from "./VsCodeServer.ts";
 
 /** Two names for one grant: SameSite=None reaches a cross-site frame but needs a secure origin. */
@@ -268,11 +269,13 @@ const proxyHttp = Effect.fn("VsCodeProxy.proxyHttp")(function* (
     response.headers["content-security-policy"],
     frameAncestors,
   );
-  return HttpServerResponse.stream(response.stream, {
-    status: response.status,
-    headers,
-    ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
-  }).pipe((proxied) =>
+  const contentType = headers["content-type"];
+  const options = { status: response.status, headers, ...(contentType ? { contentType } : {}) };
+  // Only HTML is read whole: the workbench page gets the color-scheme shim.
+  const proxiedResponse = contentType?.startsWith("text/html")
+    ? HttpServerResponse.text(withColorSchemeShim(yield* response.text), options)
+    : HttpServerResponse.stream(response.stream, options);
+  return proxiedResponse.pipe((proxied) =>
     HttpServerResponse.mergeCookies(
       proxied,
       browserCookies(response.cookies, isSecureOrigin(request)),

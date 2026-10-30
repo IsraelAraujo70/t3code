@@ -10,7 +10,9 @@ The fork tracks stable upstream releases (`vX.Y.Z` tags), not upstream `main`.
 
 1. `node scripts/friend/merge-upstream.ts` merges the newest stable tag into a fresh integration
    worktree (`friend/merge-<tag>`). It never pushes or moves `friend/main`.
-2. In that worktree, run `vp i`, `node scripts/friend/check-seams.ts`, and the fork tests:
+2. In that worktree, run `vp i`, `node scripts/friend/check-seams.ts`,
+   `node scripts/friend/vscode-theme.ts --check` (rerun it without `--check` when the default theme's
+   colors changed), and the fork tests:
    `vp test run apps/server/src/bots apps/web/src/bots packages/contracts/src/bots.test.ts`.
 3. Fast-forward `friend/main` to the integration branch after review.
 
@@ -381,6 +383,22 @@ for the desktop's bearer session, traded once for a cookie scoped to `/vscode` t
 session). The guest listener has no `/vscode` route. Responses lose `X-Frame-Options`; embedding is
 allowed to the app's own origin and the desktop renderer, plus `T3CODE_VSCODE_FRAME_ANCESTORS`. See
 [`apps/server/src/bots/vscode/`](apps/server/src/bots/vscode/).
+
+VS Code opens in "T3 Dark" or "T3 Light", a theme extension that
+[`scripts/friend/vscode-theme.ts`](scripts/friend/vscode-theme.ts) generates into
+`apps/server/src/bots/vscode/theme/`: the workbench colors from the default theme's tokens in
+`apps/web/src/index.css`, the syntax colors from `@pierre/theme` (light mode darkened like
+`t3-light`), the editor font and size from the default code font. Before every start the server
+installs it into `$T3CODE_VSCODE_DATA_DIR/server/extensions` under a folder named by its content
+hash, so an unchanged theme writes nothing. The extension sets `window.autoDetectColorScheme` and
+the preferred dark and light themes as configuration defaults, so a theme or font the user picks in
+VS Code wins and stays. Uninstalling it inside VS Code does not last: the next start installs it again.
+
+The tab follows T3's light or dark mode rather than the operating system's. A frame's
+`prefers-color-scheme` reports the system whatever the embedder's `color-scheme`, so the proxy adds a
+small script to the workbench page that answers VS Code's two color-scheme queries from the
+`t3-color-scheme` URL parameter, and the panel posts each later change to the frame, without a
+reload ([`colorScheme.ts`](apps/server/src/bots/vscode/colorScheme.ts)).
 
 ## State and rollback
 
