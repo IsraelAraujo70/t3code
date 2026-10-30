@@ -713,6 +713,13 @@ export const BOTS_RPC_AGGREGATES = Object.fromEntries(
  */
 export const COMPUTER_STREAM_PATH = "/api/computer-stream/ws";
 
+/**
+ * The server proxies VS Code (`code serve-web`) under this path, HTTP and WebSocket, to sessions
+ * holding terminal:operate. A client opens `${VSCODE_BASE_PATH}/?folder=<path>`; bearer sessions
+ * add a media `wsTicket`, which the server trades for a cookie scoped to this path.
+ */
+export const VSCODE_BASE_PATH = "/vscode";
+
 export const ComputerStreamInfo = Schema.Struct({
   type: Schema.Literal("info"),
   /** Size of the JPEG frames. */

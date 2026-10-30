@@ -63,8 +63,9 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     case "diff":
     case "files":
     case "pull-requests":
-    // Fork (friend): a closed Computer tab can be reopened like the other singletons.
+    // Fork (friend): closed Computer and VS Code tabs reopen like the other singletons.
     case "computer":
+    case "vscode":
       return surface.id === surface.kind;
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";

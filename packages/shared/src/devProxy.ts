@@ -1,5 +1,13 @@
 /** Vite's proxy and the server's dev 404 handler must share prefixes to avoid index.html responses or redirect loops. */
-export const DEV_PROXIED_PATH_PREFIXES = ["/api", "/oauth", "/.well-known", "/ws", "/mcp"] as const;
+export const DEV_PROXIED_PATH_PREFIXES = [
+  "/api",
+  "/oauth",
+  "/.well-known",
+  "/ws",
+  "/mcp",
+  // Fork (friend): VS Code's HTTP and WebSocket proxy, which builds its URLs from the browser's host.
+  "/vscode",
+] as const;
 
 /** Preserve origins for OAuth metadata validation and /ws cookie-session Origin/Host checks. */
 export const DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES: ReadonlySet<string> = new Set([
@@ -7,6 +15,7 @@ export const DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES: ReadonlySet<string> = new S
   "/.well-known",
   "/mcp",
   "/ws",
+  "/vscode",
 ]);
 
 export function isDevProxiedPath(pathname: string): boolean {

@@ -351,7 +351,10 @@ export default defineConfig(() => {
                 {
                   target: devProxyTarget,
                   changeOrigin: !DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES.has(prefix),
-                  ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
+                  // Fork (friend): VS Code's socket goes through its /vscode proxy.
+                  ...(prefix === "/ws" || prefix === "/api" || prefix === "/vscode"
+                    ? { ws: true }
+                    : {}),
                 },
               ]),
             ),

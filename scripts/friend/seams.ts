@@ -302,12 +302,12 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/rightPanelStore.ts",
     markers: 3,
-    why: "Computer surface kind",
+    why: "Computer and VS Code surface kinds",
   },
   {
     file: "apps/web/src/components/RightPanelTabs.tsx",
-    markers: 10,
-    why: "Computer in the surface launchers",
+    markers: 15,
+    why: "Computer in the surface launchers; VS Code takes the Files entry and its F shortcut",
   },
   {
     file: "apps/mobile/src/features/voice-input/VoiceInputProvider.tsx",
@@ -347,17 +347,27 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/ChatView.tsx",
     markers: 4,
-    why: "open the Computer surface from the launchers; an earlier bot generation has no composer",
+    why: "open the Computer and VS Code surfaces from the launchers; an earlier bot generation has no composer",
   },
   {
     file: "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
     markers: 2,
-    why: "render the Computer surface",
+    why: "render the Computer and VS Code surfaces",
   },
   {
     file: "apps/web/src/closedViewStore.ts",
     markers: 1,
-    why: "reopen a closed Computer tab",
+    why: "reopen a closed Computer or VS Code tab",
+  },
+  {
+    file: "packages/shared/src/devProxy.ts",
+    markers: 1,
+    why: "the dev server proxies VS Code under /vscode",
+  },
+  {
+    file: "apps/web/vite.config.ts",
+    markers: 1,
+    why: "VS Code's WebSocket goes through the dev proxy",
   },
   {
     file: "apps/web/src/keybindings.ts",

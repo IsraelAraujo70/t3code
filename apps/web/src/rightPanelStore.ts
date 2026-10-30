@@ -21,8 +21,9 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
-  // Fork (friend): the bots host's live screen.
+  // Fork (friend): the bots host's live screen and VS Code.
   "computer",
+  "vscode",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -77,8 +78,9 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
-  // Fork (friend): the bots host's live screen.
-  | { id: "computer"; kind: "computer" };
+  // Fork (friend): the bots host's live screen and VS Code.
+  | { id: "computer"; kind: "computer" }
+  | { id: "vscode"; kind: "vscode" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
@@ -217,9 +219,11 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
-    // Fork (friend): the bots host's live screen.
+    // Fork (friend): the bots host's live screen and VS Code.
     case "computer":
       return { id: "computer", kind };
+    case "vscode":
+      return { id: "vscode", kind };
   }
 };
 

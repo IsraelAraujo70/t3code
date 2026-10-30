@@ -3834,9 +3834,12 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          // Fork (friend): the bots host's live screen.
+          // Fork (friend): the bots host's live screen and VS Code.
           onAddComputer={() => {
             if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "computer");
+          }}
+          onAddVsCode={() => {
+            if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "vscode");
           }}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}

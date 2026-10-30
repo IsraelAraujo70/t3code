@@ -59,7 +59,8 @@ import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
-import { AndroidIcon, AppleIcon } from "~/components/Icons";
+// Fork (friend): VS Code surface icon.
+import { AndroidIcon, AppleIcon, VisualStudioCode } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import {
@@ -135,6 +136,8 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Fork (friend): opens the bots host's live screen. */
   onAddComputer?: () => void;
+  /** Fork (friend): opens VS Code on the thread's worktree; absent off a thread. */
+  onAddVsCode?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -305,12 +308,12 @@ function RightPanelEmptyState(props: {
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
-  onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  // Fork (friend): absent while the bots host is not connected.
+  // Fork (friend): absent while the bots host is not connected; VS Code replaces Files.
   onAddComputer: (() => void) | undefined;
+  onAddVsCode: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -338,13 +341,14 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
       onClick: props.onAddTerminal,
     },
+    // Fork (friend): VS Code takes the Files entry and its F shortcut.
     {
-      label: "Files",
-      icon: Files,
+      label: "VS Code",
+      icon: VisualStudioCode,
       shortcut: "F",
       available: props.filesAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
-      onClick: props.onAddFiles,
+      onClick: props.onAddVsCode,
     },
     {
       label: "Diff",
@@ -578,9 +582,11 @@ function surfaceTitle(
       return "Pull requests";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
-    // Fork (friend): the bots host's live screen.
+    // Fork (friend): the bots host's live screen and VS Code.
     case "computer":
       return "Computer";
+    case "vscode":
+      return "VS Code";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -677,9 +683,11 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
-    // Fork (friend): the bots host's live screen.
+    // Fork (friend): the bots host's live screen and VS Code.
     case "computer":
       return <Monitor className="size-3 shrink-0" />;
+    case "vscode":
+      return <VisualStudioCode className="size-3 shrink-0" />;
   }
 }
 
@@ -1055,13 +1063,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.terminal,
       onClick: props.onAddTerminal,
     },
+    // Fork (friend): VS Code takes the Files entry and its F shortcut.
     {
-      label: "Files",
-      icon: Files,
+      label: "VS Code",
+      icon: VisualStudioCode,
       shortcut: "F",
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
-      onClick: props.onAddFiles,
+      onClick: props.onAddVsCode ?? (() => undefined),
     },
     {
       label: "Diff",
@@ -1478,7 +1487,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             browserProfiles={browserProfiles}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
-            onAddFiles={props.onAddFiles}
+            // Fork (friend): VS Code replaces Files in the launcher.
+            onAddVsCode={props.onAddVsCode ?? (() => undefined)}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}

@@ -31,9 +31,12 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
-// Fork (friend): the bots host's live screen.
+// Fork (friend): the bots host's live screen and VS Code.
 const ComputerPanel = lazy(() =>
   import("../../bots/ComputerPanel").then((module) => ({ default: module.ComputerPanel })),
+);
+const VsCodePanel = lazy(() =>
+  import("../../bots/vscode/VsCodePanel").then((module) => ({ default: module.VsCodePanel })),
 );
 
 type RightPanelTerminalProps = Omit<
@@ -185,11 +188,17 @@ export function RightPanelSurfaceContent(props: {
           />
         </Suspense>
       );
-    // Fork (friend): the bots host's live screen.
+    // Fork (friend): the bots host's live screen and VS Code.
     case "computer":
       return (
         <Suspense fallback={null}>
           <ComputerPanel visible={visible} />
+        </Suspense>
+      );
+    case "vscode":
+      return (
+        <Suspense fallback={null}>
+          <VsCodePanel environmentId={props.environmentId} folder={props.files.workspaceRoot} />
         </Suspense>
       );
     case "files":

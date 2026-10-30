@@ -357,6 +357,31 @@ to the next call. PeerForwarding and PeerLinkRequests cannot be built without it
 every call, including the followers of remote tasks; `/mcp` also hides the link tools from refused
 callers. Any error reading a caller's origin refuses.
 
+## VS Code in the right panel
+
+On web and desktop, "VS Code" replaces Files in the right panel's "Open a surface" menus and takes
+its F shortcut; the Files view itself stays, reachable from file links, the diff and the PR guide.
+Mobile is unchanged. The tab opens `/vscode/?folder=<the thread's worktree, else the project root>`
+on the thread's environment, so a remote environment serves its own VS Code. Keys typed in the frame
+stay in its document; the desktop's native menu accelerators (quit, reload, zoom, Settings) still
+reach the app.
+
+The server proxies `/vscode/*`, HTTP and WebSocket, to Microsoft's `code serve-web` (the standalone
+CLI, licence accepted with `--accept-server-license-terms`). The first request starts it as a
+transient `systemd-run --user` unit with `MemoryMax=$T3CODE_VSCODE_MEMORY_MAX` (default `3G`),
+`CPUWeight=20` and `IOWeight=20`; one unit serves every tab and stops after
+`T3CODE_VSCODE_IDLE_MS` (default 30 minutes) with no open connection, or when T3 stops. The CLI is
+`T3CODE_VSCODE_CLI` (default `~/.t3-friend/vscode/bin/code`), its data `T3CODE_VSCODE_DATA_DIR`
+(default `~/.t3-friend/vscode`). A missing CLI shows its path in the tab.
+
+serve-web listens on a unix socket in a 0700 directory and runs without a connection token: its
+client repeats the token inside the socket protocol, so the token would have to reach the browser.
+Access is the owner's session check with `terminal:operate` (the app's cookie, or a media `wsTicket`
+for the desktop's bearer session, traded once for a cookie scoped to `/vscode` that dies with the
+session). The guest listener has no `/vscode` route. Responses lose `X-Frame-Options`; embedding is
+allowed to the app's own origin and the desktop renderer, plus `T3CODE_VSCODE_FRAME_ANCESTORS`. See
+[`apps/server/src/bots/vscode/`](apps/server/src/bots/vscode/).
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
