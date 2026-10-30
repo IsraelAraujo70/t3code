@@ -1,6 +1,6 @@
 /**
  * What the voice probes share: the WebRTC client they run in a headless Chromium, and how a run is
- * scored against the reply. See `voiceProbe.ts` (in process) and `guest/guestVoiceProbe.ts` (over
+ * scored against the reply. See `voiceBench.ts` (in process) and `guest/guestVoiceProbe.ts` (over
  * the guest API).
  */
 import * as Schema from "effect/Schema";
@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
  * JavaScript, because the server's program has no DOM types.
  */
 export const CLIENT_SCRIPT = String.raw`
-window.probe = { channel: [], audible: 0, firstAudio: null, lastAudio: null, chunks: [] };
+window.probe = { channel: [], audible: 0, firstAudio: null, lastAudio: null, chunks: [], raw: [] };
 window.probeOffer = async (useMicrophone) => {
   const probe = window.probe;
   const context = new AudioContext();
@@ -28,6 +28,8 @@ window.probeOffer = async (useMicrophone) => {
     mute.gain.value = 0;
     tone.connect(mute).connect(silence);
     tone.start();
+    probe.context = context;
+    probe.microphone = silence;
     microphone = silence.stream.getAudioTracks()[0];
   }
   const pc = new RTCPeerConnection();
@@ -36,7 +38,9 @@ window.probeOffer = async (useMicrophone) => {
   pc.createDataChannel("oai-events").addEventListener("message", (message) => {
     let type = "?";
     try {
-      type = String(JSON.parse(String(message.data)).type);
+      const event = JSON.parse(String(message.data));
+      type = String(event.type);
+      if (probe.raw.length < 8) probe.raw.push(String(message.data).slice(0, 1500));
     } catch {}
     probe.channel.push({ t: Date.now(), type });
     if (/turn\.|delegation|context/.test(type)) console.log("probe:channel " + type);
@@ -104,9 +108,21 @@ window.probeRecording = async () => {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 };
+// Plays base64 audio into the silent microphone (from probeOffer(false)) and resolves when it ends.
+window.probePlay = async (base64) => {
+  const { context, microphone } = window.probe;
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  const source = context.createBufferSource();
+  source.buffer = await context.decodeAudioData(bytes.buffer);
+  source.connect(microphone);
+  await new Promise((resolve) => {
+    source.addEventListener("ended", resolve);
+    source.start();
+  });
+};
 window.probeReport = () => {
-  const { audible, firstAudio, lastAudio, channel } = window.probe;
-  return { audibleSeconds: Math.round(audible * 10) / 10, firstAudio, lastAudio, channel };
+  const { audible, firstAudio, lastAudio, channel, raw } = window.probe;
+  return { audibleSeconds: Math.round(audible * 10) / 10, firstAudio, lastAudio, channel, raw };
 };
 `;
 
@@ -115,6 +131,8 @@ export const ClientReport = Schema.Struct({
   firstAudio: Schema.NullOr(Schema.Number),
   lastAudio: Schema.NullOr(Schema.Number),
   channel: Schema.Array(Schema.Struct({ t: Schema.Number, type: Schema.String })),
+  /** The first data channel messages, raw and cut, to see what the backend reports. */
+  raw: Schema.Array(Schema.String),
 });
 export type ClientReport = typeof ClientReport.Type;
 
