@@ -7,7 +7,7 @@ import {
   type BotId,
   type BotsError,
   OrchestratorMcpFailure,
-  parseBotThreadId,
+  parseBotThreadOwner,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -71,7 +71,7 @@ export const originAllows = Effect.fn("BotLinkAccess.originAllows")(function* (
     if (seen.has(next)) continue;
     seen.add(next);
     if (seen.size > MAX_ORIGIN_THREADS) return false;
-    const bot = parseBotThreadId(next);
+    const bot = parseBotThreadOwner(next);
     if (bot !== null) {
       allowed ??= yield* origins.allowedBots;
       if (!allowed.includes(bot.botId) || (yield* origins.isGuestBot(bot.botId))) return false;

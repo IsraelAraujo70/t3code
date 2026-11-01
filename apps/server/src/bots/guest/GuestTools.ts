@@ -19,7 +19,7 @@
 import {
   BotsError,
   ChatAttachmentId,
-  parseBotThreadId,
+  parseBotThreadOwner,
   type BotId,
   type GuestId,
   type OrchestrationV2ConversationMessage,
@@ -337,7 +337,7 @@ const make = Effect.gen(function* () {
       );
 
   const forThread = Effect.fn("GuestTools.forThread")(function* (threadId: ThreadId) {
-    const parsed = parseBotThreadId(threadId);
+    const parsed = parseBotThreadOwner(threadId);
     if (parsed === null) return undefined;
     // Forwarding never costs the bot its own tools.
     const forwarded = yield* hostMcp

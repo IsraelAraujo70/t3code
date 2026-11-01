@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   BotId,
   botThreadId,
+  botSideThreadId,
   CommandId,
   GuestId,
   MessageId,
@@ -76,8 +77,12 @@ it.effect("runs a guest's bot on its own model whoever sends, and leaves the res
 
     // The owner's T3 composer sends the thread's old host model; the bot's sandbox model wins,
     // on any generation of its conversation.
-    for (const generation of [1, 2]) {
-      const pinned = yield* pin.pin(send(botThreadId(BotId.make("b_shared"), generation)));
+    for (const threadId of [
+      botThreadId(BotId.make("b_shared"), 1),
+      botThreadId(BotId.make("b_shared"), 2),
+      botSideThreadId(BotId.make("b_shared"), "0123abcd"),
+    ]) {
+      const pinned = yield* pin.pin(send(threadId));
       assert.deepStrictEqual("modelSelection" in pinned && pinned.modelSelection, sandboxModel);
     }
     const switched = yield* pin.pin({

@@ -7,7 +7,7 @@
  * The Orchestrator applies `pin` to every command before deciding it (an optional service, so
  * upstream runtimes and tests behave as before).
  */
-import { parseBotThreadId, type OrchestrationV2ServerCommand } from "@t3tools/contracts";
+import { parseBotThreadOwner, type OrchestrationV2ServerCommand } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,7 +47,7 @@ export const layer = Layer.effect(
       pin: Effect.fn("GuestModelPin.pin")(function* (command) {
         if (!PINNED_TYPES.has(command.type) || !("modelSelection" in command)) return command;
         if (!("threadId" in command)) return command;
-        const parsed = parseBotThreadId(command.threadId);
+        const parsed = parseBotThreadOwner(command.threadId);
         if (parsed === null) return command;
         const owner = yield* guests.guestOfBot(parsed.botId).pipe(Effect.orDie);
         if (Option.isNone(owner)) return command;

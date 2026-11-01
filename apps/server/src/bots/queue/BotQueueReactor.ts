@@ -7,7 +7,7 @@ import {
   botThreadId,
   CommandId,
   type OrchestrationV2Run,
-  parseBotThreadId,
+  parseBotThreadOwner,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -55,7 +55,7 @@ const make = Effect.gen(function* () {
   );
 
   const onRunUpdated = (threadId: ThreadId, run: OrchestrationV2Run) =>
-    run.status === "completed" && parseBotThreadId(threadId) !== null
+    run.status === "completed" && parseBotThreadOwner(threadId) !== null
       ? resume(threadId)
       : Effect.void;
 

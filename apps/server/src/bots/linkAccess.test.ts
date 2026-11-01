@@ -11,6 +11,7 @@ import {
   type Bot,
   BotId,
   botThreadId,
+  botSideThreadId,
   CommandId,
   EnvironmentId,
   EventId,
@@ -122,6 +123,9 @@ describe("originAllows", () => {
       assert.isTrue(yield* decide(none, botThreadId(allowedBot, 2)));
       assert.isFalse(yield* decide(none, botThreadId(deniedBot, 1)));
       assert.isFalse(yield* decide(none, botThreadId(guestBot, 1)));
+      assert.isTrue(yield* decide(none, botSideThreadId(allowedBot, "0123abcd")));
+      assert.isFalse(yield* decide(none, botSideThreadId(deniedBot, "0123abcd")));
+      assert.isFalse(yield* decide(none, botSideThreadId(guestBot, "0123abcd")));
     }),
   );
 
