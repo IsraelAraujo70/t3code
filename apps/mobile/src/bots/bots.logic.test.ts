@@ -59,11 +59,12 @@ const completedRun = {
 } as const;
 
 describe("withoutBotThreads", () => {
-  it("drops every generation of bot conversations and keeps ordinary threads in order", () => {
+  it("drops every generation and side thread of bots and keeps ordinary threads in order", () => {
     const threads = [
       botShell({ id: ThreadId.make("thread-a") }),
       botShell({ id: ThreadId.make("bot:writer:1") }),
       botShell({ id: ThreadId.make("bot:writer:2") }),
+      botShell({ id: ThreadId.make("bot:writer:t-0123abcd") }),
       botShell({ id: ThreadId.make("thread-b") }),
     ];
     expect(withoutBotThreads(threads).map((thread) => thread.id)).toEqual(["thread-a", "thread-b"]);
@@ -74,6 +75,7 @@ describe("withoutBotThreads", () => {
       botShell({ id: ThreadId.make("bot:writer:0") }),
       botShell({ id: ThreadId.make("bot:writer") }),
       botShell({ id: ThreadId.make("robot:writer:1") }),
+      botShell({ id: ThreadId.make("bot:writer:t-xyz") }),
     ];
     expect(withoutBotThreads(threads)).toBe(threads);
   });
@@ -82,6 +84,7 @@ describe("withoutBotThreads", () => {
 describe("workspaceTabForThread", () => {
   it("sends bot conversations to the Bots tab and everything else to Chats", () => {
     expect(workspaceTabForThread("bot:writer:3")).toBe("bots");
+    expect(workspaceTabForThread("bot:writer:t-0123abcd")).toBe("bots");
     expect(workspaceTabForThread("thread-a")).toBe("threads");
     expect(workspaceTabForThread("robot:writer:1")).toBe("threads");
   });

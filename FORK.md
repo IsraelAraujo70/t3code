@@ -193,13 +193,15 @@ the bot's face in the conversation header (web and desktop), and the bot with `b
 Archiving, restoring and renaming are the thread's own, and deleting the bot archives them.
 In the web sidebar the Sections and Tabs layouts list side threads under their bot in the Bots
 block; Rail and Mixed keep them in the thread list, where any bot thread shows its bot's face and
-name in place of "No project".
+name in place of "No project". Mobile lists them under their bot in the Bots tab (the Bots section
+on iOS) and leaves them out of the home list; the wide-screen sidebar keeps every bot thread and
+shows its bot's face in place of the project icon.
 
 A side thread has no row in `bots.sqlite`: the id names its bot. `parseBotThreadId` still matches
-only the main conversation, so rotation, compaction, push, voice, history, guests and mobile ignore
-side threads; code where a thread acts as its bot (instructions, memory and bot tools, the bot
+only the main conversation, so rotation, compaction, push, voice, history, guests and the mobile
+thread screen ignore side threads; code where a thread acts as its bot (instructions, memory and bot tools, the bot
 sender mark, link access, guest model pin, host MCP tools, queue resume) uses `parseBotThreadOwner`.
-A guest's bot gets none. Mobile shows a side thread as an ordinary thread.
+A guest's bot gets none.
 
 ## Guests
 

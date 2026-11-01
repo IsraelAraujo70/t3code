@@ -1,4 +1,4 @@
-import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
+import { isBotConversationThread } from "@t3tools/client-runtime/bot-chat";
 import {
   botGroupKey,
   type BotGroup,
@@ -7,23 +7,23 @@ import {
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 /**
- * The thread list without bot conversations (`bot:<botId>:<generation>`, every generation): they
- * show in the Bots tab instead. Returns the input array when nothing is removed so memoized
- * consumers keep their identity.
+ * The thread list without bot conversations (`bot:<botId>:<generation>`, every generation, and
+ * side threads `bot:<botId>:t-<key>`): they show under their bot in the Bots tab instead. Returns
+ * the input array when nothing is removed so memoized consumers keep their identity.
  */
 export function withoutBotThreads<T extends Pick<EnvironmentThreadShell, "id">>(
   threads: ReadonlyArray<T>,
 ): ReadonlyArray<T> {
-  const kept = threads.filter((thread) => !isBotChatThread(thread.id));
+  const kept = threads.filter((thread) => !isBotConversationThread(thread.id));
   return kept.length === threads.length ? threads : kept;
 }
 
 /**
- * The workspace tab a thread belongs to: a bot's conversation opens from the Bots tab. A draft
+ * The workspace tab a thread belongs to: a bot's conversations open from the Bots tab. A draft
  * route has no thread id yet and belongs to Threads.
  */
 export function workspaceTabForThread(threadId: string | undefined): "bots" | "threads" {
-  return threadId !== undefined && isBotChatThread(threadId) ? "bots" : "threads";
+  return isBotConversationThread(threadId) ? "bots" : "threads";
 }
 
 /** One group of the Bots tab as it renders. */

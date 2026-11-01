@@ -2,11 +2,19 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   groupBotRows,
   resolveBotRows,
+  sideThreadsByBot,
   type BotRowModel,
   type BotThreadShell,
 } from "@t3tools/client-runtime/bot-directory";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { BotDirectory, BotDirectoryEntry, EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  parseBotThreadOwner,
+  type BotDirectory,
+  type BotDirectoryEntry,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo, type ReactNode } from "react";
@@ -143,6 +151,35 @@ function BotRow(props: { readonly row: BotRowModel; readonly onOpen: () => void 
   );
 }
 
+/** A side thread under its bot's row, indented to the bot's name: its title and last activity. */
+function BotSideThreadRow(props: {
+  readonly botName: string;
+  readonly thread: EnvironmentThreadShell;
+  readonly onOpen: () => void;
+}) {
+  return (
+    <View className={ROW_CONTAINER_CLASS_NAME}>
+      <RowPressable
+        accessibilityRole="button"
+        accessibilityLabel={`${props.botName}: ${props.thread.title}`}
+        accessibilityHint="Opens this thread of the bot"
+        className={ROW_CLASS_NAME}
+        interactionClassName="bg-row-hover"
+        onPress={props.onOpen}
+      >
+        <View className="flex-row items-center gap-3 py-2 pl-[72px] pr-5">
+          <Text className="min-w-0 flex-1 text-sm text-foreground-muted" numberOfLines={1}>
+            {props.thread.title}
+          </Text>
+          <Text className="text-xs tabular-nums text-foreground-tertiary">
+            {relativeTime(props.thread.updatedAt)}
+          </Text>
+        </View>
+      </RowPressable>
+    </View>
+  );
+}
+
 /** A section's header; tapping it folds or opens the section. Folded, it shows its bot count. */
 function GroupHeader(props: {
   readonly title: string;
@@ -223,6 +260,28 @@ function useBotThreadShells(
   return useAtomValueWhileVisible(shellsAtom, visible);
 }
 
+/**
+ * The bots' open side threads (`bot:<botId>:t-<key>`), one subscription for the list. Like the main
+ * threads, quiet shells skip streaming ticks; while hidden the list holds its last value.
+ */
+function useBotSideThreadShells(
+  environmentId: EnvironmentId,
+  visible: boolean,
+): ReadonlyArray<EnvironmentThreadShell> {
+  const shellsAtom = useMemo(
+    () =>
+      Atom.make((get) =>
+        get(environmentThreadShells.environmentThreadRefsAtom(environmentId)).flatMap((ref) => {
+          if (parseBotThreadOwner(ref.threadId)?.kind !== "side") return [];
+          const shell = get(environmentThreadShells.quietThreadShellAtom(ref));
+          return shell === null || shell.archivedAt !== null ? [] : [shell];
+        }),
+      ),
+    [environmentId],
+  );
+  return useAtomValueWhileVisible(shellsAtom, visible);
+}
+
 function BotGroups(props: {
   readonly environmentId: EnvironmentId;
   readonly directory: BotDirectory;
@@ -230,8 +289,14 @@ function BotGroups(props: {
 }) {
   const { environmentId, directory } = props;
   const shells = useBotThreadShells(environmentId, directory.bots, props.visible);
+  const sideThreads = sideThreadsByBot(
+    useBotSideThreadShells(environmentId, props.visible),
+    environmentId,
+  );
   const { collapsed, toggle } = useCollapsedBotGroups();
   const selectDetail = useSelectWorkspaceDetail();
+  const openThread = (threadId: ThreadId) =>
+    selectDetail({ name: "Thread", params: { environmentId, threadId } });
   const groups = botsTabGroups(
     groupBotRows(directory.sections, resolveBotRows(directory.bots, environmentId, shells)),
     collapsed,
@@ -249,16 +314,17 @@ function BotGroups(props: {
       {group.collapsed
         ? null
         : group.rows.map((row) => (
-            <BotRow
-              key={row.bot.id}
-              row={row}
-              onOpen={() =>
-                selectDetail({
-                  name: "Thread",
-                  params: { environmentId, threadId: row.bot.homeThreadId },
-                })
-              }
-            />
+            <View key={row.bot.id}>
+              <BotRow row={row} onOpen={() => openThread(row.bot.homeThreadId)} />
+              {(sideThreads.get(row.bot.id) ?? []).map((thread) => (
+                <BotSideThreadRow
+                  key={thread.id}
+                  botName={row.bot.name}
+                  thread={thread}
+                  onOpen={() => openThread(thread.id)}
+                />
+              ))}
+            </View>
           ))}
     </View>
   ));
@@ -268,7 +334,7 @@ function BotGroups(props: {
  * The bots host's bots as the desktop sidebar lists them: the user's sections in order, each
  * foldable, bots inside by status and then the user's order, then a row that opens the host's
  * screen. Read-only: bots and sections are managed from desktop. Rows open the bot's main
- * conversation in the ordinary Thread route.
+ * conversation in the ordinary Thread route; its side threads are listed under it.
  */
 export function BotsList(props: {
   readonly environmentId: EnvironmentId;

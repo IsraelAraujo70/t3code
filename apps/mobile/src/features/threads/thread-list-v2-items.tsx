@@ -40,6 +40,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+// Fork (friend): a bot thread shows its bot's face where other threads show their project's icon.
+import { BotThreadIcon } from "../../bots/BotThreadIcon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
@@ -1044,14 +1046,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       <View className="flex-row items-start gap-2">
         {props.project ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>
-            <ProjectFavicon
-              environmentId={thread.environmentId}
-              faviconPath={props.project.faviconPath}
-              projectIcon={props.project.projectIcon}
-              size={projectIconSize}
-              projectTitle={props.project.title}
-              workspaceRoot={props.project.workspaceRoot}
-            />
+            {/* Fork (friend): the bot's face in place of the Scratch project's icon. */}
+            <BotThreadIcon threadId={thread.id} size={projectIconSize}>
+              <ProjectFavicon
+                environmentId={thread.environmentId}
+                faviconPath={props.project.faviconPath}
+                projectIcon={props.project.projectIcon}
+                size={projectIconSize}
+                projectTitle={props.project.title}
+                workspaceRoot={props.project.workspaceRoot}
+              />
+            </BotThreadIcon>
           </View>
         ) : null}
         <Text
@@ -1334,14 +1339,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         >
           {props.project ? (
             <View className="opacity-40">
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                faviconPath={props.project.faviconPath}
-                projectIcon={props.project.projectIcon}
-                size={projectIconSize}
-                projectTitle={props.project.title}
-                workspaceRoot={props.project.workspaceRoot}
-              />
+              {/* Fork (friend): the bot's face in place of the Scratch project's icon. */}
+              <BotThreadIcon threadId={thread.id} size={projectIconSize}>
+                <ProjectFavicon
+                  environmentId={thread.environmentId}
+                  faviconPath={props.project.faviconPath}
+                  projectIcon={props.project.projectIcon}
+                  size={projectIconSize}
+                  projectTitle={props.project.title}
+                  workspaceRoot={props.project.workspaceRoot}
+                />
+              </BotThreadIcon>
             </View>
           ) : null}
           <View className="min-w-0 flex-1">

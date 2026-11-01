@@ -22,6 +22,7 @@ import {
   moveBot,
   moveSection,
   resolveBotRows,
+  sideThreadsByBot,
   type BotRowModel,
   type BotStatus,
   type BotThreadShell,
@@ -217,6 +218,34 @@ describe("resolveBotRows", () => {
     );
     expect(preview({ settledOverride: "settled" })).toBe("Settled");
     expect(preview({})).toBeNull();
+  });
+});
+
+describe("sideThreadsByBot", () => {
+  it("lists each bot's side threads in the environment, most recent first", () => {
+    const older = shell({
+      id: ThreadId.make("bot:b_1:t-0000aaaa"),
+      updatedAt: "2026-10-19T08:00:00.000Z",
+    });
+    const newer = shell({
+      id: ThreadId.make("bot:b_1:t-0000bbbb"),
+      updatedAt: "2026-10-19T09:00:00.000Z",
+    });
+    const other = shell({ id: ThreadId.make("bot:b_2:t-0000cccc") });
+    const byBot = sideThreadsByBot(
+      [
+        older,
+        shell({ id: ThreadId.make("bot:b_1:1") }),
+        newer,
+        other,
+        shell({ id: ThreadId.make("thread-a") }),
+        shell({ environmentId: otherEnvironmentId, id: ThreadId.make("bot:b_1:t-0000dddd") }),
+      ],
+      environmentId,
+    );
+    expect([...byBot.keys()]).toEqual(["b_1", "b_2"]);
+    expect(byBot.get("b_1")).toEqual([newer, older]);
+    expect(byBot.get("b_2")).toEqual([other]);
   });
 });
 

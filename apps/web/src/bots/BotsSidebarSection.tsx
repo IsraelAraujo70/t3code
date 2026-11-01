@@ -15,7 +15,6 @@ import {
   BotId,
   BotSectionId,
   parseBotThreadId,
-  parseBotThreadOwner,
   type BotDirectory,
   type BotsArrangeInput,
   type BotSection,
@@ -48,6 +47,7 @@ import {
   moveBot,
   moveSection,
   resolveBotRows,
+  sideThreadsByBot,
   type BotGroup,
   type BotRowModel,
   type BotThreadShell,
@@ -70,24 +70,6 @@ export function isBotThreadId(threadId: string): boolean {
 
 /** A thread shell as the Bots block reads it; side threads show their title. */
 export type BotsBlockThread = BotThreadShell & { readonly title: string };
-
-/** Each bot's side threads, most recent first. */
-function sideThreadsByBot(
-  threads: ReadonlyArray<BotsBlockThread>,
-  environmentId: EnvironmentId | null,
-): ReadonlyMap<string, ReadonlyArray<BotsBlockThread>> {
-  const byBot = new Map<string, BotsBlockThread[]>();
-  for (const thread of threads) {
-    if (thread.environmentId !== environmentId) continue;
-    const owner = parseBotThreadOwner(thread.id);
-    if (owner?.kind !== "side") continue;
-    const list = byBot.get(owner.botId);
-    if (list === undefined) byBot.set(owner.botId, [thread]);
-    else list.push(thread);
-  }
-  for (const list of byBot.values()) list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return byBot;
-}
 
 /** The selected sidebar tab in the "tabs" layout, kept per device. */
 export function useSidebarBotsTab() {

@@ -1,15 +1,17 @@
 /**
  * Shared rules for listing bots on web and mobile: each bot's status from its main thread, the
- * line under its name, the user's sections in order, and arranging bots and sections.
+ * line under its name, its side threads, the user's sections in order, and arranging bots and
+ * sections.
  */
-import type {
-  BotDirectoryEntry,
-  BotId,
-  BotsArrangeInput,
-  BotSection,
-  BotSectionId,
-  EnvironmentId,
-  ScopedThreadRef,
+import {
+  parseBotThreadOwner,
+  type BotDirectoryEntry,
+  type BotId,
+  type BotsArrangeInput,
+  type BotSection,
+  type BotSectionId,
+  type EnvironmentId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 
 import { scopeThreadRef } from "./environment/index.ts";
@@ -168,6 +170,29 @@ export function resolveBotRows(
       activityAt: botActivityAt(shell),
     };
   });
+}
+
+/**
+ * Each bot's side threads (`bot:<botId>:t-<key>`) in `environmentId`, most recently updated first,
+ * for listing them under their bot. Main conversations and other threads are left out.
+ */
+export function sideThreadsByBot<
+  T extends Pick<EnvironmentThreadShell, "environmentId" | "id" | "updatedAt">,
+>(
+  threads: ReadonlyArray<T>,
+  environmentId: EnvironmentId | null,
+): ReadonlyMap<string, ReadonlyArray<T>> {
+  const byBot = new Map<string, T[]>();
+  for (const thread of threads) {
+    if (thread.environmentId !== environmentId) continue;
+    const owner = parseBotThreadOwner(thread.id);
+    if (owner?.kind !== "side") continue;
+    const list = byBot.get(owner.botId);
+    if (list === undefined) byBot.set(owner.botId, [thread]);
+    else list.push(thread);
+  }
+  for (const list of byBot.values()) list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return byBot;
 }
 
 const STATUS_RANK = { "needs-you": 0, working: 1, settled: 2 } as const;

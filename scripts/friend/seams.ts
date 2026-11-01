@@ -406,8 +406,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
-    markers: 1,
-    why: "export the section divider the iOS home Bots section uses",
+    markers: 4,
+    why: "export the section divider the iOS home Bots section uses; bot threads show their bot's face",
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceTabsContext.tsx",
