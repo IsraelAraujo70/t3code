@@ -52,6 +52,8 @@ vi.mock("../state/use-atom-command", async () => {
   };
 });
 
+vi.mock("../state/session", () => ({ useEnvironmentScope: () => true }));
+
 vi.mock("../hooks/useThreadActions", () => ({
   useThreadActions: () => ({ archiveThread: vi.fn() }),
 }));

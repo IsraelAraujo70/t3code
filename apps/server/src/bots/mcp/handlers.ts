@@ -46,17 +46,24 @@ const callerBot = Effect.gen(function* () {
 });
 
 export const layer = McpToolAccess.toLayer(BotMemoryToolkit, {
-  bot_thread_open: McpToolAccess.actsAsCaller(({ title, message }) =>
-    Effect.gen(function* () {
-      const { bot, bots, threadId } = yield* callerBot;
-      const entry = yield* bots
-        .openThread(
-          { botId: bot.id, title, ...(message !== undefined ? { message } : {}) },
-          threadId,
-        )
-        .pipe(Effect.mapError(botsFailure));
-      return { threadId: entry.threadId, title: entry.title };
-    }),
+  // The side thread inherits the caller's modes, so a supervised bot cannot start unsupervised work.
+  bot_thread_open: McpToolAccess.startsThreads(
+    () => ({}),
+    ({ title, message }, modes) =>
+      Effect.gen(function* () {
+        yield* McpInvocationContext.McpInvocationContext.pipe(
+          Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
+        );
+        const { bot, bots, threadId } = yield* callerBot;
+        const entry = yield* bots
+          .openThread(
+            { botId: bot.id, title, ...(message !== undefined ? { message } : {}) },
+            { threadId, runtimeMode: modes.runtimeMode, interactionMode: modes.interactionMode },
+          )
+          .pipe(Effect.mapError(botsFailure));
+        return { threadId: entry.threadId, title: entry.title };
+      }),
+    { refused: "open a bot thread from a linked environment" },
   ),
   bot_thread_list: McpToolAccess.readsAsCaller(() =>
     Effect.gen(function* () {

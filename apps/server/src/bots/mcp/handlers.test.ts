@@ -23,7 +23,9 @@ import * as Stream from "effect/Stream";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../mcp/McpToolAccess.testkit.ts";
+import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import * as BotsService from "../BotsService.ts";
+import type { BotThreadOpener } from "../BotsService.ts";
 import * as BotMemoryHandlers from "./handlers.ts";
 import { BotManagementToolkit, BotMemoryToolkit } from "./tools.ts";
 
@@ -66,7 +68,7 @@ const makeBots = () => {
     memory("mem_bob", bob, "Works on the billing service."),
   ];
   const created: Array<{ input: BotMemoryCreateInput; source: BotMemorySource }> = [];
-  const opened: Array<{ input: BotThreadOpenInput; senderThreadId: ThreadId | undefined }> = [];
+  const opened: Array<{ input: BotThreadOpenInput; opener: BotThreadOpener | undefined }> = [];
   const sideThread = {
     threadId: ThreadId.make("bot:b_alice:t-abcd"),
     title: "Research",
@@ -80,9 +82,9 @@ const makeBots = () => {
   const linkedEnvironmentSwitches: Array<unknown> = [];
   const madeRegular: Array<unknown> = [];
   const layer = Layer.mock(BotsService.BotsService)({
-    openThread: (input, senderThreadId) =>
+    openThread: (input, opener) =>
       Effect.sync(() => {
-        opened.push({ input, senderThreadId });
+        opened.push({ input, opener });
         return sideThread;
       }),
     listThreads: ({ botId }) =>
@@ -192,12 +194,13 @@ const clientScope: McpInvocationContext.McpInvocationScope = {
 const memoryTools = (
   bots: Layer.Layer<BotsService.BotsService>,
   scope: McpInvocationContext.McpInvocationScope,
+  threads: Layer.Layer<ThreadManagementService> = McpToolAccessTestkit.liveThreadsLayer,
 ) =>
   Effect.gen(function* () {
     const dependencies = Layer.mergeAll(
       bots,
       Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
-      McpToolAccessTestkit.liveThreadsLayer,
+      threads,
     );
     const toolkit = yield* BotMemoryToolkit.pipe(
       Effect.provide(
@@ -501,10 +504,38 @@ it.effect("bot thread tools use the calling bot and sender thread", () =>
       title: "Research",
     });
     expect(bots.opened).toEqual([
-      { input: { botId: alice, title: "Research", message: "Full brief" }, senderThreadId },
+      {
+        input: { botId: alice, title: "Research", message: "Full brief" },
+        opener: {
+          threadId: senderThreadId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+      },
     ]);
     expect(yield* tools.listThreads()).toEqual({ threads: [bots.sideThread] });
     const bobTools = yield* memoryTools(bots.layer, threadScope(botThreadId(bob, 1)));
     expect(yield* bobTools.listThreads()).toEqual({ threads: [] });
+  }),
+);
+
+it.effect("a supervised bot's side thread keeps the caller's modes", () =>
+  Effect.gen(function* () {
+    const bots = makeBots();
+    const senderThreadId = botThreadId(alice, 1);
+    const supervised = Layer.mock(ThreadManagementService)({
+      getThreadShell: (threadId) =>
+        Effect.succeed(
+          McpToolAccessTestkit.liveThreadShell(threadId, {
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+          }),
+        ),
+    });
+    const tools = yield* memoryTools(bots.layer, threadScope(senderThreadId), supervised);
+    yield* tools.openThread("Full brief");
+    expect(bots.opened.map((entry) => entry.opener)).toEqual([
+      { threadId: senderThreadId, runtimeMode: "approval-required", interactionMode: "plan" },
+    ]);
   }),
 );

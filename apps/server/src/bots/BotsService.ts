@@ -52,6 +52,8 @@ import {
   type BotUpdateInput,
   type ModelSelection,
   type ProviderInstanceId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -66,6 +68,13 @@ import { BotsStore, type BotHandoff } from "./BotsStore.ts";
 import { runsOnHost } from "./guest/sandboxInstance.ts";
 import { hostMcpConfigFile } from "./guest/HostMcpForward.ts";
 import { readBotsHostStaticStatus, readHostMcpServers } from "./hostStatus.ts";
+
+/** The bot thread that opens a side thread, with the modes its caller may hand on. */
+export interface BotThreadOpener {
+  readonly threadId: ThreadId;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+}
 
 export class BotsService extends Context.Service<
   BotsService,
@@ -134,11 +143,12 @@ export class BotsService extends Context.Service<
     readonly makeRegular: (input: BotMakeRegularInput) => Effect.Effect<Bot, BotsError>;
     /**
      * Launches a side thread of the bot on its current model, with `message` as its first user
-     * message (sent by `senderThreadId` when a bot opened it). A guest's bot gets none.
+     * message. From the user it runs full-access like the main conversation; a bot's `opener`
+     * sends that message and caps the modes. A guest's bot gets none.
      */
     readonly openThread: (
       input: BotThreadOpenInput,
-      senderThreadId?: ThreadId,
+      opener?: BotThreadOpener,
     ) => Effect.Effect<BotThreadEntry, BotsError>;
     /** The bot's open side threads, most recently active first. */
     readonly listThreads: (input: BotRef) => Effect.Effect<BotThreadList, BotsError>;
@@ -406,9 +416,18 @@ const make = Effect.gen(function* () {
   const deleteBot = Effect.fn("BotsService.deleteBot")(function* (input: BotRef) {
     const bot = yield* store.getBot(input.botId);
     if (Option.isSome(bot)) {
+      // Deleting must not depend on Scratch: a side thread left open only loses its bot.
+      const sideThreads = yield* openSideThreads(bot.value).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not list a deleted bot's side threads", {
+            botId: bot.value.id,
+            error,
+          }).pipe(Effect.as([])),
+        ),
+      );
       yield* archiveThread(bot.value.id, bot.value.homeGeneration);
       yield* Effect.forEach(
-        yield* openSideThreads(bot.value),
+        sideThreads,
         (thread) =>
           threads
             .dispatch({
@@ -625,7 +644,7 @@ const make = Effect.gen(function* () {
   // archiving, renaming and restoring are the thread's, and there is nothing to migrate.
   const openThread = Effect.fn("BotsService.openThread")(function* (
     input: BotThreadOpenInput,
-    senderThreadId?: ThreadId,
+    opener?: BotThreadOpener,
   ) {
     const bot = yield* requireBot(input.botId);
     if ((yield* store.listGuestBotIds).includes(bot.id)) {
@@ -644,8 +663,8 @@ const make = Effect.gen(function* () {
         title: input.title,
         generateTitle: false,
         modelSelection: bot.model,
-        runtimeMode: "full-access",
-        interactionMode: "default",
+        runtimeMode: opener?.runtimeMode ?? "full-access",
+        interactionMode: opener?.interactionMode ?? "default",
         workspaceStrategy: { type: "root" },
         ...(input.message === undefined
           ? {}
@@ -654,10 +673,10 @@ const make = Effect.gen(function* () {
                 messageId: MessageId.make(commandId),
                 text: input.message,
                 attachments: [],
-                ...(senderThreadId === undefined ? {} : { senderThreadId }),
+                ...(opener === undefined ? {} : { senderThreadId: opener.threadId }),
               },
             }),
-        createdBy: senderThreadId === undefined ? "user" : "agent",
+        createdBy: opener === undefined ? "user" : "agent",
         creationSource: "server",
       })
       .pipe(Effect.mapError(botsError(`Could not open a thread of ${bot.name}.`)));

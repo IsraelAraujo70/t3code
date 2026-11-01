@@ -78,6 +78,7 @@ const makeOrchestration = Effect.gen(function* () {
   const commands: Array<OrchestrationV2ServerCommand> = [];
   const launched = yield* Queue.unbounded<ThreadId>();
   const retitled = yield* Queue.unbounded<ThreadId>();
+  const scratch = { available: true };
 
   const launch = ThreadLaunchService.ThreadLaunchService.of({
     launch: (launchInput) =>
@@ -163,7 +164,11 @@ const makeOrchestration = Effect.gen(function* () {
     Layer.succeed(ThreadLaunchService.ThreadLaunchService, launch),
     Layer.succeed(ThreadManagementService.ThreadManagementService, management),
     Layer.succeed(ManagedProjectFolders.ManagedProjectFolders, {
-      ensureScratchProject: Effect.succeed({ projectId: SCRATCH }),
+      ensureScratchProject: Effect.suspend(() =>
+        scratch.available
+          ? Effect.succeed({ projectId: SCRATCH })
+          : Effect.fail({ _tag: "ScratchUnavailableError", message: "No Scratch here." }),
+      ),
     } as unknown as ManagedProjectFolders.ManagedProjectFolders["Service"]),
     Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       listInstances: Effect.succeed(instances),
@@ -189,7 +194,7 @@ const makeOrchestration = Effect.gen(function* () {
     ),
   );
 
-  return { threads, launches, commands, launched, retitled, layer };
+  return { threads, launches, commands, launched, retitled, scratch, layer };
 });
 
 type Orchestration = Effect.Success<typeof makeOrchestration>;
@@ -399,6 +404,13 @@ describe("BotsService", () => {
 
       // Deleting again, with the thread already archived, still succeeds.
       yield* service.deleteBot({ botId: bot.id });
+
+      // Without Scratch there are no side threads to find, and deleting still works.
+      const other = yield* service.createBot({ ...input, name: "Bea" });
+      orchestration.scratch.available = false;
+      yield* service.deleteBot({ botId: other.id });
+      assert.isTrue(orchestration.threads.get(botThreadId(other.id, 1))!.archived);
+      assert.isTrue(Option.isNone(yield* store.getBot(other.id)));
     }).pipe(Effect.scoped),
   );
 
@@ -434,6 +446,7 @@ describe("BotsService", () => {
           assert.deepStrictEqual(launch.modelSelection, input.model);
           assert.strictEqual(launch.generateTitle, false);
           assert.strictEqual(launch.createdBy, "user");
+          assert.strictEqual(launch.runtimeMode, "full-access");
           const botOf = yield* service.botForThread(entry.threadId);
           assert.strictEqual(Option.getOrThrow(botOf).id, bot.id);
         }
@@ -462,7 +475,7 @@ describe("BotsService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("a bot opening its own side thread is the sender of its first message", () =>
+  it.effect("a bot opening its own side thread sends its first message and caps its modes", () =>
     Effect.gen(function* () {
       const { orchestration, startService } = yield* setup();
       const service = yield* startService;
@@ -471,10 +484,12 @@ describe("BotsService", () => {
 
       const entry = yield* service.openThread(
         { botId: bot.id, title: "Research", message: "Compare three laptops." },
-        main,
+        { threadId: main, runtimeMode: "approval-required", interactionMode: "plan" },
       );
       const launch = orchestration.launches.find((each) => each.threadId === entry.threadId)!;
       assert.strictEqual(launch.createdBy, "agent");
+      assert.strictEqual(launch.runtimeMode, "approval-required");
+      assert.strictEqual(launch.interactionMode, "plan");
       assert.strictEqual(launch.initialMessage?.senderThreadId, main);
       assert.strictEqual(launch.initialMessage?.text, "Compare three laptops.");
     }).pipe(Effect.scoped),

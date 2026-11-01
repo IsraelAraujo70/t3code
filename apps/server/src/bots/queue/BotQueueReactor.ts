@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { BotsService } from "../BotsService.ts";
 import { BotsStore } from "../BotsStore.ts";
 import { botQueueResumeKey } from "./botQueue.ts";
 
@@ -33,6 +34,7 @@ const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const store = yield* BotsStore;
+  const bots = yield* BotsService;
 
   const resume = Effect.fn("BotQueueReactor.resume")(
     function* (threadId: ThreadId) {
@@ -63,6 +65,15 @@ const make = Effect.gen(function* () {
   const catchUp = Effect.gen(function* () {
     for (const bot of yield* store.listBots) {
       yield* resume(botThreadId(bot.id, bot.homeGeneration));
+      const side = yield* bots.listThreads({ botId: bot.id }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("listing a bot's side threads to resume failed", {
+            botId: bot.id,
+            error,
+          }).pipe(Effect.as({ threads: [] })),
+        ),
+      );
+      for (const thread of side.threads) yield* resume(thread.threadId);
     }
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning("catching up bot queues failed", { cause })),

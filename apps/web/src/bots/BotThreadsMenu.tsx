@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  AuthOrchestrationOperateScope,
   BOT_THREAD_TITLE_LIMIT,
   parseBotThreadOwner,
   type BotThreadEntry,
@@ -20,8 +21,10 @@ import {
   DialogFooter,
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { toastManager } from "../components/ui/toast";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { botsEnvironment, useBotDirectory, useBotsEnvironmentId } from "../state/bots";
+import { useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { commandFailureMessage } from "./botsSettingsShared";
@@ -30,6 +33,7 @@ import { commandFailureMessage } from "./botsSettingsShared";
 export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId: ThreadId }) {
   const environmentId = useBotsEnvironmentId();
   const { directory } = useBotDirectory(environmentId);
+  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const navigate = useNavigate();
   const { archiveThread } = useThreadActions();
   const list = useAtomCommand(botsEnvironment.listThreads, {
@@ -107,6 +111,7 @@ export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId
             ))
           )}
           <MenuItem
+            disabled={!canOperate}
             onClick={() => {
               setTitle("");
               setError(null);
@@ -117,9 +122,16 @@ export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId
           </MenuItem>
           {parseBotThreadOwner(props.threadId)?.kind === "side" ? (
             <MenuItem
+              disabled={!canOperate}
               onClick={() => {
                 void archiveThread(scopeThreadRef(environmentId, props.threadId)).then((result) => {
                   if (result._tag === "Success") go(bot.homeThreadId);
+                  else
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not archive this thread.",
+                      description: commandFailureMessage(result) ?? undefined,
+                    });
                 });
               }}
             >
