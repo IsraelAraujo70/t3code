@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 import type * as Undici from "undici";
 
 import { VSCODE_BASE_PATH } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -319,6 +320,17 @@ export const systemdLauncher = (settings: VsCodeSettings): VsCodeLauncher => {
 
   return { launch, stop };
 };
+
+/**
+ * Whether this server can serve VS Code: Linux (systemd starts it) with the CLI installed. Read
+ * once at startup for the `vscode` environment capability, so clients offer it only where it runs.
+ */
+export const isVsCodeAvailable = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "linux") return false;
+  const config = yield* ServerConfig.ServerConfig;
+  const settings = yield* readSettings(config.stateDir);
+  return isExecutable(settings.cli);
+}).pipe(Effect.orElseSucceed(() => false));
 
 export const layer = Layer.effect(
   VsCodeServer,

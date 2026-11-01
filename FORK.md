@@ -388,6 +388,12 @@ on the thread's environment, so a remote environment serves its own VS Code. Key
 stay in its document; the desktop's native menu accelerators (quit, reload, zoom, Settings) still
 reach the app.
 
+The thread header's "Open in" picker offers it as "VS Code in T3", first in the list and the default
+choice: the button and the favorite-editor shortcut open (or focus) the same tab. Picking an external
+editor in the list makes that the default again, kept per browser. The choice appears only where the
+thread's environment advertises the `vscode` capability (Linux with the CLI installed, read at
+startup) and the session holds `terminal:operate`; otherwise the picker is upstream's.
+
 The server proxies `/vscode/*`, HTTP and WebSocket, to Microsoft's `code serve-web` (the standalone
 CLI, licence accepted with `--accept-server-license-terms`). The first request starts it as a
 transient `systemd-run --user` unit with `MemoryMax=$T3CODE_VSCODE_MEMORY_MAX` (default `3G`),

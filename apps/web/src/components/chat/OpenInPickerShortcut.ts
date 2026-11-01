@@ -1,5 +1,16 @@
-import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type {
+  EditorId,
+  EnvironmentId,
+  ResolvedKeybindingsConfig,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useEffect } from "react";
+
+// Fork (friend): the shortcut opens the right panel's VS Code when that is the choice.
+import {
+  useVsCodeSurfaceEditor,
+  VS_CODE_SURFACE_LABEL,
+} from "../../bots/vscode/vsCodeSurfaceEditor";
 
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -41,22 +52,33 @@ export function useOpenFavoriteEditorShortcut({
   keybindings,
   availableEditors,
   openInCwd,
+  surfaceThreadId = null,
 }: {
   enabled: boolean;
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  /** Fork (friend): the thread whose right panel can open VS Code. */
+  surfaceThreadId?: ThreadId | null;
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const remote = useRemoteOpenState(environmentId);
+  const surface = useVsCodeSurfaceEditor(environmentId, surfaceThreadId); // Fork (friend)
+  const openSurface = surface.preferred ? surface.open : null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled locally
   useEffect(() => {
-    if (!enabled || remote.mode !== "local-exec") return;
+    if (!enabled || (remote.mode !== "local-exec" && openSurface === null)) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || !isOpenFavoriteEditorShortcut(event, keybindings)) return;
+      // Fork (friend): VS Code in T3 instead of the external editor.
+      if (openSurface !== null) {
+        event.preventDefault();
+        if (openSurface()) announce(`Opened ${VS_CODE_SURFACE_LABEL}`);
+        return;
+      }
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();
@@ -79,6 +101,7 @@ export function useOpenFavoriteEditorShortcut({
     keybindings,
     openInCwd,
     openInEditorMutation,
+    openSurface,
     preferredEditor,
     remote.mode,
   ]);

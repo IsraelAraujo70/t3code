@@ -91,6 +91,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   dictation: Schema.optionalKey(Schema.Boolean),
   // Fork (friend): this server offers voice sessions (`bots.voice.session`, through Codex).
   voice: Schema.optionalKey(Schema.Boolean),
+  // Fork (friend): this server serves VS Code under VSCODE_BASE_PATH (its CLI is installed).
+  vscode: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   storageCleanupRun: Schema.optionalKey(Schema.Boolean),

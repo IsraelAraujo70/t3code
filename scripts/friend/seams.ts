@@ -57,8 +57,8 @@ export const SEAMS: readonly Seam[] = [
   { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
   {
     file: "packages/contracts/src/environment.ts",
-    markers: 3,
-    why: "bots host, dictation and voice capabilities",
+    markers: 4,
+    why: "bots host, dictation, voice and VS Code capabilities",
   },
   { file: "packages/contracts/src/rpc.ts", markers: 2, why: "bots RPCs in WsRpcGroup" },
   {
@@ -271,8 +271,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/environment/ServerEnvironment.ts",
-    markers: 6,
-    why: "advertise bots only on the bots host, dictation only with a key, voice always",
+    markers: 8,
+    why: "advertise bots only on the bots host, dictation only with a key, voice always, VS Code where its CLI runs",
   },
   {
     file: "apps/server/src/server.ts",
@@ -351,8 +351,23 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/ChatView.tsx",
+    markers: 5,
+    why: "open the Computer and VS Code surfaces from the launchers and the favorite-editor shortcut; an earlier bot generation has no composer",
+  },
+  {
+    file: "apps/web/src/components/chat/OpenInPicker.tsx",
+    markers: 3,
+    why: "VS Code in T3 is the default Open in choice",
+  },
+  {
+    file: "apps/web/src/components/chat/OpenInPickerShortcut.ts",
     markers: 4,
-    why: "open the Computer and VS Code surfaces from the launchers; an earlier bot generation has no composer",
+    why: "the favorite-editor shortcut opens VS Code in T3 when that is the choice",
+  },
+  {
+    file: "apps/web/src/components/chat/ThreadDetailsPanel.tsx",
+    markers: 1,
+    why: "offer VS Code in T3 for the thread",
   },
   {
     file: "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",

@@ -5,6 +5,7 @@ import {
   EditorId,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -73,6 +74,8 @@ import {
 } from "./threadDetailsPanelStyles";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useComposerMenuState } from "./useComposerMenuState";
+// Fork (friend): the right panel's VS Code is the thread's default "Open in" choice.
+import { useVsCodeSurfaceEditor, VS_CODE_SURFACE_LABEL } from "~/bots/vscode/vsCodeSurfaceEditor";
 
 type OpenInOption = {
   label: string;
@@ -214,6 +217,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   enableShortcut = true,
   displayMode = "toolbar",
   revealFileManager = false,
+  surfaceThreadId = null,
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
@@ -225,6 +229,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   enableShortcut?: boolean;
   displayMode?: "toolbar" | "panel";
   revealFileManager?: boolean;
+  /** Fork (friend): offers the right panel's VS Code for this thread's folder. */
+  surfaceThreadId?: ThreadId | null;
 }) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -234,7 +240,10 @@ export const OpenInPicker = memo(function OpenInPicker({
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const isHostEditorDenied = remote.mode === "local-exec" && !canOperateHost;
   const canOpenEditor = remote.mode !== "remote-unavailable" && !isHostEditorDenied;
-  const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
+  // Fork (friend): when VS Code in T3 is the choice, the primary button opens its surface.
+  const surface = useVsCodeSurfaceEditor(environmentId, surfaceThreadId);
+  const menuDisabled = isHostEditorDenied && !surface.available;
+  const [menuOpen, setMenuOpen] = useComposerMenuState(menuDisabled);
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
@@ -283,11 +292,46 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const backgroundThread = use(BackgroundThreadContext);
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
-  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-  const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
+  const primaryOption = surface.preferred
+    ? { label: VS_CODE_SURFACE_LABEL, Icon: VisualStudioCode, kind: "brand" as const }
+    : (options.find(({ value }) => value === preferredEditor) ?? null);
+  const primaryText = surface.preferred
+    ? `Open ${VS_CODE_SURFACE_LABEL}`
+    : `Open in ${primaryOption?.label ?? "editor"}`;
+  const primaryLabel = isPanel ? primaryText : "Open";
+  const shortcutEditor = surface.preferred ? null : preferredEditor;
+  const primaryDisabled = surface.preferred
+    ? false
+    : !preferredEditor || !openInCwd || !canOpenEditor;
+
+  const surfaceItemSelected = () => {
+    surface.setPreferred(true);
+    if (presentation === "menu" && surface.open()) announce(`Opened ${VS_CODE_SURFACE_LABEL}`);
+  };
+  const surfaceItem = surface.available ? (
+    <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={surfaceItemSelected}>
+      <VisualStudioCode aria-hidden="true" className={getOpenInIconClass("brand")} />
+      <MenuItemLabel>{VS_CODE_SURFACE_LABEL}</MenuItemLabel>
+      {surface.preferred && openFavoriteEditorShortcutLabel && (
+        <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+      )}
+    </MenuItem>
+  ) : null;
+  const openPrimary = () => {
+    if (surface.preferred) {
+      if (surface.open()) announce(`Opened ${VS_CODE_SURFACE_LABEL}`);
+      return;
+    }
+    if (!preferredEditor) return;
+    const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+    void openInEditor(preferredEditor).then((opened) => {
+      if (opened) announce(`Opened in ${label}`);
+    });
+  };
 
   const editorItems = (
     <>
+      {surfaceItem}
       {remote.mode === "remote-unavailable" ? (
         <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
           No SSH route to {environmentLabel}
@@ -305,6 +349,7 @@ export const OpenInPicker = memo(function OpenInPicker({
               disabled={!openInCwd || !canOpenEditor}
               key={value}
               onClick={() => {
+                surface.setPreferred(false);
                 if (presentation === "menu") {
                   void openInEditor(value);
                 } else {
@@ -314,7 +359,7 @@ export const OpenInPicker = memo(function OpenInPicker({
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               <MenuItemLabel>{label}</MenuItemLabel>
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
+              {value === shortcutEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
             </MenuItem>
@@ -334,19 +379,18 @@ export const OpenInPicker = memo(function OpenInPicker({
         {primaryOption && (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
-
-            disabled={!openInCwd || !canOpenEditor}
-            onClick={() => openInEditor(preferredEditor)}
+            disabled={primaryDisabled}
+            onClick={openPrimary}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
-            <MenuItemLabel>Open in {primaryOption.label}</MenuItemLabel>
+            <MenuItemLabel>{primaryText}</MenuItemLabel>
             {openFavoriteEditorShortcutLabel && (
               <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
             )}
           </MenuItem>
         )}
         <MenuSub>
-          <MenuSubTrigger density="touch" disabled={isHostEditorDenied}>
+          <MenuSubTrigger density="touch" disabled={menuDisabled}>
             <SquareArrowOutUpRightIcon className="size-4" />
             <MenuItemLabel>Open in…</MenuItemLabel>
           </MenuSubTrigger>
@@ -370,15 +414,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         variant={isPanel ? "ghost" : "outline"}
         part="primary"
         panel={isPanel}
-        disabled={!preferredEditor || !openInCwd || !canOpenEditor}
+        disabled={primaryDisabled}
         {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
-        onClick={() => {
-          if (!preferredEditor) return;
-          const label = editorLabelForPlatform(preferredEditor, navigator.platform);
-          void openInEditor(preferredEditor).then((opened) => {
-            if (opened) announce(`Opened in ${label}`);
-          });
-        }}
+        onClick={openPrimary}
       >
         {primaryOption?.Icon ? (
           <primaryOption.Icon
@@ -412,7 +450,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
         <MenuTrigger
-          disabled={isHostEditorDenied}
+          disabled={menuDisabled}
           render={
             <ThreadDetailsControl
               aria-label="Choose editor"

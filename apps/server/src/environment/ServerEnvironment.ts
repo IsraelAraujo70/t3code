@@ -23,9 +23,11 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
-// Fork (friend): advertise bots only on the bots host, dictation only with a transcription key.
+// Fork (friend): advertise bots only on the bots host, dictation only with a transcription key,
+// VS Code only where its CLI runs.
 import { isBotsHost } from "../bots/BotsHost.ts";
 import { isDictationConfigured } from "../bots/dictation/Dictation.ts";
+import { isVsCodeAvailable } from "../bots/vscode/VsCodeServer.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -208,6 +210,7 @@ export const make = Effect.gen(function* () {
 
   const botsHost = yield* isBotsHost; // Fork (friend)
   const dictation = yield* isDictationConfigured; // Fork (friend)
+  const vscode = yield* isVsCodeAvailable; // Fork (friend)
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
     label,
@@ -232,6 +235,7 @@ export const make = Effect.gen(function* () {
       ...(botsHost ? { bots: true } : {}), // Fork (friend)
       ...(dictation ? { dictation: true } : {}), // Fork (friend)
       voice: true, // Fork (friend)
+      ...(vscode ? { vscode: true } : {}), // Fork (friend)
       threadAutoSettlement: true,
       storageCleanup: true,
       storageCleanupRun: true,

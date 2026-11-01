@@ -138,6 +138,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   openInCwd={props.gitCwd}
                   enableShortcut={props.openInShortcutEnabled}
                   displayMode="panel"
+                  // Fork (friend): offer the right panel's VS Code on this thread.
+                  surfaceThreadId={props.threadId}
                 />
               ) : null}
 

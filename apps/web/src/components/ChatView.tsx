@@ -1602,6 +1602,7 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     availableEditors,
     openInCwd: gitCwd,
+    surfaceThreadId: activeThreadRef?.threadId ?? null, // Fork (friend)
   });
   const manualCompactionProviderAvailable = hasAvailableCompactionProvider({
     providers: providerInstanceEntries,
