@@ -36,16 +36,37 @@ const callerBot = Effect.gen(function* () {
     scope.thread === undefined
       ? Option.none()
       : yield* bots.botForThread(scope.thread.threadId).pipe(Effect.mapError(botsFailure));
-  if (Option.isNone(bot)) {
+  if (Option.isNone(bot) || scope.thread === undefined) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message: "Memory is only available in a bot's conversation.",
     });
   }
-  return { bot: bot.value, bots };
+  return { bot: bot.value, bots, threadId: scope.thread.threadId };
 });
 
 export const layer = McpToolAccess.toLayer(BotMemoryToolkit, {
+  bot_thread_open: McpToolAccess.actsAsCaller(({ title, message }) =>
+    Effect.gen(function* () {
+      const { bot, bots, threadId } = yield* callerBot;
+      const entry = yield* bots
+        .openThread(
+          { botId: bot.id, title, ...(message !== undefined ? { message } : {}) },
+          threadId,
+        )
+        .pipe(Effect.mapError(botsFailure));
+      return { threadId: entry.threadId, title: entry.title };
+    }),
+  ),
+  bot_thread_list: McpToolAccess.readsAsCaller(() =>
+    Effect.gen(function* () {
+      const { bot, bots } = yield* callerBot;
+      const { threads } = yield* bots
+        .listThreads({ botId: bot.id })
+        .pipe(Effect.mapError(botsFailure));
+      return { threads };
+    }),
+  ),
   memory_list: McpToolAccess.readsAsCaller(() =>
     Effect.gen(function* () {
       const { bot, bots } = yield* callerBot;

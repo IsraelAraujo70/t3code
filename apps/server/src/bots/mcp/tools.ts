@@ -6,6 +6,9 @@ import {
   BotMemoryText,
   BotName,
   BotRole,
+  BotThreadTitle,
+  BotThreadEntry,
+  BotThreadOpenInput,
   ModelSelection,
   OrchestratorMcpFailure,
   ThreadId,
@@ -60,7 +63,34 @@ const MemoryForgetTool = Tool.make("memory_forget", {
   success: Schema.Struct({ memoryId: BotMemoryId }),
 }).annotate(Tool.Destructive, true);
 
-export const BotMemoryToolkit = Toolkit.make(MemoryListTool, MemorySaveTool, MemoryForgetTool);
+const BotThreadOpenTool = Tool.make("bot_thread_open", {
+  ...shared,
+  description:
+    "Open your own separate thread for one subject, such as a long task or a topic the user wants apart, running in parallel with this conversation. It has your role, memories and tools. Put the full brief in message, its first message: it cannot see this conversation. Returns the thread id. Tell the user it exists.",
+  parameters: Schema.Struct({
+    title: BotThreadTitle,
+    message: Schema.optional(BotThreadOpenInput.fields.message.schema),
+  }),
+  success: Schema.Struct({ threadId: ThreadId, title: Schema.String }),
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false);
+
+const BotThreadListTool = Tool.make("bot_thread_list", {
+  ...shared,
+  description: "List your open side threads.",
+  success: Schema.Struct({ threads: Schema.Array(BotThreadEntry) }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+export const BotMemoryToolkit = Toolkit.make(
+  MemoryListTool,
+  MemorySaveTool,
+  MemoryForgetTool,
+  BotThreadOpenTool,
+  BotThreadListTool,
+);
 
 const ONLY_MANAGERS =
   "Only for a bot the user allowed to manage bots in Settings → Bots; every other caller is refused.";

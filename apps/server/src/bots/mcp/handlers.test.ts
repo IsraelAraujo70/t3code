@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   type Bot,
   type BotCreateInput,
+  type BotThreadOpenInput,
   BotId,
   type BotMemory,
   BotMemoryId,
@@ -65,6 +66,13 @@ const makeBots = () => {
     memory("mem_bob", bob, "Works on the billing service."),
   ];
   const created: Array<{ input: BotMemoryCreateInput; source: BotMemorySource }> = [];
+  const opened: Array<{ input: BotThreadOpenInput; senderThreadId: ThreadId | undefined }> = [];
+  const sideThread = {
+    threadId: ThreadId.make("bot:b_alice:t-abcd"),
+    title: "Research",
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
   const deleted: Array<BotMemoryId> = [];
   const createdBots: Array<BotCreateInput> = [];
   const updatedBots: Array<BotUpdateInput> = [];
@@ -72,6 +80,13 @@ const makeBots = () => {
   const linkedEnvironmentSwitches: Array<unknown> = [];
   const madeRegular: Array<unknown> = [];
   const layer = Layer.mock(BotsService.BotsService)({
+    openThread: (input, senderThreadId) =>
+      Effect.sync(() => {
+        opened.push({ input, senderThreadId });
+        return sideThread;
+      }),
+    listThreads: ({ botId }) =>
+      Effect.succeed({ botId, threads: botId === alice ? [sideThread] : [] }),
     setBotLinkedEnvironments: (input) =>
       Effect.sync(() => {
         linkedEnvironmentSwitches.push(input);
@@ -141,6 +156,8 @@ const makeBots = () => {
   });
   return {
     layer,
+    opened,
+    sideThread,
     created,
     deleted,
     createdBots,
@@ -199,6 +216,14 @@ const memoryTools = (
         Effect.map((results) => results.at(-1)?.result),
       );
     return {
+      openThread: (message?: string) =>
+        run(
+          toolkit.handle("bot_thread_open", {
+            title: "Research",
+            ...(message !== undefined ? { message } : {}),
+          }),
+        ),
+      listThreads: () => run(toolkit.handle("bot_thread_list", {})),
       list: () => run(toolkit.handle("memory_list", {})),
       save: (text: string) => run(toolkit.handle("memory_save", { text })),
       forget: (memoryId: string) =>
@@ -209,6 +234,8 @@ const memoryTools = (
 type MemoryTools = Effect.Success<ReturnType<typeof memoryTools>>;
 
 const everyTool = [
+  { name: "bot_thread_open", call: (tools: MemoryTools) => tools.openThread() },
+  { name: "bot_thread_list", call: (tools: MemoryTools) => tools.listThreads() },
   { name: "memory_list", call: (tools: MemoryTools) => tools.list() },
   { name: "memory_save", call: (tools: MemoryTools) => tools.save("Lives in Lisbon.") },
   { name: "memory_forget", call: (tools: MemoryTools) => tools.forget("mem_alice") },
@@ -225,6 +252,7 @@ it.effect.each(everyTool)("$name refuses a thread that is not a bot's", ({ call 
     });
     expect(bots.created).toEqual([]);
     expect(bots.deleted).toEqual([]);
+    expect(bots.opened).toEqual([]);
   }),
 );
 
@@ -238,6 +266,7 @@ it.effect.each(everyTool)("$name refuses an outside client", ({ call }) =>
     });
     expect(bots.created).toEqual([]);
     expect(bots.deleted).toEqual([]);
+    expect(bots.opened).toEqual([]);
   }),
 );
 
@@ -460,4 +489,22 @@ it.effect(
         { name: "Scout", role: "Finds jobs.", model: { instanceId: "codex", model: "gpt-6-luna" } },
       ]);
     }),
+);
+
+it.effect("bot thread tools use the calling bot and sender thread", () =>
+  Effect.gen(function* () {
+    const bots = makeBots();
+    const senderThreadId = botThreadId(alice, 1);
+    const tools = yield* memoryTools(bots.layer, threadScope(senderThreadId));
+    expect(yield* tools.openThread("Full brief")).toEqual({
+      threadId: bots.sideThread.threadId,
+      title: "Research",
+    });
+    expect(bots.opened).toEqual([
+      { input: { botId: alice, title: "Research", message: "Full brief" }, senderThreadId },
+    ]);
+    expect(yield* tools.listThreads()).toEqual({ threads: [bots.sideThread] });
+    const bobTools = yield* memoryTools(bots.layer, threadScope(botThreadId(bob, 1)));
+    expect(yield* bobTools.listThreads()).toEqual({ threads: [] });
+  }),
 );
