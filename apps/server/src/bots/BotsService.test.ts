@@ -16,6 +16,7 @@ import {
   BOT_LIMITS,
   BotId,
   botThreadId,
+  parseBotThreadOwner,
   GuestId,
   ProjectId,
   ProviderInstanceId,
@@ -120,6 +121,23 @@ const makeOrchestration = Effect.gen(function* () {
               activeRunId: thread.busy ? "run-1" : null,
             } as unknown as OrchestrationV2ThreadShell);
       }),
+    listProjectThreads: (listInput: { readonly projectId: ProjectId }) =>
+      Effect.sync(() =>
+        listInput.projectId !== SCRATCH
+          ? []
+          : [...threads]
+              .filter(([, thread]) => !thread.archived)
+              .map(
+                ([id, thread]) =>
+                  ({
+                    id,
+                    title: thread.title,
+                    createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                    updatedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                    deletedAt: null,
+                  }) as unknown as OrchestrationV2ThreadShell,
+              ),
+      ),
     dispatch: (command: OrchestrationV2ServerCommand) =>
       Effect.gen(function* () {
         commands.push(command);
@@ -364,21 +382,118 @@ describe("BotsService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("delete archives the main thread and removes the row and its memories", () =>
+  it.effect("delete archives the main and side threads and removes the row and its memories", () =>
     Effect.gen(function* () {
       const { orchestration, store, startService } = yield* setup();
       const service = yield* startService;
       const bot = yield* service.createBot(input);
       yield* service.createMemory({ botId: bot.id, text: "Likes tea" }, "user");
+      const side = yield* service.openThread({ botId: bot.id, title: "Side" });
 
       yield* service.deleteBot({ botId: bot.id });
       assert.isTrue(orchestration.threads.get(botThreadId(bot.id, 1))!.archived);
+      assert.isTrue(orchestration.threads.get(side.threadId)!.archived);
       assert.isTrue(Option.isNone(yield* store.getBot(bot.id)));
       assert.deepStrictEqual(yield* store.listMemories(bot.id), []);
       assert.isTrue(Option.isNone(yield* service.botForThread(botThreadId(bot.id, 1))));
 
       // Deleting again, with the thread already archived, still succeeds.
       yield* service.deleteBot({ botId: bot.id });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "side threads open beside a busy main thread on the bot's model, and archiving one keeps the rest",
+    () =>
+      Effect.gen(function* () {
+        const { orchestration, startService } = yield* setup();
+        const service = yield* startService;
+        const bot = yield* service.createBot(input);
+        const other = yield* service.createBot({ ...input, name: "Bea" });
+        const main = botThreadId(bot.id, 1);
+        orchestration.threads.get(main)!.busy = true;
+        const commandsBefore = orchestration.commands.length;
+
+        const taxes = yield* service.openThread({ botId: bot.id, title: "Taxes" });
+        const trip = yield* service.openThread({
+          botId: bot.id,
+          title: "Trip",
+          message: "Plan Lisbon.",
+        });
+        yield* service.openThread({ botId: other.id, title: "Not Al's" });
+
+        assert.notStrictEqual(taxes.threadId, trip.threadId);
+        for (const entry of [taxes, trip]) {
+          assert.deepStrictEqual(parseBotThreadOwner(entry.threadId), {
+            kind: "side",
+            botId: bot.id,
+          });
+          const launch = orchestration.launches.find((each) => each.threadId === entry.threadId)!;
+          assert.strictEqual(launch.title, entry.title);
+          assert.strictEqual(launch.projectId, SCRATCH);
+          assert.deepStrictEqual(launch.modelSelection, input.model);
+          assert.strictEqual(launch.generateTitle, false);
+          assert.strictEqual(launch.createdBy, "user");
+          const botOf = yield* service.botForThread(entry.threadId);
+          assert.strictEqual(Option.getOrThrow(botOf).id, bot.id);
+        }
+        const tripLaunch = orchestration.launches.find((each) => each.threadId === trip.threadId)!;
+        assert.strictEqual(tripLaunch.initialMessage?.text, "Plan Lisbon.");
+        assert.isUndefined(tripLaunch.initialMessage?.senderThreadId);
+
+        // The main conversation is untouched: same generation, no command sent to it.
+        assert.strictEqual(orchestration.commands.length, commandsBefore);
+        assert.strictEqual(Option.getOrThrow(yield* service.botForThread(main)).homeGeneration, 1);
+        assert.isFalse(orchestration.threads.get(main)!.archived);
+
+        const listed = yield* service.listThreads({ botId: bot.id });
+        assert.sameMembers(
+          listed.threads.map((entry) => entry.title),
+          ["Taxes", "Trip"],
+        );
+
+        orchestration.threads.get(taxes.threadId)!.archived = true;
+        const afterArchive = yield* service.listThreads({ botId: bot.id });
+        assert.deepStrictEqual(
+          afterArchive.threads.map((entry) => entry.threadId),
+          [trip.threadId],
+        );
+        assert.isFalse(orchestration.threads.get(main)!.archived);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("a bot opening its own side thread is the sender of its first message", () =>
+    Effect.gen(function* () {
+      const { orchestration, startService } = yield* setup();
+      const service = yield* startService;
+      const bot = yield* service.createBot(input);
+      const main = botThreadId(bot.id, 1);
+
+      const entry = yield* service.openThread(
+        { botId: bot.id, title: "Research", message: "Compare three laptops." },
+        main,
+      );
+      const launch = orchestration.launches.find((each) => each.threadId === entry.threadId)!;
+      assert.strictEqual(launch.createdBy, "agent");
+      assert.strictEqual(launch.initialMessage?.senderThreadId, main);
+      assert.strictEqual(launch.initialMessage?.text, "Compare three laptops.");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a guest's bot keeps one conversation", () =>
+    Effect.gen(function* () {
+      const guestBotIds: Array<BotId> = [];
+      const { orchestration, startService } = yield* setup({
+        storeOverrides: () => ({ listGuestBotIds: Effect.sync(() => [...guestBotIds]) }),
+      });
+      const service = yield* startService;
+      const bot = yield* service.createBot(input);
+      guestBotIds.push(bot.id);
+      const launchesBefore = orchestration.launches.length;
+
+      const refused = yield* Effect.flip(service.openThread({ botId: bot.id, title: "Side" }));
+      assert.match(refused.message, /belongs to a guest/);
+      assert.strictEqual(orchestration.launches.length, launchesBefore);
     }).pipe(Effect.scoped),
   );
 

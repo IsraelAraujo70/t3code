@@ -19,10 +19,12 @@ import {
   BotMemoryId,
   BotSectionId,
   BotsError,
+  botSideThreadId,
   botThreadId,
   CommandId,
+  MessageId,
   enabledMemoryCharacters,
-  parseBotThreadId,
+  parseBotThreadOwner,
   type Bot,
   type BotCreateInput,
   type BotDirectory,
@@ -227,15 +229,18 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  const scratchProjectId = managed.ensureScratchProject.pipe(
+    Effect.map(({ projectId }) => projectId),
+    Effect.mapError((error) =>
+      error._tag === "ScratchUnavailableError"
+        ? new BotsError({ message: SCRATCH_UNAVAILABLE_MESSAGE })
+        : new BotsError({ message: error.message, cause: error }),
+    ),
+  );
+
   /** Idempotent: the command id is fixed per bot generation, so retries replay the receipt. */
   const launchMainThread = Effect.fn("BotsService.launchMainThread")(function* (bot: Bot) {
-    const { projectId } = yield* managed.ensureScratchProject.pipe(
-      Effect.mapError((error) =>
-        error._tag === "ScratchUnavailableError"
-          ? new BotsError({ message: SCRATCH_UNAVAILABLE_MESSAGE })
-          : new BotsError({ message: error.message, cause: error }),
-      ),
-    );
+    const projectId = yield* scratchProjectId;
     yield* launches
       .launch({
         commandId: CommandId.make(`bots:launch:${bot.id}:${bot.homeGeneration}`),
@@ -400,7 +405,21 @@ const make = Effect.gen(function* () {
 
   const deleteBot = Effect.fn("BotsService.deleteBot")(function* (input: BotRef) {
     const bot = yield* store.getBot(input.botId);
-    if (Option.isSome(bot)) yield* archiveThread(bot.value.id, bot.value.homeGeneration);
+    if (Option.isSome(bot)) {
+      yield* archiveThread(bot.value.id, bot.value.homeGeneration);
+      yield* Effect.forEach(
+        yield* openSideThreads(bot.value),
+        (thread) =>
+          threads
+            .dispatch({
+              type: "thread.archive",
+              commandId: CommandId.make(`bots:archive:${thread.id}`),
+              threadId: thread.id,
+            })
+            .pipe(Effect.mapError(botsError(`Could not archive a thread of ${bot.value.name}.`))),
+        { discard: true },
+      );
+    }
     yield* store.deleteBot(input.botId);
     yield* publish;
     return input;
@@ -586,9 +605,84 @@ const make = Effect.gen(function* () {
   });
 
   const botForThread = (threadId: ThreadId) => {
-    const parsed = parseBotThreadId(threadId);
-    return parsed === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(parsed.botId);
+    const owner = parseBotThreadOwner(threadId);
+    return owner === null ? Effect.succeed(Option.none<Bot>()) : store.getBot(owner.botId);
   };
+
+  /** Active side threads of the bot, most recently active first. */
+  const openSideThreads = Effect.fn("BotsService.openSideThreads")(function* (bot: Bot) {
+    const projectId = yield* scratchProjectId;
+    const shells = yield* threads
+      .listProjectThreads({ projectId, includeSubagents: false })
+      .pipe(Effect.mapError(botsError(`Could not list the threads of ${bot.name}.`)));
+    return shells.filter((shell) => {
+      const owner = parseBotThreadOwner(shell.id);
+      return owner?.kind === "side" && owner.botId === bot.id && shell.deletedAt === null;
+    });
+  });
+
+  // A side thread is an ordinary thread with the bot's id in its own: no row of its own, so
+  // archiving, renaming and restoring are the thread's, and there is nothing to migrate.
+  const openThread = Effect.fn("BotsService.openThread")(function* (
+    input: BotThreadOpenInput,
+    senderThreadId?: ThreadId,
+  ) {
+    const bot = yield* requireBot(input.botId);
+    if ((yield* store.listGuestBotIds).includes(bot.id)) {
+      return yield* new BotsError({
+        message: `${bot.name} belongs to a guest, so it keeps one conversation.`,
+      });
+    }
+    const projectId = yield* scratchProjectId;
+    const threadId = botSideThreadId(bot.id, (yield* randomHex).slice(0, 16));
+    const commandId = CommandId.make(`bots:open-thread:${threadId}`);
+    yield* launches
+      .launch({
+        commandId,
+        threadId,
+        projectId,
+        title: input.title,
+        generateTitle: false,
+        modelSelection: bot.model,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        ...(input.message === undefined
+          ? {}
+          : {
+              initialMessage: {
+                messageId: MessageId.make(commandId),
+                text: input.message,
+                attachments: [],
+                ...(senderThreadId === undefined ? {} : { senderThreadId }),
+              },
+            }),
+        createdBy: senderThreadId === undefined ? "user" : "agent",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError(botsError(`Could not open a thread of ${bot.name}.`)));
+    const now = yield* nowIso;
+    return {
+      threadId,
+      title: input.title,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies BotThreadEntry;
+  });
+
+  const listThreads = Effect.fn("BotsService.listThreads")(function* (input: BotRef) {
+    const bot = yield* requireBot(input.botId);
+    const shells = yield* openSideThreads(bot);
+    return {
+      botId: bot.id,
+      threads: shells.map((shell) => ({
+        threadId: shell.id,
+        title: shell.title,
+        createdAt: DateTime.formatIso(shell.createdAt),
+        updatedAt: DateTime.formatIso(shell.updatedAt),
+      })),
+    } satisfies BotThreadList;
+  });
 
   const registerPushDevice = Effect.fn("BotsService.registerPushDevice")(function* (
     input: BotPushDeviceRegisterInput,
@@ -726,8 +820,8 @@ const make = Effect.gen(function* () {
     ensureConversation,
     setBotLinkedEnvironments,
     makeRegular,
-    openThread: Effect.fn("BotsService.openThread")(() => Effect.die("not implemented yet")),
-    listThreads: Effect.fn("BotsService.listThreads")(() => Effect.die("not implemented yet")),
+    openThread,
+    listThreads,
     botForThread,
     registerPushDevice,
     unregisterPushDevice,

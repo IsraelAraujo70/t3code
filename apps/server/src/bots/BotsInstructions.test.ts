@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import {
   BotId,
   BotMemoryId,
+  botSideThreadId,
   botThreadId,
   GuestId,
   ProviderInstanceId,
@@ -288,6 +289,28 @@ describe("BotsInstructions.forThread", () => {
         result!.sections.find((section) => section.key === "owner")!.text,
         "I build T3.",
       );
+      assert.include(
+        result!.sections[0]!.text,
+        "This thread is your ongoing conversation with the user.",
+      );
+
+      // A side thread carries the same memories and profile, and knows its main conversation.
+      const side = yield* instructions.forThread(botSideThreadId(bot.id, "0123abcd"));
+      const withoutIdentity = (sections: typeof result.sections) =>
+        sections.filter((section) => section.key !== "bot");
+      assert.deepStrictEqual(withoutIdentity(side!.sections), withoutIdentity(result!.sections));
+      assert.include(side!.sections[0]!.text, "side threads");
+      assert.include(side!.sections[0]!.text, `thread ${botThreadId(bot.id, 2)}`);
+
+      // A memory saved from either thread is in the next turn of both.
+      yield* store.insertMemory(memory("mem_new", "Moved to Lisbon"));
+      for (const threadId of [botThreadId(bot.id, 2), botSideThreadId(bot.id, "0123abcd")]) {
+        const next = yield* instructions.forThread(threadId);
+        assert.include(
+          next!.sections.find((section) => section.key === "memories")!.text,
+          "Moved to Lisbon",
+        );
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -335,6 +358,7 @@ describe("BotsInstructions.forThread", () => {
       const instructions = yield* BotsInstructions;
       assert.isUndefined(yield* instructions.forThread(ThreadId.make("thread-1")));
       assert.isUndefined(yield* instructions.forThread(botThreadId(bot.id, 1)));
+      assert.isUndefined(yield* instructions.forThread(botSideThreadId(bot.id, "0123abcd")));
     }).pipe(Effect.provide(layerTest)),
   );
 });

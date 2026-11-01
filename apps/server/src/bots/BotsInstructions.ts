@@ -16,7 +16,7 @@ import {
   BOT_LIMITS,
   botThreadId,
   enabledMemoryCharacters,
-  parseBotThreadId,
+  parseBotThreadOwner,
   type Bot,
   type BotMemory,
   type BotsError,
@@ -48,6 +48,8 @@ export interface BotInstructionInput {
   /** The user's other bots, in sidebar order. */
   readonly peers: ReadonlyArray<Bot>;
   readonly earlier?: BotEarlierConversations | undefined;
+  /** Set for a side thread: the main conversation it runs beside. */
+  readonly sideOf?: ThreadId | undefined;
 }
 
 export interface GuestBotInstructionInput {
@@ -163,7 +165,10 @@ function peerLine(peer: Bot): string {
  */
 export function buildBotInstructions(input: BotInstructionInput): AppInstructions {
   const { bot, memories } = input;
-  const identity = `You are ${bot.name}, one of the user's bots in T3 Code. This thread is your ongoing conversation with the user.`;
+  const identity =
+    input.sideOf === undefined
+      ? `You are ${bot.name}, one of the user's bots in T3 Code. This thread is your ongoing conversation with the user.`
+      : `You are ${bot.name}, one of the user's bots in T3 Code. This thread is one of your side threads: a separate conversation with the user about one subject, running beside your main conversation (thread ${input.sideOf}). Your role, memories and tools are the same in both, but neither thread sees the other's messages, so save what the other should know as a memory or send it there.`;
   const role = bot.role.trim();
   const aboutMe = input.aboutMe.trim();
   const sections = [
@@ -290,8 +295,8 @@ export class BotsInstructions extends Context.Service<
   BotsInstructions,
   {
     /**
-     * Instructions for any thread whose id parses as a bot thread (any generation, including
-     * delegated work later bound to a bot), or undefined for every other thread and for a bot
+     * Instructions for any thread whose id parses as a bot thread (any generation, a side thread,
+     * or delegated work later bound to a bot), or undefined for every other thread and for a bot
      * that no longer exists.
      */
     readonly forThread: (
@@ -321,7 +326,7 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
     });
     return BotsInstructions.of({
       forThread: Effect.fn("BotsInstructions.forThread")(function* (threadId: ThreadId) {
-        const parsed = parseBotThreadId(threadId);
+        const parsed = parseBotThreadOwner(threadId);
         if (parsed === null) return undefined;
         const bot = yield* store.getBot(parsed.botId);
         if (Option.isNone(bot)) return undefined;
@@ -350,6 +355,10 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
           // A guest's bots are not the owner's to hand work to.
           peers: bots.filter((peer) => peer.id !== parsed.botId && !assignments.has(peer.id)),
           earlier,
+          sideOf:
+            parsed.kind === "side"
+              ? botThreadId(bot.value.id, bot.value.homeGeneration)
+              : undefined,
         });
       }),
     });
