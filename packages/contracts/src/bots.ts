@@ -2,7 +2,9 @@
  * Bots (friend fork). A bot is a named, long-lived agent with a standing role, a default model,
  * its own memory, and one main conversation. That conversation is an ordinary T3 thread whose id
  * is `bot:<botId>:<generation>`; resetting or rotating the conversation archives it and starts
- * the next generation. Bot records live in the server's `bots.sqlite`, never in orchestration state.
+ * the next generation. A bot may also have side threads (`bot:<botId>:t-<key>`), ordinary threads
+ * with the same role and memory that never rotate. Bot records live in the server's `bots.sqlite`,
+ * never in orchestration state; side threads are found by their id alone.
  */
 import * as Effect from "effect/Effect";
 import * as Rpc from "effect/rpc/Rpc";
@@ -198,6 +200,61 @@ export function parseBotThreadId(
   return { botId: BotId.make(match[1]!), generation: Number(match[2]) };
 }
 
+/** `t-` keeps side thread ids out of BOT_THREAD_ID, so main-conversation logic never sees them. */
+const BOT_SIDE_THREAD_ID = /^bot:([A-Za-z0-9_-]{1,64}):t-([a-f0-9]{8,32})$/;
+
+/**
+ * A side thread of a bot: a conversation besides its main one, on one subject. Same role, memory
+ * and tools; it never rotates and keeps no generation.
+ */
+export function botSideThreadId(botId: BotId, key: string): ThreadId {
+  return ThreadId.make(`bot:${botId}:t-${key}`);
+}
+
+/** Which bot a thread speaks for: its main conversation (any generation) or a side thread. */
+export type BotThreadOwner =
+  | { readonly kind: "main"; readonly botId: BotId; readonly generation: number }
+  | { readonly kind: "side"; readonly botId: BotId };
+
+/**
+ * Like parseBotThreadId, but also recognizes side threads. Use it where a thread acts as its bot
+ * (instructions, memory tools, sender marks, link access); keep parseBotThreadId where only the
+ * main conversation counts (rotation, compaction, push, voice, history).
+ */
+export function parseBotThreadOwner(threadId: string): BotThreadOwner | null {
+  const main = parseBotThreadId(threadId);
+  if (main !== null) return { kind: "main", ...main };
+  const match = BOT_SIDE_THREAD_ID.exec(threadId);
+  return match === null ? null : { kind: "side", botId: BotId.make(match[1]!) };
+}
+
+export const BOT_THREAD_TITLE_LIMIT = 120;
+export const BotThreadTitle = boundedText(BOT_THREAD_TITLE_LIMIT);
+
+/** Opens a side thread; `message`, when given, is its first user message. */
+export const BotThreadOpenInput = Schema.Struct({
+  botId: BotId,
+  title: BotThreadTitle,
+  message: Schema.optionalKey(boundedText(20_000)),
+});
+export type BotThreadOpenInput = typeof BotThreadOpenInput.Type;
+
+/** One open (not archived) side thread of a bot. */
+export const BotThreadEntry = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type BotThreadEntry = typeof BotThreadEntry.Type;
+
+/** A bot's open side threads, most recently active first. Archived ones live in the T3 archive. */
+export const BotThreadList = Schema.Struct({
+  botId: BotId,
+  threads: Schema.Array(BotThreadEntry),
+});
+export type BotThreadList = typeof BotThreadList.Type;
+
 export const BotCreateInput = Schema.Struct({
   name: BotName,
   role: BotRole,
@@ -313,6 +370,8 @@ export const BOTS_WS_METHODS = {
   botRestartSession: "bots.bot.restartSession",
   botLinkedEnvironments: "bots.bot.linkedEnvironments",
   botMakeRegular: "bots.bot.makeRegular",
+  threadOpen: "bots.thread.open",
+  threadList: "bots.thread.list",
   memoryCreate: "bots.memory.create",
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
@@ -382,6 +441,19 @@ export const BotRestartSessionRpc = Rpc.make(BOTS_WS_METHODS.botRestartSession, 
   success: BotRestartSessionResult,
   error: BotsRpcError,
 });
+/** Opens a side thread of the bot and returns its first entry. */
+export const BotThreadOpenRpc = Rpc.make(BOTS_WS_METHODS.threadOpen, {
+  payload: BotThreadOpenInput,
+  success: BotThreadEntry,
+  error: BotsRpcError,
+});
+
+export const BotThreadListRpc = Rpc.make(BOTS_WS_METHODS.threadList, {
+  payload: BotRef,
+  success: BotThreadList,
+  error: BotsRpcError,
+});
+
 export const BotLinkedEnvironmentsRpc = Rpc.make(BOTS_WS_METHODS.botLinkedEnvironments, {
   payload: BotLinkedEnvironmentsInput,
   success: BotLinkedEnvironmentsInput,
@@ -616,6 +688,8 @@ export const BOTS_RPCS = [
   BotRestartSessionRpc,
   BotLinkedEnvironmentsRpc,
   BotMakeRegularRpc,
+  BotThreadOpenRpc,
+  BotThreadListRpc,
   BotMemoryCreateRpc,
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
@@ -645,6 +719,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.botLinkedEnvironments]: AuthOrchestrationOperateScope,
   // Moves a guest's bot out of its sandbox onto the host: the user's session only, never a tool.
   [BOTS_WS_METHODS.botMakeRegular]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.threadOpen]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,
@@ -696,6 +771,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
 export const BOTS_RPC_SCOPES = {
   [BOTS_WS_METHODS.directorySubscribe]: AuthOrchestrationReadScope,
   [BOTS_WS_METHODS.botHistory]: AuthOrchestrationReadScope,
+  [BOTS_WS_METHODS.threadList]: AuthOrchestrationReadScope,
   [BOTS_WS_METHODS.kanbanSubscribe]: AuthOrchestrationReadScope,
   ...BOTS_GUARDED_RPC_SCOPES,
 } as const;

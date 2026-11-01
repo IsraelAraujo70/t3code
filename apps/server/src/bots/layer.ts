@@ -102,6 +102,8 @@ const layerServiceOff = Layer.succeed(
     ensureConversation: notHost,
     setBotLinkedEnvironments: notHost,
     makeRegular: notHost,
+    openThread: notHost,
+    listThreads: notHost,
     // Not a bots host: no thread belongs to a bot here.
     botForThread: Effect.fn("BotsService.BotsService.botForThread")(() => Effect.succeedNone),
     registerPushDevice: notHost,

@@ -42,6 +42,9 @@ import {
   type BotSectionCreateInput,
   type BotSectionRef,
   type BotSectionRenameInput,
+  type BotThreadEntry,
+  type BotThreadList,
+  type BotThreadOpenInput,
   type BotsArrangeInput,
   type BotsOwnerUpdateInput,
   type BotUpdateInput,
@@ -127,7 +130,17 @@ export class BotsService extends Context.Service<
      * bot works or when the target is not an enabled host instance. Retrying converges.
      */
     readonly makeRegular: (input: BotMakeRegularInput) => Effect.Effect<Bot, BotsError>;
-    /** The bot a thread belongs to, from its id; none for every other thread. */
+    /**
+     * Launches a side thread of the bot on its current model, with `message` as its first user
+     * message (sent by `senderThreadId` when a bot opened it). A guest's bot gets none.
+     */
+    readonly openThread: (
+      input: BotThreadOpenInput,
+      senderThreadId?: ThreadId,
+    ) => Effect.Effect<BotThreadEntry, BotsError>;
+    /** The bot's open side threads, most recently active first. */
+    readonly listThreads: (input: BotRef) => Effect.Effect<BotThreadList, BotsError>;
+    /** The bot a thread belongs to (main conversation or side thread); none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
     /** Idempotent: the app repeats it on every connect and token rotation. */
     readonly registerPushDevice: (
@@ -713,6 +726,8 @@ const make = Effect.gen(function* () {
     ensureConversation,
     setBotLinkedEnvironments,
     makeRegular,
+    openThread: Effect.fn("BotsService.openThread")(() => Effect.die("not implemented yet")),
+    listThreads: Effect.fn("BotsService.listThreads")(() => Effect.die("not implemented yet")),
     botForThread,
     registerPushDevice,
     unregisterPushDevice,
