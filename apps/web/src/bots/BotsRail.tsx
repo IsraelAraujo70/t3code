@@ -3,7 +3,6 @@ import {
   botSignal,
   groupBotRows,
   type BotRowModel,
-  type BotThreadShell,
 } from "@t3tools/client-runtime/bot-directory";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { BellIcon, ListTreeIcon, PlusIcon } from "lucide-react";
@@ -21,6 +20,7 @@ import {
   useBotMenu,
   useBotsArrangement,
   useOpenBotsSettings,
+  type BotsBlockThread,
 } from "./BotsSidebarSection";
 
 const RAIL_ITEM = "data-bot-rail-item";
@@ -121,7 +121,7 @@ function RailIconButton(props: {
  * the names out over the threads; the bell lists the bots that need the user.
  */
 export function BotsRail(props: {
-  threads: ReadonlyArray<BotThreadShell>;
+  threads: ReadonlyArray<BotsBlockThread>;
   activeThreadRef: ScopedThreadRef | null;
   onOpenThread: (threadRef: ScopedThreadRef) => void;
 }) {

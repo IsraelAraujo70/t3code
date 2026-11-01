@@ -113,6 +113,8 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } f
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+// Fork (friend): a bot thread shows its bot where other threads show their project.
+import { BotThreadAvatar, useBotThreadRowProps } from "../../bots/BotThreadIdentity";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -478,8 +480,10 @@ export function SortableThreadRow(
   const thread =
     useThreadShell(scopeThreadRef(rowProps.thread.environmentId, rowProps.thread.id)) ??
     rowProps.thread;
+  // Fork (friend): a bot thread names its bot in place of the Scratch project.
+  const shownProps = useBotThreadRowProps({ ...rowProps, thread });
   // Keyed by variant so a card/slim switch remounts the row.
-  return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
+  return <SidebarThreadRow key={rowProps.variant} {...shownProps} sortable={bag} />;
 }
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
@@ -1170,7 +1174,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               >
                 {props.project ? (
                   <ProjectFavicon project={props.project} className="size-4" />
-                ) : null}
+                ) : (
+                  // Fork (friend): the bot's face in place of the Scratch project's icon.
+                  <BotThreadAvatar threadId={thread.id} size={16} />
+                )}
               </span>
             )}
             {draftIndicator}
@@ -1356,7 +1363,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-              ) : null}
+              ) : (
+                // Fork (friend): the bot's face in place of the Scratch project's icon.
+                <BotThreadAvatar threadId={thread.id} size={16} />
+              )}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
@@ -1587,7 +1597,8 @@ const scrollHighlightedResultIntoView = (node: HTMLLIElement | null) => {
   node?.scrollIntoView({ block: "nearest" });
 };
 
-export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
+// Fork (friend): `input` becomes `props` with a bot thread's bot in place of its project.
+export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(input: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
@@ -1606,6 +1617,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   onSelect: () => void;
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
+  const props = useBotThreadRowProps(input);
   const thread =
     useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
   const accessibility = resolveSidebarRowAccessibility({
@@ -1706,7 +1718,10 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                   "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             />
-          ) : null}
+          ) : (
+            // Fork (friend): the bot's face in place of the Scratch project's icon.
+            <BotThreadAvatar threadId={thread.id} size={16} />
+          )}
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
               <span

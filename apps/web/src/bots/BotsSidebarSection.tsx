@@ -15,11 +15,13 @@ import {
   BotId,
   BotSectionId,
   parseBotThreadId,
+  parseBotThreadOwner,
   type BotDirectory,
   type BotsArrangeInput,
   type BotSection,
   type EnvironmentId,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Schema } from "effect";
@@ -52,6 +54,8 @@ import {
 } from "@t3tools/client-runtime/bot-directory";
 import { confirmDestructive, useRestartBotSession } from "./botsSettingsShared";
 
+export { isBotsBlockThread } from "./BotThreadIdentity";
+
 const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
 const BOTS_TAB_KEY = "t3code:bots:sidebar-tab";
 const COLLAPSED_GROUPS_KEY = "t3code:bots:collapsed-groups";
@@ -62,6 +66,27 @@ const CollapsedGroups = Schema.Array(Schema.String);
 /** A bot's main conversation is a `bot:<botId>:<generation>` thread; thread lists skip it. */
 export function isBotThreadId(threadId: string): boolean {
   return parseBotThreadId(threadId) !== null;
+}
+
+/** A thread shell as the Bots block reads it; side threads show their title. */
+export type BotsBlockThread = BotThreadShell & { readonly title: string };
+
+/** Each bot's side threads, most recent first. */
+function sideThreadsByBot(
+  threads: ReadonlyArray<BotsBlockThread>,
+  environmentId: EnvironmentId | null,
+): ReadonlyMap<string, ReadonlyArray<BotsBlockThread>> {
+  const byBot = new Map<string, BotsBlockThread[]>();
+  for (const thread of threads) {
+    if (thread.environmentId !== environmentId) continue;
+    const owner = parseBotThreadOwner(thread.id);
+    if (owner?.kind !== "side") continue;
+    const list = byBot.get(owner.botId);
+    if (list === undefined) byBot.set(owner.botId, [thread]);
+    else list.push(thread);
+  }
+  for (const list of byBot.values()) list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return byBot;
 }
 
 /** The selected sidebar tab in the "tabs" layout, kept per device. */
@@ -129,7 +154,10 @@ function BotRow(props: {
   row: BotRowModel;
   selected: boolean;
   draggable: boolean;
+  sideThreads: ReadonlyArray<BotsBlockThread>;
+  selectedThreadId: ThreadId | null;
   onOpen: () => void;
+  onOpenThread: (threadId: ThreadId) => void;
   onContextMenu: (position: { x: number; y: number }) => void;
 }) {
   const { bot, status, activityAt, preview } = props.row;
@@ -200,6 +228,28 @@ function BotRow(props: {
           ) : null}
         </span>
       </button>
+      {props.sideThreads.length > 0 ? (
+        <ul aria-label={`Threads of ${bot.name}`} className="flex flex-col gap-px">
+          {props.sideThreads.map((thread) => (
+            <li key={thread.id}>
+              <button
+                type="button"
+                onClick={() => props.onOpenThread(thread.id)}
+                aria-current={props.selectedThreadId === thread.id ? "page" : undefined}
+                className={cn(
+                  "flex w-full cursor-pointer items-baseline gap-2 rounded-lg py-1 ps-13 pe-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+                  props.selectedThreadId === thread.id
+                    ? "bg-sidebar-row-selected text-sidebar-foreground"
+                    : "text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+                <span className="shrink-0 text-2xs">{compactTimeLabel(thread.updatedAt)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </li>
   );
 }
@@ -427,7 +477,7 @@ export function useBotMenu(view: BotsArrangement, onNewSection: ((botId: BotId) 
 export function BotsSidebarSection(props: {
   collapsible: boolean;
   order?: "byStatus" | "arranged";
-  threads: ReadonlyArray<BotThreadShell>;
+  threads: ReadonlyArray<BotsBlockThread>;
   activeThreadRef: ScopedThreadRef | null;
   onOpenThread: (threadRef: ScopedThreadRef) => void;
 }) {
@@ -467,6 +517,11 @@ export function BotsSidebarSection(props: {
   const needsYou = countRowsNeedingYou(liveRows);
   const expanded = !props.collapsible || storedExpanded;
   const activeThreadRef = props.activeThreadRef;
+  const sideThreads = sideThreadsByBot(props.threads, environmentId);
+  const selectedThreadId =
+    activeThreadRef !== null && activeThreadRef.environmentId === environmentId
+      ? activeThreadRef.threadId
+      : null;
 
   const sectionOfBot = (botId: string): BotSectionId | null =>
     shown?.bots.find((bot) => bot.id === botId)?.sectionId ?? null;
@@ -650,7 +705,15 @@ export function BotsSidebarSection(props: {
                               activeThreadRef.environmentId === row.threadRef.environmentId &&
                               activeThreadRef.threadId === row.threadRef.threadId
                             }
+                            sideThreads={sideThreads.get(row.bot.id) ?? []}
+                            selectedThreadId={selectedThreadId}
                             onOpen={() => props.onOpenThread(row.threadRef)}
+                            onOpenThread={(threadId) =>
+                              props.onOpenThread({
+                                environmentId: row.threadRef.environmentId,
+                                threadId,
+                              })
+                            }
                             onContextMenu={(position) => void showBotMenu(row, position)}
                           />
                         ))}

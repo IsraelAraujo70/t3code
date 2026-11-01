@@ -127,7 +127,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import {
   BotsSidebarSection,
-  isBotThreadId,
+  isBotsBlockThread,
   SidebarBotsTabs,
   SidebarThreadsHeading,
   useSidebarBotsTab,
@@ -1075,7 +1075,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const botsLayout = useClientSettings((s) => s.sidebarBotsLayout);
   const allThreads = useQuietThreadShells();
   const threads =
-    botsLayout === "mixed" ? allThreads : allThreads.filter((thread) => !isBotThreadId(thread.id));
+    botsLayout === "mixed"
+      ? allThreads
+      : allThreads.filter((thread) => !isBotsBlockThread(thread.id, botsLayout));
   const routeRowThreadKey =
     routeThreadRef === null
       ? null

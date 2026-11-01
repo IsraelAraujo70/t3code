@@ -285,6 +285,11 @@ export const SEAMS: readonly Seam[] = [
     why: "Bots block, tabs, the bots rail, bot threads kept out of the thread list",
   },
   {
+    file: "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
+    markers: 6,
+    why: "a bot thread's row shows its bot's face and name instead of No project",
+  },
+  {
     file: "apps/web/src/components/ui/sidebar.tsx",
     markers: 1,
     why: "aside slot beside the scrolling list for the bots rail",

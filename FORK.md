@@ -191,6 +191,9 @@ Memories are read on every turn, so one saved in any thread reaches the next tur
 messages stay in their own thread. The user opens one with a title from the Threads button beside
 the bot's face in the conversation header (web and desktop), and the bot with `bot_thread_open`.
 Archiving, restoring and renaming are the thread's own, and deleting the bot archives them.
+In the web sidebar the Sections and Tabs layouts list side threads under their bot in the Bots
+block; Rail and Mixed keep them in the thread list, where any bot thread shows its bot's face and
+name in place of "No project".
 
 A side thread has no row in `bots.sqlite`: the id names its bot. `parseBotThreadId` still matches
 only the main conversation, so rotation, compaction, push, voice, history, guests and mobile ignore
