@@ -1,7 +1,7 @@
 # friend fork
 
 This fork of [T3 Code](https://github.com/pingdotgg/t3code) adds bots: named, long-lived agents with a
-standing role, a default model, their own memory, and one ongoing conversation each. It replaces the
+standing role, a default model, their own memory, and one ongoing conversation each (plus optional side threads). It replaces the
 separate friend app. `friend/main` is the fork's main branch.
 
 ## Following upstream
@@ -182,6 +182,21 @@ the normal thread view without a composer, since only the current one takes mess
 generation with no messages yet points back to the one before it. Both clients read these rules
 from `botGenerationView` in
 [`packages/client-runtime/src/botChat.ts`](packages/client-runtime/src/botChat.ts).
+
+## Side threads of a bot
+
+Besides its main conversation, a bot can hold side threads, one per subject, that run in parallel
+with it: `bot:<id>:t-<key>` in Scratch, on the bot's model, with the bot's role, memories and tools.
+Memories are read on every turn, so one saved in any thread reaches the next turn of all of them;
+messages stay in their own thread. The user opens one with a title from the Threads button beside
+the bot's face in the conversation header (web and desktop), and the bot with `bot_thread_open`.
+Archiving, restoring and renaming are the thread's own, and deleting the bot archives them.
+
+A side thread has no row in `bots.sqlite`: the id names its bot. `parseBotThreadId` still matches
+only the main conversation, so rotation, compaction, push, voice, history, guests and mobile ignore
+side threads; code where a thread acts as its bot (instructions, memory and bot tools, the bot
+sender mark, link access, guest model pin, host MCP tools, queue resume) uses `parseBotThreadOwner`.
+A guest's bot gets none. Mobile shows a side thread as an ordinary thread.
 
 ## Guests
 
