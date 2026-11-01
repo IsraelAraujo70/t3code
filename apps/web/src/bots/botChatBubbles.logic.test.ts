@@ -138,6 +138,7 @@ describe("botBubbleLayout", () => {
       message("u3", "user"),
     ];
     const layout = botBubbleLayout(BOT_THREAD, rows)!;
+    expect(botBubbleLayout("bot:b_1:t-0123abcd", rows)).toEqual(layout);
     const bubble = (id: string) => layout.byRowId.get(id)?.bubble;
     expect(bubble("u1")).toEqual({ side: "user", joinsPrevious: false, joinsNext: true });
     expect(bubble("u2")).toEqual({ side: "user", joinsPrevious: true, joinsNext: false });

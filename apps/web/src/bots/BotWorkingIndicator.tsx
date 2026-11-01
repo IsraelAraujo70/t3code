@@ -1,6 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
+import { isBotConversationThread } from "@t3tools/client-runtime/bot-chat";
 import { useBotSender } from "./useBotSender";
 import { useVoiceSnapshot } from "./voiceController";
 
@@ -16,7 +16,7 @@ export function BotWorkingIndicator(props: {
   readonly working: boolean;
 }) {
   const botThreadId =
-    props.threadId !== null && isBotChatThread(props.threadId) ? props.threadId : undefined;
+    props.threadId !== null && isBotConversationThread(props.threadId) ? props.threadId : undefined;
   const botName = useBotSender(botThreadId);
   const voice = useVoiceSnapshot();
   if (botThreadId === undefined || !props.working) return null;

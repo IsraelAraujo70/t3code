@@ -1,6 +1,6 @@
 import {
   bubbleLayout,
-  isBotChatThread,
+  isBotConversationThread,
   showsInBotChat,
   type BubblePlacement,
   type BubbleSide,
@@ -47,7 +47,7 @@ export function botChatRows(
   threadId: string | null | undefined,
   rows: MessagesTimelineRow[],
 ): MessagesTimelineRow[] {
-  if (!isBotChatThread(threadId)) return rows;
+  if (!isBotConversationThread(threadId)) return rows;
   const expandedRuns = new Set<RunId>();
   for (const row of rows) {
     if (row.kind === "turn-fold" && row.expanded) expandedRuns.add(row.runId);
@@ -102,7 +102,7 @@ export function botBubbleLayout(
   threadId: string | null | undefined,
   rows: ReadonlyArray<MessagesTimelineRow>,
 ): BotBubbleLayout | null {
-  if (!isBotChatThread(threadId)) return null;
+  if (!isBotConversationThread(threadId)) return null;
   const bubbles = bubbleLayout(rows, sideOf);
   const byRowId = new Map<string, BotChatRowLayout>();
   for (const row of rows) {

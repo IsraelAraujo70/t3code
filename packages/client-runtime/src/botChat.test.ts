@@ -1,11 +1,23 @@
 import { BotId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { botGenerationView } from "./botChat.ts";
+import { botGenerationView, isBotChatThread, isBotConversationThread } from "./botChat.ts";
 
 const botId = BotId.make("b_gen");
 
 describe("botGenerationView", () => {
+  it("distinguishes main conversations from all bot conversations", () => {
+    for (const [id, main, conversation] of [
+      ["bot:b_1:1", true, true],
+      ["bot:b_1:2", true, true],
+      ["bot:b_1:t-0123abcd", false, true],
+      ["thread-1", false, false],
+    ] as const) {
+      expect(isBotChatThread(id)).toBe(main);
+      expect(isBotConversationThread(id)).toBe(conversation);
+    }
+  });
+
   it.each([
     ["a plain thread", "thread-1", 2, null],
     ["an unknown current generation", "bot:b_gen:2", null, null],

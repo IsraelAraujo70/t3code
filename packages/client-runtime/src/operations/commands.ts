@@ -2,7 +2,7 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import {
   type ThreadLinkedPullRequest,
   CommandId,
-  parseBotThreadId,
+  parseBotThreadOwner,
   CheckpointId,
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -758,8 +758,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       : { idleCompaction: input.message.idleCompaction }),
     attachments,
     ...(input.titleSeed === undefined ||
-    // Fork (friend): a bot's conversation keeps the "<emoji> <name>" title BotsService sets.
-    parseBotThreadId(input.threadId) !== null
+    // Fork (friend): a bot's main or side conversation keeps the title it was opened with.
+    parseBotThreadOwner(input.threadId) !== null
       ? {}
       : { titleSeed: input.titleSeed }),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),

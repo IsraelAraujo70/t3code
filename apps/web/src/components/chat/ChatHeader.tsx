@@ -41,7 +41,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 // Fork (friend): a bot conversation's header shows the bot's face.
-import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
+import { isBotConversationThread } from "@t3tools/client-runtime/bot-chat";
 import { BotHeaderAvatar } from "~/bots/BotHeaderAvatar";
 import { GuestShareIndicator } from "./GuestShareControls";
 
@@ -289,7 +289,7 @@ export const ChatHeader = memo(function ChatHeader({
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
       >
         {/* Fork (friend): the bot's face replaces the Scratch project crumb. */}
-        {isBotChatThread(activeThreadId) ? (
+        {isBotConversationThread(activeThreadId) ? (
           <BotHeaderAvatar threadId={activeThreadId} />
         ) : activeProject ? (
           <>

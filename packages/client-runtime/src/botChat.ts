@@ -6,6 +6,7 @@
 import {
   botThreadId,
   parseBotThreadId,
+  parseBotThreadOwner,
   type BotHistoryEntry,
   type BotId,
   type OrchestrationV2TurnItem,
@@ -37,8 +38,13 @@ export interface BubbleLayout {
   readonly key: string;
 }
 
+/** Main conversations only; use isBotConversationThread for bot presentation including side threads. */
 export const isBotChatThread = (threadId: string | null | undefined): boolean =>
   threadId != null && parseBotThreadId(threadId) !== null;
+
+/** Bot presentation for main and side threads; use isBotChatThread for main-only behavior. */
+export const isBotConversationThread = (threadId: string | null | undefined): boolean =>
+  threadId != null && parseBotThreadOwner(threadId) !== null;
 
 /**
  * Turn items a bot conversation shows even though it hides tool calls: a failed or interrupted run

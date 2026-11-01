@@ -1,13 +1,13 @@
-import { parseBotThreadId, type ThreadId } from "@t3tools/contracts";
+import { parseBotThreadOwner, type ThreadId } from "@t3tools/contracts";
 
 import { useBotDirectory, useBotsEnvironmentId } from "../state/bots";
 
 /**
- * The bot's name ("Financeiro") when a bot's thread (any generation) sent the message, or null for every
+ * The bot's name ("Financeiro") when a bot's main or side thread sent the message, or null for every
  * other sender. Reads the bot directory only for messages a bot sent.
  */
 export function useBotSender(senderThreadId: ThreadId | undefined): string | null {
-  const parsed = senderThreadId === undefined ? null : parseBotThreadId(senderThreadId);
+  const parsed = senderThreadId === undefined ? null : parseBotThreadOwner(senderThreadId);
   const environmentId = useBotsEnvironmentId();
   const { directory } = useBotDirectory(parsed === null ? null : environmentId);
   const bot = directory?.bots.find((entry) => entry.id === parsed?.botId);
