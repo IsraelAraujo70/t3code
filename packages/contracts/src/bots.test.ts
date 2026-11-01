@@ -5,9 +5,13 @@ import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "./aut
 import {
   BOTS_GUARDED_RPC_SCOPES,
   BOTS_RPC_SCOPES,
+  BotId,
+  botSideThreadId,
   isCalendarDay,
   KANBAN_WS_METHODS,
   KanbanTicketPatch,
+  parseBotThreadId,
+  parseBotThreadOwner,
 } from "./bots.ts";
 import { ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
@@ -59,5 +63,18 @@ describe("kanban due dates", () => {
     expect(decode({ dueDate: "2026-10-27" })._tag).toBe("Success");
     expect(decode({ dueDate: null })._tag).toBe("Success");
     expect(decode({ dueDate: "2026-99-99" })._tag).toBe("Failure");
+  });
+});
+
+describe("parseBotThreadOwner", () => {
+  it("names the bot of a main or side thread, and parseBotThreadId stays main-only", () => {
+    const side = botSideThreadId(BotId.make("b_1"), "0123abcd");
+    expect(side).toBe("bot:b_1:t-0123abcd");
+    expect(parseBotThreadOwner(side)).toEqual({ kind: "side", botId: "b_1" });
+    expect(parseBotThreadId(side)).toBeNull();
+    expect(parseBotThreadOwner("bot:b_1:3")).toEqual({ kind: "main", botId: "b_1", generation: 3 });
+    for (const other of ["bot:b_1:0", "bot:b_1:t-XYZ12345", "bot:b_1:t-0123", "thread-1"]) {
+      expect(parseBotThreadOwner(other)).toBeNull();
+    }
   });
 });

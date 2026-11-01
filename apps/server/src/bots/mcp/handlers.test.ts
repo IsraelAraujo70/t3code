@@ -248,7 +248,7 @@ it.effect.each(everyTool)("$name refuses a thread that is not a bot's", ({ call 
     const result = yield* call(tools);
     expect(result).toMatchObject({
       _tag: "OrchestratorMcpFailure",
-      message: "Memory is only available in a bot's conversation.",
+      message: "Memory and bot threads are only available in a bot's conversation.",
     });
     expect(bots.created).toEqual([]);
     expect(bots.deleted).toEqual([]);

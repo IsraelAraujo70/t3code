@@ -1,10 +1,8 @@
 /**
- * Bots (friend fork). A bot is a named, long-lived agent with a standing role, a default model,
- * its own memory, and one main conversation. That conversation is an ordinary T3 thread whose id
- * is `bot:<botId>:<generation>`; resetting or rotating the conversation archives it and starts
- * the next generation. A bot may also have side threads (`bot:<botId>:t-<key>`), ordinary threads
- * with the same role and memory that never rotate. Bot records live in the server's `bots.sqlite`,
- * never in orchestration state; side threads are found by their id alone.
+ * Bots (friend fork): named, long-lived agents with a role, a default model and their own memory.
+ * The main conversation is the T3 thread `bot:<botId>:<generation>` (rotation starts the next one);
+ * side threads `bot:<botId>:t-<key>` share role and memory and never rotate. Bot records live in
+ * the server's `bots.sqlite`, never in orchestration state; side threads are found by id alone.
  */
 import * as Effect from "effect/Effect";
 import * as Rpc from "effect/rpc/Rpc";

@@ -39,7 +39,7 @@ const callerBot = Effect.gen(function* () {
   if (Option.isNone(bot) || scope.thread === undefined) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "Memory is only available in a bot's conversation.",
+      message: "Memory and bot threads are only available in a bot's conversation.",
     });
   }
   return { bot: bot.value, bots, threadId: scope.thread.threadId };
