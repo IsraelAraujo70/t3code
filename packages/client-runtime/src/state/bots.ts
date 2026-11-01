@@ -88,6 +88,11 @@ export function createBotsEnvironmentAtoms<R, E>(
       label: "environment-command:bots:history",
       tag: BOTS_WS_METHODS.botHistory,
     }),
+    openThread: command("open-thread", BOTS_WS_METHODS.threadOpen),
+    listThreads: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:bots:list-threads",
+      tag: BOTS_WS_METHODS.threadList,
+    }),
     restartSession: command("restart-session", BOTS_WS_METHODS.botRestartSession),
     setLinkedEnvironments: command("linked-environments", BOTS_WS_METHODS.botLinkedEnvironments),
     makeRegular: command("make-regular", BOTS_WS_METHODS.botMakeRegular),

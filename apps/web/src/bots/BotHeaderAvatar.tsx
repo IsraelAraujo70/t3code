@@ -1,7 +1,8 @@
-import { parseBotThreadId, type ThreadId } from "@t3tools/contracts";
+import { parseBotThreadOwner, type ThreadId } from "@t3tools/contracts";
 
 import { WorkspaceBreadcrumbItem } from "~/components/WorkspaceBreadcrumb";
 import { BotAvatar } from "./BotAvatar";
+import { BotThreadsMenu } from "./BotThreadsMenu";
 import { BotHistoryMenu } from "./BotHistoryMenu";
 
 /**
@@ -10,11 +11,12 @@ import { BotHistoryMenu } from "./BotHistoryMenu";
  * earlier conversations.
  */
 export function BotHeaderAvatar(props: { readonly threadId: ThreadId }) {
-  const parsed = parseBotThreadId(props.threadId);
+  const parsed = parseBotThreadOwner(props.threadId);
   if (parsed === null) return null;
   return (
     <WorkspaceBreadcrumbItem className="group/bot">
       <BotAvatar botId={parsed.botId} size={22} />
+      <BotThreadsMenu botId={parsed.botId} threadId={props.threadId} />
       <BotHistoryMenu botId={parsed.botId} threadId={props.threadId} />
     </WorkspaceBreadcrumbItem>
   );
