@@ -383,58 +383,10 @@ export const WorkflowNode = Schema.Union([
 
 Gatilhos, orçamento, layout e a definição inteira:
 
-```ts
-const TriggerCommon = {
-  id: NodeId,
-  params: Schema.optional(Schema.Record(Schema.String, Template)),
-};
-export const WorkflowTrigger = Schema.Union([
-  Schema.Struct({
-    ...TriggerCommon,
-    kind: Schema.Literal("cron"),
-    expr: Schema.String,
-    tz: Schema.String,
-    misfire: Schema.optional(
-      Schema.Struct({ mode: Schema.Literals(["latest", "skip"]), grace: DurationText }),
-    ),
-  }),
-  Schema.Struct({
-    ...TriggerCommon,
-    kind: Schema.Literal("webhook"),
-    signature: Schema.optional(ScheduledTaskWebhookSignature),
-    filters: Schema.optional(ScheduledTaskWebhookFilters),
-    replayKey: Schema.optional(Schema.String),
-    template: Schema.optional(Template),
-  }),
-  Schema.Struct({
-    ...TriggerCommon,
-    kind: Schema.Literal("upstreamTag"),
-    remote: Schema.String,
-    pattern: Schema.String,
-    pollMinutes: PositiveInt,
-  }),
-  Schema.Struct({
-    ...TriggerCommon,
-    kind: Schema.Literal("prMerged"),
-    scope: Schema.Literals(["linked", "repo"]),
-    repo: Schema.String,
-    base: Schema.optional(Schema.String),
-  }),
-  Schema.Struct({
-    ...TriggerCommon,
-    kind: Schema.Literal("threadSettled"),
-    projectId: Schema.optional(ProjectId),
-    botId: Schema.optional(Schema.String),
-    titlePrefix: Schema.optional(Schema.String),
-  }),
-  Schema.Struct({
-    ...TriggerCommon,
-    kind: Schema.Literal("workflowFailed"),
-    workflow: Schema.optional(WorkflowId),
-  }),
-]);
-// "Rodar agora" na UI e `workflow_run` de um bot são gatilhos manuais implícitos.
+Os gatilhos (`WorkflowTrigger` em `packages/contracts/src/workflows.ts`) ficam num mapa por id,
+como os nós, e dividem o espaço de nomes com eles. Os tipos e o que muda entre eles estão na §5.
 
+```ts
 export const RunBudget = Schema.Struct({
   steps: PositiveInt,
   wall: DurationText,
@@ -477,7 +429,7 @@ export const WorkflowDefinition = Schema.Struct({
   description: Schema.optional(Schema.String),
   home: Schema.Struct({ project: Schema.String }), // projeto das threads e das tasks de webhook
   params: Schema.optional(Schema.Record(Schema.String, ParamSpec)),
-  triggers: Schema.optional(Schema.Array(WorkflowTrigger)),
+  triggers: Schema.optional(Schema.Record(Schema.String, WorkflowTrigger)),
   concurrency: Schema.optional(Schema.Literals(["single", "queue", "parallel"])), // padrão single
   budget: RunBudget,
   fatigue: Schema.Struct({ consecutiveFailures: PositiveInt }),
@@ -1153,16 +1105,61 @@ A rotina de qualidade (§11.4) faz: `snapshot` → `extract` → `map` sobre cla
 
 Todo gatilho termina em `WorkflowEngine.start({ workflowId, request: { kind, occurrence, payload, causalDepth } })`, que só grava `TriggerFired` (chave = ocorrência) em `workflow:<id>` e devolve `runId = "wfr_" + sha256(workflowId + occurrence)[0..20]` com status `accepted`. O decisor do workflow (§3.2) transforma o fato em execução, pulo ou fila. Ocorrência repetida devolve o mesmo `runId`. `concurrency: single` pula com `busy` se há execução viva; `queue` espera; `parallel` sobrepõe.
 
-| Gatilho                  | Fonte                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Ocorrência                      | Observações                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **cron com fuso**        | do fork: `Cron.parse(expr, tz)` (`.repos/effect-smol/packages/effect/src/Cron.ts:545`) avaliado no tick do `Scheduler` compartilhado. `occ = Cron.prev(cron, now)`; dispara se `occ > última ocorrência` e está dentro do `misfire.grace` (padrão `latest` e 1 h). Ativar grava a marca d'água, então nada é recuperado do passado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `cron:<trigger>:<occ ISO UTC>`  | A `ScheduledTask` só tem intervalo e hora fixa no fuso do host (`Schedule.ts:12-37`) e sua chave de disparo não identifica a ocorrência (`ScheduledTaskService.ts:807-812`). Horário duplicado no fim do horário de verão tem duas chaves UTC distintas                                                                                                                                                                                                                                                                                                                |
-| **webhook**              | **reaproveita a `ScheduledTask`**. `reconcileWebhooks` (no save e em todo tick) faz `upsert`, dentro do escopo do motor, da task `wf-hook:<workflowId>:<trigger>` com `schedule: {type: "webhook", signature, filters, dedupe: { replayKey, coalesceKey: "{{request}}", coalesceWindowSeconds: 10 }}`, `prompt: template ?? "{{request}}"` e `projectId: home`. Tirar o gatilho apaga a task. O segredo do HMAC fica em `~/.t3/workflows/secrets/` e vai como `secret` em cada recriação (um `secretRef` só vale uma vez, `ScheduledTaskService.ts:1104-1107`). A task aparece na tela de tarefas como "gerenciada pelo workflow X", e o guard da seam (§12) recusa editar, desligar, apagar ou "rodar agora" fora do motor. Se alguém apagar o banco por fora, o tick recria a task, e como o token da URL é novo, o motor avisa o Israel da URL nova | `webhook:<deliveryId>`          | O `coalesceKey` nunca vazio faz a entrega virar linha durável em `scheduled_task_webhook_pending` **antes** do 202 (`webhookDedupe.ts:85-90`). Sem ele, a entrega imediata fica só em memória até o despacho (`ScheduledTaskService.ts:1986-2034`). O custo é até 10 s de latência. O worker durável despacha por `runTask`, onde está o gancho (§12). HMAC, prova do relay, filtros, limites e URL pública (`webhookPublicBase.ts:54`) vêm de graça. O payload chega como texto renderizado e marcado como não confiável (`webhookTemplate.ts:148`) em `trigger.text` |
-| **pedido de bot**        | MCP `workflow_run`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `bot:<botId>:<clientRequestId>` | No fim, um `Notify{thread}` acorda o bot com o link, como o `ThreadWatchReactor` (`ThreadWatchReactor.ts:45`)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| **manual**               | RPC `run.start` (web, desktop, Android)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `manual:<clientRequestId>`      | O mesmo `clientRequestId` com parâmetros diferentes é erro, não a execução velha                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| **tag nova no upstream** | poller do fork no tick: `git ls-remote --tags --refs <remote>`, maior tag que casa com `pattern`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `tag:<remote>:<tag>:<objeto>`   | Só leitura: não faz fetch nem mexe em ref local, então tag local perdida não ganha (`merge-upstream.ts:30-41` faz fetch e confia em tags locais). O sha do objeto entra na chave: tag movida é ocorrência nova e aparece como tal                                                                                                                                                                                                                                                                                                                                      |
-| **PR mergeado**          | `scope: linked`: `streamStoredEventsFrom({ afterSequence: cursor, eventType: "thread.pull-request-link-updated" })` (`Orchestrator.ts:416-420`, evento em `contracts/orchestrationV2.ts:2728`) mais a cauda ao vivo. `scope: repo`: `gh api` de PRs fechados desde o cursor, a cada 10 min no mínimo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `pr:<repo>#<n>:<mergeSha>`      | `linked` cobre PRs ligados a threads T3; `repo` cobre o repositório inteiro, com custo de cota da API                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| **thread terminou**      | cursor em `thread.settled` (`ThreadSettlementService.ts:603`), filtrado por projeto, bot ou prefixo de título; threads de passo de workflow ficam de fora                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `settled:<threadId>:<seq>`      | "Terminou" é `thread.settled`, não um `run.updated` terminal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **rotina falhou**        | o próprio motor: no batch atômico do fim (§3.2), grava `TriggerFired` nos assinantes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `run-failed:<runId>`            | `causalDepth` do filho = pai + 1; dispara só se `< 2` e se o assinante ≠ origem. Não há laço infinito                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Gatilho                  | Fonte                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Ocorrência                      | Observações                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **cron com fuso**        | do fork: `Cron.parse(expr, tz)` (`.repos/effect-smol/packages/effect/src/Cron.ts:545`) avaliado no tick do `Scheduler` compartilhado. `occ = Cron.prev(cron, now)`; dispara se `occ > última ocorrência` e está dentro do `misfire.grace` (padrão `latest` e 1 h). Ativar grava a marca d'água, então nada é recuperado do passado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `cron:<trigger>:<occ ISO UTC>`  | A `ScheduledTask` só tem intervalo e hora fixa no fuso do host (`Schedule.ts:12-37`) e sua chave de disparo não identifica a ocorrência (`ScheduledTaskService.ts:807-812`). Horário duplicado no fim do horário de verão tem duas chaves UTC distintas                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **webhook**              | **reaproveita a `ScheduledTask`**. `reconcileWebhooks` (no save e em todo tick) faz `upsert`, dentro do escopo do motor, da task `wf-hook:<workflowId>:<trigger>` com `schedule: {type: "webhook", signature, filters, dedupe: { replayKey, coalesceKey: "{{request}}", coalesceWindowSeconds: 10 }}`, `prompt: template ?? "{{request}}"` e `projectId: home`. Tirar o gatilho apaga a task. O segredo do HMAC fica em `~/.t3/workflows/secrets/` e vai como `secret` em cada recriação (um `secretRef` só vale uma vez, `ScheduledTaskService.ts:1104-1107`). A task aparece na tela de tarefas como "gerenciada pelo workflow X", e o guard da seam (§12) recusa editar, desligar, apagar ou "rodar agora" fora do motor. Se alguém apagar o banco por fora, o tick recria a task, e como o token da URL é novo, o motor avisa o Israel da URL nova | `webhook:<deliveryId>`          | O `coalesceKey` nunca vazio faz a entrega virar linha durável em `scheduled_task_webhook_pending` **antes** do 202 (`webhookDedupe.ts:85-90`). Sem ele, a entrega imediata fica só em memória até o despacho (`ScheduledTaskService.ts:1986-2034`). O custo é até 10 s de latência. O worker durável despacha por `runTask`, onde está o gancho (§12). HMAC, prova do relay, filtros, limites e URL pública (`webhookPublicBase.ts:54`) vêm de graça. O payload chega estruturado (`trigger.method`, `path`, `query` e `headers` redigidos, `body`, até 256 KiB) e também como `trigger.text`, o `template` renderizado com a moldura de não confiável (`webhookTemplate.ts:148`) |
+| **bot**                  | MCP `workflow_run`, só pelo gatilho `bot` declarado (§5.2)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `bot:<botId>:<clientRequestId>` | No fim, um `Notify{thread}` acorda o bot com o link, como o `ThreadWatchReactor` (`ThreadWatchReactor.ts:45`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **manual**               | RPC `run.start` (web, desktop, Android), só com gatilho `manual` declarado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `manual:<clientRequestId>`      | O mesmo `clientRequestId` com parâmetros diferentes é erro, não a execução velha                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **tag nova no upstream** | poller do fork no tick: `git ls-remote --tags --refs <remote>`, maior tag que casa com `pattern`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `tag:<remote>:<tag>:<objeto>`   | Só leitura: não faz fetch nem mexe em ref local, então tag local perdida não ganha (`merge-upstream.ts:30-41` faz fetch e confia em tags locais). O sha do objeto entra na chave: tag movida é ocorrência nova e aparece como tal                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **PR mergeado**          | `scope: linked`: `streamStoredEventsFrom({ afterSequence: cursor, eventType: "thread.pull-request-link-updated" })` (`Orchestrator.ts:416-420`, evento em `contracts/orchestrationV2.ts:2728`) mais a cauda ao vivo. `scope: repo`: `gh api` de PRs fechados desde o cursor, a cada 10 min no mínimo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `pr:<repo>#<n>:<mergeSha>`      | `linked` cobre PRs ligados a threads T3; `repo` cobre o repositório inteiro, com custo de cota da API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **thread terminou**      | cursor em `thread.settled` (`ThreadSettlementService.ts:603`), filtrado por projeto, bot ou prefixo de título; threads de passo de workflow ficam de fora                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `settled:<threadId>:<seq>`      | "Terminou" é `thread.settled`, não um `run.updated` terminal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **rotina falhou**        | o próprio motor: no batch atômico do fim (§3.2), grava `TriggerFired` nos assinantes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `run-failed:<runId>`            | `causalDepth` do filho = pai + 1; dispara só se `< 2` e se o assinante ≠ origem. Não há laço infinito                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+
+Um workflow declara seus gatilhos num mapa por id (`triggers.<id>`), que divide o espaço de nomes
+com os nós: o id também chaveia a posição do nó de entrada no canvas. Há três tipos sob demanda,
+`manual`, `bot` e `call`, no máximo um de cada, em que quem chama passa os parâmetros; os de evento
+(`webhook`, `cron`, `upstreamTag`, `prMerged`, `threadSettled`, `workflowFailed`) mapeiam o payload
+para os parâmetros com `params`. Qualquer gatilho começa o grafo inteiro: o motor não roteia por
+gatilho, e um ramo por gatilho se escreve com `when` sobre `trigger.id`. Um nó `call` só compila
+contra um workflow com gatilho `call` que o aceite em `from`.
+
+### 5.1 Switches e quem dispara
+
+O switch do workflow (`Toggled`) arma todos os gatilhos; cada gatilho tem o seu (`TriggerToggled`,
+ligado até alguém desligar), porque desligar só um webhook não pode virar commit. Uma função pura,
+`triggerBlock` (`triggers/policy.ts`), decide se um `TriggerFired` vira execução: o decisor do
+workflow é a autoridade, e os handlers da RPC e do MCP chamam a mesma função para recusar antes.
+A origem vem do prefixo da ocorrência, que só o servidor escreve: `manual:` e `test:` são do dono e
+ignoram os dois switches (dá para testar sem armar cron e webhook); a suspensão por fadiga continua
+bloqueando. Um `call` respeita o switch do filho, para uma edição de bot sem permissão (que desliga o
+workflow) não rodar chamada pelo pai.
+
+### 5.2 Gatilho bot
+
+O gatilho `bot` expõe o workflow aos bots: `workflow_list` mostra a `description` (quando usar) e os
+parâmetros, e `workflow_run` recusa um workflow sem esse gatilho ou um bot fora de `bots`, mesmo com
+`canManageBots`. Por cima vale a regra do turno do dono: um bot sem `canManageBots` só roda, cancela
+ou liga um workflow num turno aberto por mensagem do próprio Israel. O payload grava `bot.id`, e o
+decisor confere a lista de novo na promoção, porque a definição pode mudar no meio.
+
+### 5.3 Último evento e modo de teste
+
+`workflow_trigger_samples` guarda o último evento de cada gatilho: o journal grava a linha na mesma
+transação do `TriggerFired`, e o snapshot leva só a data (`lastFiredAt`). O payload, de até 256 KiB,
+nunca vai no snapshot nem nos deltas da execução: a tela lê pela RPC (`trigger.sample`,
+`run.trigger`) quando abre.
+
+"Listen for test event" é o stream `trigger.listen`: por 120 s, a próxima entrega aceita pela task
+do webhook (mesmo HMAC, filtros e dedupe da produção) é capturada e não cria execução. A captura
+grava a amostra e uma marca por `deliveryId` (`workflow_test_deliveries`) na mesma transação, e o
+gancho confere a marca antes de disparar: uma entrega de teste reentregue depois de um crash, quando
+ninguém mais escuta, é confirmada sem execução. "Run with this event" chama `run.start` com
+`testTrigger` e roda o mapeamento `params` sobre a amostra.
+
+Dentro de um `prompt` de agente, todo buraco que lê `trigger.*` (menos `text`, `id` e `kind`) sai
+entre `<trigger-data>` e `</trigger-data>`, com uma nota de dado não confiável; o compilador já os
+mantém fora de argv, env e refs.
 
 Os cursores (`workflow_cursors`) avançam só depois do `TriggerFired` gravado. Perder um cursor relê eventos, e as chaves deduplicam. Todas as fontes sobem só no host de bots.
 
@@ -1174,22 +1171,22 @@ Contaminação: valores de webhook, título de PR e texto de thread são **não 
 
 Toolkit do fork `WorkflowToolkit` (`apps/server/src/bots/workflows/mcp/tools.ts` e `handlers.ts`), registrado no hunk do fork que já existe em `McpHttpServer.ts:1174`.
 
-| Ferramenta             | Parâmetros                                                 | Saída                                                               | Anotação                              |
-| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------- |
-| `workflow_list`        | `{ includeTemplates? }`                                    | `{ workflows: [{ id, title, valid, enabled, triggers, lastRun }] }` | leitura                               |
-| `workflow_get`         | `{ workflowId }`                                           | `{ source, revision, hash, diagnostics, enabled }`                  | leitura                               |
-| `workflow_save`        | `{ workflowId?, source, baseRevision?, message, dryRun? }` | `{ ok, workflowId?, revision?, commit?, diagnostics, webhooks? }`   | escrita; `dryRun: true` é a validação |
-| `workflow_set_enabled` | `{ workflowId, enabled }`                                  | `{ enabled }`                                                       | escrita                               |
-| `workflow_run`         | `{ workflowId, params?, clientRequestId? }`                | `{ runId, status, link }`                                           | escrita                               |
-| `workflow_runs`        | `{ workflowId?, status?, limit? }`                         | execuções recentes, resumidas                                       | leitura                               |
-| `workflow_run_status`  | `{ runId }`                                                | `RunSummary` mais passos e blocos com texto truncado                | leitura                               |
-| `workflow_run_cancel`  | `{ runId }`                                                | `{ status }`                                                        | escrita, destrutiva                   |
-| `workflow_ledger`      | `{ ledger?, workflowId?, limit? }`                         | entradas com veredito e números                                     | leitura                               |
+| Ferramenta             | Parâmetros                                                 | Saída                                                                    | Anotação                              |
+| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
+| `workflow_list`        | `{ includeTemplates? }`                                    | `{ workflows: [{ id, title, valid, enabled, triggers, bot, lastRun }] }` | leitura                               |
+| `workflow_get`         | `{ workflowId }`                                           | `{ source, revision, hash, diagnostics, enabled }`                       | leitura                               |
+| `workflow_save`        | `{ workflowId?, source, baseRevision?, message, dryRun? }` | `{ ok, workflowId?, revision?, commit?, diagnostics, webhooks? }`        | escrita; `dryRun: true` é a validação |
+| `workflow_set_enabled` | `{ workflowId, triggerId?, enabled }`                      | `{ enabled }`                                                            | escrita                               |
+| `workflow_run`         | `{ workflowId, params?, clientRequestId? }`                | `{ runId, status, link }`                                                | escrita                               |
+| `workflow_runs`        | `{ workflowId?, status?, limit? }`                         | execuções recentes, resumidas                                            | leitura                               |
+| `workflow_run_status`  | `{ runId }`                                                | `RunSummary` mais passos e blocos com texto truncado                     | leitura                               |
+| `workflow_run_cancel`  | `{ runId }`                                                | `{ status }`                                                             | escrita, destrutiva                   |
+| `workflow_ledger`      | `{ ledger?, workflowId?, limit? }`                         | entradas com veredito e números                                          | leitura                               |
 
 Regras:
 
 - **Mesma validação.** Os handlers chamam `WorkflowDefinitions.save` e `WorkflowEngine.start`, os mesmos métodos das RPCs. A edição de um bot vira commit com autor `<nome do bot> (bot)`.
-- **Quem pode.** Qualquer bot que não seja de guest pode ler, rascunhar e validar. Rodar, cancelar, ativar e salvar mantendo gatilhos ativos são permitidos quando o dono pediu na própria mensagem nesta conversa ou concedeu `canManageBots`; mensagens de outro bot, tarefas agendadas e passos de workflow não contam. Um workflow novo começa desativado; um save não solicitado sem essa permissão desativa o existente até o dono ativar no app. Bot de guest não recebe estas ferramentas.
+- **Quem pode.** Qualquer bot que não seja de guest pode ler, rascunhar e validar. Rodar exige o gatilho `bot` do workflow (§5.2). Rodar, cancelar, ativar (o workflow ou um gatilho) e salvar mantendo gatilhos ativos são permitidos quando o dono pediu na própria mensagem nesta conversa ou concedeu `canManageBots`; mensagens de outro bot, tarefas agendadas e passos de workflow não contam. Um workflow novo começa desativado; um save não solicitado sem essa permissão desativa o existente até o dono ativar no app. Bot de guest não recebe estas ferramentas.
 - **Sem portão.** Nenhuma ferramenta decide portão. Só a RPC `gate.decide`, com sessão de usuário, decide.
 - **Sem autoedição.** Os handlers recusam quem chama de dentro de uma thread de passo (`isWorkflowStepThreadId`). Um workflow não edita, roda nem cancela workflows.
 - **Eval.** O texto das ferramentas fala com modelos e precisa de caso em `evals/mcp-tool-use` antes de ir ao ar (AGENTS.md, "Evals"). Hoje o catálogo da eval não inclui toolkits do fork (`evals/mcp-tool-use/run.ts:303`). A fatia 9 inclui os toolkits do fork e casos para "valida com dryRun antes de salvar" e "não tenta aprovar portão".
@@ -1429,14 +1426,20 @@ params:
       pattern: "^(https://[A-Za-z0-9.-]+|)/[A-Za-z0-9._/-]+$",
     }
 triggers:
-  - { id: weekly, kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
-  - {
-      id: newtag,
-      kind: upstreamTag,
-      remote: "https://github.com/pingdotgg/t3code",
-      pattern: '^v\d+\.\d+\.\d+$',
-      pollMinutes: 120,
-    }
+  run: { kind: manual, title: Run now }
+  weekly: { kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
+  newtag:
+    kind: upstreamTag
+    remote: "https://github.com/pingdotgg/t3code"
+    pattern: '^v\d+\.\d+\.\d+$'
+    pollMinutes: 120
+    params: { upstream: "{{trigger.remote}}" }
+  ask:
+    kind: bot
+    title: Pedido de um bot
+    description: >-
+      Use when the user asks to merge the latest upstream T3 Code release into friend/main.
+      Pass `base` only when they name another branch.
 concurrency: single
 budget: { steps: 60, wall: 8h, tokens: 4000000 }
 fatigue: { consecutiveFailures: 3 }
@@ -1627,15 +1630,9 @@ params:
     from: { type: string, default: feat/cu-argo35-terra, pattern: "^[A-Za-z0-9._/-]+$" },
   }
 triggers:
-  [
-    {
-      id: nightly,
-      kind: cron,
-      expr: "30 1 * * *",
-      tz: America/Sao_Paulo,
-      misfire: { mode: skip, grace: 1h },
-    },
-  ]
+  run: { kind: manual, title: Run now }
+  nightly:
+    { kind: cron, expr: "30 1 * * *", tz: America/Sao_Paulo, misfire: { mode: skip, grace: 1h } }
 concurrency: single
 budget: { steps: 300, wall: 7h, tokens: 15000000 }
 fatigue: { consecutiveFailures: 3 }
@@ -1796,7 +1793,9 @@ schema: t3.workflow/v1
 id: mcp-token-cut
 title: Cortar tokens das definições de ferramentas MCP sem regressão de comportamento
 home: { project: t3code }
-triggers: [{ id: weekly, kind: cron, expr: "0 2 * * 6", tz: America/Sao_Paulo }]
+triggers:
+  run: { kind: manual, title: Run now }
+  weekly: { kind: cron, expr: "0 2 * * 6", tz: America/Sao_Paulo }
 budget: { steps: 200, wall: 10h, tokens: 8000000, usd: 40 }
 fatigue: { consecutiveFailures: 3 }
 models: { lead: { provider: claude, model: claude-opus-5-5, effort: high } }
@@ -1899,15 +1898,9 @@ description: >-
   primeiro passo falha. Não ative até ela entrar.
 home: { project: t3code }
 triggers:
-  [
-    {
-      id: nightly,
-      kind: cron,
-      expr: "0 3 * * *",
-      tz: America/Sao_Paulo,
-      misfire: { mode: skip, grace: 1h },
-    },
-  ]
+  run: { kind: manual, title: Run now }
+  nightly:
+    { kind: cron, expr: "0 3 * * *", tz: America/Sao_Paulo, misfire: { mode: skip, grace: 1h } }
 # parallel: uma noite esperando o portão de 72 h não bloqueia a seguinte; o `once` no ledger evita repetir classe.
 # O `wall` conta só tempo ativo, não a espera em portão (§9.1).
 concurrency: parallel

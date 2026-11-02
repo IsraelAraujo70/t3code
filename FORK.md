@@ -336,7 +336,9 @@ On the host, under the T3 home (`~/.t3`):
 - `workflows/definitions/` is a git repository with one `<id>.workflow.yaml` per workflow. Every save
   is a commit; the server ingests it at startup and picks up hand edits. Library templates ship in
   [`apps/server/src/bots/workflows/library/`](apps/server/src/bots/workflows/library/).
-- `userdata/bots.sqlite` holds each run's journal (`workflow_facts`) and the run list (`workflow_runs`).
+- `userdata/bots.sqlite` holds each run's journal (`workflow_facts`), the run list (`workflow_runs`),
+  each trigger's last event (`workflow_trigger_samples`) and the deliveries captured as test events
+  (`workflow_test_deliveries`).
 - `workflows/runs/<runId>/` holds the receipts of each command unit (`started.json`, `exit.json`),
   the step directories, build artifacts, and the run's worktrees until `retain` lets them go.
 
@@ -370,8 +372,19 @@ of the Android Bots tab. It lists the bots host's workflows with their last run.
 
 - **Create one.** "From template" copies a ready routine under a new name; "New workflow" starts
   blank. A new workflow starts turned off.
-- **Run it.** Turn it on, then press "Run now" and fill in the parameters, or keep the defaults.
-  While it is on, its triggers (a schedule, a new upstream tag) start runs by themselves.
+- **Run it.** Press "Run now" and fill in the parameters, or keep the defaults. Run now needs a
+  manual trigger in the workflow and works even while the workflow is off, so you can try it before
+  arming anything; a suspended workflow stays blocked until you resume it.
+- **Triggers.** Each trigger is a node on the left of the canvas: manual (Run now), bot, called by
+  another workflow, webhook, schedule, new upstream tag, PR merged, thread finished, workflow
+  failed. Every trigger starts the whole graph. The workflow switch arms them all; each trigger also
+  has its own switch in its inspector and on Android. A trigger node shows when it last fired.
+- **Webhooks.** A webhook trigger's inspector shows its URL with a copy button and the last event
+  it received. "Listen for test event" waits two minutes for the next request: that request is
+  captured, starts no run, and fills the event shown there and the list of `{{ trigger.* }}` paths
+  you can copy into prompts and params. "Run with this event" then runs the workflow with it. A test
+  delivery uses up its replay key, so the sender's redelivery of that same request is ignored.
+  Values from a trigger reach agent prompts marked as untrusted data.
 - **Follow a run.** The run page shows each step with its status, cost and the thread its agent
   worked in. A failed step can be retried from there.
 - **Approve a gate.** A run that needs you stops at a gate and shows the question with its options
@@ -380,9 +393,11 @@ of the Android Bots tab. It lists the bots host's workflows with their last run.
 - **Read the result.** A run ends ready for review (with a draft pull request), with no gain,
   blocked, or failed. Merging into `friend/main` stays your step.
 
-Any bot can run, cancel or turn on a workflow when you ask in your own message in its conversation,
-or when you allow it to manage bots in Settings → Bots. Messages from another bot, scheduled tasks
-and workflow steps do not count as your request.
+A bot runs a workflow only through the workflow's bot trigger, whose description tells bots when to
+use it and whose optional list says which bots may. On top of that, a bot runs, cancels or turns on
+a workflow only when you ask in your own message in its conversation, or when you allow it to manage
+bots in Settings → Bots. Messages from another bot, scheduled tasks and workflow steps do not count
+as your request.
 
 Each workflow is a file in `~/.t3/workflows/definitions` on the bots host. Saving in the editor
 commits it there, and a hand edit of the file shows up in the app. Two templates are not ready to run
