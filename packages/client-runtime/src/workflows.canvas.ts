@@ -8,10 +8,19 @@ import type {
   WorkflowCanvasLayout,
   WorkflowDefinition,
   WorkflowDiagnostic,
+  WorkflowGraph,
   WorkflowNode,
   WorkflowNodeKind,
   WorkflowStepStatus,
 } from "@t3tools/contracts";
+import {
+  compileWorkflow,
+  DEFAULT_HOST_LIMITS,
+  formatEdge,
+  nodePorts,
+  parseEdge,
+} from "@t3tools/shared/workflows";
+import * as Result from "effect/Result";
 
 export type CanvasPositions = WorkflowCanvasLayout["positions"];
 export type CanvasAnnotation = WorkflowCanvasLayout["annotations"][number];
@@ -124,16 +133,6 @@ export interface WorkflowCanvasApi {
     statuses: ReadonlyMap<string, WorkflowStepStatus>,
   ) => CanvasModel;
 }
-
-import type { WorkflowGraph } from "@t3tools/contracts";
-import {
-  compileWorkflow,
-  DEFAULT_HOST_LIMITS,
-  formatEdge,
-  nodePorts,
-  parseEdge,
-} from "@t3tools/shared/workflows";
-import * as Result from "effect/Result";
 
 export const CANVAS_NODE_SIZE = { w: 200, h: 64 } as const;
 export const canvasEdgeId: WorkflowCanvasApi["canvasEdgeId"] = (from, port, to) =>
