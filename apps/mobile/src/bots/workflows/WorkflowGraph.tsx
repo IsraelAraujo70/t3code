@@ -12,7 +12,7 @@ import {
 import { useMemo } from "react";
 import { useWorkflowColors } from "./WorkflowStatus";
 import { ScrollView, useWindowDimensions } from "react-native";
-import Svg, { G, Path, Text, Rect, Circle } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, Path, Rect, Text } from "react-native-svg";
 import rough from "roughjs/bin/rough";
 import { useResolveClassNames } from "uniwind";
 import { edgePillSize, edgeGeometry, fitText, graphGeometry } from "./WorkflowGraph.logic";
@@ -174,12 +174,20 @@ export function WorkflowGraph({
                     }
                   />
                 ))}
-                <Text x={12} y={24} fill={foreground} fontSize={14}>
-                  {fitText(node.label, node.w - 24, 8)}
-                </Text>
-                <Text x={12} y={44} fill={colors.muted} fontSize={11}>
-                  {fitText(node.subtitle, node.w - 24, 6)}
-                </Text>
+                <Defs>
+                  <ClipPath id={`wf-text-${node.id}`}>
+                    <Rect x={12} y={0} width={Math.max(0, node.w - 24)} height={node.h} />
+                  </ClipPath>
+                </Defs>
+                {/* SVG text never clips and the font is proportional, so the clip is the bound. */}
+                <G clipPath={`url(#wf-text-${node.id})`}>
+                  <Text x={12} y={24} fill={foreground} fontSize={14}>
+                    {fitText(node.label, node.w - 24, 8)}
+                  </Text>
+                  <Text x={12} y={44} fill={colors.muted} fontSize={11}>
+                    {fitText(node.subtitle, node.w - 24, 6)}
+                  </Text>
+                </G>
                 {mark && mark !== "dim" && (
                   <G>
                     <Circle cx={node.w} cy={0} r={9} fill={tone} />
