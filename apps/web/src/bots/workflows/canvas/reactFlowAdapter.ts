@@ -26,7 +26,7 @@ export const reactFlowAdapter: CanvasAdapter<ReactFlowScene> = {
         height: node.h,
         style: { width: node.w, height: node.h },
         ...(node.parent === null ? {} : { parentId: node.parent, extent: "parent" }),
-        data: { model: node },
+        data: { ...node, model: node },
         draggable: mode === "edit",
       })),
       ...model.annotations.map((annotation): WorkflowFlowNode => ({
@@ -36,7 +36,7 @@ export const reactFlowAdapter: CanvasAdapter<ReactFlowScene> = {
         width: annotation.w,
         height: annotation.h,
         style: { width: annotation.w, height: annotation.h },
-        data: { annotation },
+        data: { ...annotation, annotation },
         draggable: mode === "edit",
         connectable: false,
       })),

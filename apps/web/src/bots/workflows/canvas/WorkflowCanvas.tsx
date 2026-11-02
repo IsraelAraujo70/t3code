@@ -45,7 +45,7 @@ function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFlowNode>
         width,
         height,
         position: "relative",
-        color: `var(--${tone === "muted" ? "foreground" : tone})`,
+        color: `var(--${tone === "muted" ? "foreground" : tone === "danger" ? "destructive" : tone})`,
       }}
     >
       <svg width={width} height={height} style={{ position: "absolute", pointerEvents: "none" }}>
