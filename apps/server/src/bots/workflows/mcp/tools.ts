@@ -34,12 +34,20 @@ const shared = {
 
 const WORKFLOW_LIST_LIMIT = 50;
 
+const NEEDS_MANAGE =
+  "Only a bot the owner allowed to manage bots, in Settings → Bots, can do this.";
+const OWNER_ONLY =
+  "A bot the owner has not allowed to manage bots saves the workflow turned off; the owner turns it on in the app.";
+const GATES =
+  "A gate waits for the owner: only they approve or reject it, in the run view of the T3 app, and no tool can. When a run waits at a gate, tell the user it needs their approval there; do not edit, cancel, or rerun the workflow to get past it.";
+
 const Limit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: WORKFLOW_LIST_LIMIT }));
 const ParamValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
 
 const WorkflowListTool = Tool.make("workflow_list", {
   ...shared,
-  description: "List the workflows on the bots host, with validity, on/off state and triggers.",
+  description:
+    "List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. `includeTemplates` adds the ready-made workflows the owner can start from in the app.",
   parameters: Schema.Struct({ includeTemplates: Schema.optional(Schema.Boolean) }),
   success: Schema.Struct({
     workflows: Schema.Array(
@@ -62,7 +70,8 @@ const WorkflowListTool = Tool.make("workflow_list", {
 
 const WorkflowGetTool = Tool.make("workflow_get", {
   ...shared,
-  description: "Read a workflow's YAML source, its revision, and its diagnostics.",
+  description:
+    "Read a workflow's YAML source, its `revision` (pass it as `baseRevision` when you save an edit) and its diagnostics.",
   parameters: Schema.Struct({ workflowId: WorkflowId }),
   success: Schema.Struct({
     source: Schema.String,
@@ -78,8 +87,7 @@ const WorkflowGetTool = Tool.make("workflow_get", {
 
 const WorkflowSaveTool = Tool.make("workflow_save", {
   ...shared,
-  description:
-    "Save a workflow from its YAML source. Saving commits the file to the workflow repository. `dryRun: true` only validates. Pass `baseRevision` to replace an existing workflow.",
+  description: `Create or replace a workflow from its YAML source (\`schema: t3.workflow/v1\`). Validate first: call with \`dryRun: true\`, fix every diagnostic, then save the same source with a commit \`message\`; a save without \`dryRun\` is a commit in the workflows repository. To replace a workflow, pass the \`revision\` from workflow_get as \`baseRevision\`; if the file changed since, nothing is written and \`conflict\` holds the current text to merge. ${OWNER_ONLY} Never remove or weaken a \`gate\` node to get a waiting run through.`,
   parameters: Schema.Struct({
     workflowId: Schema.optional(WorkflowId),
     source: Schema.String,
@@ -105,7 +113,7 @@ const WorkflowSaveTool = Tool.make("workflow_save", {
 
 const WorkflowSetEnabledTool = Tool.make("workflow_set_enabled", {
   ...shared,
-  description: "Turn a workflow's triggers on or off.",
+  description: `Turn a workflow's triggers on or off. ${NEEDS_MANAGE}`,
   parameters: Schema.Struct({ workflowId: WorkflowId, enabled: Schema.Boolean }),
   success: Schema.Struct({ enabled: Schema.Boolean }),
 })
@@ -115,7 +123,7 @@ const WorkflowSetEnabledTool = Tool.make("workflow_set_enabled", {
 
 const WorkflowRunTool = Tool.make("workflow_run", {
   ...shared,
-  description: "Start a run of a workflow.",
+  description: `Start a run now. The same \`clientRequestId\` returns the same run instead of starting another. ${NEEDS_MANAGE}`,
   parameters: Schema.Struct({
     workflowId: WorkflowId,
     params: Schema.optional(Schema.Record(Schema.String, ParamValue)),
@@ -128,7 +136,7 @@ const WorkflowRunTool = Tool.make("workflow_run", {
 
 const WorkflowRunsTool = Tool.make("workflow_runs", {
   ...shared,
-  description: "List recent workflow runs.",
+  description: "List recent workflow runs, newest first.",
   parameters: Schema.Struct({
     workflowId: Schema.optional(WorkflowId),
     status: Schema.optional(WorkflowRunStatus),
@@ -141,7 +149,7 @@ const WorkflowRunsTool = Tool.make("workflow_runs", {
 
 const WorkflowRunStatusTool = Tool.make("workflow_run_status", {
   ...shared,
-  description: "Read a run's status, its steps, and any open gates.",
+  description: `Read a run's status, its steps and its gates. ${GATES}`,
   parameters: Schema.Struct({ runId: WorkflowRunId }),
   success: Schema.Struct({
     summary: WorkflowRunSummary,
@@ -167,7 +175,7 @@ const WorkflowRunStatusTool = Tool.make("workflow_run_status", {
 
 const WorkflowRunCancelTool = Tool.make("workflow_run_cancel", {
   ...shared,
-  description: "Cancel a running workflow run.",
+  description: `Cancel a run. Only when the user asks to stop it: cancelling is not a way past a gate. ${NEEDS_MANAGE}`,
   parameters: Schema.Struct({ runId: WorkflowRunId }),
   success: Schema.Struct({ status: WorkflowRunStatus }),
 })
