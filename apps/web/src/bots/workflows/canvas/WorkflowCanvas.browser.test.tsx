@@ -81,3 +81,16 @@ it.each(["keyboard", "menu"] as const)(
     );
   },
 );
+
+it("deletes a node by keyboard with its connections in one change", async () => {
+  const changed = vi.fn();
+  await using screen = await render(<Harness changed={changed} />);
+  await userEvent.click(screen.getByText("Node 1"));
+  await userEvent.keyboard("{Delete}");
+  await vi.waitFor(() => {
+    const model: CanvasModel | undefined = changed.mock.lastCall?.[0];
+    expect(model?.nodes.map((n) => n.id)).toEqual(["n0", "n2"]);
+    expect(model?.edges).toEqual([]);
+    expect(model?.annotations).toEqual(fixture().annotations);
+  });
+});

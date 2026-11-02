@@ -164,20 +164,39 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
           nodesDraggable={editable}
           nodesConnectable={editable}
           deleteKeyCode={editable ? ["Delete", "Backspace"] : null}
-          onNodesChange={(changes) =>
-            editable &&
+          // Removals arrive split across both change handlers; `onDelete` applies them at once.
+          onNodesChange={(changes) => {
+            const kept = changes.filter((c) => c.type !== "remove");
+            if (!editable || kept.length === 0) return;
             update(
-              { ...scene, nodes: applyNodeChanges(changes, scene.nodes) },
-              changes.some((c) => c.type !== "dimensions" && c.type !== "select"),
-            )
-          }
-          onEdgesChange={(changes) =>
-            editable &&
-            update(
-              { ...scene, edges: applyEdgeChanges(changes, scene.edges) },
-              changes.some((c) => c.type !== "select"),
-            )
-          }
+              { ...scene, nodes: applyNodeChanges(kept, scene.nodes) },
+              // A drag reports every pointer move; only its end is an edit.
+              kept.some((c) =>
+                c.type === "position"
+                  ? c.dragging === false
+                  : c.type !== "dimensions" && c.type !== "select",
+              ),
+            );
+          }}
+          onEdgesChange={(changes) => {
+            const kept = changes.filter((c) => c.type !== "remove");
+            if (!editable || kept.length === 0) return;
+            update({ ...scene, edges: applyEdgeChanges(kept, scene.edges) }, false);
+          }}
+          onDelete={({ nodes, edges }) => {
+            if (!editable) return;
+            const gone = new Set(nodes.map((n) => n.id));
+            const goneEdges = new Set(edges.map((e) => e.id));
+            update({
+              ...scene,
+              nodes: scene.nodes.filter(
+                (n) => !gone.has(n.id) && !(n.parentId && gone.has(n.parentId)),
+              ),
+              edges: scene.edges.filter(
+                (e) => !goneEdges.has(e.id) && !gone.has(e.source) && !gone.has(e.target),
+              ),
+            });
+          }}
           onNodeClick={(_, node) => onSelectNode?.("model" in node.data ? node.id : null)}
           onPaneClick={() => {
             setMenu(null);
@@ -220,16 +239,13 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
       {menu && (
         <div
           role="menu"
-          style={{
-            position: "fixed",
-            left: menu.x,
-            top: menu.y,
-            background: "var(--background)",
-            zIndex: 100,
-          }}
+          className="fixed z-50 min-w-36 rounded-md border border-border bg-popover p-1 text-popover-foreground text-sm shadow-md"
+          style={{ left: menu.x, top: menu.y }}
         >
           <button
+            type="button"
             role="menuitem"
+            className="w-full cursor-pointer rounded px-2 py-1 text-left hover:bg-accent"
             onClick={() => {
               if (menu.edge)
                 update({ ...scene, edges: scene.edges.filter((e) => e.id !== menu.edge) });
