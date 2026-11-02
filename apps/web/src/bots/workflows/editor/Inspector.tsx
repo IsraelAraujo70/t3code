@@ -1,5 +1,8 @@
+import { TriggerInspector } from "./TriggerInspector";
 import { findNode, renameNode, updateNode } from "@t3tools/client-runtime/workflows";
 import {
+  type EnvironmentId,
+  type WorkflowDocument,
   WorkflowNode,
   WORKFLOW_NODE_ID_PATTERN,
   type WorkflowDefinition,
@@ -15,6 +18,8 @@ import { WorkflowSettingsForm } from "./WorkflowSettingsForm";
 const decodeNode = Schema.decodeUnknownOption(WorkflowNode);
 
 export interface InspectorProps {
+  readonly environmentId?: EnvironmentId;
+  readonly document?: WorkflowDocument;
   readonly definition: WorkflowDefinition;
   readonly selected: string | null;
   readonly diagnostics: ReadonlyArray<WorkflowDiagnostic>;
@@ -26,6 +31,8 @@ export interface InspectorProps {
 /** Edits a selected node or the workflow settings through schema-validated commits. */
 export function Inspector(props: InspectorProps) {
   const id = props.selected;
+  const trigger = id === null ? undefined : props.definition.triggers?.[id];
+  if (id !== null && trigger) return <TriggerInspector {...props} id={id} trigger={trigger} />;
   const found = id === null ? null : findNode(props.definition, id);
   if (id === null || found === null)
     return (
@@ -65,7 +72,8 @@ export function Inspector(props: InspectorProps) {
           if (props.readOnly || next === id) return null;
           if (!WORKFLOW_NODE_ID_PATTERN.test(next))
             return "Invalid node id. Use lowercase letters, digits and underscores, starting with a letter.";
-          if (findNode(props.definition, next)) return "A node with this id already exists.";
+          if (findNode(props.definition, next) || props.definition.triggers?.[next])
+            return "A node with this id already exists.";
           props.onChange(renameNode(props.definition, id, next));
           props.onSelect(next);
           return null;

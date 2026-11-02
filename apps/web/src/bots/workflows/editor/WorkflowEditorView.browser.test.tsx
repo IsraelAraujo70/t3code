@@ -186,3 +186,88 @@ it("keeps Source text across tabs and overwrites a changed file only when asked"
     });
   });
 });
+
+it("adds and selects a webhook trigger and saves its focused title", async () => {
+  const save = vi.fn(async (_input: WorkflowSaveInput) => ({
+    ok: true as const,
+    result: { _tag: "Conflict" as const, workflowId, base: null, current: fixture() },
+  }));
+  await using screen = await render(
+    <WorkflowEditorView environmentId={environmentId} document={fixture()} save={save} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add webhook", exact: true }));
+  await expect.element(screen.getByText("Save to get the URL")).toBeVisible();
+  await userEvent.fill(
+    screen.getByRole("textbox", { name: "title", exact: true }),
+    "Incoming issue",
+  );
+  await expect.element(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+  await vi.waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.objectContaining({
+          triggers: {
+            webhook: expect.objectContaining({ kind: "webhook", title: "Incoming issue" }),
+          },
+        }),
+      }),
+    ),
+  );
+});
+
+it("disables the singleton manual trigger in the palette", async () => {
+  const document = fixture();
+  if (!document.definition) throw new Error("Missing definition");
+  await using screen = await render(
+    <WorkflowEditorView
+      environmentId={environmentId}
+      document={{
+        ...document,
+        definition: { ...document.definition, triggers: { manual: { kind: "manual" } } },
+      }}
+      save={vi.fn()}
+    />,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Add manual", exact: true }))
+    .toBeDisabled();
+});
+
+it("keeps Save enabled for a focused trigger field before its first draft commit", async () => {
+  const document = fixture();
+  if (!document.definition) throw new Error("Missing definition");
+  const saved = {
+    ...document,
+    definition: {
+      ...document.definition,
+      triggers: {
+        clock: { kind: "cron" as const, title: "Scheduled event", expr: "0 * * * *", tz: "UTC" },
+      },
+    },
+  };
+  const save = vi.fn(async (_input: WorkflowSaveInput) => ({
+    ok: true as const,
+    result: { _tag: "Conflict" as const, workflowId, base: null, current: saved },
+  }));
+  await using screen = await render(
+    <div style={{ width: 1200, height: 800 }}>
+      <WorkflowEditorView environmentId={environmentId} document={saved} save={save} />
+    </div>,
+  );
+  const trigger = screen.getByText("Scheduled event", { exact: true }).element();
+  if (!(trigger instanceof HTMLElement)) throw new Error("Missing trigger element");
+  trigger.click();
+  await userEvent.fill(screen.getByRole("textbox", { name: "expr", exact: true }), "0 3 * * *");
+  await expect.element(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+  await vi.waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.objectContaining({
+          triggers: { clock: expect.objectContaining({ expr: "0 3 * * *" }) },
+        }),
+      }),
+    ),
+  );
+});
