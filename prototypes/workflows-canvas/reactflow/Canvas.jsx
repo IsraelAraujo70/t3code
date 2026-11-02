@@ -21,14 +21,12 @@ function Box({ data }) {
   useEffect(() => {
     const s = ref.current;
     s.replaceChildren(
-      rough
-        .svg(s)
-        .rectangle(3, 3, 184, 64, {
-          seed: 12,
-          fill: colors[data.kind],
-          fillStyle: "solid",
-          roughness: 1.4,
-        }),
+      rough.svg(s).rectangle(3, 3, 184, 64, {
+        seed: 12,
+        fill: colors[data.kind],
+        fillStyle: "solid",
+        roughness: 1.4,
+      }),
     );
   }, [data.kind]);
   return (
