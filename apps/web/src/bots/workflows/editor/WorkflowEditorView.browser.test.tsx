@@ -115,3 +115,17 @@ it("overwrites an invalid file with the draft and the current disk revision", as
     expect(input && "definition" in input ? input.definition.nodes.gate?.kind : null).toBe("gate");
   });
 });
+
+it("opening a workflow leaves nothing to save", async () => {
+  const save = vi.fn();
+  await using screen = await render(
+    <div style={{ width: 1200, height: 800 }}>
+      <WorkflowEditorView environmentId={environmentId} document={fixture()} save={save} />
+    </div>,
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelectorAll(".react-flow__node").length).toBeGreaterThan(1),
+  );
+  await expect.element(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  expect(screen.getByText("Unsaved").elements()).toHaveLength(0);
+});

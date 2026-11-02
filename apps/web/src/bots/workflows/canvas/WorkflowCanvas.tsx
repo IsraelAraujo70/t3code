@@ -90,7 +90,7 @@ function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFlowNode>
   );
 }
 function RoughEdge(props: EdgeProps) {
-  const [path] = getBezierPath(props);
+  const [path, labelX, labelY] = getBezierPath(props);
   const paths = generator.toPaths(generator.path(path, { seed: seed(props.id), roughness: 1.2 }));
   return (
     <>
@@ -110,6 +110,8 @@ function RoughEdge(props: EdgeProps) {
         path={path}
         interactionWidth={24}
         label={props.label}
+        labelX={labelX}
+        labelY={labelY}
         style={{ stroke: "transparent" }}
       />
     </>
@@ -159,7 +161,8 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
           edges={scene.edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          fitView={mode === "run"}
+          // A workflow with no saved viewport opens framed, like a run.
+          fitView={mode === "run" || model.viewport === undefined}
           {...(model.viewport ? { defaultViewport: model.viewport } : {})}
           nodesDraggable={editable}
           nodesConnectable={editable}
@@ -202,7 +205,10 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
             setMenu(null);
             onSelectNode?.(null);
           }}
-          onMoveEnd={(_, viewport) => editable && onChange?.({ ...model, viewport })}
+          // A null event is a programmatic move (fitView), not an edit.
+          onMoveEnd={(event, viewport) =>
+            editable && event !== null && onChange?.({ ...model, viewport })
+          }
           isValidConnection={(c) =>
             c.source !== c.target &&
             !scene.edges.some(

@@ -104,8 +104,11 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
             ? "Valid"
             : "Invalid"}
         </WorkflowToneBadge>
-        {state.draft !== null || state.base.dirty ? (
-          <WorkflowToneBadge tone="warning">Dirty</WorkflowToneBadge>
+        {state.draft !== null ? (
+          <WorkflowToneBadge tone="warning">Unsaved</WorkflowToneBadge>
+        ) : null}
+        {state.base.dirty ? (
+          <WorkflowToneBadge tone="warning">Edited by hand</WorkflowToneBadge>
         ) : null}
         <WorkflowToneBadge tone={state.base.enabled ? "info" : "muted"}>
           {state.base.enabled ? "Enabled" : "Disabled"}
