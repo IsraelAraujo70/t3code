@@ -58,12 +58,12 @@ export interface McpTokenCountOutput {
 }
 
 export interface McpEvalUsage {
-  /** Uncached input tokens, agent plus shell simulator. */
+  /** Input tokens without cache reads or writes, agent plus shell simulator. */
   readonly input: number;
   readonly output: number;
   readonly cacheWrite: number;
   readonly cacheRead: number;
-  /** `input + output`: what `WF_TOKEN_BUDGET` is charged with (design §9.1). */
+  /** `input + cacheWrite + output`: uncached input plus output, charged to `WF_TOKEN_BUDGET` (§9.1). */
   readonly total_tokens: number;
   /** Sum of the eval's own estimates; null when any case had no price (Codex proxy). */
   readonly cost_usd: number | null;

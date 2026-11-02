@@ -41,17 +41,18 @@ const passes = (items: Row[]) => {
   return done.length > 0 && done.filter((row) => row.pass).length / done.length > 0.5;
 };
 
-/** Lists repository cases compatible with the model's harness. */
-export function listCases(model: string): string[] {
+const harnessOf = (model: string) => (model.startsWith("gpt-") ? "codex" : "claude");
+const repoCases = () => {
   const dir = NodePath.join(ROOT, "evals/mcp-tool-use/cases");
   return NodeFS.readdirSync(dir)
     .filter((file) => file.endsWith(".ndjson"))
-    .flatMap((file) => readLines(NodePath.join(dir, file), Schema.decodeUnknownSync(CaseSchema)))
-    .filter(
-      (item) =>
-        !item.setup?.harness ||
-        item.setup.harness === (model.startsWith("gpt-") ? "codex" : "claude"),
-    )
+    .flatMap((file) => readLines(NodePath.join(dir, file), Schema.decodeUnknownSync(CaseSchema)));
+};
+
+/** Lists repository cases compatible with the model's harness. */
+export function listCases(model: string): string[] {
+  return repoCases()
+    .filter((item) => !item.setup?.harness || item.setup.harness === harnessOf(model))
     .map((item) => item.id);
 }
 
@@ -114,7 +115,12 @@ export function mcpEvalVerdict(): McpEvalVerdictOutput {
       process.stderr.write(log);
       if (result.status !== 0) {
         if (log.includes("No case matches --case")) {
-          planned--;
+          // Only a case that exists for another harness leaves the plan; a pinned case that is
+          // gone stays planned and unfinished, so the verdict is incomplete.
+          const known = repoCases().find((item) => item.id === id);
+          if (known?.setup?.harness !== undefined && known.setup.harness !== harnessOf(model))
+            planned--;
+          else process.stderr.write(`Case ${id} is not in this checkout.\n`);
           continue;
         }
         throw new Error(result.error?.message ?? (log.slice(-8000) || "Eval runner failed"));
@@ -131,8 +137,8 @@ export function mcpEvalVerdict(): McpEvalVerdictOutput {
       for (const part of [row.usage, row.shellUsage])
         if (part) {
           for (const key of ["input", "output", "cacheWrite", "cacheRead"] as const)
-            usage[key] += part[key] ?? 0;
-          spent += (part.input ?? 0) + (part.output ?? 0);
+            usage[key] += part[key];
+          spent += part.input + part.cacheWrite + part.output;
         }
     usage.total_tokens += spent;
     largest = Math.max(largest, spent);
@@ -142,6 +148,8 @@ export function mcpEvalVerdict(): McpEvalVerdictOutput {
       : null;
     usage.cost_usd = cost && usage.cost_usd !== null ? usage.cost_usd + Number(cost[1]) : null;
   }
+  // A unit cannot be cut short without losing its results, so the last one may overshoot.
+  if (budget !== undefined && usage.total_tokens > budget) stopped = "budget";
   const resultsPath = NodePath.resolve(out, "results.jsonl");
   NodeFS.mkdirSync(NodePath.dirname(resultsPath), { recursive: true });
   NodeFS.writeFileSync(
@@ -164,7 +172,11 @@ if (import.meta.main) {
     process.stdout.write(
       `--model <m> [--baseline <results.jsonl>] --out <dir>
 [--case <ids>] [--samples <n>]
-WF_TOKEN_BUDGET limits uncached input + output.
+WF_TOKEN_BUDGET charges input + cacheWrite + output (agent and shell). A case starts only
+while spent + largest case so far fits; a run that ends above the budget reports
+stopped: "budget" and is not complete.
+A baseline case missing from this checkout leaves the verdict incomplete; a case for
+another harness leaves the plan.
 MCP_EVAL_RUN_TS overrides the runner.
 Regression: baseline majority passes, current majority fails.
 Exit 0: JSON verdict; exit 1: no verdict.

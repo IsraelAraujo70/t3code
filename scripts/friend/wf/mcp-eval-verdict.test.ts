@@ -73,7 +73,7 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
     complete: true,
     regressed: ["B"],
     case_regressions: 1,
-    usage: { total_tokens: 30, cost_usd: 3 },
+    usage: { input: 18, cacheWrite: 18, output: 12, cacheRead: 24, total_tokens: 48, cost_usd: 3 },
   });
   expect(runWfCli("mcp-eval-verdict.ts", args, { cwd: dir.path, env }).stdout).toBe(first.stdout);
   expect(NodeFS.readFileSync(calls, "utf8")).toBe("A\nB\nC\n");
@@ -81,7 +81,7 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
   const limited = runWfCli(
     "mcp-eval-verdict.ts",
     [...args.slice(0, -1), NodePath.join(dir.path, "limited")],
-    { cwd: dir.path, env: { ...env, WF_TOKEN_BUDGET: "20" } },
+    { cwd: dir.path, env: { ...env, WF_TOKEN_BUDGET: "40" } },
   );
   expect(JSON.parse(limited.stdout)).toMatchObject({
     complete: false,
@@ -89,23 +89,35 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
     cases: { finished: 2 },
   });
   expect(NodeFS.readFileSync(calls, "utf8")).toBe("A\nB\n");
-  const run = (name: string, fake: unknown, baselineArgs = ["--baseline", baseline]) =>
+  const run = (
+    name: string,
+    fake: unknown,
+    baselineArgs = ["--baseline", baseline],
+    cases = "A,B",
+    budget = "",
+  ) =>
     runWfCli(
       "mcp-eval-verdict.ts",
       [
         "--model",
         "gpt-test",
         "--case",
-        "A,B",
+        cases,
         ...baselineArgs,
         "--out",
         NodePath.join(dir.path, name),
       ],
       {
         cwd: dir.path,
-        env: { ...env, FAKE_EVAL_TABLE: JSON.stringify(fake) },
+        env: { ...env, FAKE_EVAL_TABLE: JSON.stringify(fake), WF_TOKEN_BUDGET: budget },
       },
     );
+  const overshoot = run("overshoot", table, undefined, "A", "10");
+  expect(JSON.parse(overshoot.stdout)).toMatchObject({
+    complete: false,
+    stopped: "budget",
+    usage: { total_tokens: 16 },
+  });
   const errors = run("errors", {
     A: { rows: [row("A", true), { ...row("A", false), error: "failed" }] },
     B: { rows: [{ ...row("B", false), error: "failed" }] },
@@ -117,19 +129,21 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
     case_regressions: 0,
     regressed: [],
   });
-  const skipped = run("skipped", {
-    A: table.A,
-    B: { exit: 1, stdout: "ERROR (#1): Error: No case matches --case." },
-  });
+  // NAT-01 is a real Claude-only case, so a Codex model drops it; B is in no checkout.
+  const noMatch = { exit: 1, stdout: "ERROR (#1): Error: No case matches --case." };
+  const skipped = run("skipped", { A: table.A, "NAT-01": noMatch }, undefined, "A,NAT-01");
   expect(skipped.status).toBe(0);
   expect(JSON.parse(skipped.stdout)).toMatchObject({
     complete: true,
     cases: { planned: 1, finished: 1 },
   });
-  const nothing = run("nothing", {
-    A: { exit: 1, stdout: "No case matches --case." },
-    B: { exit: 1, stdout: "No case matches --case." },
+  const gone = run("gone", { A: table.A, B: noMatch });
+  expect(JSON.parse(gone.stdout)).toMatchObject({
+    complete: false,
+    cases: { planned: 2, finished: 1 },
+    case_regressions: 0,
   });
+  const nothing = run("nothing", { "NAT-01": noMatch }, undefined, "NAT-01");
   expect(JSON.parse(nothing.stdout)).toMatchObject({
     complete: false,
     cases: { planned: 0, finished: 0 },
