@@ -311,6 +311,6 @@ it.effect("hides a bot that a guest owned, with its linked environments", () =>
       ["kept"],
     );
     assert.isTrue(Option.isNone(yield* store.getBot(BotId.make("owned"))));
-    assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, ["kept"]);
+    assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, [BotId.make("kept")]);
   }).pipe(Effect.provide(layerFromDb.pipe(Layer.provideMerge(BotsDb.layerMemory)))),
 );
