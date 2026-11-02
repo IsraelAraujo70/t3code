@@ -8,7 +8,6 @@ import type { WorkflowJournalError } from "../Journal.ts";
 import * as Stream from "effect/Stream";
 
 import { WorkflowDefinitions } from "../definitions/WorkflowDefinitions.ts";
-
 import { TriggerSamples } from "../triggers/samples.ts";
 
 const unavailable = new WorkflowsError({

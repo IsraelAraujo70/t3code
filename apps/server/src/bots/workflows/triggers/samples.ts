@@ -69,8 +69,10 @@ export const layer = Layer.effect(
         if (result === "replayed") return result;
         const sample = yield* latest(input.workflowId, input.triggerId);
         if (Option.isSome(sample)) {
-          listeners.delete(key(input.workflowId, input.triggerId));
-          for (const listener of waiting) yield* Deferred.succeed(listener, sample.value);
+          // Only the listeners present now: one that registers while they wake waits for the next.
+          const present = Array.from(waiting);
+          for (const listener of present) waiting.delete(listener);
+          for (const listener of present) yield* Deferred.succeed(listener, sample.value);
         }
         return "captured";
       }),
