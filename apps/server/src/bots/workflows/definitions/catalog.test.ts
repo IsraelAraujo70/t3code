@@ -53,6 +53,23 @@ it.live("rejects invalid disk state while preserving pinned versions", () =>
           suspended: false,
           version: { commit: saved.commit },
         });
+        const journal = yield* Journal.Journal;
+        yield* journal.append([
+          {
+            stream: "workflow:" + saved.workflowId,
+            key: "switch",
+            fact: {
+              _tag: "TriggerToggled",
+              triggerId: "manual",
+              enabled: false,
+              by: "test",
+              at: "t",
+            },
+          },
+        ]);
+        const switched = yield* catalog.current(saved.workflowId);
+        if (switched._tag !== "Ready") throw new Error("Expected ready");
+        expect(switched.off).toEqual(new Set(["manual"]));
         const pinned = yield* catalog.pinned(saved.workflowId, saved.commit);
         yield* fs.writeFileString(
           `${definitions.repoPath}/${saved.workflowId}.workflow.yaml`,

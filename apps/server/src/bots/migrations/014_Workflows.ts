@@ -29,5 +29,10 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX workflow_runs_live ON workflow_runs (status, pending_intents)`;
   yield* sql`CREATE INDEX workflow_runs_by_workflow ON workflow_runs (workflow_id, started_at DESC)`;
   yield* sql`CREATE TABLE workflow_step_threads (thread_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_key TEXT NOT NULL, attempt INTEGER NOT NULL)`;
+  yield* sql`CREATE TABLE workflow_trigger_samples (workflow_id TEXT NOT NULL, trigger_id TEXT NOT NULL, at TEXT NOT NULL,
+    occurrence TEXT NOT NULL, run_id TEXT, test INTEGER NOT NULL, payload_json TEXT NOT NULL,
+    PRIMARY KEY (workflow_id, trigger_id))`;
+  yield* sql`CREATE TABLE workflow_test_deliveries (delivery_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL,
+    trigger_id TEXT NOT NULL, at TEXT NOT NULL)`;
   yield* sql`CREATE TABLE workflow_cursors (source TEXT PRIMARY KEY, position TEXT NOT NULL)`;
 });

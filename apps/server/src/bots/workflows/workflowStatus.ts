@@ -16,14 +16,18 @@ export const workflowStatus = (facts: ReadonlyArray<StoredFact>): WorkflowStatus
   let enabled = false;
   let suspended = false;
   let toggledSeq = 0;
+  const off = new Set<string>();
   for (const { fact, seq } of facts) {
     if (fact._tag === "Toggled") {
       enabled = fact.enabled;
       toggledSeq = seq;
     }
+    if (fact._tag === "TriggerToggled") {
+      if (fact.enabled) off.delete(fact.triggerId);
+      else off.add(fact.triggerId);
+    }
     if (fact._tag === "Suspended") suspended = true;
     if (fact._tag === "Unsuspended") suspended = false;
   }
-  // Contract stub (triggers n0): n3a folds TriggerToggled into `off`.
-  return { enabled, suspended, toggledSeq, off: new Set() };
+  return { enabled, suspended, toggledSeq, off };
 };

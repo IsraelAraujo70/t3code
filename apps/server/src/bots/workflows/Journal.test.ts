@@ -390,3 +390,63 @@ it.effect("reads a workflow's switch, backlog and live runs by kind, not its who
     ]);
   }).pipe(Effect.provide(layerMemory)),
 );
+
+it.effect("captures test deliveries once and lists trigger samples", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const input = { workflowId: "w", triggerId: "a", deliveryId: "d", payload: { value: 1 } };
+    assert.equal(yield* journal.captureTestDelivery(input), "captured");
+    assert.equal(yield* journal.captureTestDelivery({ ...input, payload: null }), "replayed");
+    assert.isTrue(yield* journal.isTestDelivery("d"));
+    assert.deepEqual(Option.getOrThrow(yield* journal.triggerSample("w", "a")).payload, {
+      value: 1,
+    });
+    yield* journal.captureTestDelivery({ ...input, triggerId: "b", deliveryId: "e" });
+    assert.equal((yield* journal.triggerLastFired).length, 2);
+  }).pipe(Effect.provide(layerMemory)),
+);
+
+it.effect("projects only inserted trigger events and folds the latest switches", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const fired = (key: string, triggerId: string): NewFact => ({
+      stream: workflowStream("w"),
+      key,
+      fact: {
+        _tag: "TriggerFired",
+        triggerId,
+        runId: key,
+        kind: "manual",
+        occurrence: key,
+        label: key,
+        params: {},
+        payload: { key },
+        causalDepth: 0,
+        parent: null,
+        at: key,
+      },
+    });
+    yield* journal.append([fired("one", "a"), fired("two", "a"), fired("three", "b")]);
+    yield* journal.append([fired("one", "a")]);
+    assert.equal(Option.getOrThrow(yield* journal.triggerSample("w", "a")).occurrence, "two");
+    assert.equal((yield* journal.triggerLastFired).length, 2);
+    yield* journal.append([
+      {
+        stream: workflowStream("w"),
+        key: "off",
+        fact: { _tag: "TriggerToggled", triggerId: "a", enabled: false, by: "test", at: "t" },
+      },
+      {
+        stream: workflowStream("w"),
+        key: "off-b",
+        fact: { _tag: "TriggerToggled", triggerId: "b", enabled: false, by: "test", at: "t" },
+      },
+      {
+        stream: workflowStream("w"),
+        key: "on",
+        fact: { _tag: "TriggerToggled", triggerId: "a", enabled: true, by: "test", at: "t" },
+      },
+    ]);
+    assert.deepEqual((yield* journal.workflowStatus("w")).off, new Set(["b"]));
+  }).pipe(Effect.provide(layerMemory)),
+);
