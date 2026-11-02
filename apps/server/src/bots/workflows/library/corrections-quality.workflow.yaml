@@ -6,6 +6,7 @@ description: >-
   primeiro passo falha. Não ative até ela entrar.
 home: { project: t3code }
 triggers:
+  run: { kind: manual, title: Run now }
   nightly:
     { kind: cron, expr: "0 3 * * *", tz: America/Sao_Paulo, misfire: { mode: skip, grace: 1h } }
 # parallel: uma noite esperando o portão de 72 h não bloqueia a seguinte; o `once` no ledger evita repetir classe.

@@ -2,7 +2,9 @@ schema: t3.workflow/v1
 id: mcp-token-cut
 title: Cortar tokens das definições de ferramentas MCP sem regressão de comportamento
 home: { project: t3code }
-triggers: { weekly: { kind: cron, expr: "0 2 * * 6", tz: America/Sao_Paulo } }
+triggers:
+  run: { kind: manual, title: Run now }
+  weekly: { kind: cron, expr: "0 2 * * 6", tz: America/Sao_Paulo }
 budget: { steps: 200, wall: 10h, tokens: 8000000, usd: 40 }
 fatigue: { consecutiveFailures: 3 }
 models: { lead: { provider: claude, model: claude-opus-5-5, effort: high } }
