@@ -112,8 +112,6 @@
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
       "ignoreDependencies": ["@astrojs/check"],
     },
-    // Fork (friend): Expo's Babel preset needs @babel/core, which nothing imports.
-    "apps/bia": { "ignoreDependencies": ["@babel/core"] },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
       "entry": [
@@ -160,7 +158,7 @@
     // Fork (friend): the fork's own unused exports predate this check; prune them separately.
     "packages/contracts": {
       "includeEntryExports": true,
-      "ignoreIssues": { "src/{bots,kanban,guest}.ts": ["exports"] },
+      "ignoreIssues": { "src/{bots,kanban}.ts": ["exports"] },
     },
     "packages/effect-acp": {
       "includeEntryExports": true,
