@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@xyflow/react": "latest",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "roughjs": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "playwright": "^1.64.1",
+    "vite": "latest"
+  }
+}
