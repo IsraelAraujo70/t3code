@@ -1,26 +1,18 @@
 import {
   CANVAS_NODE_SIZE,
+  CANVAS_NODE_STYLES,
+  CANVAS_HUES,
   defaultNodeConfig,
   nextNodeId,
   toCanvasModel,
 } from "@t3tools/client-runtime/workflows";
 import type { WorkflowDefinition, WorkflowNode } from "@t3tools/contracts";
+import { canvasIcons } from "../canvas/canvasIcons";
 import { Button } from "../../../components/ui/button";
 
-const kinds = [
-  "agent",
-  "command",
-  "gate",
-  "branch",
-  "output",
-  "call",
-  "map",
-  "loop",
-  "hillclimb",
-  "arena",
-  "graph",
-  "interrogate",
-] as const satisfies ReadonlyArray<WorkflowNode["kind"]>;
+const kinds = Object.keys(CANVAS_NODE_STYLES).filter(
+  (kind): kind is WorkflowNode["kind"] => kind !== "note",
+);
 
 /** Adds typed top-level nodes to the right of the existing graph. */
 export function WorkflowPalette(props: {
@@ -48,18 +40,27 @@ export function WorkflowPalette(props: {
   };
   return (
     <div role="toolbar" aria-label="Add workflow node" className="flex max-w-full flex-wrap gap-1">
-      {kinds.map((kind) => (
-        <Button
-          key={kind}
-          size="xs"
-          variant="outline"
-          disabled={props.disabled}
-          onClick={() => add(kind)}
-          aria-label={`Add ${kind}`}
-        >
-          {kind}
-        </Button>
-      ))}
+      {kinds.map((kind) => {
+        const style = CANVAS_NODE_STYLES[kind];
+        const hue = CANVAS_HUES[style.hue];
+        const Icon = canvasIcons[style.icon];
+        return (
+          <Button
+            key={kind}
+            size="xs"
+            variant="outline"
+            disabled={props.disabled}
+            onClick={() => add(kind)}
+            aria-label={`Add ${kind}`}
+          >
+            <Icon
+              size={14}
+              style={{ color: `light-dark(${hue.light.stroke}, ${hue.dark.stroke})` }}
+            />
+            {kind}
+          </Button>
+        );
+      })}
     </div>
   );
 }

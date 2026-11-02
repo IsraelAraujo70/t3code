@@ -19,6 +19,7 @@ import {
   formatEdge,
   nodePorts,
   parseEdge,
+  resolveModelUse,
 } from "@t3tools/shared/workflows";
 import * as Result from "effect/Result";
 
@@ -32,6 +33,8 @@ export interface CanvasNode {
   readonly kind: WorkflowNodeKind;
   /** The node's `title`, else its id. */
   readonly label: string;
+  /** One line under the label: the type and its key setting (model and effort, the command…). */
+  readonly subtitle: string;
   /** Relative to the parent's top-left when `parent` is set (React Flow's sub-flow convention). */
   readonly x: number;
   readonly y: number;
@@ -80,6 +83,8 @@ export interface FromCanvasResult {
  * WorkflowCanvasApi["toCanvasModel"] = …`.
  */
 export interface WorkflowCanvasApi {
+  /** `kind · detail`: the model and effort (`$name` resolved), the command, the question… */
+  readonly nodeSubtitle: (node: WorkflowNode, models: WorkflowDefinition["models"]) => string;
   /** Edge ids come from the endpoints and the written port: `a:ok->b`, `a->b`. */
   readonly canvasEdgeId: (from: string, port: string | null, to: string) => string;
   /**
@@ -99,7 +104,7 @@ export interface WorkflowCanvasApi {
   readonly fromCanvasModel: (model: CanvasModel, previous: WorkflowDefinition) => FromCanvasResult;
   /**
    * Deterministic left-to-right layered layout of every node at every level, boxes of
-   * `CANVAS_NODE_SIZE` (200×64) and a `map`/`loop` grown to hold its body. `fixed` positions are
+   * `CANVAS_NODE_SIZE` (220×72) and a `map`/`loop` grown to hold its body. `fixed` positions are
    * kept as they are; only nodes without one are placed. The same input always yields the same output.
    */
   readonly autoLayout: (definition: WorkflowDefinition, fixed?: CanvasPositions) => CanvasPositions;
@@ -134,7 +139,7 @@ export interface WorkflowCanvasApi {
   ) => CanvasModel;
 }
 
-export const CANVAS_NODE_SIZE = { w: 200, h: 64 } as const;
+export const CANVAS_NODE_SIZE = { w: 220, h: 72 } as const;
 export const canvasEdgeId: WorkflowCanvasApi["canvasEdgeId"] = (from, port, to) =>
   `${from}${port === null ? "" : `:${port}`}->${to}`;
 export const defaultNodeConfig: WorkflowCanvasApi["defaultNodeConfig"] = (kind) => {
@@ -232,6 +237,52 @@ export const nextNodeId: WorkflowCanvasApi["nextNodeId"] = (definition, kind) =>
   for (let n = 2; findNode(definition, id); n++) id = `${kind}_${n}`;
   return id;
 };
+export const nodeSubtitle: WorkflowCanvasApi["nodeSubtitle"] = (node, models) => {
+  let detail: string;
+  switch (node.kind) {
+    case "agent":
+    case "graph": {
+      const use = node.kind === "agent" ? node.model : node.lead;
+      const resolved = resolveModelUse(use, models);
+      detail = Result.isSuccess(resolved)
+        ? resolved.success.model +
+          (node.kind === "agent" && resolved.success.effort ? ` ${resolved.success.effort}` : "")
+        : String(use);
+      break;
+    }
+    case "command":
+      detail = node.argv.join(" ");
+      break;
+    case "gate":
+      detail = node.ask;
+      break;
+    case "branch":
+      detail = nodePorts(node).join(" / ");
+      break;
+    case "output":
+      detail = node.status;
+      break;
+    case "call":
+      detail = node.workflow;
+      break;
+    case "map":
+      detail = node.items;
+      break;
+    case "loop":
+      detail = `until ${node.until}`;
+      break;
+    case "hillclimb":
+      detail = `${node.objective.direction} ${node.objective.expr}`;
+      break;
+    case "arena":
+      detail = `${node.runners.length} runners`;
+      break;
+    case "interrogate":
+      detail = `${node.mode} · ${node.reviewers.length} reviewers`;
+      break;
+  }
+  return detail ? `${node.kind} · ${detail}` : node.kind;
+};
 export const autoLayout: WorkflowCanvasApi["autoLayout"] = (definition, fixed = {}) => {
   const positions: Record<string, CanvasPositions[string]> = {};
   const visit = (graph: WorkflowGraph, nested: boolean) => {
@@ -272,12 +323,12 @@ export const autoLayout: WorkflowCanvasApi["autoLayout"] = (definition, fixed = 
           y,
           ...(node.kind === "map" || node.kind === "loop" ? size : {}),
         };
-        y += size.h + 40;
+        y += size.h + 72;
         columnWidth = Math.max(columnWidth, size.w);
       }
       width = x + columnWidth + 24;
-      height = Math.max(height, y - 40 + 24);
-      x += columnWidth + 80;
+      height = Math.max(height, y - 72 + 24);
+      x += columnWidth + 120;
     }
     return { w: width, h: height };
   };
@@ -298,6 +349,7 @@ export const toCanvasModel: WorkflowCanvasApi["toCanvasModel"] = (
         id,
         kind: node.kind,
         label: node.title ?? id,
+        subtitle: nodeSubtitle(node, definition.models),
         parent,
         ports: nodePorts(node),
         ...pos,

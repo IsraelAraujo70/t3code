@@ -1,21 +1,22 @@
-import { useState, createContext, useContext, type ReactNode } from "react";
+/* oxlint-disable shadcn/no-unknown-classes -- Canvas classes are defined in the lazy canvas.css asset. */
+import { useState, type ReactNode } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
-  Handle,
-  Position,
-  BaseEdge,
-  getBezierPath,
+  Background,
+  BackgroundVariant,
+  Controls,
   applyNodeChanges,
   applyEdgeChanges,
   useReactFlow,
-  type NodeProps,
-  type EdgeProps,
 } from "@xyflow/react";
-import rough from "roughjs";
-import { canvasEdgeId, stepStatusTone, type CanvasModel } from "@t3tools/client-runtime/workflows";
+import { canvasEdgeId, type CanvasModel } from "@t3tools/client-runtime/workflows";
 import { reactFlowAdapter, type WorkflowFlowNode, type ReactFlowScene } from "./reactFlowAdapter";
 import "@xyflow/react/dist/style.css";
+import "./canvas.css";
+import { NoteEdit } from "./CanvasContext";
+import { Box } from "./CanvasNodeView";
+import { RoughEdge } from "./RoughEdge";
 
 export interface WorkflowCanvasProps {
   model: CanvasModel;
@@ -25,101 +26,7 @@ export interface WorkflowCanvasProps {
   toolbar?: ReactNode;
   className?: string;
 }
-const NoteEdit = createContext<((id: string, text: string) => void) | undefined>(undefined);
-const generator = rough.generator();
-function seed(id: string) {
-  return Array.from(id).reduce((n, c) => (n * 31 + c.charCodeAt(0)) | 0, 1) >>> 0 || 1;
-}
-function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFlowNode>) {
-  const paths = generator.toPaths(
-    generator.rectangle(3, 3, width - 6, height - 6, { seed: seed(id), roughness: 1.2 }),
-  );
-  const edit = useContext(NoteEdit);
-  const [editing, setEditing] = useState(false);
-  const model = "model" in data ? data.model : null;
-  const annotation = "annotation" in data ? data.annotation : null;
-  const tone = model?.status ? stepStatusTone(model.status) : "muted";
-  return (
-    <div
-      style={{
-        width,
-        height,
-        position: "relative",
-        color: `var(--${tone === "muted" ? "foreground" : tone === "danger" ? "destructive" : tone})`,
-      }}
-    >
-      <svg width={width} height={height} style={{ position: "absolute", pointerEvents: "none" }}>
-        {paths.map((p) => (
-          <path key={p.d} d={p.d} fill="none" stroke="currentColor" strokeWidth={p.strokeWidth} />
-        ))}
-      </svg>
-      <div style={{ padding: 12 }} onDoubleClick={() => annotation && edit && setEditing(true)}>
-        {editing && annotation ? (
-          <textarea
-            onPointerDown={(e) => e.stopPropagation()}
-            onWheel={(e) => e.stopPropagation()}
-            aria-label="Note text"
-            defaultValue={annotation.text}
-            onBlur={(e) => {
-              edit?.(id, e.target.value);
-              setEditing(false);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") e.currentTarget.blur();
-            }}
-          />
-        ) : (
-          (model?.label ?? annotation?.text)
-        )}
-      </div>
-      {model && (
-        <>
-          <Handle type="target" position={Position.Left} />
-          {model.ports.map((port, i) => (
-            <Handle
-              key={port}
-              id={port}
-              type="source"
-              position={Position.Right}
-              style={{ top: `${(100 * (i + 1)) / (model.ports.length + 1)}%` }}
-            />
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
-function RoughEdge(props: EdgeProps) {
-  const [path, labelX, labelY] = getBezierPath(props);
-  const paths = generator.toPaths(generator.path(path, { seed: seed(props.id), roughness: 1.2 }));
-  return (
-    <>
-      <g pointerEvents="none">
-        {paths.map((p) => (
-          <path
-            key={p.d}
-            d={p.d}
-            fill="none"
-            stroke="var(--foreground)"
-            strokeWidth={p.strokeWidth}
-          />
-        ))}
-      </g>
-      <BaseEdge
-        id={props.id}
-        path={path}
-        interactionWidth={24}
-        label={props.label}
-        labelX={labelX}
-        labelY={labelY}
-        // The port name is a caption; the wide interaction path under it takes the clicks.
-        labelShowBg={false}
-        labelStyle={{ pointerEvents: "none", fontSize: 10, fill: "var(--muted-foreground)" }}
-        style={{ stroke: "transparent" }}
-      />
-    </>
-  );
-}
+
 /** A parent re-render hands over a new model; what the user selected stays selected. */
 function keepSelection(next: ReactFlowScene, previous: ReactFlowScene): ReactFlowScene {
   const nodes = new Set(previous.nodes.filter((n) => n.selected).map((n) => n.id));
@@ -158,7 +65,10 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
       });
   };
   return (
-    <div className={className} style={{ height: "100%", minHeight: 320, position: "relative" }}>
+    <div
+      className={`wf-canvas ${className ?? ""}`}
+      style={{ height: "100%", minHeight: 320, position: "relative" }}
+    >
       <NoteEdit
         value={
           editable
@@ -181,6 +91,8 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
           edgeTypes={edgeTypes}
           // A workflow with no saved viewport opens framed, like a run.
           fitView={mode === "run" || model.viewport === undefined}
+          // Wide workflows (ten columns and more) only fit below React Flow's default 0.5.
+          minZoom={0.15}
           {...(model.viewport ? { defaultViewport: model.viewport } : {})}
           nodesDraggable={editable}
           nodesConnectable={editable}
@@ -257,7 +169,15 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
             e.preventDefault();
             if (editable) setMenu({ x: e.clientX, y: e.clientY });
           }}
-        />
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1.2}
+            color="color-mix(in srgb, var(--foreground) 22%, transparent)"
+          />
+          <Controls showInteractive={false} />
+        </ReactFlow>
       </NoteEdit>
       {toolbar}
       {menu && (

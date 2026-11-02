@@ -11,6 +11,7 @@ function fixture(): CanvasModel {
       id: `n${n}`,
       kind: "agent",
       label: `Node ${n}`,
+      subtitle: "",
       x: n * 280,
       y: 40 + n * 60,
       w: 200,
@@ -122,4 +123,43 @@ it("keeps the clicked node selected when the parent re-renders with a new model"
   await vi.waitFor(() =>
     expect(changed.mock.lastCall?.[0].nodes.map((n: { id: string }) => n.id)).toEqual(["n0", "n2"]),
   );
+});
+it("shows run badges and preserves rough strokes across status changes", async () => {
+  const base = fixture();
+  const model: CanvasModel = {
+    ...base,
+    nodes: [...base.nodes, { ...base.nodes[0]!, id: "pending", x: 840 }].map((node, i) => ({
+      ...node,
+      status: (["succeeded", "waiting_gate", "failed", "pending"] as const)[i]!,
+    })),
+  };
+  await using screen = await render(<WorkflowCanvas model={model} mode="run" />);
+  await expect.element(screen.getByRole("img", { name: "Succeeded" })).toBeVisible();
+  await expect.element(screen.getByRole("img", { name: "Waiting for you" })).toBeVisible();
+  await expect.element(screen.getByRole("img", { name: "Failed" })).toBeVisible();
+  expect(document.querySelectorAll(".wf-badge")).toHaveLength(3);
+  const path = document.querySelector('[data-id="n0"] svg path:last-child')?.getAttribute("d");
+  await screen.rerender(
+    <WorkflowCanvas
+      model={{ ...model, nodes: model.nodes.map((node) => ({ ...node, status: "running" })) }}
+      mode="run"
+    />,
+  );
+  expect(document.querySelector('[data-id="n0"] svg path:last-child')?.getAttribute("d")).toBe(
+    path,
+  );
+  await expect.element(screen.getByText("ok").first()).toBeVisible();
+});
+it("draws map and loop frames dashed", async () => {
+  const base = fixture();
+  const model: CanvasModel = {
+    ...base,
+    nodes: [{ ...base.nodes[0]!, id: "each", kind: "map", w: 300, h: 160 }],
+    edges: [],
+    annotations: [],
+  };
+  await using screen = await render(<WorkflowCanvas model={model} mode="edit" />);
+  await expect.element(screen.getByText("Node 0")).toBeVisible();
+  const dashed = document.querySelectorAll('[data-id="each"] svg path[stroke-dasharray="8 6"]');
+  expect(dashed.length).toBeGreaterThan(0);
 });

@@ -15,9 +15,15 @@ export function graphGeometry(model: CanvasModel, width: number) {
   return { nodes, w, h, scale: Math.min(1, Math.max(1, width) / w) };
 }
 
-/** A stable nonzero rough drawing seed for a node or edge. */
-export function drawingSeed(id: string) {
-  return [...id].reduce((seed, char) => (seed * 31 + char.charCodeAt(0)) >>> 0, 1) || 1;
+/** Approximate label bounds with horizontal padding. */
+export function edgePillSize(label: string) {
+  return { width: label.length * 7 + 16, height: 18 };
+}
+
+/** `text` cut with an ellipsis to about `width` px, at `charWidth` px per character (SVG text does not clip). */
+export function fitText(text: string, width: number, charWidth: number) {
+  const max = Math.max(1, Math.floor(width / charWidth));
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
 /** Cubic edge and label coordinates between the source and target boxes. */
