@@ -420,12 +420,13 @@ const make = Effect.gen(function* () {
                   by,
                   `toggled:created:${commit}`,
                 );
-              else if (
-                author.kind === "bot" &&
-                !author.canManageBots &&
-                (yield* status(id)).enabled
-              )
-                yield* toggle(id, false, by, `toggled:bot-save:${commit}`);
+              else if (author.kind === "bot" && !author.canManageBots) {
+                // Keyed to the activation it turns off: the same commit saved again after the owner
+                // turned the workflow back on disables it again.
+                const current = yield* status(id);
+                if (current.enabled)
+                  yield* toggle(id, false, by, `toggled:bot-save:${commit}:${current.toggledSeq}`);
+              }
               yield* PubSub.publish(bus, id);
               return {
                 _tag: "Saved" as const,

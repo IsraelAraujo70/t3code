@@ -156,7 +156,10 @@ function upsert<T>(old: readonly T[], incoming: readonly T[], key: (item: T) => 
 }
 export const foldRunDelta: WorkflowRunApi["foldRunDelta"] = (view, delta) =>
   delta.seq <= view.seq
-    ? view
+    ? // A queued run has no run stream yet (seq 0), so its skip arrives at that same seq.
+      view.seq === 0 && view.summary.status === "queued" && delta.summary.status !== "queued"
+      ? { ...view, summary: delta.summary }
+      : view
     : {
         ...view,
         summary: delta.summary,

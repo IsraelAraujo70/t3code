@@ -144,6 +144,16 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     gates: [],
   };
   expect(foldRunDelta(view, { ...delta, seq: 1 })).toBe(view);
+  // A queued run that is skipped never gets a run stream: its delta keeps seq 0.
+  const queued = { ...view, seq: 0, steps: [], summary: { ...summary, status: "queued" as const } };
+  const skipped = { ...summary, status: "skipped" as const, skipReason: "busy" as const };
+  expect(
+    foldRunDelta(queued, { ...delta, seq: 0, steps: [], summary: skipped }).summary.status,
+  ).toBe("skipped");
+  expect(foldRunDelta({ ...queued, summary: skipped }, { ...delta, seq: 0, steps: [] })).toEqual({
+    ...queued,
+    summary: skipped,
+  });
   expect(foldRunDelta(view, delta).steps.map((s) => [s.attempt, s.status])).toEqual([
     [1, "failed"],
     [2, "running"],

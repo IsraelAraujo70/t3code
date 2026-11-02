@@ -317,7 +317,7 @@ it.effect("reads a workflow's switch, backlog and live runs by kind, not its who
       key,
       fact: { _tag: "Toggled", enabled, by: "test", at },
     });
-    assert.deepEqual(yield* journal.workflowStatus("w"), { enabled: false, suspended: false });
+    assert.deepInclude(yield* journal.workflowStatus("w"), { enabled: false, suspended: false });
     yield* journal.append([
       toggled("toggled:1", true),
       fired("a"),
@@ -333,7 +333,7 @@ it.effect("reads a workflow's switch, backlog and live runs by kind, not its who
       { stream, key: "suspended:r2", fact: { _tag: "Suspended", reason: "fatigue", at } },
       toggled("toggled:2", false),
     ]);
-    assert.deepEqual(yield* journal.workflowStatus("w"), { enabled: false, suspended: true });
+    assert.deepInclude(yield* journal.workflowStatus("w"), { enabled: false, suspended: true });
     yield* journal.append([
       { stream, key: "unsuspended:1", fact: { _tag: "Unsuspended", by: "test", at } },
       toggled("toggled:3", true),
@@ -342,7 +342,7 @@ it.effect("reads a workflow's switch, backlog and live runs by kind, not its who
       outcome("r4", "succeeded"),
       outcome("r5", "failed"),
     ]);
-    assert.deepEqual(yield* journal.workflowStatus("w"), { enabled: true, suspended: false });
+    assert.deepInclude(yield* journal.workflowStatus("w"), { enabled: true, suspended: false });
     const backlog = yield* journal.workflowBacklog("w", 2);
     assert.deepEqual(
       backlog.map((f) => f.key),

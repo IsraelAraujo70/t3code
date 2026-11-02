@@ -6,15 +6,21 @@ export interface WorkflowStatus {
   readonly enabled: boolean;
   /** Fatigue suspended it; only an Unsuspended lifts it. */
   readonly suspended: boolean;
+  /** Seq of the latest Toggled (0 before any), so an action can key itself to one activation. */
+  readonly toggledSeq: number;
 }
 
 export const workflowStatus = (facts: ReadonlyArray<StoredFact>): WorkflowStatus => {
   let enabled = false;
   let suspended = false;
-  for (const { fact } of facts) {
-    if (fact._tag === "Toggled") enabled = fact.enabled;
+  let toggledSeq = 0;
+  for (const { fact, seq } of facts) {
+    if (fact._tag === "Toggled") {
+      enabled = fact.enabled;
+      toggledSeq = seq;
+    }
     if (fact._tag === "Suspended") suspended = true;
     if (fact._tag === "Unsuspended") suspended = false;
   }
-  return { enabled, suspended };
+  return { enabled, suspended, toggledSeq };
 };

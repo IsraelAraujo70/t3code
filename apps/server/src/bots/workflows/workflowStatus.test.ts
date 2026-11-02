@@ -18,11 +18,15 @@ const unsuspended: Fact = { _tag: "Unsuspended", by: "israel", at: "t" };
 
 describe("workflowStatus", () => {
   it.each([
-    ["no Toggled yet", [], { enabled: false, suspended: false }],
-    ["turned on", [on], { enabled: true, suspended: false }],
-    ["turned on, then off", [on, off], { enabled: false, suspended: false }],
-    ["suspended by fatigue", [on, suspended], { enabled: true, suspended: true }],
-    ["unsuspended", [on, suspended, unsuspended], { enabled: true, suspended: false }],
+    ["no Toggled yet", [], { enabled: false, suspended: false, toggledSeq: 0 }],
+    ["turned on", [on], { enabled: true, suspended: false, toggledSeq: 1 }],
+    ["turned on, then off", [on, off], { enabled: false, suspended: false, toggledSeq: 2 }],
+    ["suspended by fatigue", [on, suspended], { enabled: true, suspended: true, toggledSeq: 1 }],
+    [
+      "unsuspended",
+      [on, suspended, unsuspended],
+      { enabled: true, suspended: false, toggledSeq: 1 },
+    ],
   ] as const)("%s", (_case, facts, expected) => {
     expect(workflowStatus(stored(facts))).toEqual(expected);
   });

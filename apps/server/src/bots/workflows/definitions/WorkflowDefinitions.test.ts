@@ -160,6 +160,24 @@ it.live("checks toggle permission and paginates committed history", () =>
         { kind: "bot", name: "Bot", canManageBots: false },
       );
       expect(botSaved).toMatchObject({ _tag: "Saved", enabled: false });
+      // Turned back on, the same content saved again by the bot (same commit) turns it off again.
+      yield* definitions.setEnabled(
+        decodeToggle({ workflowId: id, enabled: true, clientRequestId: "toggle-again" }),
+        { kind: "user" },
+      );
+      const unchanged = yield* definitions.document(id);
+      if (!unchanged.definition) throw new Error("Expected definition");
+      expect(
+        yield* definitions.save(
+          {
+            definition: unchanged.definition,
+            workflowId: id,
+            baseRevision: unchanged.revision,
+            message: "Bot edit again",
+          },
+          { kind: "bot", name: "Bot", canManageBots: false },
+        ),
+      ).toMatchObject({ _tag: "Saved", enabled: false });
       for (const title of ["Second", "Third"]) {
         const doc = yield* definitions.document(id);
         if (!doc.definition) throw new Error("Expected definition");
