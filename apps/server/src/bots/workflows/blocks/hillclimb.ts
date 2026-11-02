@@ -14,7 +14,13 @@ import {
   WorkflowStepKey,
   type WorkflowWorkspaceUse,
 } from "@t3tools/contracts";
-import { isTruthy, type JsonValue } from "@t3tools/shared/workflows";
+import {
+  parseTemplate,
+  exprPaths,
+  renderPrompt,
+  isTruthy,
+  type JsonValue,
+} from "@t3tools/shared/workflows";
 
 import { ledgerDigest } from "./ledger.ts";
 import { blockScope } from "./reader.ts";
@@ -255,6 +261,23 @@ const failBlock = (io: BlockIO, error: string): "finished" => {
 const rendered = (io: BlockIO, template: string, roots?: Roots): string | "finished" => {
   const result = io.render(template, roots);
   return Result.isFailure(result) ? failBlock(io, result.failure) : result.success;
+};
+
+const renderedPrompt = (io: BlockIO, template: string, roots?: Roots): string | "finished" => {
+  const parsed = parseTemplate(template);
+  if (Result.isFailure(parsed)) return failBlock(io, parsed.failure.message);
+  const values: Record<string, JsonValue> = {};
+  for (const part of parsed.success.parts) {
+    if (part.type !== "expr") continue;
+    for (const path of exprPaths(part.expr)) {
+      if (path.root in values) continue;
+      const value = io.evaluate(path.root, roots);
+      if (Result.isFailure(value)) return failBlock(io, value.failure);
+      values[path.root] = value.success;
+    }
+  }
+  const result = renderPrompt(parsed.success, { roots: values });
+  return Result.isFailure(result) ? failBlock(io, result.failure.message) : result.success;
 };
 
 const projectOf = (io: BlockIO, node: Node) => rendered(io, node.workspace.project);
@@ -566,7 +589,7 @@ const confirmPhase = (node: Node, state: State, io: BlockIO, point: Point): void
 };
 
 const proposePrompt = (io: BlockIO, node: Node, child: string) => {
-  const prompt = rendered(io, node.generator.prompt, { step: { dir: io.stepDir(child) } });
+  const prompt = renderedPrompt(io, node.generator.prompt, { step: { dir: io.stepDir(child) } });
   return prompt === "finished" ? prompt : prompt + PROPOSE_INSTRUCTION;
 };
 
@@ -583,7 +606,7 @@ const dedupePrompt = (proposal: Proposal, digest: string) =>
   ].join("\n");
 
 const implementPrompt = (io: BlockIO, node: Node, child: string, proposal: Proposal) => {
-  const goal = rendered(io, node.generator.prompt, { step: { dir: io.stepDir(child) } });
+  const goal = renderedPrompt(io, node.generator.prompt, { step: { dir: io.stepDir(child) } });
   if (goal === "finished") return goal;
   return [
     goal,
