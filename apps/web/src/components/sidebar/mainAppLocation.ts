@@ -11,8 +11,9 @@ export function isSidebarUtilityPage(pathname: string) {
   return (
     pathname.startsWith("/projects/") ||
     pathname === "/pull-requests" ||
-    // Fork (friend): the bots host's kanban.
-    pathname === "/kanban"
+    // Fork (friend): the bots host's kanban and workflows.
+    pathname === "/kanban" ||
+    pathname.startsWith("/workflows/")
   );
 }
 

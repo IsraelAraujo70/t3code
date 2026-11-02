@@ -41,7 +41,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
-    markers: 2,
+    markers: 3,
     why: "direct bot notification delivery",
   },
   {
@@ -59,7 +59,11 @@ export const SEAMS: readonly Seam[] = [
     markers: 5,
     why: "sidebarBotsLayout client setting; voiceReaderVoice and voiceLanguage server settings",
   },
-  { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
+  {
+    file: "packages/contracts/src/index.ts",
+    markers: 1,
+    why: "export bots, guest and workflow step thread contracts",
+  },
   {
     file: "packages/contracts/src/environment.ts",
     markers: 4,
@@ -137,6 +141,11 @@ export const SEAMS: readonly Seam[] = [
     why: "export the kanban display helpers shared by the web and mobile boards",
   },
   {
+    file: "packages/client-runtime/package.json",
+    contains: '"./workflows"',
+    why: "export the workflows canvas, run rules and atoms shared by web and Android",
+  },
+  {
     file: "packages/shared/package.json",
     contains: '"./workflows"',
     why: "export the workflow compiler shared by the server, the canvas and Android",
@@ -177,12 +186,12 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/features/threads/ThreadRouteScreen.tsx",
     markers: 5,
-    why: 'bot conversation header: the bot\'s face, no "No project" subtitle; Back returns to the Kanban tab',
+    why: 'bot conversation header: the bot\'s face, no "No project" subtitle; workflow steps link to their run; Back returns to the Kanban tab',
   },
   {
     file: "apps/web/src/components/chat/ChatHeader.tsx",
     markers: 2,
-    why: "bot conversation header shows the bot's face instead of the Scratch project",
+    why: "bot conversation faces and workflow step run backlinks replace the project crumb",
   },
   {
     file: "apps/web/src/components/chat/TimelineUserMessageRow.tsx",
@@ -412,7 +421,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/Stack.tsx",
     markers: 2,
-    why: "Computer and Kanban screen routes on mobile",
+    why: "Computer, Kanban and Workflows screen routes on mobile",
   },
   {
     file: "apps/mobile/src/features/home/HomeRouteScreen.tsx",
@@ -514,7 +523,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/sidebar/mainAppLocation.ts",
     markers: 1,
-    why: "the kanban page is a utility page, like pull requests",
+    why: "the kanban and workflows pages are utility pages, like pull requests",
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
@@ -537,6 +546,31 @@ export const SEAMS: readonly Seam[] = [
     why: "generated route for the kanban page",
   },
   {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId'",
+    why: "generated layout route of the Workflows pages",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.index'",
+    why: "generated route for the Workflows list",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.$workflowId'",
+    why: "generated route for the workflow editor",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.runs.$runId'",
+    why: "generated route for a workflow run",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.ledger'",
+    why: "generated route for the workflows ledger",
+  },
+  {
     file: "apps/web/src/components/settings/settingsSearch.test.ts",
     markers: 1,
     why: "old Bots → Kanban links",
@@ -550,6 +584,26 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/web/src/threadRoutes.test.ts",
     markers: 1,
     why: "an archived earlier bot generation opens instead of redirecting home",
+  },
+  {
+    file: "packages/contracts/src/orchestrationV2.ts",
+    markers: 2,
+    why: "workflow step threads (wf:) are never listed, like subagents and side chats",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/ThreadSearch.ts",
+    markers: 6,
+    why: "workflow step threads (wf:) are never search results",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+    markers: 2,
+    why: "t3_thread_list with subagents still leaves out workflow step threads",
+  },
+  {
+    file: "packages/client-runtime/src/state/archivedThreads.ts",
+    markers: 1,
+    why: "Settings → Archived leaves out workflow step threads",
   },
 ];
 
@@ -565,6 +619,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
   "packages/contracts/src/kanban.ts",
+  "packages/contracts/src/workflowThreads.",
   "packages/contracts/src/guest.ts",
   "packages/contracts/src/workflows.",
   "packages/shared/src/workflows/",
@@ -576,6 +631,8 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/appSelfUpdate.",
   "packages/client-runtime/src/kanbanBoard.",
   "packages/client-runtime/src/kanbanDisplay.",
+  "packages/client-runtime/src/workflows.",
+  "apps/web/src/routes/_chat.workflows",
   "scripts/friend/",
   "docs/friend/",
   ".github/workflows/friend-fork.yml",

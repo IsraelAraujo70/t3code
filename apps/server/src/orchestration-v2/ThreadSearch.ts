@@ -1,4 +1,5 @@
 import {
+  WORKFLOW_STEP_THREAD_PREFIX, // Fork (friend): shared workflow thread namespace.
   IsoDateTime,
   MessageId,
   OrchestrationThreadSearchSource,
@@ -35,6 +36,9 @@ import {
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
+
+// Fork (friend): workflow step threads are never search results, like subagents.
+const workflowStepThreadPattern = `${WORKFLOW_STEP_THREAD_PREFIX}*`;
 
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
@@ -174,6 +178,7 @@ export const messageHitsQuery = (
         AND threads.thread_id NOT IN (SELECT value FROM json_each(${excludedThreadIds}))
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND threads.thread_id NOT GLOB ${workflowStepThreadPattern} -- Fork (friend)
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
     )
     ${
@@ -333,6 +338,7 @@ export const make = Effect.gen(function* () {
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND threads.thread_id NOT GLOB ${workflowStepThreadPattern} -- Fork (friend)
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND (${projectId} IS NULL OR threads.project_id = ${projectId})
     `,
@@ -364,6 +370,7 @@ export const make = Effect.gen(function* () {
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND threads.thread_id NOT GLOB ${workflowStepThreadPattern} -- Fork (friend)
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
@@ -387,6 +394,7 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND threads.thread_id NOT GLOB ${workflowStepThreadPattern} -- Fork (friend)
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}

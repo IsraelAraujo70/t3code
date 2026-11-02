@@ -36,6 +36,7 @@
         "verify-windows-desktop-artifact.ts",
         // Fork (friend): run by path, per FORK.md.
         "friend/merge-upstream.ts",
+        "friend/wf/*.ts",
       ],
       "ignoreDependencies": ["agent-device", "esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.

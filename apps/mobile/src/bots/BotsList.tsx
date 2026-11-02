@@ -37,6 +37,7 @@ import { useBotDirectory } from "./state";
 
 const COMPUTER_SYMBOL: AppSymbolName = { ios: "desktopcomputer", android: "desktop_windows" };
 const KANBAN_SYMBOL: AppSymbolName = "square.split.2x1";
+const WORKFLOWS_SYMBOL: AppSymbolName = "point.3.connected.trianglepath.dotted";
 
 // The home thread rows' surface: rounded inset cards on Android, flat edge-to-edge rows on iOS.
 const ROW_CONTAINER_CLASS_NAME =
@@ -407,6 +408,31 @@ export function BotsList(props: {
             onPress={() => navigation.navigate("BotsKanban", { environmentId })}
           />
         )}
+        <BotsListRow
+          accessibilityLabel="Workflows"
+          accessibilityHint="Opens workflows and recent runs"
+          leading={
+            <View className="size-10 items-center justify-center rounded-full bg-subtle">
+              <SymbolView
+                name={WORKFLOWS_SYMBOL}
+                size={18}
+                tintColorClassName="accent-foreground-muted"
+                type="monochrome"
+              />
+            </View>
+          }
+          title="Workflows"
+          subtitle={null}
+          trailing={
+            <SymbolView
+              name="chevron.right"
+              size={12}
+              tintColorClassName="accent-foreground-tertiary"
+              type="monochrome"
+            />
+          }
+          onPress={() => navigation.navigate("BotsWorkflows", { environmentId })}
+        />
       </View>
     </View>
   );
