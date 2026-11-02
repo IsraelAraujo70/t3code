@@ -59,9 +59,6 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
-// Fork (friend): bots a guest owned take no new turns.
-import { BotId, botThreadId } from "@t3tools/contracts";
-import { BotsStore } from "../bots/BotsStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -8394,80 +8391,3 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
-
-// Fork (friend): a bot a guest owned may sit on a host model, so its threads take no new turns.
-const retiredGuestBotId = BotId.make("b_retired_guest");
-const layerRetiredGuestBotTest = Layer.mergeAll(
-  RuntimeLayer.layer,
-  RuntimeLayer.layerEventSink,
-  ProjectStore.layer,
-  ProjectionStore.layer,
-  EffectOutbox.layer,
-  ThreadCommandExecutor.layer,
-).pipe(
-  Layer.provide(
-    Layer.mock(BotsStore)({ retiredGuestBotIds: Effect.succeed(new Set([retiredGuestBotId])) }),
-  ),
-  Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(layerGitWorkflowTest),
-  Layer.provide(layerProjectServiceTest),
-  Layer.provide(layerPlatformTest),
-);
-
-it.layer(layerRetiredGuestBotTest)("bots a guest owned", (it) => {
-  it.effect("refuses a turn on their thread on a host model, and still archives it", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const create = (threadId: ThreadId) =>
-        orchestrator.dispatch({
-          type: "thread.create",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make(`${threadId}:create`),
-          threadId,
-          projectId: ProjectId.make("retired-guest-bot-project"),
-          title: "Bot conversation",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-        });
-      const send = (threadId: ThreadId) =>
-        orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make(`${threadId}:message`),
-          threadId,
-          messageId: MessageId.make(`${threadId}:message`),
-          text: "Hi",
-          attachments: [],
-          dispatchMode: { type: "defer_start" },
-        });
-      const retired = botThreadId(retiredGuestBotId, 1);
-      const owned = botThreadId(BotId.make("b_owned"), 1);
-      yield* create(retired);
-      yield* create(owned);
-
-      const refused = yield* send(retired).pipe(Effect.flip);
-      assert.equal(refused._tag, "OrchestratorCommandRejectedError");
-      assert.deepEqual((yield* orchestrator.getThreadProjection(retired)).runs, []);
-      yield* send(owned);
-      assert.lengthOf((yield* orchestrator.getThreadProjection(owned)).runs, 1);
-
-      yield* orchestrator.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make(`${retired}:archive`),
-        threadId: retired,
-      });
-      assert.isNotNull((yield* orchestrator.getThreadProjection(retired)).thread.archivedAt);
-    }),
-  );
-});

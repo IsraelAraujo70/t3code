@@ -53,7 +53,6 @@ const layerStoreOff = Layer.succeed(
     listPushDevices: notHost(),
     // Off the bots host no bot is allowed links: BotLinkAccess refuses when this fails.
     listLinkedEnvironmentBots: notHost(),
-    retiredGuestBotIds: Effect.succeed(new Set()),
     setBotLinkedEnvironments: notHost,
   }),
 );

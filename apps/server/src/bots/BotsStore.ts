@@ -103,8 +103,6 @@ export class BotsStore extends Context.Service<
     readonly listPushDevices: Effect.Effect<ReadonlyArray<BotPushDevice>, BotsError>;
     /** The bots the user lets reach linked environments. */
     readonly listLinkedEnvironmentBots: Effect.Effect<ReadonlyArray<BotId>, BotsError>;
-    /** Bots a guest owned before guest mode was removed, read at startup: nothing writes them now. */
-    readonly retiredGuestBotIds: Effect.Effect<ReadonlySet<BotId>>;
     /** Only the owner's RPC calls this; no MCP tool does (see linkAccess.test.ts). */
     readonly setBotLinkedEnvironments: (
       botId: BotId,
@@ -233,7 +231,6 @@ const make = Effect.gen(function* () {
   const moveTicketLinks = moveThread("kanban_ticket_threads", "thread_id");
 
   return BotsStore.of({
-    retiredGuestBotIds: Effect.succeed(new Set(hiddenGuestBots.map((row) => row.botId))),
     advanceGeneration: Effect.fn("BotsStore.advanceGeneration")(
       function* (advance: BotGenerationAdvance) {
         const row = yield* encodeBot(advance.bot);
