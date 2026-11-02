@@ -3,6 +3,7 @@
  * shared by web and Android. Design: docs/friend/workflows-design.md §7, §8.
  */
 export * from "./workflows.canvas.ts";
+export * from "./workflows.canvasStyle.ts";
 export * from "./workflows.merge.ts";
 export * from "./workflows.run.ts";
 export * from "./workflows.atoms.ts";

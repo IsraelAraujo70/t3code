@@ -124,3 +124,29 @@ it("keeps the clicked node selected when the parent re-renders with a new model"
     expect(changed.mock.lastCall?.[0].nodes.map((n: { id: string }) => n.id)).toEqual(["n0", "n2"]),
   );
 });
+it("shows run badges and preserves rough strokes across status changes", async () => {
+  const base = fixture();
+  const model: CanvasModel = {
+    ...base,
+    nodes: [...base.nodes, { ...base.nodes[0]!, id: "pending", x: 840 }].map((node, i) => ({
+      ...node,
+      status: (["succeeded", "waiting_gate", "failed", "pending"] as const)[i]!,
+    })),
+  };
+  await using screen = await render(<WorkflowCanvas model={model} mode="run" />);
+  await expect.element(screen.getByRole("img", { name: "Succeeded" })).toBeVisible();
+  await expect.element(screen.getByRole("img", { name: "Waiting for you" })).toBeVisible();
+  await expect.element(screen.getByRole("img", { name: "Failed" })).toBeVisible();
+  expect(document.querySelectorAll(".wf-badge")).toHaveLength(3);
+  const path = document.querySelector('[data-id="n0"] svg path:last-child')?.getAttribute("d");
+  await screen.rerender(
+    <WorkflowCanvas
+      model={{ ...model, nodes: model.nodes.map((node) => ({ ...node, status: "running" })) }}
+      mode="run"
+    />,
+  );
+  expect(document.querySelector('[data-id="n0"] svg path:last-child')?.getAttribute("d")).toBe(
+    path,
+  );
+  await expect.element(screen.getByText("ok").first()).toBeVisible();
+});

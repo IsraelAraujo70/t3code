@@ -391,3 +391,5 @@ Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata
 adds no columns or events to upstream tables. A bot's conversation is an ordinary thread whose id
 starts with `bot:`, so the official T3 Code app can open the same userdata directory; it shows bot
 threads as normal threads and ignores `bots.sqlite`.
+
+- `apps/web/src/bots/workflows/canvas/fonts/Excalifont-Regular-latin.woff2`: Excalifont (Latin subset) from excalidraw/excalidraw `packages/excalidraw/fonts/Excalifont` at 21ffaf4d, SIL OFL 1.1, license in `fonts/OFL.txt`.

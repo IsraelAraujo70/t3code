@@ -1,0 +1,78 @@
+@font-face {
+  font-family: "Excalifont";
+  src: url("./fonts/Excalifont-Regular-latin.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+20-7E, U+A0-FF, U+2013-2014, U+2018-201E, U+2022, U+2026, U+20AC;
+}
+.wf-canvas {
+  --xy-controls-button-background-color: var(--background);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-border-color: var(--border);
+}
+.wf-canvas .react-flow__node {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.wf-canvas .react-flow__node.selected {
+  outline: 1.5px dashed var(--ring);
+  outline-offset: 4px;
+}
+.wf-canvas .wf-content {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 25px;
+}
+.wf-canvas .wf-header {
+  height: auto;
+  justify-content: flex-start;
+}
+.wf-canvas .wf-label {
+  min-width: 0;
+}
+.wf-canvas .wf-name,
+.wf-canvas .wf-note,
+.wf-canvas .wf-edge-label {
+  font-family: "Excalifont", var(--font-sans, ui-sans-serif), sans-serif;
+}
+.wf-canvas .wf-name {
+  font-size: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wf-canvas .wf-subtitle {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wf-canvas .wf-note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wf-canvas .wf-badge {
+  position: absolute;
+  right: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+.wf-canvas .wf-edge-label {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 999px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
