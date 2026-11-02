@@ -33,6 +33,7 @@ it.effect("rescans periodically after an ingestion failure", () =>
         template: unavailable,
         fromTemplate: unavailable,
         setEnabled: unavailable,
+        botEntries: unavailable,
         delete: unavailable,
         restore: unavailable,
         history: unavailable,

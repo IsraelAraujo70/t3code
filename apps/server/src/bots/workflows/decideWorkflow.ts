@@ -143,7 +143,13 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
         hash: current.version.compiled.hash,
         title: definition.title,
         params,
-        trigger: { kind: trigger.kind, occurrence, label: trigger.label, payload: trigger.payload },
+        trigger: {
+          id: trigger.triggerId,
+          kind: trigger.kind,
+          occurrence,
+          label: trigger.label,
+          payload: trigger.payload,
+        },
         budget: {
           steps: definition.budget.steps,
           wallMs,

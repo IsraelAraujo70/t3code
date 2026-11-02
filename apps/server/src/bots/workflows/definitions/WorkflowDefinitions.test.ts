@@ -151,7 +151,7 @@ it.live("checks toggle permission and paginates committed history", () =>
           definition: {
             ...active.definition,
             title: "Bot edit",
-            triggers: [],
+            triggers: {},
           },
           workflowId: id,
           baseRevision: active.revision,
@@ -573,7 +573,7 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
       Effect.gen(function* () {
         const source = (yield* librarySource("inbox")).replace(
           /^triggers:.*$/m,
-          "triggers: [{ id: push, kind: webhook }]",
+          "triggers: { push: { kind: webhook } }",
         );
         expect((yield* definitions.save({ source, message: "hook" }, { kind: "user" }))._tag).toBe(
           "Saved",
@@ -583,8 +583,11 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
           {
             id: "push",
             kind: "webhook",
+            title: null,
             label: "webhook",
             webhookUrl: "https://hooks.example.com/api/hooks/wf-hook%3Ainbox%3Apush/token",
+            enabled: true,
+            lastFiredAt: null,
           },
         ]);
       }),
@@ -626,7 +629,7 @@ it.live("shows each workflow's newest projected run as its last run", () =>
         status: "failed",
         pausedFor: null,
         skipReason: null,
-        trigger: { kind: "manual", label: "Manual" },
+        trigger: { id: "manual", kind: "manual", label: "Manual" },
         startedAt: "2026-11-02T00:00:00.000Z",
         endedAt: "2026-11-02T00:10:00.000Z",
         outputStatus: null,

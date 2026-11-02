@@ -96,6 +96,7 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
     case "TriggerSkipped":
     case "RunOutcome":
     case "Toggled":
+    case "TriggerToggled":
     case "Suspended":
     case "Unsuspended":
     // wf-engine slice 7: ledger facts live in their own streams.

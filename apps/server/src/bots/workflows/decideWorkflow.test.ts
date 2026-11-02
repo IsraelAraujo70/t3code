@@ -72,6 +72,7 @@ const input = (): DecideWorkflowInput => ({
     version: { workflowId: "demo", commit: "commit", compiled },
     enabled: true,
     suspended: false,
+    off: new Set<string>(),
   },
   liveRuns: 0,
   now: 0,

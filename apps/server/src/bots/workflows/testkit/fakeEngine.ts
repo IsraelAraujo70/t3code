@@ -34,6 +34,7 @@ export const layerCatalog = (workflows: ReadonlyArray<CompiledWorkflow>) =>
               version: { workflowId, commit: "c1", compiled },
               enabled: true,
               suspended: false,
+              off: new Set<string>(),
             };
       }),
       pinned: Effect.fn("WorkflowCatalog.pinned")(function* (workflowId: string, commit: string) {

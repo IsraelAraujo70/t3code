@@ -30,7 +30,7 @@ it.live("rejects invalid disk state while preserving pinned versions", () =>
             .replaceAll("mcp-token-cut", id)
             .replace(
               /^triggers:.*$/m,
-              `triggers: [{ id: failed, kind: workflowFailed${id === "b" ? ", workflow: c" : ""} }]`,
+              `triggers: { failed: { kind: workflowFailed${id === "b" ? ", workflow: c" : ""} } }`,
             );
           expect(
             (yield* definitions.save(

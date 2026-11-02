@@ -106,7 +106,9 @@ export const layerBindHook = Layer.effectDiscard(
   }),
 );
 
-type WebhookTrigger = Extract<WorkflowTrigger, { readonly kind: "webhook" }>;
+type WebhookTrigger = Extract<WorkflowTrigger, { readonly kind: "webhook" }> & {
+  readonly id: string;
+};
 
 /** The task a webhook trigger needs, without its secret. */
 const desiredTask = (

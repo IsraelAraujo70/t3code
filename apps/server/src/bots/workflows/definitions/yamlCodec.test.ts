@@ -38,9 +38,9 @@ describe("library templates", () => {
     expect(`${compiled.definition.id}.workflow.yaml`).toBe(name);
 
     if (name === "upstream-merge.workflow.yaml") {
-      const trigger = compiled.definition.triggers?.find((entry) => entry.id === "newtag");
+      const trigger = compiled.definition.triggers?.newtag;
       expect(
-        triggerParams(trigger?.params, {
+        triggerParams(trigger && "params" in trigger ? trigger.params : undefined, {
           remote: "https://example.com/acme/app",
           kind: "upstreamTag",
           label: "x",

@@ -22,7 +22,10 @@ import { make } from "./WorkflowTriggers.ts";
 import { getCursor } from "./cursors.ts";
 
 const runId = Schema.decodeSync(WorkflowRunId)("wfr_00000000000000000000");
-const seed = Effect.fn("test.seed")(function* (trigger: WorkflowTrigger) {
+const seed = Effect.fn("test.seed")(function* ({
+  id,
+  ...trigger
+}: WorkflowTrigger & { readonly id: string }) {
   yield* insertVersion({
     workflow_id: "daily",
     commit_sha: "head",
@@ -36,7 +39,7 @@ const seed = Effect.fn("test.seed")(function* (trigger: WorkflowTrigger) {
       id: "daily",
       title: "Daily",
       home: { project: "project" },
-      triggers: [trigger],
+      triggers: { [id]: trigger },
       budget: { steps: 10, wall: "1h", tokens: 100 },
       fatigue: { consecutiveFailures: 3 },
       nodes: {},
@@ -177,7 +180,7 @@ it.effect("reads each head commit's triggers once and the switch on every listin
           id: "daily",
           title: "Daily",
           home: { project: "project" },
-          triggers: [{ ...clock, id: "later" }],
+          triggers: { later: { kind: "cron", expr: clock.expr, tz: clock.tz } },
           budget: { steps: 10, wall: "1h", tokens: 100 },
           fatigue: { consecutiveFailures: 3 },
           nodes: {},

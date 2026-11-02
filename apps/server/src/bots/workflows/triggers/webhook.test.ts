@@ -30,7 +30,7 @@ const HOOK = "wf-hook:inbox:push";
 const runId = WorkflowRunId.make("wfr_00000000000000000000");
 
 const seed = Effect.fn("test.seed")(function* (
-  triggers: ReadonlyArray<WorkflowTrigger>,
+  triggers: ReadonlyArray<WorkflowTrigger & { readonly id: string }>,
   commit = `head-${triggers.length}`,
 ) {
   yield* insertVersion({
@@ -46,7 +46,7 @@ const seed = Effect.fn("test.seed")(function* (
       id: "inbox",
       title: "Inbox",
       home: { project: "app" },
-      triggers,
+      triggers: Object.fromEntries(triggers.map(({ id, ...trigger }) => [id, trigger])),
       budget: { steps: 10, wall: "1h", tokens: 100 },
       fatigue: { consecutiveFailures: 3 },
       nodes: {},
@@ -75,7 +75,7 @@ const seed = Effect.fn("test.seed")(function* (
   ]);
 });
 
-const push: WorkflowTrigger = {
+const push: WorkflowTrigger & { readonly id: string } = {
   id: "push",
   kind: "webhook",
   signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },

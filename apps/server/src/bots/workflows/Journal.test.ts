@@ -167,7 +167,7 @@ const summary = (
   status: "running",
   pausedFor: null,
   skipReason: null,
-  trigger: { kind: "manual", label: "Manual" },
+  trigger: { id: "manual", kind: "manual", label: "Manual" },
   startedAt,
   endedAt: null,
   outputStatus: null,

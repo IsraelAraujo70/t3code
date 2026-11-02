@@ -24,7 +24,9 @@ import {
   type WorkflowSetEnabledInput,
   type WorkflowsSnapshot,
   type WorkflowSummary,
+  type WorkflowDefinition,
   type WorkflowTrigger,
+  type WorkflowTriggerSummary,
   type WorkflowValidateInput,
   type WorkflowValidateResult,
 } from "@t3tools/contracts";
@@ -154,8 +156,30 @@ const label = (trigger: WorkflowTrigger): string => {
       return "thread settled";
     case "workflowFailed":
       return `${trigger.workflow ?? "any"} failed`;
+    case "manual":
+      return "Run now";
+    case "bot":
+      return "bot";
+    case "call":
+      return "called by a workflow";
   }
 };
+/** The summaries of a definition's triggers; `urls` maps webhook task ids to their public URLs. */
+const triggerSummaries = (
+  workflowId: string,
+  triggers: WorkflowDefinition["triggers"],
+  urls: ReadonlyMap<string, string>,
+): Array<WorkflowTriggerSummary> =>
+  Object.entries(triggers ?? {}).map(([id, trigger]) => ({
+    id,
+    kind: trigger.kind,
+    title: trigger.title ?? null,
+    label: label(trigger),
+    webhookUrl:
+      trigger.kind === "webhook" ? (urls.get(workflowHookTaskId(workflowId, id)) ?? null) : null,
+    enabled: true,
+    lastFiredAt: null,
+  }));
 const make = Effect.gen(function* () {
   const repo = yield* WorkflowRepo;
   // Webhook triggers are scheduled tasks; their URLs come from there when the service is present.
@@ -244,17 +268,26 @@ const make = Effect.gen(function* () {
       return yield* new WorkflowsError({ code: "not-found", message: "Workflow not found." });
     const head = Option.getOrNull(yield* repo.head(id));
     const result = compileFile(id, file.value.text);
+    const definition = Result.isSuccess(result) ? result.success.definition : null;
+    const { enabled, suspended } = yield* status(id);
+    const hasWebhook = Object.values(definition?.triggers ?? {}).some((t) => t.kind === "webhook");
     return {
       workflowId: workflowId(id),
       source: file.value.text,
       revision: revision(file.value.revision),
       headCommit: head?.commit ?? null,
-      definition: Result.isSuccess(result) ? result.success.definition : null,
+      definition,
       hash: Result.isSuccess(result) ? result.success.hash : null,
       valid: Result.isSuccess(result),
       dirty: head?.revision !== file.value.revision,
       diagnostics: Result.isFailure(result) ? result.failure : [],
-      ...(yield* status(id)),
+      enabled,
+      suspended,
+      triggers: triggerSummaries(
+        id,
+        definition?.triggers,
+        hasWebhook ? yield* webhookUrls : new Map<string, string>(),
+      ),
       updatedBy: head?.author ?? null,
       updatedAt: head?.at ?? null,
     };
@@ -271,7 +304,7 @@ const make = Effect.gen(function* () {
         valid: Number(d.valid),
         dirty: Number(d.dirty),
         diagnostics_json: JSON.stringify(d.diagnostics),
-        triggers_json: JSON.stringify(d.definition?.triggers ?? []),
+        triggers_json: JSON.stringify(d.definition?.triggers ?? {}),
         scanned_at: yield* now,
       }),
     );
@@ -460,15 +493,7 @@ const make = Effect.gen(function* () {
           enabled: d.enabled,
           suspended: d.suspended,
           diagnostics: d.diagnostics.length,
-          triggers: (d.definition?.triggers ?? []).map((trigger) => ({
-            id: trigger.id,
-            kind: trigger.kind,
-            label: label(trigger),
-            webhookUrl:
-              trigger.kind === "webhook"
-                ? (urls.get(workflowHookTaskId(id, trigger.id)) ?? null)
-                : null,
-          })),
+          triggers: triggerSummaries(id, d.definition?.triggers, urls),
           headCommit: d.headCommit,
           revision: d.revision,
           updatedAt: d.updatedAt,
@@ -521,12 +546,7 @@ const make = Effect.gen(function* () {
             templateId: workflowId(file.replace(/\.workflow\.yaml$/, "")),
             title: definition.title,
             description: definition.description ?? null,
-            triggers: (definition.triggers ?? []).map((trigger) => ({
-              id: trigger.id,
-              kind: trigger.kind,
-              label: label(trigger),
-              webhookUrl: null,
-            })),
+            triggers: triggerSummaries(definition.id, definition.triggers, new Map()),
           });
         }
         return { repoPath: repo.root, workflows, deleted, templates };
@@ -684,7 +704,9 @@ const make = Effect.gen(function* () {
     fromTemplate,
     setEnabled,
     // Contract stub (triggers n0): n3c implements it.
-    botEntries: () => Effect.succeed([]),
+    botEntries: Effect.fn("WorkflowDefinitions.botEntries")(function* (_botId: string) {
+      return yield* Effect.succeed<ReadonlyArray<BotEntry>>([]);
+    }),
     delete: remove,
     restore,
     history,

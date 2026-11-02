@@ -71,7 +71,15 @@ import { isSubStep } from "./steps.ts";
 import { WorkflowInterpreter } from "./Interpreter.ts";
 import { Journal, WorkflowJournalError } from "./Journal.ts";
 import type { GateDecided, IntentEntry, RunState } from "./state.ts";
-import { gateViews, pendingSummary, runDelta, runSummary, stepDetail, stepViews } from "./view.ts";
+import {
+  gateViews,
+  pendingSummary,
+  runDelta,
+  runSummary,
+  runTriggerView,
+  stepDetail,
+  stepViews,
+} from "./view.ts";
 
 /** A request to run a workflow once; `occurrence` names it, so asking twice is one run. */
 export interface TriggerRequest {
@@ -667,8 +675,16 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           : undefined;
       const { state, compiled } = yield* loadRun(input.runId, upTo);
       if (compiled === null) {
+        const owner = yield* journal.workflowOfRun(input.runId);
+        const fired = Option.isSome(owner)
+          ? (yield* journal.read(workflowStream(owner.value)))
+              .map((entry) => entry.fact)
+              .find((fact) => fact._tag === "TriggerFired" && fact.runId === input.runId)
+          : undefined;
+        if (fired?._tag !== "TriggerFired") return yield* unknownRun(input.runId);
         return {
           summary: yield* summaryOf(input.runId),
+          trigger: runTriggerView({ ...fired, id: fired.triggerId }),
           definition: null,
           seq: state.lastSeq,
           steps: [],
@@ -677,9 +693,11 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           gates: [],
         };
       }
+      if (state.started === null) return yield* unknownRun(input.runId);
       const steps = pageOf(stepViews(compiled, state), offset ?? input.stepsCursor, STEPS_PAGE);
       return {
         summary: runSummary(state, yield* Clock.currentTimeMillis),
+        trigger: runTriggerView(state.started.trigger),
         definition: compiled.definition,
         seq: state.lastSeq,
         steps: steps.page,

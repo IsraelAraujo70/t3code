@@ -70,6 +70,10 @@ export const handlers = Effect.gen(function* () {
     [M.workflowsMetrics]: (
       input: Parameters<Context.Service.Shape<typeof WorkflowEngine>["metrics"]>[0],
     ) => execute((engine) => engine.metrics(input)),
+    // Triggers n1 stubs: the trigger payload, samples and test mode land with their services.
+    [M.workflowsRunTrigger]: () => Effect.fail(unavailable),
+    [M.workflowsTriggerSample]: () => Effect.fail(unavailable),
+    [M.workflowsTriggerListen]: () => Stream.fail(unavailable),
     [M.workflowsLedger]: (
       input: Parameters<Context.Service.Shape<typeof WorkflowEngine>["ledger"]>[0],
     ) => execute((engine) => engine.ledger(input)),

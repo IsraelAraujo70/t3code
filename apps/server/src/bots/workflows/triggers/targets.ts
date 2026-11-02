@@ -12,7 +12,7 @@ export interface TriggerTarget {
   readonly enabled: boolean;
   /** The workflow's `home.project` reference, as the definition names it. */
   readonly home: string;
-  readonly trigger: WorkflowTrigger;
+  readonly trigger: WorkflowTrigger & { readonly id: string };
 }
 
 /**
@@ -25,7 +25,7 @@ export const makeTriggerTargets = Effect.sync(() => {
     {
       readonly commit: string;
       readonly home: string;
-      readonly triggers: ReadonlyArray<WorkflowTrigger>;
+      readonly triggers: ReadonlyArray<WorkflowTrigger & { readonly id: string }>;
     }
   >();
   return Effect.gen(function* () {
@@ -44,7 +44,10 @@ export const makeTriggerTargets = Effect.sync(() => {
         head = {
           commit: row.head_commit,
           home: definition.home.project,
-          triggers: definition.triggers ?? [],
+          triggers: Object.entries(definition.triggers ?? {}).map(([id, trigger]) => ({
+            ...trigger,
+            id,
+          })),
         };
         heads.set(row.workflow_id, head);
       }

@@ -274,25 +274,21 @@ const FAILING: ReadonlyArray<FailingCase> = [
   {
     name: "a cron expression that does not parse",
     code: "trigger",
-    path: "triggers[0].expr",
-    change: (d) => (d.triggers = [{ id: "nightly", kind: "cron", expr: "61 * * * *", tz: "UTC" }]),
+    path: "triggers.nightly.expr",
+    change: (d) => (d.triggers = { nightly: { kind: "cron", expr: "61 * * * *", tz: "UTC" } }),
   },
   {
     name: "an unknown time zone",
     code: "trigger",
-    path: "triggers[0].expr",
+    path: "triggers.nightly.expr",
     change: (d) =>
-      (d.triggers = [{ id: "nightly", kind: "cron", expr: "0 3 * * *", tz: "Mars/Olympus" }]),
+      (d.triggers = { nightly: { kind: "cron", expr: "0 3 * * *", tz: "Mars/Olympus" } }),
   },
   {
-    name: "two triggers with one id",
-    code: "trigger",
-    path: "triggers[1].id",
-    change: (d) =>
-      (d.triggers = [
-        { id: "go", kind: "cron", expr: "0 3 * * *", tz: "UTC" },
-        { id: "go", kind: "workflowFailed" },
-      ]),
+    name: "a trigger id that is not a node-style id",
+    code: "schema",
+    path: "triggers.Go",
+    change: (d) => (d.triggers = { Go: { kind: "cron", expr: "0 3 * * *", tz: "UTC" } }),
   },
   {
     name: "a workflow calling itself",

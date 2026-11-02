@@ -12,7 +12,7 @@ import * as Store from "./definitionsStore.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeTriggers = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Array(WorkflowTrigger)),
+  Schema.fromJsonString(Schema.Record(Schema.String, WorkflowTrigger)),
 );
 const failure = (cause: unknown) =>
   new WorkflowJournalError({ message: "Workflow catalog operation failed.", cause });
@@ -58,6 +58,7 @@ const make = Effect.gen(function* () {
       if (Result.isFailure(compiled)) return { _tag: "Invalid" };
       return {
         _tag: "Ready",
+        off: new Set(),
         version: { workflowId, commit: document.headCommit, compiled: compiled.success },
         enabled: document.enabled,
         suspended: document.suspended,
@@ -75,14 +76,14 @@ const make = Effect.gen(function* () {
       for (const row of rows) {
         if (row.valid !== 1 || row.workflow_id === workflowId) continue;
         const triggers = yield* decodeTriggers(row.triggers_json);
-        for (const trigger of triggers)
+        for (const [id, trigger] of Object.entries(triggers))
           if (
             trigger.kind === "workflowFailed" &&
             (!trigger.workflow || trigger.workflow === workflowId)
           )
             subscribers.push({
               workflowId: row.workflow_id,
-              triggerId: trigger.id,
+              triggerId: id,
               params: trigger.params ?? {},
             });
       }

@@ -870,13 +870,13 @@ export const compileWorkflow = (
     roots: new Set(["trigger"]),
     itemTaint: new Map(),
   };
-  const triggerIds = new Set<string>();
-  (definition.triggers ?? []).forEach((trigger, index) => {
-    const path = `triggers[${index}]`;
-    if (triggerIds.has(trigger.id))
-      report(`${path}.id`, "trigger", `trigger id "${trigger.id}" is used twice`);
-    triggerIds.add(trigger.id);
-    for (const [key, value] of Object.entries(trigger.params ?? {})) {
+  Object.entries(definition.triggers ?? {}).forEach(([id, trigger]) => {
+    const path = `triggers.${id}`;
+    if (!WORKFLOW_NODE_ID_PATTERN.test(id))
+      report(path, "schema", `trigger id "${id}" must match ${WORKFLOW_NODE_ID_PATTERN}`);
+    for (const [key, value] of Object.entries(
+      ("params" in trigger ? trigger.params : undefined) ?? {},
+    )) {
       if (own(definition.params, key) === undefined) {
         report(`${path}.params.${key}`, "trigger", `${key} is not a declared param`);
       }
@@ -917,6 +917,9 @@ export const compileWorkflow = (
           report(`${path}.workflow`, "trigger", "a workflow cannot start on its own failure");
         }
         return;
+      case "manual":
+      case "bot":
+      case "call":
       case "prMerged":
       case "threadSettled":
         return;

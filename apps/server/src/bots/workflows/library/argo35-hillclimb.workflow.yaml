@@ -11,15 +11,8 @@ params:
     from: { type: string, default: feat/cu-argo35-terra, pattern: "^[A-Za-z0-9._/-]+$" },
   }
 triggers:
-  [
-    {
-      id: nightly,
-      kind: cron,
-      expr: "30 1 * * *",
-      tz: America/Sao_Paulo,
-      misfire: { mode: skip, grace: 1h },
-    },
-  ]
+  nightly:
+    { kind: cron, expr: "30 1 * * *", tz: America/Sao_Paulo, misfire: { mode: skip, grace: 1h } }
 concurrency: single
 budget: { steps: 300, wall: 7h, tokens: 15000000 }
 fatigue: { consecutiveFailures: 3 }
