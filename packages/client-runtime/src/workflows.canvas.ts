@@ -32,6 +32,8 @@ export interface CanvasNode {
   readonly kind: WorkflowNodeKind;
   /** The node's `title`, else its id. */
   readonly label: string;
+  /** One line under the label: the type and its key setting (model and effort, the command…). */
+  readonly subtitle: string;
   /** Relative to the parent's top-left when `parent` is set (React Flow's sub-flow convention). */
   readonly x: number;
   readonly y: number;
@@ -298,6 +300,7 @@ export const toCanvasModel: WorkflowCanvasApi["toCanvasModel"] = (
         id,
         kind: node.kind,
         label: node.title ?? id,
+        subtitle: node.kind,
         parent,
         ports: nodePorts(node),
         ...pos,

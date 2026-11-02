@@ -113,6 +113,7 @@ describe("canvas conversion", () => {
       id: "new_gate",
       kind: "gate",
       label: "new_gate",
+      subtitle: "",
       parent: "each",
       x: 0,
       y: 0,

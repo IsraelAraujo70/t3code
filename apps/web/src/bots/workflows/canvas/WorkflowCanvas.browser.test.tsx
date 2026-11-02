@@ -11,6 +11,7 @@ function fixture(): CanvasModel {
       id: `n${n}`,
       kind: "agent",
       label: `Node ${n}`,
+      subtitle: "",
       x: n * 280,
       y: 40 + n * 60,
       w: 200,
