@@ -30,6 +30,7 @@ it.effect("rescans periodically after an ingestion failure", () =>
         documentChanges: () => Stream.empty,
         validate: unavailable,
         save: unavailable,
+        template: unavailable,
         fromTemplate: unavailable,
         setEnabled: unavailable,
         delete: unavailable,

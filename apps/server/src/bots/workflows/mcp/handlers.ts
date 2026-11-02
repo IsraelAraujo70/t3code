@@ -1,0 +1,254 @@
+import { OrchestratorMcpFailure, type WorkflowsError } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
+import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
+import * as BotsService from "../../BotsService.ts";
+import * as WorkflowDefinitions from "../definitions/WorkflowDefinitions.ts";
+import { WorkflowEngine } from "../WorkflowEngine.ts";
+import { WorkflowToolkit } from "./tools.ts";
+
+const failure = (error: WorkflowsError) =>
+  new OrchestratorMcpFailure({
+    code:
+      error.code === "permission"
+        ? "capability_denied"
+        : error.code === "not-found" || error.code === "invalid-request"
+          ? "invalid_request"
+          : "orchestration_error",
+    message: error.message,
+  });
+// Replaced by isWorkflowStepThreadId from @t3tools/contracts when the hide work lands.
+const isWorkflowStepThread = (threadId: string) => threadId.startsWith("wf:");
+const callerBot = Effect.gen(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  const denied = new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message: "Workflow tools are only available in a bot's conversation.",
+  });
+  if (!scope.thread) return yield* denied;
+  if (isWorkflowStepThread(scope.thread.threadId))
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message:
+        "Workflow tools are not available inside a workflow step: a workflow does not edit, run or cancel workflows.",
+    });
+  const bots = yield* BotsService.BotsService;
+  const bot = yield* bots
+    .botForThread(scope.thread.threadId)
+    .pipe(
+      Effect.mapError(
+        (error) =>
+          new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+      ),
+    );
+  if (Option.isNone(bot)) return yield* denied;
+  return {
+    bot: bot.value,
+    author: { kind: "bot" as const, name: bot.value.name, canManageBots: bot.value.canManageBots },
+  };
+});
+const engineAvailable = Effect.gen(function* () {
+  const engine = yield* Effect.serviceOption(WorkflowEngine);
+  if (Option.isSome(engine)) return engine.value;
+  return yield* new OrchestratorMcpFailure({
+    code: "provider_unavailable",
+    message: "The workflow engine is not available on this server yet.",
+  });
+});
+const runFailure = () =>
+  new OrchestratorMcpFailure({
+    code: "orchestration_error",
+    message: "Workflow run operation failed.",
+  });
+const requestId = Effect.gen(function* () {
+  const at = yield* Clock.currentTimeMillis;
+  const nonce = (yield* Random.nextIntBetween(0, 0xffffffff)).toString(16);
+  return `mcp-${at}-${nonce}`;
+});
+const manage = (allowed: boolean) =>
+  allowed
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "This bot does not have permission to manage bots.",
+        }),
+      );
+export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
+  workflow_list: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      const workflows = (yield* definitions.list.pipe(Effect.mapError(failure))).map((w) => ({
+        id: w.workflowId,
+        title: w.title,
+        valid: w.valid,
+        enabled: w.enabled,
+        triggers: w.triggers.map((t) => t.label),
+        lastRun: w.lastRun ? { runId: w.lastRun.runId, status: w.lastRun.status } : null,
+      }));
+      if (!input.includeTemplates) return { workflows };
+      const snapshot = yield* Stream.runHead(definitions.snapshot).pipe(Effect.mapError(failure));
+      return {
+        workflows,
+        templates: Option.isSome(snapshot)
+          ? snapshot.value.templates.map((t) => ({ id: t.templateId, title: t.title }))
+          : [],
+      };
+    }),
+  ),
+  workflow_get: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      const d = yield* definitions.document(input.workflowId).pipe(Effect.mapError(failure));
+      return {
+        source: d.source,
+        revision: d.revision,
+        hash: d.hash,
+        valid: d.valid,
+        diagnostics: d.diagnostics,
+        enabled: d.enabled,
+      };
+    }),
+  ),
+  workflow_template: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      return {
+        source: yield* definitions.template(input.templateId).pipe(Effect.mapError(failure)),
+      };
+    }),
+  ),
+  workflow_save: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { author } = yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      if (input.dryRun) {
+        const { diagnostics } = yield* definitions
+          .validate({ source: input.source })
+          .pipe(Effect.mapError(failure));
+        return { ok: diagnostics.length === 0, diagnostics };
+      }
+      const result = yield* definitions
+        .save(
+          {
+            source: input.source,
+            message: input.message,
+            ...(input.workflowId !== undefined ? { workflowId: input.workflowId } : {}),
+            ...(input.baseRevision !== undefined ? { baseRevision: input.baseRevision } : {}),
+          },
+          author,
+        )
+        .pipe(Effect.mapError(failure));
+      switch (result._tag) {
+        case "Saved":
+          return {
+            ok: true,
+            workflowId: result.workflowId,
+            revision: result.revision,
+            commit: result.commit,
+            enabled: result.enabled,
+            diagnostics: [],
+          };
+        case "Invalid":
+          return { ok: false, diagnostics: result.diagnostics };
+        case "Conflict":
+          return {
+            ok: false,
+            diagnostics: [],
+            conflict: { revision: result.current.revision, source: result.current.source },
+          };
+      }
+    }),
+  ),
+  workflow_set_enabled: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { author } = yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      const nonce = (yield* Random.nextIntBetween(0, 0xffffffff)).toString(16);
+      const at = yield* Clock.currentTimeMillis;
+      const summary = yield* definitions
+        .setEnabled({ ...input, clientRequestId: `mcp-${at}-${nonce}` }, author)
+        .pipe(Effect.mapError(failure));
+      return { enabled: summary.enabled };
+    }),
+  ),
+  workflow_run: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { bot } = yield* callerBot;
+      yield* manage(bot.canManageBots);
+      const engine = yield* engineAvailable;
+      const id = input.clientRequestId ?? (yield* requestId);
+      const { runId } = yield* engine
+        .start({
+          workflowId: input.workflowId,
+          triggerId: "bot",
+          kind: "bot",
+          occurrence: `bot:${bot.id}:${id}`,
+          label: `Run by ${bot.name} (bot)`,
+          params: input.params ?? {},
+          payload: null,
+          causalDepth: 0,
+          parent: null,
+        })
+        .pipe(Effect.mapError(runFailure));
+      const { summary } = yield* engine.runView({ runId }).pipe(Effect.mapError(runFailure));
+      return { runId, status: summary.status, link: `t3-workflow-run://v1/${runId}` };
+    }),
+  ),
+  workflow_runs: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const engine = yield* engineAvailable;
+      const { runs } = yield* engine.listRuns(input).pipe(Effect.mapError(runFailure));
+      return { runs };
+    }),
+  ),
+  workflow_run_status: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const engine = yield* engineAvailable;
+      const { summary, steps, gates } = yield* engine
+        .runView(input)
+        .pipe(Effect.mapError(runFailure));
+      return {
+        summary,
+        steps: steps.map(({ key, status, summary }) => ({ key, status, summary })),
+        gates: gates.map((g) => ({
+          key: g.key,
+          ask: g.ask,
+          options: g.options,
+          decided: g.decision?.option ?? null,
+        })),
+      };
+    }),
+  ),
+  workflow_run_cancel: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { bot } = yield* callerBot;
+      yield* manage(bot.canManageBots);
+      const engine = yield* engineAvailable;
+      const summary = yield* engine
+        .controlRun(
+          { runId: input.runId, control: { _tag: "cancel" }, clientRequestId: yield* requestId },
+          `${bot.name} (bot)`,
+        )
+        .pipe(Effect.mapError(runFailure));
+      return { status: summary.status };
+    }),
+  ),
+  workflow_ledger: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const engine = yield* engineAvailable;
+      const { entries } = yield* engine.ledger(input).pipe(Effect.mapError(runFailure));
+      return { entries };
+    }),
+  ),
+});

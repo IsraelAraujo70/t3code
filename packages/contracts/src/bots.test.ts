@@ -69,11 +69,11 @@ describe("workflows RPCs", () => {
       WORKFLOWS_WS_METHODS.workflowsLedger,
     ]);
     for (const method of Object.values(WORKFLOWS_WS_METHODS)) {
-      if (reads.has(method)) {
-        expect(BOTS_RPC_SCOPES[method]).toBe(AuthOrchestrationReadScope);
-      } else {
-        expect(BOTS_GUARDED_RPC_SCOPES[method]).toBe(AuthOrchestrationOperateScope);
-      }
+      const read = reads.has(method);
+      expect(BOTS_RPC_SCOPES[method]).toBe(
+        read ? AuthOrchestrationReadScope : AuthOrchestrationOperateScope,
+      );
+      expect(Object.hasOwn(BOTS_GUARDED_RPC_SCOPES, method)).toBe(!read);
     }
     expect(BOTS_GUARDED_RPC_SCOPES[WORKFLOWS_WS_METHODS.workflowsGateDecide]).toBe(
       AuthOrchestrationOperateScope,

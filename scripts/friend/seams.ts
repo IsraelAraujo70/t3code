@@ -10,6 +10,11 @@ export type Seam =
 
 export const SEAMS: readonly Seam[] = [
   {
+    file: "evals/mcp-tool-use/run.ts",
+    markers: 2,
+    why: "the eval catalog lists the fork's MCP toolkits, so their text has evals",
+  },
+  {
     file: "knip.jsonc",
     markers: 6,
     why: "fork scripts that run by path, apps/bia's Babel peer, and the fork's older unused exports",
