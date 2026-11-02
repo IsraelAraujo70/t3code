@@ -38,28 +38,21 @@ import * as Workflows from "./workflows/layer.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinitions.ts";
-import { layer as WorkflowCatalogLayer } from "./workflows/definitions/catalog.ts";
 import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
-import * as Journal from "./workflows/Journal.ts";
 import { layer as WorkflowTriggersLayer } from "./workflows/triggers/WorkflowTriggers.ts";
 import * as WorkflowWebhooks from "./workflows/triggers/webhook.ts";
 
-/** Definitions, catalog and journal; the engine joins here when it is registered. */
-const layerWorkflowsCore = WorkflowCatalogLayer.pipe(
-  Layer.provideMerge(WorkflowDefinitions.layer),
-  Layer.provideMerge(Journal.layerFromDb),
-);
-
 /**
- * Workflows on the bots host: the core above, with the hand-edit watcher and the trigger sources
- * on top of it, so they see the engine. Their tables live in bots.sqlite, so BotsDb is provided
- * here: the server's own SqlClient must never reach them.
+ * Workflows on the bots host: the engine block (engine, catalog, definitions, journal) with the
+ * hand-edit watcher, the trigger sources and the webhook side on top of it, so they see the
+ * engine. BotsDb, the same layer the engine block keeps private, backs their cursors.
  */
 export const layerWorkflows = Layer.mergeAll(
   WatcherLayer,
   WorkflowTriggersLayer,
   WorkflowWebhooks.layerBindHook,
-).pipe(Layer.provideMerge(layerWorkflowsCore), Layer.provide(BotsDb.layer));
+  WorkflowWebhooks.layerReconcileOnHost,
+).pipe(Layer.provideMerge(Workflows.layer), Layer.provide(BotsDb.layer));
 const workflowsNotHost = () =>
   Effect.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }));
 const layerWorkflowsOff = Layer.succeed(
@@ -322,8 +315,6 @@ export const layerService = Layer.unwrap(
             BotQueueReactor.layerStart,
             BotPushReactor.layerStart,
             KanbanPoller.layerStart,
-            // Workflows: the engine, its catalog and the host interpreter.
-            Workflows.layer,
           ).pipe(
             Layer.provideMerge(BotRotation.layer),
             Layer.provideMerge(BotsService.layer),

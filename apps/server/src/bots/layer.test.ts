@@ -16,7 +16,12 @@ import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
 import { ServerConfig } from "../config.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as BotsLayer from "./layer.ts";
 import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinitions.ts";
 
@@ -78,6 +83,18 @@ describe("workflows on the bots host", () => {
         }).pipe(
           Effect.provide(
             BotsLayer.layerWorkflows.pipe(
+              // The runtime the engine reaches through; nothing here starts a run.
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(ProjectService.ProjectService)({}),
+                  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    list: () => Effect.succeed({ tasks: [] }),
+                  }),
+                  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                ),
+              ),
               Layer.provideMerge(SqlitePersistence.layerMemory),
               Layer.provide(ServerConfig.layerTest(root, root)),
             ),

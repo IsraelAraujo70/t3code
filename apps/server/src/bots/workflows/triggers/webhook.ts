@@ -24,10 +24,13 @@ import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
+import { ServerConfig } from "../../../config.ts";
+import { ProjectService } from "../../../project/ProjectService.ts";
 import { forkParked } from "../../../serverActivation.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as WorkflowDefinitions from "../definitions/WorkflowDefinitions.ts";
 import { Journal } from "../Journal.ts";
+import { projectByRef } from "../exec/projects.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
 import { fireTrigger } from "./fire.ts";
 import {
@@ -258,3 +261,22 @@ export const layerReconcile = (options: ReconcilerOptions) =>
       yield* forkParked(definitions.changes.pipe(Stream.runForEach(() => quiet)));
     }),
   );
+
+/** The reconciler as the bots host runs it: projects resolved as the interpreter resolves them. */
+export const layerReconcileOnHost = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const path = yield* Path.Path;
+    const projects = yield* ProjectService;
+    return layerReconcile({
+      secretsDir: path.join(config.baseDir, "workflows", "secrets"),
+      resolveProject: (ref) =>
+        projects.snapshot.pipe(
+          Effect.map((snapshot) =>
+            Option.fromUndefinedOr(projectByRef(snapshot.projects, ref)?.id),
+          ),
+          Effect.orElseSucceed(() => Option.none()),
+        ),
+    });
+  }),
+);
