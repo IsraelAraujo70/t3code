@@ -1107,7 +1107,7 @@ Rodada (chaves dos filhos `<hc>/r<n>/<filho>`):
 1. **Origem**, uma vez por execução. Prepara `wf/<run>/<node>` em `workspace.base`, roda `build` (heavy) e todo `measure` contra ela mesma, e grava a leitura da origem. Execuções noturnas sobem a partir do último candidato **validado**: `base: "{{coalesce(ledgerBest('argo35-throughput'), params.from)}}"`, e `ledgerBest` só devolve entradas `validated` (mantidas e depois aprovadas pela validação final do workflow). Um candidato só mantido no treino não vira base.
 2. **Propor.** Turno do gerador (thread nova, leitura) com o resumo do ledger: últimas 50 entradas com veredito e todas as chaves. A saída é `{ key, mechanism, rationale }` ou `{ exhausted: true }`. O sub-decisor confere `key ∉ ledger` e `RegisterLedger` grava `entry:<key>` com o hash da barra. Conflito com outra execução vira `DuplicateRejected` e o gerador é chamado mais uma vez. **O registro vem antes de qualquer código**: isso é a pré-registração.
 3. **Implementar.** Thread **nova**, com escrita, numa worktree `wf/<run>/<node>/r<n>` a partir de `best.sha`, com a proposta registrada no prompt, terminando em "commite e devolva {sha}". Não é a thread do passo 2, porque uma thread tem um só acesso e uma só worktree (§9.5). O motor lê o `HEAD` sozinho, sem confiar no relato. Calcula o hash da árvore e grava `tree:<hash>`. Árvore já vista é `DuplicateRejected{tree}`. O que o ledger garante: **a mesma chave ou a mesma árvore nunca é medida duas vezes**. Uma ideia reescrita com outra chave passa por ele; contra isso o gerador lê o resumo do ledger, e um turno curto de juiz (Haiku) compara a proposta com o resumo antes do registro e recusa repetição óbvia.
-4. **Build.** Comando heavy. Antes de medir, o motor copia o artefato para `~/.t3/workflows/runs/<runId>/artifacts/<sha>/`, para que a medição não dependa da worktree da tentativa.
+4. **Build.** Comando heavy. Antes de medir, o motor copia o artefato para `~/.t3/workflows/runs/<runId>/artifacts/<sha>/`, para que a medição não dependa da worktree da tentativa. Sem `artifact`, o build só prepara a worktree (o `vp i` do corte de tokens) e nada é copiado.
 5. **Medir.** Cada `measure.<nome>` recebe `{{best.artifact}}`, `{{candidate.artifact}}` e `{{step.dir}}` e escreve em `m.<nome>`. Métrica incompleta (`complete == false`, JSON quebrado, campo faltando) é **inválida**, não rejeitada. Inválida conta para fadiga e orçamento, não para platô.
 6. **Julgar.** `keep(m, best, origin)` dá `kept` ou `rejected`. Mantido: `GitOp advance wf/<run>/<node>/best` (CAS), o melhor avança e as rodadas sem ganho zeram. Rejeitado: `RemoveWorkspace` da tentativa e +1 rodada sem ganho. Nos dois casos, `ResolveLedger` grava veredito, leitura antes e depois e sha. **Reverter é descartar a worktree da tentativa**, nunca dar reset numa worktree compartilhada.
 7. **Confirmar.** Quando `confirmWhen` vale, roda `measure` com base = artefato da **origem**. A barra pré-registrada `target` só é avaliada aqui. Atingiu: fim `target`.
@@ -1399,7 +1399,7 @@ Até 2026-11-02 este desenho rodava cada passo num container Docker, no molde do
 
 ## 11. Biblioteca de workflows prontos
 
-Modelos em `apps/server/src/bots/workflows/library/`; os blocos abaixo são cópia deles, e o teste do codec YAML compila os quatro. Cada um depende de CLIs auxiliares que imprimem JSON e ainda não existem. A fatia 12 escreve todas elas.
+Modelos em `apps/server/src/bots/workflows/library/`; os blocos abaixo são cópia deles, e o teste do codec YAML compila os quatro. Cada um depende de CLIs auxiliares que imprimem JSON. As do t3code existem em `scripts/friend/`, menos `extract-corrections.ts`, que está pendente (por isso o `corrections-quality` não deve ser ativado). As do bench existem só na branch local `feat/wf-bench-cli` do computer-use-linux, então o `argo35-hillclimb` fica como não suportado sem supervisão até elas entrarem no checkout do host. O `upstream-merge` e o `mcp-token-cut` rodaram ponta a ponta num servidor de teste (fatia 12).
 
 | CLI                                                         | Repositório        | Contrato                                                                                                                                                                                                                                                                                                                             |
 | ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1410,7 +1410,7 @@ Modelos em `apps/server/src/bots/workflows/library/`; os blocos abaixo são cóp
 | `bench/agent/sol_suites.py`                                 | computer-use-linux | roda `sol-easy`, `sol-hard` e `sol-long` com o binário dado num diretório novo e chama `sol_regression.py` nele; sai ≠ 0 em regressão                                                                                                                                                                                                |
 | `scripts/friend/wf/mcp-token-count.ts --json`               | t3code             | inventário servido inteiro, toolkits do fork incluídos → `{ total, perTool, method }` (`chars/4` declarado; tokenizer quando houver)                                                                                                                                                                                                 |
 | `scripts/friend/wf/mcp-eval-verdict.ts`                     | t3code             | `pnpm mcp-tool-use` contra baseline fixado → `{ complete, case_regressions, usage }`                                                                                                                                                                                                                                                 |
-| `scripts/friend/wf/extract-corrections.ts --out <dir>`      | t3code             | cópia só leitura do `statev2.sqlite` (`VACUUM INTO`) e JSONL só com os campos permitidos (correção do Israel, texto anterior do assistente sem saídas de ferramenta, ids de evidência) → `{ count, path }`                                                                                                                           |
+| `scripts/friend/wf/extract-corrections.ts --out <dir>`      | t3code             | pendente; cópia só leitura das tabelas que precisa do `statev2.sqlite` (nunca `VACUUM INTO` do banco inteiro, de 4,3 GB) e JSONL só com os campos permitidos (correção do Israel, texto anterior do assistente sem saídas de ferramenta, ids de evidência) → `{ count, path }`                                                       |
 
 ### 11.1 Merge semanal do upstream
 
@@ -1419,7 +1419,15 @@ schema: t3.workflow/v1
 id: upstream-merge
 title: Merge do upstream
 home: { project: t3code }
-params: { base: { type: string, default: friend/main, pattern: "^[A-Za-z0-9._/-]+$" } }
+params:
+  base: { type: string, default: friend/main, pattern: "^[A-Za-z0-9._/-]+$" }
+  # A local bare repository works too: the end-to-end test points this at one.
+  upstream:
+    {
+      type: string,
+      default: "https://github.com/pingdotgg/t3code",
+      pattern: "^(https://[A-Za-z0-9.-]+|)/[A-Za-z0-9._/-]+$",
+    }
 triggers:
   - { id: weekly, kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
   - {
@@ -1455,7 +1463,7 @@ nodes:
           node,
           scripts/friend/wf/select-upstream-tag.ts,
           --remote,
-          "https://github.com/pingdotgg/t3code",
+          "{{params.upstream}}",
           --base,
           "{{params.base}}",
         ],
@@ -1483,6 +1491,10 @@ nodes:
           ".",
           --tag,
           "{{nodes.select.output.tag}}",
+          --remote,
+          "{{params.upstream}}",
+          --base,
+          "{{params.base}}",
         ],
       output:
         {
@@ -1513,7 +1525,7 @@ nodes:
       heavy: true,
       replay: safe,
       parse: json,
-      argv: [node, scripts/friend/wf/fork-checks.ts, --json],
+      argv: [node, scripts/friend/wf/fork-checks.ts, --json, --no-heavy],
       check: "out.seams && out.theme && out.tests",
     }
   fix:
@@ -1532,7 +1544,7 @@ nodes:
       heavy: true,
       replay: safe,
       parse: json,
-      argv: [node, scripts/friend/wf/fork-checks.ts, --json],
+      argv: [node, scripts/friend/wf/fork-checks.ts, --json, --no-heavy],
       check: "out.seams && out.theme && out.tests",
     }
   review:
@@ -1605,6 +1617,9 @@ Barra pré-registrada: throughput ≥ 1,5×, sucesso não pior e nenhuma tarefa 
 schema: t3.workflow/v1
 id: argo35-hillclimb
 title: Hillclimb de throughput no argo35
+description: >-
+  Não suportado sem supervisão: as CLIs do bench (argo35_metric.py, sol_suites.py) ainda não estão
+  no checkout do computer-use-linux que o host usa. Não ative até elas entrarem.
 home: { project: computer-use-linux }
 params:
   {
@@ -1676,10 +1691,12 @@ nodes:
     objective: { expr: "m.bench.candidate.throughput", direction: max }
     keep: >-
       m.bench.complete && m.bench.errors == 0 && len(m.bench.regressed_tasks) == 0
-      && m.bench.candidate.success_rate >= m.bench.baseline.success_rate && m.bench.throughput_ratio >= 1.05
+      && m.bench.candidate.success_rate >= m.bench.baseline.success_rate
+      && m.bench.throughput_ratio != null && m.bench.throughput_ratio >= 1.05
     confirmWhen: "m.bench.candidate.throughput / origin.bench.candidate.throughput >= 1.5"
     target: >-
-      m.bench.complete && m.bench.throughput_ratio >= 1.5 && len(m.bench.regressed_tasks) == 0
+      m.bench.complete && m.bench.throughput_ratio != null && m.bench.throughput_ratio >= 1.5
+      && len(m.bench.regressed_tasks) == 0
       && m.bench.candidate.success_rate >= m.bench.baseline.success_rate
     plateau: { rounds: 4 }
     budget: { iterations: 12, wall: 6h, tokens: 12000000 }
@@ -1703,7 +1720,7 @@ nodes:
       ]
     selfSerializing: true
     parse: json
-    check: "out.complete && out.throughput_ratio >= 1.5 && len(out.regressed_tasks) == 0 && out.candidate.success_rate >= out.baseline.success_rate"
+    check: "out.complete && out.throughput_ratio != null && out.throughput_ratio >= 1.5 && len(out.regressed_tasks) == 0 && out.candidate.success_rate >= out.baseline.success_rate"
   sol:
     kind: command
     cwd: { project: computer-use-linux, readOnly: true }
@@ -1795,6 +1812,8 @@ nodes:
         Encurte descrições e schemas de ferramentas MCP (apps/server/src/mcp/toolkits/*/tools.ts,
         apps/server/src/bots/**/tools.ts) sem perder orientação de roteamento ou segurança. Uma mudança
         coerente por tentativa. Já tentado: {{ledgerDigest('mcp-token-cut')}}
+    # Attempt worktrees start without node_modules, and both measures import effect.
+    build: { argv: [vp, i], cwd: attempt, heavy: true, replay: safe }
     measure:
       tokens:
         {
@@ -1812,7 +1831,7 @@ nodes:
               --model,
               claude-opus-5-5,
               --baseline,
-              "{{origin.evals.resultsPath}}",
+              "{{coalesce(origin.evals.resultsPath, '')}}",
               --out,
               "{{step.dir}}",
             ],
@@ -1828,6 +1847,8 @@ nodes:
     target: "m.evals.complete && m.evals.case_regressions == 0 && m.tokens.total <= origin.tokens.total * 0.7"
     plateau: { rounds: 3 }
     budget: { iterations: 10, wall: 9h, tokens: 7000000 }
+  # cut.best is a fresh worktree: the review's check:changed needs node_modules there.
+  deps: { kind: command, cwd: cut.best, heavy: true, replay: safe, argv: [vp, i] }
   review:
     kind: interrogate
     target: { workspace: cut.best, baseRef: friend/main }
@@ -1835,7 +1856,7 @@ nodes:
     mode: panel
     reviewers: [{ provider: codex, model: gpt-6.1-sol, effort: high }, $lead]
     lead: $lead
-    checks: [{ argv: [vp, run, check:changed], cwd: cut.best, heavy: true }]
+    checks: [{ argv: [vp, run, check:changed, friend/main], cwd: cut.best, heavy: true }]
     rounds: 3
   done:
     {
@@ -1856,7 +1877,8 @@ nodes:
   stuck: { kind: output, status: blocked, notify: true, value: {} }
 edges:
   [
-    "cut:target -> review",
+    "cut:target -> deps",
+    "deps -> review",
     "cut:no_gain -> no_gain",
     "cut:budget -> no_gain",
     "review:approve -> done",
@@ -1864,7 +1886,7 @@ edges:
   ]
 ```
 
-A origem mede `tokens` e `evals` contra si mesma, e é isso que gera `origin.evals.resultsPath`. O método de contagem (`chars/4` ou tokenizer) fica gravado, e `keep` recusa comparar métodos diferentes.
+A origem mede `tokens` e `evals` contra si mesma, sem baseline (o `coalesce` passa `--baseline` vazio, que a CLI lê como ausente), e é isso que gera `origin.evals.resultsPath`. O `build` roda `vp i` em cada worktree antes das medidas, que importam `effect`. O nó `deps` faz o mesmo na `cut.best`, uma worktree nova, antes do `check:changed` da revisão. O método de contagem (`chars/4` ou tokenizer) fica gravado, e `keep` recusa comparar métodos diferentes.
 
 ### 11.4 Qualidade a partir das correções do Israel
 
@@ -1872,6 +1894,9 @@ A origem mede `tokens` e `evals` contra si mesma, e é isso que gera `origin.eva
 schema: t3.workflow/v1
 id: corrections-quality
 title: Correções viram enforcement estrutural
+description: >-
+  Pendente: a tarefa do host scripts/friend/wf/extract-corrections.ts ainda não existe, então o
+  primeiro passo falha. Não ative até ela entrar.
 home: { project: t3code }
 triggers:
   [
@@ -1954,7 +1979,14 @@ nodes:
             lead: $lead,
             leaf: $sol,
             workspace: { project: t3code, base: friend/main },
-            finalChecks: [{ argv: [vp, run, check:changed], cwd: build.integration, heavy: true }],
+            finalChecks:
+              [
+                {
+                  argv: [vp, run, check:changed, friend/main],
+                  cwd: build.integration,
+                  heavy: true,
+                },
+              ],
             reworkCap: 2,
             maxLeaves: 6,
             maxParallel: 2,

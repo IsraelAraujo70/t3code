@@ -322,6 +322,69 @@ small script to the workbench page that answers VS Code's two color-scheme queri
 `t3-color-scheme` URL parameter, and the panel posts each later change to the frame, without a
 reload ([`colorScheme.ts`](apps/server/src/bots/vscode/colorScheme.ts)).
 
+## Workflows
+
+Workflows run repeatable routines on the bots host: command steps, agent turns, gates and blocks
+(hillclimb, arena, graph, interrogate) wired as a graph in a YAML definition. The engine lives in
+[`apps/server/src/bots/workflows/`](apps/server/src/bots/workflows/), the schema and compiler in
+`packages/contracts/src/workflows.ts` and `packages/shared/src/workflows/`, the screens in
+`apps/web/src/bots/workflows/` and `apps/mobile/src/bots/workflows/`. Design and its reasons:
+[`docs/friend/workflows-design.md`](docs/friend/workflows-design.md).
+
+On the host, under the T3 home (`~/.t3`):
+
+- `workflows/definitions/` is a git repository with one `<id>.workflow.yaml` per workflow. Every save
+  is a commit; the server ingests it at startup and picks up hand edits. Library templates ship in
+  [`apps/server/src/bots/workflows/library/`](apps/server/src/bots/workflows/library/).
+- `userdata/bots.sqlite` holds each run's journal (`workflow_facts`) and the run list (`workflow_runs`).
+- `workflows/runs/<runId>/` holds the receipts of each command unit (`started.json`, `exit.json`),
+  the step directories, build artifacts, and the run's worktrees until `retain` lets them go.
+
+The host needs `T3CODE_BOTS_HOST=1`, a user systemd (each command runs in a `systemd-run --user` unit
+that outlives a server restart), the projects a definition names registered by title, and an enabled
+Claude and Codex instance (the first enabled one, or `T3CODE_WORKFLOW_CLAUDE_INSTANCE` and
+`T3CODE_WORKFLOW_CODEX_INSTANCE`). Steps marked `heavy` take heavy.sh's lock
+(`T3CODE_WORKFLOW_HEAVY_LOCK`, default `~/.cache/t3-testdata/heavy.lock`), and agent steps are told to
+run heavy commands through `T3CODE_WORKFLOW_HEAVY_SH` (default `~/.cache/t3-testdata/heavy.sh`); both
+must use the same lock. Steps that open a pull
+request push to the project's `origin` and call `gh`, so `gh` must be logged in.
+
+Steps run on the host, not in a container: the RSI routines need the `:99` display, the host MCP
+servers and the provider homes. The guard is the owner's gate. Before a command whose argv deploys,
+restarts, merges into `friend/main`, force pushes or writes `~/.t3/userdata/settings.json`, the run
+waits for a decision that only a user session makes (`bots.workflows.gate.decide`, which needs
+`orchestration:operate`); no MCP tool and no bot decides a gate. The gate reads only command argv,
+so an agent with a shell can go around it, a risk the owner accepted. The engine itself only pushes
+`wf/…` branches, without force, and opens draft pull requests. Merging into `friend/main` is always
+a handoff.
+
+A step's agent turn is an ordinary thread with id `wf:<runId>:<keyHash>`
+([`workflowThreads.ts`](packages/contracts/src/workflowThreads.ts)). These threads stay out of the
+sidebar, search, the command palette, the archive and per-thread notifications; they open from the
+run view or by direct link.
+
+## Using workflows
+
+Open Workflows from the Bots block of the sidebar (web and desktop) or from the Workflows row of the
+Android Bots tab. It lists the bots host's workflows with their last run.
+
+- **Create one.** "From template" copies a ready routine under a new name; "New workflow" starts
+  blank. A new workflow starts turned off.
+- **Run it.** Turn it on, then press "Run now" and fill in the parameters, or keep the defaults.
+  While it is on, its triggers (a schedule, a new upstream tag) start runs by themselves.
+- **Follow a run.** The run page shows each step with its status, cost and the thread its agent
+  worked in. A failed step can be retried from there.
+- **Approve a gate.** A run that needs you stops at a gate and shows the question with its options
+  on the run page; Android also sends a notification. Pick an option and the run continues on that
+  path. Only you decide gates, never a bot.
+- **Read the result.** A run ends ready for review (with a draft pull request), with no gain,
+  blocked, or failed. Merging into `friend/main` stays your step.
+
+Each workflow is a file in `~/.t3/workflows/definitions` on the bots host. Saving in the editor
+commits it there, and a hand edit of the file shows up in the app. Two templates are not ready to run
+unattended yet, "Hillclimb de throughput no argo35" and "Correções viram enforcement estrutural";
+their description says what is missing.
+
 ## State and rollback
 
 Bot data lives in `bots.sqlite` next to the upstream database in the T3 userdata directory. The fork
