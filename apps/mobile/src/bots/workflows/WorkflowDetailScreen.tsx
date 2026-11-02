@@ -130,19 +130,16 @@ function DetailContent({
                           disabled={pending || !canEnable}
                           onValueChange={async (enabled) => {
                             setPending(true);
-                            try {
-                              await enable({
-                                environmentId,
-                                input: {
-                                  workflowId,
-                                  triggerId: trigger.id,
-                                  enabled,
-                                  clientRequestId: Crypto.randomUUID(),
-                                },
-                              });
-                            } finally {
-                              setPending(false);
-                            }
+                            await enable({
+                              environmentId,
+                              input: {
+                                workflowId,
+                                triggerId: trigger.id,
+                                enabled,
+                                clientRequestId: Crypto.randomUUID(),
+                              },
+                            });
+                            setPending(false);
                           }}
                         />
                       )}

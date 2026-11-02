@@ -65,6 +65,8 @@ describe("workflows RPCs", () => {
       WORKFLOWS_WS_METHODS.workflowsRunGet,
       WORKFLOWS_WS_METHODS.workflowsRunSubscribe,
       WORKFLOWS_WS_METHODS.workflowsRunStep,
+      WORKFLOWS_WS_METHODS.workflowsRunTrigger,
+      WORKFLOWS_WS_METHODS.workflowsTriggerSample,
       WORKFLOWS_WS_METHODS.workflowsMetrics,
       WORKFLOWS_WS_METHODS.workflowsLedger,
     ]);
