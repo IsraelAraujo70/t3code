@@ -772,9 +772,8 @@ it.effect("ignores unrelated workflow facts for a queued subscriber", () =>
           },
         },
       ]);
-      const chunk = yield* Queue.take(deltas).pipe(
-        Effect.repeat({ until: (delta) => delta.summary.status === "skipped" }),
-      );
+      // The very next delta is the skip: the 50 unrelated facts sent nothing.
+      const chunk = yield* Queue.take(deltas);
       yield* Fiber.join(subscriber);
       assert.equal(chunk.summary.status, "skipped");
       assert.equal(reads.facts, 1);
