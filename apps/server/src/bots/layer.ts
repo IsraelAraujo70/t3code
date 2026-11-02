@@ -42,17 +42,19 @@ import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
 import * as Journal from "./workflows/Journal.ts";
 import { layer as WorkflowTriggersLayer } from "./workflows/triggers/WorkflowTriggers.ts";
 
-/**
- * Workflows: definitions repository, catalog and hand-edit watcher (bots host only). Their tables
- * live in bots.sqlite, so BotsDb is provided here: the server's own SqlClient must never reach them.
- */
-export const layerWorkflows = Layer.mergeAll(
-  WorkflowCatalogLayer,
-  WatcherLayer,
-  WorkflowTriggersLayer,
-).pipe(
+/** Definitions, catalog and journal; the engine joins here when it is registered. */
+const layerWorkflowsCore = WorkflowCatalogLayer.pipe(
   Layer.provideMerge(WorkflowDefinitions.layer),
   Layer.provideMerge(Journal.layerFromDb),
+);
+
+/**
+ * Workflows on the bots host: the core above, with the hand-edit watcher and the trigger sources
+ * on top of it, so they see the engine. Their tables live in bots.sqlite, so BotsDb is provided
+ * here: the server's own SqlClient must never reach them.
+ */
+export const layerWorkflows = Layer.mergeAll(WatcherLayer, WorkflowTriggersLayer).pipe(
+  Layer.provideMerge(layerWorkflowsCore),
   Layer.provide(BotsDb.layer),
 );
 const workflowsNotHost = () =>
