@@ -4,6 +4,8 @@
  * Design: docs/friend/workflows-design.md §7.3.
  */
 import type { WorkflowDefinition } from "@t3tools/contracts";
+import { formatEdge, parseEdge } from "@t3tools/shared/workflows";
+import * as Result from "effect/Result";
 
 export interface MergeResult {
   readonly merged: WorkflowDefinition;
@@ -28,9 +30,6 @@ export interface WorkflowMergeApi {
     theirs: WorkflowDefinition,
   ) => MergeResult;
 }
-
-import { formatEdge, parseEdge } from "@t3tools/shared/workflows";
-import * as Result from "effect/Result";
 
 type Item = Record<string, unknown>;
 const record = (value: unknown): Item =>
