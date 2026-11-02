@@ -7,8 +7,10 @@ import {
   WorkflowId,
   WorkflowDocRevision,
   WorkflowRunId,
+  WorkflowRunView,
   WorkflowsError,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -23,7 +25,15 @@ import { liveThreadsLayer } from "../../../mcp/McpToolAccess.testkit.ts";
 import { WorkflowToolkit } from "./tools.ts";
 import { layer } from "./handlers.ts";
 
-const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (thread: string, isBot = true) {
+import { WorkflowEngine } from "../WorkflowEngine.ts";
+
+const decodeView = Schema.decodeSync(WorkflowRunView);
+
+const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
+  thread: string,
+  isBot = true,
+  canManageBots = false,
+) {
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
   const record = (value: unknown) => Ref.update(calls, (values) => [...values, value]);
   const scope: Invocation.McpInvocationScope = {
@@ -39,6 +49,49 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (thread: string,
     issuedAt: 0,
   };
   const dependencies = Layer.mergeAll(
+    Layer.mock(WorkflowEngine)({
+      isStepThread: (id) => id.startsWith("wf:"),
+      start: (request) =>
+        record(request).pipe(Effect.as({ runId: WorkflowRunId.make("wfr_0123456789abcdef0123") })),
+      runView: () =>
+        Effect.succeed(
+          decodeView({
+            summary: {
+              runId: "wfr_0123456789abcdef0123",
+              workflowId: "example",
+              title: "Example",
+              status: "queued",
+              hash: null,
+              commit: null,
+              pausedFor: null,
+              skipReason: null,
+              trigger: { kind: "bot", label: "Test" },
+              startedAt: "2026-01-01T00:00:00.000Z",
+              endedAt: null,
+              outputStatus: null,
+              stepsUsed: 0,
+              reservedTokens: 0,
+              openGates: 0,
+              pullRequest: null,
+              cost: {
+                billable: 0,
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                usage: "unavailable",
+                usdEstimate: null,
+              },
+            },
+            definition: null,
+            seq: 0,
+            nextStepsCursor: null,
+            blocks: [],
+            steps: [],
+            gates: [],
+          }),
+        ),
+      gateDecide: () => Effect.die("MCP must not decide gates"),
+    }),
     liveThreadsLayer,
     NodeCrypto.layer,
     Layer.succeed(Invocation.McpInvocationContext, scope),
@@ -55,7 +108,7 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (thread: string,
                   homeGeneration: 1,
                   sectionId: null,
                   position: 0,
-                  canManageBots: false,
+                  canManageBots,
                   rotation: "daily" as const,
                   createdAt: "2026-01-01T00:00:00.000Z",
                   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -112,7 +165,13 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (thread: string,
     calls,
     save: (dryRun = false) =>
       run(toolkit.handle("workflow_save", { source: "source", message: "Save", dryRun })),
-    run: () => run(toolkit.handle("workflow_run", { workflowId: WorkflowId.make("example") })),
+    run: () =>
+      run(
+        toolkit.handle("workflow_run", {
+          workflowId: WorkflowId.make("example"),
+          clientRequestId: "test-run",
+        }),
+      ),
     cancel: () =>
       run(
         toolkit.handle("workflow_run_cancel", {
@@ -161,5 +220,30 @@ it.effect("preserves author permissions and returns conflicts", () =>
       { kind: "bot", name: "Test", canManageBots: false },
     ]);
     expect(yield* t.enable()).toMatchObject({ code: "capability_denied" });
+  }),
+);
+
+it.effect("starts bot runs with their occurrence and refuses unprivileged mutations", () =>
+  Effect.gen(function* () {
+    const allowed = yield* setup("bot:test:1", true, true);
+    expect(yield* allowed.run()).toMatchObject({ status: "queued" });
+    expect(yield* Ref.get(allowed.calls)).toEqual([
+      "botForThread",
+      {
+        workflowId: "example",
+        triggerId: "bot",
+        kind: "bot",
+        occurrence: "bot:b_test:test-run",
+        label: "Run by Test (bot)",
+        params: {},
+        payload: null,
+        causalDepth: 0,
+        parent: null,
+      },
+    ]);
+    const denied = yield* setup("bot:test:1");
+    expect(yield* denied.run()).toMatchObject({ code: "capability_denied" });
+    expect(yield* denied.cancel()).toMatchObject({ code: "capability_denied" });
+    expect(yield* Ref.get(denied.calls)).toEqual(["botForThread", "botForThread"]);
   }),
 );

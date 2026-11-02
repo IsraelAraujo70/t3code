@@ -1,3 +1,6 @@
+import { WorkflowEngine, make as makeEngine } from "../WorkflowEngine.ts";
+import { makeFakeInterpreter, layerCatalog } from "../testkit/fakeEngine.ts";
+import { compile } from "../testkit/decideHarness.ts";
 import { handlers } from "./handlers.ts";
 import { WORKFLOWS_WS_METHODS as M } from "@t3tools/contracts";
 // @effect-diagnostics schemaSyncInEffect:off - Test fixtures use fixed valid identifiers.
@@ -69,9 +72,48 @@ it.live("saves owner definitions and streams their committed document", () =>
           Stream.runCollect,
         ))[0]?.workflowId,
       ).toBe(id);
-      expect(yield* rpc[M.workflowsRunStart]().pipe(Effect.flip)).toMatchObject({
+      expect(
+        yield* rpc[M.workflowsRunStart]({ workflowId: id, clientRequestId: "missing" }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({
         code: "unavailable",
       });
+    }),
+  ),
+);
+
+it.live("starts and reads a run through the engine", () =>
+  withDefinitions((definitions) =>
+    Effect.gen(function* () {
+      const { layer: interpreter } = yield* makeFakeInterpreter({});
+      yield* Effect.gen(function* () {
+        const engine = yield* makeEngine({ runsDir: "/runs" });
+        const rpc = yield* handlers.pipe(
+          Effect.provideService(WorkflowDefinitions, definitions),
+          Effect.provideService(WorkflowEngine, engine),
+        );
+        const summary = yield* rpc[M.workflowsRunStart]({
+          workflowId: decodeId("demo"),
+          clientRequestId: "rpc-start",
+        });
+        expect((yield* rpc[M.workflowsRunGet]({ runId: summary.runId })).summary.runId).toBe(
+          summary.runId,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            interpreter,
+            layerCatalog([
+              compile({
+                nodes: { done: { kind: "output", status: "ready_for_review", value: {} } },
+                edges: [],
+              }),
+            ]),
+          ),
+        ),
+      );
     }),
   ),
 );
