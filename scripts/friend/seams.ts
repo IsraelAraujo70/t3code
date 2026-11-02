@@ -59,7 +59,11 @@ export const SEAMS: readonly Seam[] = [
     markers: 5,
     why: "sidebarBotsLayout client setting; voiceReaderVoice and voiceLanguage server settings",
   },
-  { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
+  {
+    file: "packages/contracts/src/index.ts",
+    markers: 1,
+    why: "export bots, guest and workflow step thread contracts",
+  },
   {
     file: "packages/contracts/src/environment.ts",
     markers: 4,
@@ -546,6 +550,26 @@ export const SEAMS: readonly Seam[] = [
     markers: 1,
     why: "an archived earlier bot generation opens instead of redirecting home",
   },
+  {
+    file: "packages/contracts/src/orchestrationV2.ts",
+    markers: 2,
+    why: "workflow step threads (wf:) are never listed, like subagents and side chats",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/ThreadSearch.ts",
+    markers: 6,
+    why: "workflow step threads (wf:) are never search results",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+    markers: 2,
+    why: "t3_thread_list with subagents still leaves out workflow step threads",
+  },
+  {
+    file: "packages/client-runtime/src/state/archivedThreads.ts",
+    markers: 1,
+    why: "Settings → Archived leaves out workflow step threads",
+  },
 ];
 
 /** Paths the fork owns outright; markers there are allowed and not counted. */
@@ -560,6 +584,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
   "packages/contracts/src/kanban.ts",
+  "packages/contracts/src/workflowThreads.",
   "packages/contracts/src/guest.ts",
   "apps/bia/",
   "packages/client-runtime/src/state/bots.ts",
@@ -570,6 +595,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/kanbanBoard.",
   "packages/client-runtime/src/kanbanDisplay.",
   "scripts/friend/",
+  "docs/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",
 ];

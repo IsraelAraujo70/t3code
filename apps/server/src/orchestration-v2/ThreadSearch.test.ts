@@ -389,6 +389,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
+          thread(ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef"), project, {
+            title: "ThreadSearchService question",
+          }),
+          message(
+            ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef"),
+            "workflow",
+            "user",
+            "ThreadSearchService renamed",
+          ),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
           message(sideChat, "side-chat", "user", "Why rename ThreadSearchService?"),
         ],
@@ -816,6 +825,10 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
       yield* Effect.forEach(
         [
           thread(id("old"), project, { title: "Kestrel nest", settledAt: old }),
+          thread(ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef"), project, {
+            title: "Kestrel nest",
+            settledAt: old,
+          }),
           thread(id("recent"), project, { title: "Kestrel nest", settledAt: at(50) }),
           thread(id("open"), project, { title: "Kestrel nest" }),
           thread(id("child"), project, { title: "Kestrel nest", subagentOf: id("old") }),
@@ -827,7 +840,12 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
         { discard: true },
       );
       const before = DateTime.formatIso(at(30));
-      const messageThreadIds = [id("new-note"), id("note"), id("old")];
+      const messageThreadIds = [
+        id("new-note"),
+        id("note"),
+        id("old"),
+        ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef"),
+      ];
       assert.sameMembers(
         [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],
@@ -1037,8 +1055,10 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       const midWord = ThreadId.make("thread:mid-word");
       const messageOnly = ThreadId.make("thread:message-only");
       const elsewhere = ThreadId.make("thread:elsewhere");
+      const workflowStep = ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef");
       yield* Effect.forEach(
         [
+          thread(workflowStep, project, { title: "Auth" }),
           thread(midWord, project, { title: "Fix oauth redirect" }),
           thread(wordStart, project, { title: "Clean up auth tokens" }),
           thread(messageOnly, project, { title: "Unrelated" }),

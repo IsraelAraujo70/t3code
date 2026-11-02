@@ -6,6 +6,7 @@ import {
   threadCardStatus,
   workspaceOf,
   type ThreadCardStatus,
+  isKanbanLinkableThread,
 } from "@t3tools/client-runtime/kanban-board";
 import { resolveChangeRequestLinkTarget } from "@t3tools/client-runtime/change-request-links";
 import type {
@@ -226,7 +227,7 @@ function ThreadLinks(props: {
       (shell) =>
         shell.projectId === ticket.projectId &&
         !ticket.threadIds.includes(shell.id) &&
-        !shell.id.startsWith("bot:"),
+        isKanbanLinkableThread(shell.id),
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 30);

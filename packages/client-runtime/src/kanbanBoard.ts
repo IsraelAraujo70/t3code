@@ -6,6 +6,7 @@
 import type { BotThreadShell } from "./botDirectory.ts";
 import { isThreadWorking } from "./state/threadInbox.ts";
 import {
+  isWorkflowStepThreadId,
   kanbanLocalStateOf,
   LINEAR_STATE_TYPE_ORDER,
   LOCAL_KANBAN_WORKSPACE_ID,
@@ -116,3 +117,8 @@ export function threadCardStatus(shell: BotThreadShell): ThreadCardStatus {
   return "settled";
 }
 export * from "./kanbanView.ts";
+
+/** Whether a thread can be linked to a Kanban ticket. */
+export function isKanbanLinkableThread(threadId: string): boolean {
+  return !threadId.startsWith("bot:") && !isWorkflowStepThreadId(threadId);
+}
