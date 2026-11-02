@@ -570,6 +570,21 @@ export const SEAMS: readonly Seam[] = [
     markers: 1,
     why: "Settings → Archived leaves out workflow step threads",
   },
+  {
+    file: "apps/server/src/orchestration-v2/ShellStream.ts",
+    markers: 4,
+    why: "idle workflow step threads leave trimmed shell snapshots, since no list shows them",
+  },
+  {
+    file: "apps/server/src/pullRequest/linkedThreads.ts",
+    markers: 2,
+    why: "a pull request's linked threads leave out workflow step threads",
+  },
+  {
+    file: "apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx",
+    markers: 2,
+    why: "the pull request's Link to thread picker leaves out workflow step threads",
+  },
 ];
 
 /** Paths the fork owns outright; markers there are allowed and not counted. */

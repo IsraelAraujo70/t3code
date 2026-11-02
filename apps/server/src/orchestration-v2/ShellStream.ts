@@ -15,6 +15,7 @@ import {
   isListedThreadLineage,
   isLiveSubagentShell,
   isOlderSettledThreadShell,
+  isWorkflowStepThreadId, // Fork (friend): idle workflow steps leave trimmed snapshots.
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
 } from "@t3tools/contracts";
@@ -127,13 +128,14 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
 }
 
 function hiddenChildAncestorIds(
-  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage">>,
+  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id" | "lineage">>,
 ) {
   const ancestorIds = new Set<string>();
   for (const thread of threads) {
     if (isListedThreadLineage(thread.lineage)) continue;
     if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
-    ancestorIds.add(thread.lineage.rootThreadId);
+    // Fork (friend): an unlisted top-level workflow step is its own root, not its own ancestor.
+    if (thread.lineage.rootThreadId !== thread.id) ancestorIds.add(thread.lineage.rootThreadId);
   }
   return ancestorIds;
 }
@@ -166,7 +168,8 @@ function omitOlderSettledShellsWith(
   const ancestorIds = hiddenChildAncestorIds(input.threads);
   const threads = input.threads.filter(
     (thread) =>
-      !isOlderSettledThreadShell(thread, beforeMs) ||
+      // Fork (friend): no list shows a workflow step, so like an older row it stays only while live.
+      !(isOlderSettledThreadShell(thread, beforeMs) || isWorkflowStepThreadId(thread.id)) ||
       thread.pinnedAt != null ||
       (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
       isLiveSubagentShell(thread) ||
@@ -275,8 +278,9 @@ function shellSubscriberThreadIds(
         ? [entry.id]
         : []
       : !options.omitOlderSettled ||
-          beforeMs === undefined ||
-          !isOlderSettledThreadShell(entry, beforeMs) ||
+          // Fork (friend): a workflow step stays only while it may be live, cut or no cut.
+          (!isWorkflowStepThreadId(entry.id) &&
+            (beforeMs === undefined || !isOlderSettledThreadShell(entry, beforeMs))) ||
           entry.pinnedAt != null ||
           entry.snoozedUntil != null ||
           entry.mayBeLive ||

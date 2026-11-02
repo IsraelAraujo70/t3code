@@ -9,7 +9,7 @@ import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
-  "finds active and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
+  "finds active and archived threads for exactly one pull request, excluding deleted, dismissed, side chat and workflow step links",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -61,6 +61,13 @@ it.effect(
           repository: "acme/web",
           number: 7,
           source: "manual",
+        },
+        {
+          id: "wf:wfr_0123456789abcdef0123:0123456789abcdef",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          source: "created",
         },
         {
           id: "dismissed",
