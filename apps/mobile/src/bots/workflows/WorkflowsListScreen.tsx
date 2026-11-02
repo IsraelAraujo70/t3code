@@ -1,16 +1,34 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import * as Schema from "effect/Schema";
 import { EnvironmentId } from "@t3tools/contracts";
-import { runStatusLabel } from "@t3tools/client-runtime/workflows";
-import { Pressable, ScrollView, View } from "react-native";
+import { runStatusLabel, runStatusTone } from "@t3tools/client-runtime/workflows";
+import { ScrollView, View } from "react-native";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Chip } from "../../components/ui/Chip";
+import { ListSection } from "../../components/ui/ListSection";
+import { Notice } from "../../components/ui/Notice";
+import { WorkflowStatus } from "./WorkflowStatus";
 import { relativeTime } from "../../lib/time";
 import { useWorkflowRuns, useWorkflowsSnapshot } from "./state";
 
+const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
+
 /** Workflow directory and latest runs on the selected host. */
 export function WorkflowsListScreen({ route }: StaticScreenProps<{ environmentId: string }>) {
-  const { environmentId } = route.params;
-  const env = EnvironmentId.make(environmentId);
+  const env = decodeEnvironmentId(route.params.environmentId);
+  return env._tag === "Some" ? (
+    <ListContent environmentId={env.value} />
+  ) : (
+    <View className="flex-1 bg-screen">
+      <AppBar title="Workflows" />
+      <Notice tone="danger" message="Invalid environment link." />
+    </View>
+  );
+}
+
+function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
+  const env = environmentId;
   const query = useWorkflowsSnapshot(env);
   const runs = useWorkflowRuns(env, { limit: 20 });
   const navigation = useNavigation();
@@ -19,60 +37,71 @@ export function WorkflowsListScreen({ route }: StaticScreenProps<{ environmentId
       <AppBar title="Workflows" />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
         {query.error ? (
-          <Text>{query.error}</Text>
+          <Notice tone="danger" message={query.error} />
         ) : !query.data ? (
           <Text>Loading workflows…</Text>
         ) : query.data.workflows.length === 0 ? (
           <Text>No workflows yet.</Text>
         ) : (
           query.data.workflows.map((workflow) => (
-            <Pressable
-              key={workflow.workflowId}
-              onPress={() =>
-                navigation.navigate("BotsWorkflow", {
-                  environmentId,
-                  workflowId: workflow.workflowId,
-                })
-              }
-            >
-              <Text>{workflow.title}</Text>
-              <Text>
-                {workflow.enabled ? "Enabled" : "Disabled"} ·{" "}
-                {workflow.suspended
-                  ? "Suspended"
-                  : workflow.dirty
-                    ? "Dirty"
-                    : workflow.valid
-                      ? "Valid"
-                      : "Invalid"}{" "}
-                · {workflow.lastRun?.openGates ?? 0} open gates
-              </Text>
-              {workflow.triggers.map((trigger) => (
-                <Text key={trigger.id}>{trigger.label}</Text>
-              ))}
-              {workflow.lastRun && (
+            <ListSection key={workflow.workflowId} title={workflow.title}>
+              <View className="gap-2 p-3">
+                <Chip
+                  label="Open workflow"
+                  onPress={() =>
+                    navigation.navigate("BotsWorkflow", {
+                      environmentId,
+                      workflowId: workflow.workflowId,
+                    })
+                  }
+                />
                 <Text>
-                  {runStatusLabel(workflow.lastRun.status)} ·{" "}
-                  {relativeTime(workflow.lastRun.startedAt)}
+                  {workflow.enabled ? "Enabled" : "Disabled"} ·{" "}
+                  {workflow.suspended
+                    ? "Suspended"
+                    : workflow.dirty
+                      ? "Dirty"
+                      : workflow.valid
+                        ? "Valid"
+                        : "Invalid"}{" "}
+                  · {workflow.lastRun?.openGates ?? 0} open gates
                 </Text>
-              )}
-            </Pressable>
+                {workflow.triggers.map((trigger) => (
+                  <Text key={trigger.id}>{trigger.label}</Text>
+                ))}
+                {workflow.lastRun && (
+                  <View className="gap-1">
+                    <WorkflowStatus
+                      label={runStatusLabel(workflow.lastRun.status)}
+                      tone={runStatusTone(workflow.lastRun.status)}
+                    />
+                    <Text>{relativeTime(workflow.lastRun.startedAt)}</Text>
+                  </View>
+                )}
+              </View>
+            </ListSection>
           ))
         )}
-        <Text>Recent runs</Text>
-        {runs.error && <Text>{runs.error}</Text>}
-        {runs.data?.runs.map((run) => (
-          <Pressable
-            key={run.runId}
-            onPress={() =>
-              navigation.navigate("BotsWorkflowRun", { environmentId, runId: run.runId })
-            }
-          >
-            <Text>
-              {run.title} · {runStatusLabel(run.status)} · {relativeTime(run.startedAt)}
-            </Text>
-          </Pressable>
-        ))}
+        <ListSection title="Recent runs">
+          <View className="gap-3 p-3">
+            {runs.error && <Notice tone="danger" message={runs.error} />}
+            {runs.data?.runs.map((run) => (
+              <View key={run.runId} className="gap-1">
+                <Chip
+                  label={run.title}
+                  onPress={() =>
+                    navigation.navigate("BotsWorkflowRun", { environmentId, runId: run.runId })
+                  }
+                />
+                <WorkflowStatus
+                  label={runStatusLabel(run.status)}
+                  tone={runStatusTone(run.status)}
+                />
+                <Text>{relativeTime(run.startedAt)}</Text>
+              </View>
+            ))}
+          </View>
+        </ListSection>
       </ScrollView>
     </View>
   );
