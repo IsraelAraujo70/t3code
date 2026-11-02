@@ -8,6 +8,8 @@ export interface WorkflowStatus {
   readonly suspended: boolean;
   /** Seq of the latest Toggled (0 before any), so an action can key itself to one activation. */
   readonly toggledSeq: number;
+  /** Triggers whose latest TriggerToggled turned them off; a trigger without one is on. */
+  readonly off: ReadonlySet<string>;
 }
 
 export const workflowStatus = (facts: ReadonlyArray<StoredFact>): WorkflowStatus => {
@@ -22,5 +24,6 @@ export const workflowStatus = (facts: ReadonlyArray<StoredFact>): WorkflowStatus
     if (fact._tag === "Suspended") suspended = true;
     if (fact._tag === "Unsuspended") suspended = false;
   }
-  return { enabled, suspended, toggledSeq };
+  // Contract stub (triggers n0): n3a folds TriggerToggled into `off`.
+  return { enabled, suspended, toggledSeq, off: new Set() };
 };

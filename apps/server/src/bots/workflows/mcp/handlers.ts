@@ -128,6 +128,8 @@ const handlers = (
         valid: w.valid,
         enabled: w.enabled,
         triggers: w.triggers.map((t) => t.label),
+        // Contract stub (triggers n0): n7 fills it from definitions.botEntries.
+        bot: null,
         lastRun: w.lastRun ? { runId: w.lastRun.runId, status: w.lastRun.status } : null,
       }));
       if (!input.includeTemplates) return { workflows };

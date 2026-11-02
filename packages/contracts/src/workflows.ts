@@ -459,12 +459,48 @@ export type WorkflowNodeKind = WorkflowNode["kind"];
 const WORKFLOW_BLOCK_KINDS = ["hillclimb", "arena", "graph", "interrogate"] as const;
 export type WorkflowBlockKind = (typeof WORKFLOW_BLOCK_KINDS)[number];
 
+/** The canvas node's text; the trigger id when absent. */
+const TriggerTitle = { title: Schema.optional(Schema.String) };
+/** Event triggers map their payload to the workflow params: param name → template over `trigger`. */
 const TriggerCommon = {
-  id: WorkflowNodeKey,
-  /** Param name → template over `trigger`. */
+  ...TriggerTitle,
   params: Schema.optional(Schema.Record(Schema.String, WorkflowTemplate)),
 };
+// Same pattern as `BotId` in bots.ts, which this module cannot import (bots.ts imports the RPCs).
+const TriggerBotId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));
+
+/**
+ * A run asked for by the owner in a client (Run now). Its form is the workflow's `params`. Owner
+ * runs ignore the workflow's and the trigger's switches; a suspension still blocks them.
+ */
+export const WorkflowManualTrigger = Schema.Struct({
+  kind: Schema.Literal("manual"),
+  ...TriggerTitle,
+});
+/**
+ * The workflow as a tool for bots: `workflow_list` shows `description` and the params, and
+ * `workflow_run` refuses a workflow without this trigger or a bot `bots` does not list.
+ */
+export const WorkflowBotTrigger = Schema.Struct({
+  kind: Schema.Literal("bot"),
+  ...TriggerTitle,
+  /** When a bot should run it, written for the bot. */
+  description: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_000)),
+  /** Bot ids allowed to run it; every bot when absent. */
+  bots: Schema.optional(Schema.Array(TriggerBotId).check(Schema.isMaxLength(32))),
+});
+/** Lets `call` nodes start this workflow; a call to a workflow without it does not compile. */
+export const WorkflowCallTrigger = Schema.Struct({
+  kind: Schema.Literal("call"),
+  ...TriggerTitle,
+  /** Workflow ids allowed to call it; every workflow when absent. */
+  from: Schema.optional(Schema.Array(WorkflowKey)),
+});
+
 export const WorkflowTrigger = Schema.Union([
+  WorkflowManualTrigger,
+  WorkflowBotTrigger,
+  WorkflowCallTrigger,
   Schema.Struct({
     ...TriggerCommon,
     kind: Schema.Literal("cron"),
@@ -512,7 +548,7 @@ export const WorkflowTrigger = Schema.Union([
   }),
 ]);
 export type WorkflowTrigger = typeof WorkflowTrigger.Type;
-// "Run now" in the UI and a bot's `workflow_run` are implicit manual triggers.
+export type WorkflowTriggerKind = WorkflowTrigger["kind"];
 
 export const WorkflowRunBudget = Schema.Struct({
   steps: PositiveInt,
@@ -562,7 +598,8 @@ export const WorkflowDefinition = Schema.Struct({
   /** Project of the step threads and the webhook tasks. */
   home: Schema.Struct({ project: Schema.String }),
   params: Schema.optional(Schema.Record(Schema.String, WorkflowParamSpec)),
-  triggers: Schema.optional(Schema.Array(WorkflowTrigger)),
+  /** Trigger id → trigger. Ids share the node namespace, so they also key `canvas.positions`. */
+  triggers: Schema.optional(Schema.Record(Schema.String, WorkflowTrigger)),
   /** Default `single`. */
   concurrency: Schema.optional(Schema.Literals(["single", "queue", "parallel"])),
   budget: WorkflowRunBudget,
@@ -746,7 +783,8 @@ export const WorkflowRunSummary = Schema.Struct({
   status: WorkflowRunStatus,
   pausedFor: Schema.NullOr(WorkflowPauseReason),
   skipReason: Schema.NullOr(WorkflowSkipReason),
-  trigger: Schema.Struct({ kind: Schema.String, label: Schema.String }),
+  /** `id` is the trigger that started the run, as the run's version names it. */
+  trigger: Schema.Struct({ id: Schema.String, kind: Schema.String, label: Schema.String }),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
   outputStatus: Schema.NullOr(Schema.String),

@@ -17,6 +17,7 @@ import {
   type WorkflowHistoryInput,
   type WorkflowHistoryPage,
   type WorkflowNode,
+  type WorkflowParamSpec,
   type WorkflowRestoreInput,
   type WorkflowSaveInput,
   type WorkflowSaveResult,
@@ -53,6 +54,16 @@ import { WorkflowRepo, layer as repoLayer } from "./WorkflowRepo.ts";
 import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
 
 /** Who writes. Commit author: `Owner`, `Owner (hand edit)` for ingestion, `<name> (bot)`. */
+/** A workflow as a tool for one bot (`workflow_list`'s `bot` entry, `workflow_run`'s check). */
+export interface BotEntry {
+  readonly workflowId: string;
+  readonly triggerId: string;
+  readonly description: string;
+  readonly params: Readonly<Record<string, WorkflowParamSpec>>;
+  /** A run would start now: the workflow and the trigger are on and it is not suspended. */
+  readonly on: boolean;
+}
+
 export type WorkflowAuthor =
   | { readonly kind: "user" }
   | { readonly kind: "bot"; readonly name: string; readonly canManageBots: boolean };
@@ -90,6 +101,8 @@ export class WorkflowDefinitions extends Context.Service<
       input: WorkflowSetEnabledInput,
       author: WorkflowAuthor,
     ) => Effect.Effect<WorkflowSummary, WorkflowsError>;
+    /** The workflows `botId` may run: valid HEADs with a `bot` trigger whose `bots` lists it or is absent. */
+    readonly botEntries: (botId: string) => Effect.Effect<ReadonlyArray<BotEntry>, WorkflowsError>;
     readonly delete: (
       input: WorkflowDeleteInput,
       author: WorkflowAuthor,
@@ -670,6 +683,8 @@ const make = Effect.gen(function* () {
     template,
     fromTemplate,
     setEnabled,
+    // Contract stub (triggers n0): n3c implements it.
+    botEntries: () => Effect.succeed([]),
     delete: remove,
     restore,
     history,

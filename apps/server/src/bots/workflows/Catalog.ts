@@ -19,6 +19,8 @@ export type CurrentVersion =
       readonly version: PinnedVersion;
       readonly enabled: boolean;
       readonly suspended: boolean;
+      /** Triggers switched off on their own (`WorkflowStatus.off`). */
+      readonly off: ReadonlySet<string>;
     }
   | { readonly _tag: "Invalid" }
   | { readonly _tag: "Missing" };

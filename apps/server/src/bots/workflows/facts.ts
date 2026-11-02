@@ -153,7 +153,14 @@ export const RunFact = Schema.TaggedUnion({
     hash: Text,
     title: Text,
     params: Schema.Record(Schema.String, Json),
-    trigger: Schema.Struct({ kind: Text, occurrence: Text, label: Text, payload: Json }),
+    /** `id` is the trigger the decider resolved; facts written before it existed read it as `kind`. */
+    trigger: Schema.Struct({
+      id: Schema.optional(Text),
+      kind: Text,
+      occurrence: Text,
+      label: Text,
+      payload: Json,
+    }),
     budget: Schema.Struct({
       steps: Schema.Number,
       wallMs: Schema.Number,
@@ -330,6 +337,8 @@ export const WorkflowFact = Schema.TaggedUnion({
   RunOutcome: { runId: Text, status: Text },
   /** Key `toggled:<clientRequestId>`. A workflow is off until its first Toggled. */
   Toggled: { enabled: Schema.Boolean, by: Text, at: Text },
+  /** Key `trigger-toggled:<triggerId>:<clientRequestId>`. A trigger is on until its first one. */
+  TriggerToggled: { triggerId: Text, enabled: Schema.Boolean, by: Text, at: Text },
   /** Key `suspended:<runId>`: the failed run that reached the fatigue limit. */
   Suspended: { reason: Schema.Literal("fatigue"), at: Text },
   /** Key `unsuspended:<clientRequestId>`. */
