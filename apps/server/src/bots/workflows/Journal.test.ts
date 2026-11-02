@@ -48,6 +48,7 @@ it.effect("finds orphan triggers and unresolved intents on ended runs", () =>
     const journal = yield* Journal;
     const trigger = {
       _tag: "TriggerFired",
+      runId: "wfr_00000000000000000001",
       triggerId: "manual",
       kind: "manual",
       occurrence: "occ",
