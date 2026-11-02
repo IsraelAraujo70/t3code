@@ -586,9 +586,11 @@ const make = Effect.gen(function* () {
         ? Option.getOrNull(yield* repo.show(input.workflowId, head.commit))
         : null;
       const compiled = source === null ? null : compileFile(input.workflowId, source);
+      const triggers =
+        compiled && Result.isSuccess(compiled) ? compiled.success.definition.triggers : undefined;
       const trigger =
-        compiled && Result.isSuccess(compiled)
-          ? compiled.success.definition.triggers?.[input.triggerId]
+        triggers && Object.hasOwn(triggers, input.triggerId)
+          ? triggers[input.triggerId]
           : undefined;
       if (!trigger)
         return yield* new WorkflowsError({
@@ -737,16 +739,13 @@ const make = Effect.gen(function* () {
     fromTemplate,
     setEnabled,
     botEntries: Effect.fn("WorkflowDefinitions.botEntries")(function* (botId: string) {
+      const fired = yield* lastFired;
       const entries: BotEntry[] = [];
       for (const id of [...(yield* repo.listIds)].sort()) {
-        const d = yield* document(id);
-        if (!d.valid || !d.headCommit) continue;
-        const source = Option.getOrNull(yield* repo.show(id, d.headCommit));
-        const compiled = source === null ? null : compileFile(id, source);
-        if (!compiled || Result.isFailure(compiled)) continue;
-        const definition = compiled.success.definition;
-        const current = yield* status(id);
-        for (const [triggerId, trigger] of Object.entries(definition.triggers ?? {})) {
+        const d = yield* document(id, fired);
+        // A dirty file is not the version that runs; only a committed, valid HEAD is offered.
+        if (!d.valid || d.dirty || d.definition === null) continue;
+        for (const [triggerId, trigger] of Object.entries(d.definition.triggers ?? {})) {
           if (
             trigger.kind !== "bot" ||
             (trigger.bots !== undefined && !trigger.bots.includes(botId))
@@ -756,8 +755,11 @@ const make = Effect.gen(function* () {
             workflowId: id,
             triggerId,
             description: trigger.description,
-            params: definition.params ?? {},
-            on: current.enabled && !current.suspended && !current.off.has(triggerId),
+            params: d.definition.params ?? {},
+            on:
+              d.enabled &&
+              !d.suspended &&
+              d.triggers.some((summary) => summary.id === triggerId && summary.enabled),
           });
         }
       }

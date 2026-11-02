@@ -752,6 +752,35 @@ it.live("switches individual triggers and exposes bot entries", () =>
       expect(
         (yield* definitions.document(id)).triggers.find((t) => t.id === "first")?.enabled,
       ).toBe(true);
+      yield* definitions.setEnabled(
+        decodeToggle({ workflowId: id, enabled: true, clientRequestId: "workflow-on" }),
+        { kind: "user" },
+      );
+      const on = yield* definitions.document(id);
+      expect(yield* definitions.botEntries("mine")).toEqual([
+        {
+          workflowId: id,
+          triggerId: "first",
+          description: "First",
+          params: on.definition?.params ?? {},
+          on: true,
+        },
+      ]);
+      if (!on.definition) throw new Error("Expected definition");
+      yield* definitions.save(
+        {
+          workflowId: id,
+          baseRevision: on.revision,
+          message: "Only another bot",
+          definition: {
+            ...on.definition,
+            triggers: { first: { kind: "bot", description: "First", bots: ["someone"] } },
+          },
+        },
+        { kind: "user" },
+      );
+      expect(yield* definitions.botEntries("mine")).toEqual([]);
+      expect(yield* definitions.botEntries("someone")).toMatchObject([{ triggerId: "first" }]);
     }),
   ),
 );
