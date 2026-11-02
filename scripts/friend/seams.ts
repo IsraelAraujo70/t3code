@@ -137,6 +137,11 @@ export const SEAMS: readonly Seam[] = [
     why: "export the kanban display helpers shared by the web and mobile boards",
   },
   {
+    file: "packages/client-runtime/package.json",
+    contains: '"./workflows"',
+    why: "export the workflows canvas, run rules and atoms shared by web and Android",
+  },
+  {
     file: "packages/shared/package.json",
     contains: '"./workflows"',
     why: "export the workflow compiler shared by the server, the canvas and Android",
@@ -576,6 +581,8 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/appSelfUpdate.",
   "packages/client-runtime/src/kanbanBoard.",
   "packages/client-runtime/src/kanbanDisplay.",
+  "packages/client-runtime/src/workflows.",
+  "apps/web/src/routes/_chat.workflows",
   "scripts/friend/",
   "docs/friend/",
   ".github/workflows/friend-fork.yml",

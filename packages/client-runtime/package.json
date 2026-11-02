@@ -27,6 +27,10 @@
       "types": "./src/kanbanDisplay.ts",
       "default": "./src/kanbanDisplay.ts"
     },
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
     "./app-self-update": {
       "types": "./src/appSelfUpdate.ts",
       "default": "./src/appSelfUpdate.ts"
