@@ -181,6 +181,19 @@ const make = Effect.gen(function* () {
       ? Result.fail([parsed.failure])
       : compileWorkflow(parsed.success, { ...DEFAULT_HOST_LIMITS, callGraph });
   };
+  /** A file compiles only under its own name: `<id>.workflow.yaml` must say `id: <id>`. */
+  const compileFile = (id: string, text: string) => {
+    const result = compile({ source: text });
+    return Result.isSuccess(result) && result.success.definition.id !== id
+      ? Result.fail([
+          {
+            path: "id",
+            code: "schema" as const,
+            message: `id must match the file name ${id}.workflow.yaml`,
+          },
+        ])
+      : result;
+  };
   const validate = Effect.fn("WorkflowDefinitions.validate")(function* (
     input: WorkflowValidateInput,
   ) {
@@ -199,7 +212,7 @@ const make = Effect.gen(function* () {
     if (Option.isNone(file))
       return yield* new WorkflowsError({ code: "not-found", message: "Workflow not found." });
     const head = Option.getOrNull(yield* repo.head(id));
-    const result = compile({ source: file.value.text });
+    const result = compileFile(id, file.value.text);
     return {
       workflowId: workflowId(id),
       source: file.value.text,
@@ -262,40 +275,52 @@ const make = Effect.gen(function* () {
   const ingestInternal = Effect.fn("WorkflowDefinitions.ingestInternal")(function* (
     id: string | undefined,
   ) {
+    yield* refreshGraph();
+    const indexed = new Map(
+      (yield* store(Store.listIndex())).map((row) => [row.workflow_id, row] as const),
+    );
     const ids = id
       ? [id]
-      : [
-          ...new Set([
-            ...(yield* repo.listIds),
-            ...(yield* repo.dirtyIds),
-            ...(yield* store(Store.listIndex())).map((r) => r.workflow_id),
-          ]),
-        ];
+      : [...new Set([...(yield* repo.listIds), ...(yield* repo.dirtyIds), ...indexed.keys()])];
     for (const current of ids) {
       const file = yield* repo.read(current);
       const head = Option.getOrNull(yield* repo.head(current));
       if (Option.isNone(file)) {
-        if (head) {
-          const commit = yield* repo.commit({
+        // Removed by hand (still on HEAD), or a removal committed before a crash finished it.
+        const lastWithFile = head
+          ? head.commit
+          : (yield* repo.deleted).find((entry) => entry.workflowId === current)?.commit;
+        if (head)
+          yield* repo.commit({
             workflowId: current,
             author: "Owner (hand edit)",
             message: "Hand edit",
           });
-          yield* toggle(current, false, "Owner (hand edit)", `toggled:deleted:${commit}`);
+        if (lastWithFile !== undefined && (head || indexed.has(current))) {
+          yield* toggle(current, false, "Owner (hand edit)", `toggled:deleted:${lastWithFile}`);
           yield* store(Store.deleteIndex(current));
           yield* PubSub.publish(bus, current);
         }
         continue;
       }
       const dirty = head?.revision !== file.value.revision;
-      if (dirty && Result.isSuccess(compile({ source: file.value.text })))
+      if (dirty && Result.isSuccess(compileFile(current, file.value.text)))
         yield* repo.commit({
           workflowId: current,
           author: "Owner (hand edit)",
           message: "Hand edit",
         });
       yield* index(current);
-      if (dirty) yield* PubSub.publish(bus, current);
+      const before = indexed.get(current);
+      const after = (yield* store(Store.listIndex())).find((row) => row.workflow_id === current);
+      if (
+        dirty ||
+        before === undefined ||
+        before.head_commit !== after?.head_commit ||
+        before.revision !== after?.revision ||
+        before.valid !== after?.valid
+      )
+        yield* PubSub.publish(bus, current);
     }
   }, Effect.mapError(internal));
   const ingest = Effect.fn("WorkflowDefinitions.ingest")((id?: string) =>
@@ -400,6 +425,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(internal)),
   );
   const list = Effect.fn("WorkflowDefinitions.list")(function* () {
+    yield* refreshGraph();
     return yield* Effect.forEach(yield* repo.listIds, (id) =>
       document(id).pipe(
         Effect.map((d) => ({
@@ -517,13 +543,19 @@ const make = Effect.gen(function* () {
       lock
         .withPermits(1)(
           Effect.gen(function* () {
-            yield* document(input.workflowId);
+            const current = yield* document(input.workflowId);
             const commit = yield* repo.remove({
               workflowId: input.workflowId,
               author: authorName(author),
               message: `Delete ${input.workflowId}`,
             });
-            yield* toggle(input.workflowId, false, authorName(author), `toggled:deleted:${commit}`);
+            // Keyed by the last commit with the file, which ingestion can find again after a crash.
+            yield* toggle(
+              input.workflowId,
+              false,
+              authorName(author),
+              `toggled:deleted:${current.headCommit ?? commit}`,
+            );
             yield* store(Store.deleteIndex(input.workflowId));
             yield* PubSub.publish(bus, input.workflowId);
             return { workflowId: input.workflowId, commit };
