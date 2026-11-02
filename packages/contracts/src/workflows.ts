@@ -757,5 +757,7 @@ export const WorkflowRunSummary = Schema.Struct({
   pullRequest: Schema.NullOr(Schema.String),
   /** Wall time without pauses and open-gate waits (the `wall` budget's clock); null before it starts. */
   activeMs: Schema.NullOr(NonNegativeInt),
+  /** When `activeMs` was measured, while that clock still runs; null while paused, at a gate or ended. */
+  activeSince: Schema.NullOr(IsoDateTime),
 });
 export type WorkflowRunSummary = typeof WorkflowRunSummary.Type;

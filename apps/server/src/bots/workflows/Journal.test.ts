@@ -174,6 +174,7 @@ const summary = (
   openGates: 0,
   pullRequest: null,
   activeMs: null,
+  activeSince: null,
   ...patch,
 });
 const row = (s: WorkflowRunSummary, lastSeq: number) => ({

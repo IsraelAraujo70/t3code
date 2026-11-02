@@ -105,6 +105,7 @@ export const runSummary = (
           entry.result?._tag === "PullRequestOpened" ? [entry.result.url] : [],
         )[0] ?? null,
     activeMs: activeMs(state, state.ended ? Date.parse(state.ended.at) : now),
+    activeSince: null,
   };
 };
 
@@ -152,6 +153,7 @@ export const pendingSummary = (
       openGates: 0,
       pullRequest: null,
       activeMs: null,
+      activeSince: null,
     };
   }
   return null;

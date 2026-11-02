@@ -125,6 +125,7 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     openGates: 0,
     pullRequest: null,
     activeMs: null,
+    activeSince: null,
   });
   const view: WorkflowRunView = {
     summary,
