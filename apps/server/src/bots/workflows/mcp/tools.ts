@@ -49,7 +49,7 @@ const ParamValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
 const WorkflowListTool = Tool.make("workflow_list", {
   ...shared,
   description:
-    "List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. `includeTemplates` adds the ready-made workflows the owner can start from in the app.",
+    "List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. `includeTemplates` adds the ready-made workflows; read one with workflow_template to see the YAML format.",
   parameters: Schema.Struct({ includeTemplates: Schema.optional(Schema.Boolean) }),
   success: Schema.Struct({
     workflows: Schema.Array(
@@ -83,6 +83,16 @@ const WorkflowGetTool = Tool.make("workflow_get", {
     diagnostics: Schema.Array(WorkflowDiagnostic),
     enabled: Schema.Boolean,
   }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const WorkflowTemplateTool = Tool.make("workflow_template", {
+  ...shared,
+  description:
+    "Read a ready-made workflow's YAML (ids from workflow_list with `includeTemplates`). Use it as the example of the format: copy it, change `id`, `title` and the nodes, then validate and save it as a new workflow with workflow_save.",
+  parameters: Schema.Struct({ templateId: WorkflowId }),
+  success: Schema.Struct({ source: Schema.String }),
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -201,6 +211,7 @@ const WorkflowLedgerTool = Tool.make("workflow_ledger", {
 export const WorkflowToolkit = Toolkit.make(
   WorkflowListTool,
   WorkflowGetTool,
+  WorkflowTemplateTool,
   WorkflowSaveTool,
   WorkflowSetEnabledTool,
   WorkflowRunTool,

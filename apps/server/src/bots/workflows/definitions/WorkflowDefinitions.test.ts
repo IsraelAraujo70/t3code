@@ -327,3 +327,14 @@ it.live("creates bot workflows disabled", () =>
     }),
   ),
 );
+
+it.live("reads a library template by id and refuses anything else", () =>
+  withDefinitions((definitions) =>
+    Effect.gen(function* () {
+      expect(yield* definitions.template("mcp-token-cut")).toContain("id: mcp-token-cut");
+      for (const id of ["missing-one", "../definitions/x", "MCP-TOKEN-CUT"]) {
+        expect((yield* Effect.flip(definitions.template(id))).code).toBe("not-found");
+      }
+    }),
+  ),
+);

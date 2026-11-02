@@ -71,6 +71,7 @@ const layerWorkflowsOff = Layer.succeed(
     delete: workflowsNotHost,
     restore: workflowsNotHost,
     history: workflowsNotHost,
+    template: workflowsNotHost,
     ingest: workflowsNotHost,
   }),
 );

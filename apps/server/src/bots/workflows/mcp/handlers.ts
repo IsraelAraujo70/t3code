@@ -95,6 +95,15 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
       };
     }),
   ),
+  workflow_template: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      return {
+        source: yield* definitions.template(input.templateId).pipe(Effect.mapError(failure)),
+      };
+    }),
+  ),
   workflow_save: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { author } = yield* callerBot;

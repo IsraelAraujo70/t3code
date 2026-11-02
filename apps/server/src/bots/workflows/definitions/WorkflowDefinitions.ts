@@ -78,6 +78,8 @@ export class WorkflowDefinitions extends Context.Service<
       input: WorkflowSaveInput,
       author: WorkflowAuthor,
     ) => Effect.Effect<WorkflowSaveResult, WorkflowsError>;
+    /** A ready-made workflow's YAML, as shipped; `not-found` for an unknown id. */
+    readonly template: (templateId: string) => Effect.Effect<string, WorkflowsError>;
     readonly fromTemplate: (
       input: WorkflowFromTemplateInput,
       author: WorkflowAuthor,
@@ -121,6 +123,9 @@ const internal = (cause: unknown) =>
         message: "Workflow definitions operation failed.",
         cause,
       });
+/** Template ids are file names in the library; the pattern keeps `../` out of the path. */
+const WORKFLOW_ID = /^[a-z][a-z0-9-]{0,62}$/;
+
 const label = (trigger: WorkflowTrigger): string => {
   switch (trigger.kind) {
     case "cron":
@@ -578,19 +583,17 @@ const make = Effect.gen(function* () {
     }
     return { versions, nextCursor: commits.length > limit ? String(skip + limit) : null };
   }, Effect.mapError(internal));
+  const template = Effect.fn("WorkflowDefinitions.template")(function* (templateId: string) {
+    const path = nodePath.join(import.meta.dirname, "..", "library", `${templateId}.workflow.yaml`);
+    if (!WORKFLOW_ID.test(templateId) || !(yield* fs.exists(path)))
+      return yield* new WorkflowsError({ code: "not-found", message: "Template not found." });
+    return yield* fs.readFileString(path);
+  }, Effect.mapError(internal));
   const fromTemplate = Effect.fn("WorkflowDefinitions.fromTemplate")(function* (
     input: WorkflowFromTemplateInput,
     author: WorkflowAuthor,
   ) {
-    const path = nodePath.join(
-      import.meta.dirname,
-      "..",
-      "library",
-      `${input.templateId}.workflow.yaml`,
-    );
-    if (!(yield* fs.exists(path)))
-      return yield* new WorkflowsError({ code: "not-found", message: "Template not found." });
-    const parsed = compile({ source: yield* fs.readFileString(path) });
+    const parsed = compile({ source: yield* template(input.templateId) });
     if (Result.isFailure(parsed)) return yield* internal(parsed.failure);
     return yield* save(
       {
@@ -613,6 +616,7 @@ const make = Effect.gen(function* () {
     ingest,
     changes,
     snapshot,
+    template,
     fromTemplate,
     setEnabled,
     delete: remove,
