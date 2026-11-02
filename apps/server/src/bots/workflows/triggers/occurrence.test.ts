@@ -199,3 +199,7 @@ it.each([
   }
   expect(fired).toEqual([new Date(nowIso).toISOString()]);
 });
+
+it("keys an owner test by trigger and request", () => {
+  expect(occurrenceKey.test("hook", "request")).toBe("test:hook:request");
+});

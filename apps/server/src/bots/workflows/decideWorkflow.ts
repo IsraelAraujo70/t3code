@@ -1,3 +1,4 @@
+import { originOf, resolveTrigger, triggerBlock } from "./triggers/policy.ts";
 /**
  * The workflow decider (§3.2): turns each pending TriggerFired into a run, a skip, or a wait.
  * Pure, like `decide`; the engine appends what it returns in one transaction.
@@ -85,15 +86,42 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
       skip("invalid");
       continue;
     }
-    if (!current.enabled) {
-      skip("disabled");
-      continue;
-    }
-    if (current.suspended || suspendedNow) {
-      skip("suspended");
-      continue;
-    }
     const { definition } = current.version.compiled;
+    const resolved = resolveTrigger(definition.triggers, trigger.triggerId, trigger.kind);
+    const payload = trigger.payload;
+    const source =
+      typeof payload === "object" && payload !== null
+        ? trigger.kind === "bot" && "bot" in payload
+          ? payload.bot
+          : trigger.kind === "call" && "parent" in payload
+            ? payload.parent
+            : null
+        : null;
+    const caller =
+      typeof source === "object" && source !== null
+        ? trigger.kind === "bot" && "id" in source && typeof source.id === "string"
+          ? source.id
+          : trigger.kind === "call" &&
+              "workflowId" in source &&
+              typeof source.workflowId === "string"
+            ? source.workflowId
+            : null
+        : null;
+    const block = triggerBlock({
+      trigger: resolved,
+      firedKind: trigger.kind,
+      origin: originOf(trigger.occurrence),
+      status: {
+        enabled: current.enabled,
+        suspended: current.suspended || suspendedNow,
+        off: current.off,
+      },
+      caller,
+    });
+    if (block !== null || resolved === undefined) {
+      skip(block ?? "invalid");
+      continue;
+    }
     const decoded = decodeRunParams(definition.params, trigger.params);
     if (!decoded.ok) {
       skip("invalid");
@@ -129,7 +157,7 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
         title: definition.title,
         params,
         trigger: {
-          id: trigger.triggerId,
+          id: resolved.id,
           kind: trigger.kind,
           occurrence,
           label: trigger.label,

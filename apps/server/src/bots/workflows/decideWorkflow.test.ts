@@ -8,6 +8,7 @@ const compiled = (() => {
   const r = compileWorkflow(
     {
       schema: "t3.workflow/v1",
+      triggers: { run: { kind: "manual" } },
       id: "demo",
       title: "Demo",
       home: { project: "t3code" },
@@ -82,13 +83,13 @@ it.each(["Missing", "Invalid"] as const)("skips %s definitions", (_tag) => {
     [1, 2].map((n) => ({ _tag: "TriggerSkipped", occurrence: `manual:${n}`, reason: "invalid" })),
   );
 });
-it.each(["disabled", "suspended", "busy"] as const)("skips %s", (reason) => {
+it.each(["suspended", "busy"] as const)("skips %s", (reason) => {
   const base = input();
   if (base.current._tag !== "Ready") throw new Error("fixture");
   const result = decideWorkflow({
     ...base,
     liveRuns: reason === "busy" ? 1 : 0,
-    current: { ...base.current, enabled: reason !== "disabled", suspended: reason === "suspended" },
+    current: { ...base.current, enabled: true, suspended: reason === "suspended" },
   });
   expect(result.every((x) => x.fact._tag === "TriggerSkipped" && x.fact.reason === reason)).toBe(
     true,
@@ -240,4 +241,117 @@ it("matches a param's pattern against the whole value", () => {
     occurrence: "manual:1",
     reason: "invalid",
   });
+});
+
+it.each([
+  [
+    "owner off",
+    { run: { kind: "manual" } },
+    "manual",
+    "manual:3",
+    null,
+    false,
+    false,
+    [],
+    null,
+    "run",
+  ],
+  [
+    "owner suspended",
+    { run: { kind: "manual" } },
+    "manual",
+    "manual:3",
+    null,
+    false,
+    true,
+    [],
+    "suspended",
+    null,
+  ],
+  [
+    "missing bot",
+    { run: { kind: "manual" } },
+    "bot",
+    "bot:3",
+    null,
+    true,
+    false,
+    [],
+    "invalid",
+    null,
+  ],
+  [
+    "bot denied",
+    { ask: { kind: "bot", description: "test", bots: ["allowed"] } },
+    "bot",
+    "bot:3",
+    { bot: { id: "other" } },
+    true,
+    false,
+    [],
+    "invalid",
+    null,
+  ],
+  [
+    "cron off",
+    { clock: { kind: "cron", expr: "* * * * *", tz: "UTC" } },
+    "cron",
+    "cron:3",
+    null,
+    true,
+    false,
+    ["clock"],
+    "disabled",
+    null,
+  ],
+  [
+    "call resolves",
+    { parent: { kind: "call" } },
+    "call",
+    "child:3",
+    null,
+    true,
+    false,
+    [],
+    null,
+    "parent",
+  ],
+] as const)("%s", (_, triggers, kind, occurrence, payload, enabled, suspended, off, reason, id) => {
+  const base = input();
+  if (base.current._tag !== "Ready") throw new Error("fixture");
+  const fired = trigger(3);
+  if (fired.fact._tag !== "TriggerFired") throw new Error("fixture");
+  const definition = { ...compiled.definition, triggers };
+  const result = decideWorkflow({
+    ...base,
+    facts: [
+      {
+        ...fired,
+        fact: {
+          ...fired.fact,
+          kind,
+          occurrence,
+          payload,
+          triggerId: kind === "cron" ? "clock" : kind,
+        },
+      },
+    ],
+    current: {
+      ...base.current,
+      enabled,
+      suspended,
+      off: new Set(off),
+      version: { ...base.current.version, compiled: { ...compiled, definition } },
+    },
+  });
+  if (reason)
+    expect(result.map((x) => x.fact)).toContainEqual({
+      _tag: "TriggerSkipped",
+      occurrence,
+      reason,
+    });
+  else
+    expect(result.find((x) => x.fact._tag === "RunStarted")?.fact).toMatchObject({
+      trigger: { id },
+    });
 });

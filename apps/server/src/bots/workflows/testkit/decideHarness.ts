@@ -26,6 +26,7 @@ type Definition = Record<string, unknown>;
 /** A valid one-node workflow; `patch` replaces top-level fields (nodes, edges, workspaces…). */
 export const definition = (patch: Definition = {}): Definition => ({
   schema: "t3.workflow/v1",
+  triggers: { run: { kind: "manual" } },
   id: "demo",
   title: "Demo",
   home: { project: "t3code" },
