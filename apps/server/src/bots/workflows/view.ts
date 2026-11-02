@@ -95,6 +95,7 @@ export const runSummary = (state: RunState): WorkflowRunSummary => {
         ? [...state.gates.values()].filter((g) => g.decision === null).length
         : 0,
     pullRequest: null,
+    activeMs: null,
   };
 };
 
@@ -141,6 +142,7 @@ export const pendingSummary = (
       reservedTokens: 0,
       openGates: 0,
       pullRequest: null,
+      activeMs: null,
     };
   }
   return null;

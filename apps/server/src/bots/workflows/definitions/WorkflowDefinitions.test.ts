@@ -580,6 +580,7 @@ it.live("shows each workflow's newest projected run as its last run", () =>
         reservedTokens: 0,
         openGates: 0,
         pullRequest: null,
+        activeMs: null,
       } satisfies WorkflowRunSummary;
       yield* journal.putRun({ summary: run, lastSeq: 9, pendingIntents: 0, parentRunId: null });
       const listed = (yield* definitions.list).find((d) => d.workflowId === saved.workflowId);

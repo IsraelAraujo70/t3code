@@ -73,6 +73,7 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
               reservedTokens: 0,
               openGates: 0,
               pullRequest: null,
+              activeMs: null,
               cost: {
                 billable: 0,
                 input: 0,

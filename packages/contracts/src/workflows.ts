@@ -750,5 +750,7 @@ export const WorkflowRunSummary = Schema.Struct({
   reservedTokens: NonNegativeInt,
   openGates: NonNegativeInt,
   pullRequest: Schema.NullOr(Schema.String),
+  /** Wall time without pauses and open-gate waits (the `wall` budget's clock); null before it starts. */
+  activeMs: Schema.NullOr(NonNegativeInt),
 });
 export type WorkflowRunSummary = typeof WorkflowRunSummary.Type;
