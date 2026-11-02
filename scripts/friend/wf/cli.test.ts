@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - spawns Node on throwaway scripts.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
