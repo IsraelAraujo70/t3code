@@ -136,6 +136,11 @@ export const SEAMS: readonly Seam[] = [
     contains: '"./kanban-display"',
     why: "export the kanban display helpers shared by the web and mobile boards",
   },
+  {
+    file: "packages/shared/package.json",
+    contains: '"./workflows"',
+    why: "export the workflow compiler shared by the server, the canvas and Android",
+  },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
   { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
   {
@@ -561,6 +566,8 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/contracts/src/bots.ts",
   "packages/contracts/src/kanban.ts",
   "packages/contracts/src/guest.ts",
+  "packages/contracts/src/workflows.",
+  "packages/shared/src/workflows/",
   "apps/bia/",
   "packages/client-runtime/src/state/bots.ts",
   "packages/client-runtime/src/voice.",
@@ -570,6 +577,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "packages/client-runtime/src/kanbanBoard.",
   "packages/client-runtime/src/kanbanDisplay.",
   "scripts/friend/",
+  "docs/friend/",
   ".github/workflows/friend-fork.yml",
   "FORK.md",
 ];

@@ -1,0 +1,178 @@
+schema: t3.workflow/v1
+id: upstream-merge
+title: Merge do upstream
+home: { project: t3code }
+params: { base: { type: string, default: friend/main, pattern: "^[A-Za-z0-9._/-]+$" } }
+triggers:
+  - { id: weekly, kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
+  - {
+      id: newtag,
+      kind: upstreamTag,
+      remote: "https://github.com/pingdotgg/t3code",
+      pattern: '^v\d+\.\d+\.\d+$',
+      pollMinutes: 120,
+    }
+concurrency: single
+budget: { steps: 60, wall: 8h, tokens: 4000000 }
+fatigue: { consecutiveFailures: 3 }
+models:
+  lead: { provider: claude, model: claude-opus-5-5, effort: high }
+  reviewer: { provider: codex, model: gpt-6.1-sol, effort: high }
+workspaces:
+  integ:
+    {
+      project: t3code,
+      base: "{{params.base}}",
+      branch: "wf/merge-{{nodes.select.output.tag}}",
+      retain: always,
+    }
+nodes:
+  select:
+    {
+      kind: command,
+      cwd: { project: t3code, readOnly: true },
+      replay: safe,
+      parse: json,
+      argv:
+        [
+          node,
+          scripts/friend/wf/select-upstream-tag.ts,
+          --remote,
+          "https://github.com/pingdotgg/t3code",
+          --base,
+          "{{params.base}}",
+        ],
+      output:
+        {
+          tag: { type: string, pattern: '^v\d+\.\d+\.\d+$' },
+          tagSha: { type: string, pattern: "^[a-f0-9]{40}$" },
+          contained: { type: boolean },
+        },
+    }
+  route:
+    { kind: branch, cases: [{ port: nothing, when: "nodes.select.output.contained" }], else: go }
+  merge:
+    {
+      kind: command,
+      cwd: integ,
+      replay: safe,
+      parse: json,
+      argv:
+        [
+          node,
+          scripts/friend/merge-upstream.ts,
+          --json,
+          --into,
+          ".",
+          --tag,
+          "{{nodes.select.output.tag}}",
+        ],
+      output:
+        {
+          status: { type: string, pattern: "^(merged|conflicts)$" },
+          conflicts: { type: "string[]" },
+        },
+    }
+  conflicted:
+    {
+      kind: branch,
+      cases: [{ port: repair, when: "nodes.merge.output.status == 'conflicts'" }],
+      else: clean,
+    }
+  repair:
+    {
+      kind: agent,
+      model: $lead,
+      workspace: integ,
+      access: write,
+      output: { committed: { type: boolean } },
+      prompt: 'Resolva os conflitos do upstream {{nodes.select.output.tag}}: {{nodes.merge.output.conflicts}}. Preserve todo hunk `Fork (friend)` (scripts/friend/seams.ts). Commite o merge. Termine com ```json {"committed": true}```.',
+    }
+  setup: { kind: command, cwd: integ, heavy: true, replay: safe, argv: [vp, i] }
+  checks:
+    {
+      kind: command,
+      cwd: integ,
+      heavy: true,
+      replay: safe,
+      parse: json,
+      argv: [node, scripts/friend/wf/fork-checks.ts, --json],
+      check: "out.seams && out.theme && out.tests",
+    }
+  fix:
+    {
+      kind: agent,
+      model: $lead,
+      workspace: integ,
+      access: write,
+      retry: { max: 1, on: [failed] },
+      prompt: "Os checks do fork falharam: {{nodes.checks.output.failures}}. Corrija na worktree e commite.",
+    }
+  recheck:
+    {
+      kind: command,
+      cwd: integ,
+      heavy: true,
+      replay: safe,
+      parse: json,
+      argv: [node, scripts/friend/wf/fork-checks.ts, --json],
+      check: "out.seams && out.theme && out.tests",
+    }
+  review:
+    {
+      kind: interrogate,
+      target: { workspace: integ, baseRef: "{{params.base}}" },
+      mode: loop,
+      reviewers: [$reviewer],
+      lead: $lead,
+      intent: "Merge do upstream {{nodes.select.output.tag}}; só as resoluções de conflito e as seams do fork são nossas.",
+      checks: [{ argv: [node, scripts/friend/check-seams.ts], cwd: integ }],
+      rounds: 3,
+    }
+  unchanged: { kind: output, status: no_change, value: { tag: "{{nodes.select.output.tag}}" } }
+  ready:
+    {
+      kind: output,
+      status: ready_for_review,
+      notify: true,
+      value: { tag: "{{nodes.select.output.tag}}", sha: "{{workspaces.integ.head}}" },
+      pullRequest:
+        {
+          workspace: integ,
+          base: "{{params.base}}",
+          title: "Merge upstream {{nodes.select.output.tag}}",
+          body: "Merge automático do upstream. Checks do fork verdes; revisão interrogate aprovada.",
+        },
+      handoff: "Depois de revisar o PR: na sua checkout da friend/main, git merge --ff-only {{workspaces.integ.branch}}",
+    }
+  failed_checks:
+    {
+      kind: output,
+      status: checks_failed,
+      notify: true,
+      value: { failures: "{{nodes.recheck.output.failures}}" },
+    }
+  stuck:
+    {
+      kind: output,
+      status: blocked,
+      notify: true,
+      value: { branch: "{{workspaces.integ.branch}}" },
+      report: "A revisão não convergiu; veja os achados abertos na execução.",
+    }
+edges:
+  - select -> route
+  - route:nothing -> unchanged
+  - route:go -> merge
+  - merge -> conflicted
+  - conflicted:repair -> repair
+  - conflicted:clean -> setup
+  - repair -> setup
+  - setup -> checks
+  - checks:pass -> review
+  - checks:fail -> fix
+  - fix -> recheck
+  - recheck:pass -> review
+  - recheck:fail -> failed_checks
+  - review:approve -> ready
+  - review:stuck -> stuck

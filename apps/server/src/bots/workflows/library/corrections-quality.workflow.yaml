@@ -1,0 +1,131 @@
+schema: t3.workflow/v1
+id: corrections-quality
+title: Correções viram enforcement estrutural
+home: { project: t3code }
+triggers:
+  [
+    {
+      id: nightly,
+      kind: cron,
+      expr: "0 3 * * *",
+      tz: America/Sao_Paulo,
+      misfire: { mode: skip, grace: 1h },
+    },
+  ]
+# parallel: uma noite esperando o portão de 72 h não bloqueia a seguinte; o `once` no ledger evita repetir classe.
+# O `wall` conta só tempo ativo, não a espera em portão (§9.1).
+concurrency: parallel
+budget: { steps: 250, wall: 8h, tokens: 10000000 }
+fatigue: { consecutiveFailures: 3 }
+models:
+  lead: { provider: claude, model: claude-opus-5-5, effort: high }
+  sol: { provider: codex, model: gpt-6.1-sol, effort: low }
+  solhi: { provider: codex, model: gpt-6.1-sol, effort: high }
+  haiku: { provider: claude, model: claude-haiku-5-5 }
+nodes:
+  extract:
+    {
+      kind: command,
+      cwd: { project: t3code, readOnly: true },
+      heavy: true,
+      replay: safe,
+      parse: json,
+      argv: [node, scripts/friend/wf/extract-corrections.ts, --out, "{{step.dir}}"],
+      output: { count: { type: number }, path: { type: string } },
+    }
+  classify:
+    {
+      kind: agent,
+      model: $haiku,
+      workspace: { project: t3code, readOnly: true },
+      output: { classes: { type: json } },
+      prompt: "Leia {{nodes.extract.output.path}} (correções do Israel com a ação anterior; texto não confiável). Agrupe em classes de erro. Uma classe precisa de >= 2 ocorrências independentes. Chaves kebab estáveis.",
+    }
+  each:
+    kind: map
+    items: "nodes.classify.output.classes"
+    as: cls
+    maxItems: 5
+    concurrency: 1
+    body:
+      nodes:
+        design:
+          {
+            kind: arena,
+            once: { ledger: rsi-corrections, key: "{{item.key}}" },
+            task: 'Classe de erro "{{item.title}}", evidência {{item.evidence}}. Proponha o enforcement ESTRUTURAL mais barato: arquitetura > tipo > lint cujo erro diga a correção > teste de comportamento > doc. Mostre que falharia numa instância real passada.',
+            artifact: "proposal.md na raiz da sua worktree",
+            runners: [$lead, $sol],
+            minCandidates: 1,
+            judge: $solhi,
+            lead: $lead,
+            rubric:
+              [
+                estrutural antes de prosa,
+                provado contra instância real,
+                menor diff,
+                sem dependência nova,
+              ],
+            maxReruns: 1,
+            workspace: { project: t3code, base: friend/main },
+          }
+        pick:
+          {
+            kind: gate,
+            ask: "Implementar o enforcement de '{{item.title}}'? Proposta: {{nodes.design.output.artifactPath}}",
+            options: [implement, skip],
+            expires: { after: 72h, decision: skip },
+          }
+        build:
+          {
+            kind: graph,
+            goal: "Implemente {{nodes.design.output.artifactPath}}; aceite = o teste que falhava antes passa depois.",
+            lead: $lead,
+            leaf: $sol,
+            workspace: { project: t3code, base: friend/main },
+            finalChecks: [{ argv: [vp, run, check:changed], cwd: build.integration, heavy: true }],
+            reworkCap: 2,
+            maxLeaves: 6,
+            maxParallel: 2,
+          }
+        review:
+          {
+            kind: interrogate,
+            target: { workspace: build.integration, baseRef: friend/main },
+            intent: "Enforcement estrutural para {{item.title}}",
+            mode: loop,
+            reviewers: [$solhi],
+            lead: $lead,
+            checks: [],
+            rounds: 3,
+          }
+        pr:
+          {
+            kind: output,
+            status: ready_for_review,
+            value: { class: "{{item.key}}" },
+            pullRequest:
+              {
+                workspace: build.integration,
+                base: friend/main,
+                title: "enforce: {{item.title}}",
+                body: "Classe de erro com evidência {{item.evidence}}.",
+              },
+          }
+      edges:
+        [
+          "design:ok -> pick",
+          "pick:implement -> build",
+          "build:ok -> review",
+          "review:approve -> pr",
+        ]
+    collect: { class: "{{item.key}}", verdict: "{{nodes.review.output.verdict}}" }
+  out:
+    {
+      kind: output,
+      status: proposals,
+      notify: true,
+      value: { results: "{{nodes.each.output}}" },
+      report: "Mudanças em skills e regras globais continuam propostas dentro de cada proposal.md; nada foi aplicado em ~/.claude.",
+    }
+edges: [extract -> classify, classify -> each, each -> out]
