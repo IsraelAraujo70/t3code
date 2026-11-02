@@ -146,6 +146,8 @@ const triggerSummaries = (
   workflowId: string,
   triggers: WorkflowDefinition["triggers"],
   urls: ReadonlyMap<string, string>,
+  off: ReadonlySet<string> = new Set(),
+  fired: ReadonlyMap<string, string> = new Map(),
 ): Array<WorkflowTriggerSummary> =>
   Object.entries(triggers ?? {}).map(([id, trigger]) => ({
     id,
@@ -154,8 +156,8 @@ const triggerSummaries = (
     label: triggerLabel(trigger),
     webhookUrl:
       trigger.kind === "webhook" ? (urls.get(workflowHookTaskId(workflowId, id)) ?? null) : null,
-    enabled: true,
-    lastFiredAt: null,
+    enabled: trigger.kind === "manual" || !off.has(id),
+    lastFiredAt: fired.get(JSON.stringify([workflowId, id])) ?? null,
   }));
 const make = Effect.gen(function* () {
   const repo = yield* WorkflowRepo;
@@ -247,14 +249,24 @@ const make = Effect.gen(function* () {
       return yield* internal("Canonical hash mismatch");
     return { diagnostics: [], normalizedSource, semanticHash: result.success.hash };
   });
-  const document = Effect.fn("WorkflowDefinitions.document")(function* (id: string) {
+  const lastFired = journal.triggerLastFired.pipe(
+    Effect.map(
+      (rows) =>
+        new Map(rows.map((row) => [JSON.stringify([row.workflowId, row.triggerId]), row.at])),
+    ),
+  );
+  const document = Effect.fn("WorkflowDefinitions.document")(function* (
+    id: string,
+    fired?: ReadonlyMap<string, string>,
+  ) {
+    const samples = fired ?? (yield* lastFired);
     const file = yield* repo.read(id);
     if (Option.isNone(file))
       return yield* new WorkflowsError({ code: "not-found", message: "Workflow not found." });
     const head = Option.getOrNull(yield* repo.head(id));
     const result = compileFile(id, file.value.text);
     const definition = Result.isSuccess(result) ? result.success.definition : null;
-    const { enabled, suspended } = yield* status(id);
+    const { enabled, suspended, off } = yield* status(id);
     const hasWebhook = Object.values(definition?.triggers ?? {}).some((t) => t.kind === "webhook");
     return {
       workflowId: workflowId(id),
@@ -272,6 +284,8 @@ const make = Effect.gen(function* () {
         id,
         definition?.triggers,
         hasWebhook ? yield* webhookUrls : new Map<string, string>(),
+        off,
+        samples,
       ),
       updatedBy: head?.author ?? null,
       updatedAt: head?.at ?? null,
@@ -464,10 +478,10 @@ const make = Effect.gen(function* () {
   );
   const list = Effect.fn("WorkflowDefinitions.list")(function* () {
     yield* refreshGraph();
-    const urls = yield* webhookUrls;
     const lastRuns = yield* journal.lastRuns;
+    const fired = yield* lastFired;
     return yield* Effect.forEach(yield* repo.listIds, (id) =>
-      document(id).pipe(
+      document(id, fired).pipe(
         Effect.map((d) => ({
           workflowId: workflowId(id),
           title: d.definition?.title ?? id,
@@ -478,7 +492,7 @@ const make = Effect.gen(function* () {
           enabled: d.enabled,
           suspended: d.suspended,
           diagnostics: d.diagnostics.length,
-          triggers: triggerSummaries(id, d.definition?.triggers, urls),
+          triggers: d.triggers,
           headCommit: d.headCommit,
           revision: d.revision,
           updatedAt: d.updatedAt,
@@ -566,12 +580,46 @@ const make = Effect.gen(function* () {
     if (author.kind === "bot" && !author.canManageBots)
       return yield* new WorkflowsError({ code: "permission", message: "Cannot manage workflows." });
     yield* document(input.workflowId);
-    yield* toggle(
-      input.workflowId,
-      input.enabled,
-      authorName(author),
-      `toggled:${input.clientRequestId}`,
-    );
+    if (input.triggerId !== undefined) {
+      const head = Option.getOrNull(yield* repo.head(input.workflowId));
+      const source = head
+        ? Option.getOrNull(yield* repo.show(input.workflowId, head.commit))
+        : null;
+      const compiled = source === null ? null : compileFile(input.workflowId, source);
+      const trigger =
+        compiled && Result.isSuccess(compiled)
+          ? compiled.success.definition.triggers?.[input.triggerId]
+          : undefined;
+      if (!trigger)
+        return yield* new WorkflowsError({
+          code: "not-found",
+          message: `This workflow has no trigger ${input.triggerId}.`,
+        });
+      if (trigger.kind === "manual")
+        return yield* new WorkflowsError({
+          code: "invalid-request",
+          message: "A manual trigger has no switch: Run now always works.",
+        });
+      yield* journal.append([
+        {
+          stream: workflowStream(input.workflowId),
+          key: `trigger-toggled:${input.triggerId}:${input.clientRequestId}`,
+          fact: {
+            _tag: "TriggerToggled",
+            triggerId: input.triggerId,
+            enabled: input.enabled,
+            by: authorName(author),
+            at: yield* now,
+          },
+        },
+      ]);
+    } else
+      yield* toggle(
+        input.workflowId,
+        input.enabled,
+        authorName(author),
+        `toggled:${input.clientRequestId}`,
+      );
     yield* PubSub.publish(bus, input.workflowId);
     return yield* summary(input.workflowId);
   }, Effect.mapError(internal));
@@ -688,10 +736,33 @@ const make = Effect.gen(function* () {
     template,
     fromTemplate,
     setEnabled,
-    // Contract stub (triggers n0): n3c implements it.
-    botEntries: Effect.fn("WorkflowDefinitions.botEntries")(function* (_botId: string) {
-      return yield* Effect.succeed<ReadonlyArray<BotEntry>>([]);
-    }),
+    botEntries: Effect.fn("WorkflowDefinitions.botEntries")(function* (botId: string) {
+      const entries: BotEntry[] = [];
+      for (const id of [...(yield* repo.listIds)].sort()) {
+        const d = yield* document(id);
+        if (!d.valid || !d.headCommit) continue;
+        const source = Option.getOrNull(yield* repo.show(id, d.headCommit));
+        const compiled = source === null ? null : compileFile(id, source);
+        if (!compiled || Result.isFailure(compiled)) continue;
+        const definition = compiled.success.definition;
+        const current = yield* status(id);
+        for (const [triggerId, trigger] of Object.entries(definition.triggers ?? {})) {
+          if (
+            trigger.kind !== "bot" ||
+            (trigger.bots !== undefined && !trigger.bots.includes(botId))
+          )
+            continue;
+          entries.push({
+            workflowId: id,
+            triggerId,
+            description: trigger.description,
+            params: definition.params ?? {},
+            on: current.enabled && !current.suspended && !current.off.has(triggerId),
+          });
+        }
+      }
+      return entries;
+    }, Effect.mapError(internal)),
     delete: remove,
     restore,
     history,
