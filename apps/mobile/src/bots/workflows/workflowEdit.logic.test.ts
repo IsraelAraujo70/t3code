@@ -12,7 +12,7 @@ const definition = () =>
     home: { project: "t3code" },
     budget: { steps: 10, wall: "2h", tokens: 100000 },
     fatigue: { consecutiveFailures: 2 },
-    triggers: [{ id: "nightly", kind: "cron", expr: "0 0 * * *", tz: "UTC" }],
+    triggers: { nightly: { kind: "cron", expr: "0 0 * * *", tz: "UTC" } },
     params: {
       text: { type: "string", default: "hello" },
       count: { type: "number", default: 2 },
