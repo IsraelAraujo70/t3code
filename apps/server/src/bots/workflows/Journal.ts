@@ -49,6 +49,17 @@ export class Journal extends Context.Service<
     readonly liveRuns: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     /** Workflow ids with a TriggerFired that has neither RunCreated nor TriggerSkipped. */
     readonly pendingTriggers: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
+    /** The workflow a run id belongs to, from its TriggerFired; none when no trigger names it. */
+    readonly workflowOfRun: (
+      runId: string,
+    ) => Effect.Effect<Option.Option<string>, WorkflowJournalError>;
+    /** Runs created, newest first, of one workflow or of all. */
+    readonly createdRuns: (
+      workflowId: string | null,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly workflowId: string; readonly runId: string; readonly at: string }>,
+      WorkflowJournalError
+    >;
     /**
      * Every fact inserted after this subscription opens, once its transaction commits, in commit
      * order. Subscribe before reading a stream so no fact lands between the read and the wait.
@@ -140,6 +151,38 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.id)),
       Effect.mapError(fail),
     ),
+    workflowOfRun: Effect.fn("Journal.workflowOfRun")(function* (runId: string) {
+      const rows = yield* sql<{ readonly stream: string }>`
+        SELECT stream FROM workflow_facts
+        WHERE kind = 'TriggerFired' AND json_extract(payload_json, '$.runId') = ${runId}
+        LIMIT 1`;
+      const stream = rows[0]?.stream;
+      return stream === undefined ? Option.none() : Option.some(stream.slice("workflow:".length));
+    }, Effect.mapError(fail)),
+    createdRuns: Effect.fn("Journal.createdRuns")(function* (workflowId: string | null) {
+      const rows = yield* sql<{
+        readonly stream: string;
+        readonly key: string;
+        readonly at: string;
+        readonly payload: string;
+      }>`
+        SELECT stream, key, at, payload_json AS payload FROM workflow_facts
+        WHERE kind = 'RunCreated' AND (${workflowId} IS NULL OR stream = ${`workflow:${workflowId ?? ""}`})
+        ORDER BY at DESC, seq DESC`;
+      return rows.flatMap((row) => {
+        const parsed: unknown = JSON.parse(row.payload);
+        const runId =
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "runId" in parsed &&
+          typeof parsed.runId === "string"
+            ? parsed.runId
+            : null;
+        return runId === null
+          ? []
+          : [{ workflowId: row.stream.slice("workflow:".length), runId, at: row.at }];
+      });
+    }, Effect.mapError(fail)),
     subscribe: PubSub.subscribe(pubsub),
   });
 });

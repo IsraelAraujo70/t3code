@@ -54,7 +54,7 @@ const renderValue = (value: JsonValue): string =>
         ? JSON.stringify(value)
         : String(value);
 /** Renders all holes, propagating evaluation failures. */
-const renderTemplate = (
+export const renderTemplate = (
   template: ParsedTemplate,
   env: EvalEnv,
 ): Result.Result<string, EvalError> => {
