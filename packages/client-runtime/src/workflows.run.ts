@@ -51,6 +51,14 @@ export interface WorkflowRunApi {
    */
   readonly foldRunDelta: (view: WorkflowRunView, delta: WorkflowRunDelta) => WorkflowRunView;
   /**
+   * Joins the `run.get` pages of one read (first page first) into one view with every attempt and
+   * no `nextStepsCursor`. Null when the run moved between pages: pages are offsets into a list
+   * that can shift, so the reader starts over rather than risk a lost attempt.
+   */
+  readonly joinRunPages: (
+    pages: readonly [WorkflowRunView, ...WorkflowRunView[]],
+  ) => WorkflowRunView | null;
+  /**
    * One status per node id for the graph: the latest attempt of each step key, then, across the
    * instances of one node (`each[0]/x`, `each[1]/x`), the most urgent one: waiting_gate > running
    * > dispatched > failed, lost, timed_out, ambiguous > pending > cancelled > skipped > succeeded.
@@ -136,6 +144,7 @@ export const runStatusLabel: WorkflowRunApi["runStatusLabel"] = (status) =>
   })[status];
 export const isRunActive: WorkflowRunApi["isRunActive"] = (status) =>
   ["queued", "running", "paused"].includes(status);
+const attemptKey = (s: WorkflowStepAttemptView) => JSON.stringify([s.key, s.attempt]);
 function upsert<T>(old: readonly T[], incoming: readonly T[], key: (item: T) => string): T[] {
   const result = [...old];
   for (const item of incoming) {
@@ -152,9 +161,20 @@ export const foldRunDelta: WorkflowRunApi["foldRunDelta"] = (view, delta) =>
         ...view,
         summary: delta.summary,
         seq: delta.seq,
-        steps: upsert(view.steps, delta.steps, (s) => JSON.stringify([s.key, s.attempt])),
+        steps: upsert(view.steps, delta.steps, attemptKey),
         blocks: upsert(view.blocks, delta.blocks, (b) => b.step),
         gates: upsert(view.gates, delta.gates, (g) => g.key),
+      };
+export const joinRunPages: WorkflowRunApi["joinRunPages"] = ([first, ...rest]) =>
+  rest.some((page) => page.seq !== first.seq)
+    ? null
+    : {
+        ...first,
+        nextStepsCursor: null,
+        steps: rest.reduce<readonly WorkflowStepAttemptView[]>(
+          (steps, page) => upsert(steps, page.steps, attemptKey),
+          first.steps,
+        ),
       };
 export const stepRows: WorkflowRunApi["stepRows"] = (steps) => {
   const groups = new Map<string, WorkflowStepAttemptView[]>();

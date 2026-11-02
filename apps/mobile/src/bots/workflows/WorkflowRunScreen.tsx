@@ -34,7 +34,6 @@ import { ListSection } from "../../components/ui/ListSection";
 import { Notice } from "../../components/ui/Notice";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useOpenLinkedThread } from "../../features/threads/useOpenLinkedThread";
-import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorkflowGraph } from "./WorkflowGraph";
 import { WorkflowGateSheet, WorkflowStepSheet } from "./WorkflowRunSheets";
@@ -76,15 +75,6 @@ function RunContent({
   const now = useNowMinuteMs();
   const definition = run?.definition;
   const steps = run?.steps;
-  const metrics = useEnvironmentQuery(
-    run
-      ? workflowsEnvironment.metrics({
-          environmentId,
-          input: { workflowId: run.summary.workflowId },
-        })
-      : null,
-  );
-  const activeMs = metrics.data?.runs.find((point) => point.runId === runId)?.activeMs;
   const control = useAtomCommand(workflowsEnvironment.runControl);
   const allowed = useAtomValue(workflowsEnvironment.runControl.permissionAtom(environmentId));
   const [pending, setPending] = useState(false);
@@ -129,14 +119,13 @@ function RunContent({
             <Text>
               {run.summary.trigger.label} · {run.summary.trigger.kind}
               {"\n"}Started {run.summary.startedAt}
-              {"\n"}Active duration {activeMs == null ? "unknown" : formatDuration(activeMs)}
+              {"\n"}Active duration{" "}
+              {run.summary.activeMs === null ? "unknown" : formatDuration(run.summary.activeMs)}
               {"\n"}
               {formatTokens(run.summary.cost.billable)} tokens ·{" "}
               {formatUsd(run.summary.cost.usdEstimate)} · {run.summary.cost.usage} usage
             </Text>
             <Text textRole="footnote">Native subagents may add usage outside this total.</Text>
-            {metrics.error && <Notice tone="danger" message={metrics.error} />}
-            <ControlPill label="Refresh duration" variant="pill" onPress={metrics.refresh} />
             {pullRequest && (
               <ControlPill
                 label="Open PR"

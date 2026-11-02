@@ -17,7 +17,7 @@ import {
   type WorkflowRunView,
   type WorkflowRunDelta,
 } from "@t3tools/contracts";
-import { foldRunDelta } from "./workflows.run.ts";
+import { foldRunDelta, joinRunPages } from "./workflows.run.ts";
 import { WorkflowStepKey, WorkflowNodeId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -175,6 +175,22 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
   expect(
     foldRunDelta({ ...view, gates: [gate] }, { ...delta, gates: [{ ...gate, decision }] }).gates,
   ).toEqual([{ ...gate, decision }]);
+  // A shifted offset repeats `b` on the second page; the join keeps each attempt once and the
+  // deltas after the read's `seq` fold over the whole set.
+  const paged = joinRunPages([
+    { ...view, steps: [first, step("b", 1, "succeeded")], nextStepsCursor: "2" },
+    { ...view, steps: [step("b", 1, "succeeded"), step("c", 1, "pending")] },
+  ]);
+  expect(paged?.nextStepsCursor).toBeNull();
+  expect(
+    paged && foldRunDelta(paged, delta).steps.map((s) => [s.key, s.attempt, s.status]),
+  ).toEqual([
+    ["a", 1, "failed"],
+    ["b", 1, "succeeded"],
+    ["c", 1, "pending"],
+    ["a", 2, "running"],
+  ]);
+  expect(joinRunPages([view, { ...view, seq: 2 }])).toBeNull();
 });
 
 it("presents statuses and run controls consistently", () => {

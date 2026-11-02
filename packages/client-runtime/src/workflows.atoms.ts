@@ -16,7 +16,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./state/runtime.ts";
-import { foldRunDelta } from "./workflows.run.ts";
+import { foldRunDelta, joinRunPages } from "./workflows.run.ts";
 
 const M = BOTS_WS_METHODS;
 
@@ -41,8 +41,8 @@ export function createWorkflowsEnvironmentAtoms<R, E>(
       tag: M.workflowsDocumentSubscribe,
     }),
     /**
-     * A run: `run.get` once, then the `run.subscribe` deltas folded in. Reconnecting starts over
-     * from `run.get`, so a missed delta never leaves the view behind.
+     * A run: every `run.get` page once, then the `run.subscribe` deltas folded in. Reconnecting
+     * starts over from `run.get`, so a missed delta never leaves the view behind.
      */
     run: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:workflows:run",
@@ -119,22 +119,46 @@ export function createWorkflowsEnvironmentAtoms<R, E>(
   };
 }
 
-/**
- * `run.get`, then its deltas. Deltas never carry the definition, so a run read while still queued
- * is read again once it pins its version (its `commit` appears), and followed from there.
- */
 type RunId = WorkflowRunView["summary"]["runId"];
-const readRun = (runId: RunId) => request(M.workflowsRunGet, { runId });
+type StepsCursor = NonNullable<WorkflowRunView["nextStepsCursor"]>;
+const readRun = (runId: RunId, stepsCursor?: StepsCursor) =>
+  request(M.workflowsRunGet, stepsCursor === undefined ? { runId } : { runId, stepsCursor });
+type RunRead = ReturnType<typeof readRun>;
+type RunReadOf<A> = Effect.Effect<A, Effect.Error<RunRead>, Effect.Services<RunRead>>;
+type RunPages = readonly [WorkflowRunView, ...WorkflowRunView[]];
+/**
+ * Every `run.get` page joined, so no screen ever sees a partial set of attempts (a node's status
+ * would read as pending). Starts over when the run moved between pages.
+ */
+const readWholeRun = (runId: RunId): RunReadOf<WorkflowRunView> => {
+  const morePages = (pages: RunPages): RunReadOf<RunPages> => {
+    const cursor = pages[pages.length - 1]!.nextStepsCursor;
+    return cursor === null
+      ? Effect.succeed(pages)
+      : readRun(runId, cursor).pipe(Effect.flatMap((page) => morePages([...pages, page])));
+  };
+  return readRun(runId).pipe(
+    Effect.flatMap((first) => morePages([first])),
+    Effect.flatMap((pages) => {
+      const view = joinRunPages(pages);
+      return view === null ? readWholeRun(runId) : Effect.succeed(view);
+    }),
+  );
+};
 const runDeltas = (runId: RunId, afterSeq: number) =>
   subscribe(M.workflowsRunSubscribe, { runId, afterSeq });
 type RunStream = Stream.Stream<
   WorkflowRunView,
-  Effect.Error<ReturnType<typeof readRun>> | Stream.Error<ReturnType<typeof runDeltas>>,
-  Effect.Services<ReturnType<typeof readRun>> | Stream.Services<ReturnType<typeof runDeltas>>
+  Effect.Error<RunRead> | Stream.Error<ReturnType<typeof runDeltas>>,
+  Effect.Services<RunRead> | Stream.Services<ReturnType<typeof runDeltas>>
 >;
+/**
+ * The whole run, then its deltas. Deltas never carry the definition, so a run read while still
+ * queued is read again once it pins its version (its `commit` appears), and followed from there.
+ */
 const followRun = (runId: RunId): RunStream =>
   Stream.unwrap(
-    readRun(runId).pipe(
+    readWholeRun(runId).pipe(
       Effect.map((view): RunStream => {
         // `scan` emits `view` first, then each folded delta.
         const deltas = runDeltas(runId, view.seq).pipe(Stream.scan(() => view, foldRunDelta));
