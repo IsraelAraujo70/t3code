@@ -25,6 +25,7 @@ import { KANBAN_RPCS, KANBAN_WS_METHODS } from "./kanban.ts";
 import { ModelSelection } from "./modelSelection.ts";
 
 export * from "./kanban.ts";
+export * from "./workflows.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
