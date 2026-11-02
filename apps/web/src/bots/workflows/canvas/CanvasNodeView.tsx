@@ -28,10 +28,7 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
   const { shape, fill } = style;
   const hue = CANVAS_HUES[style.hue];
   const stroke = `light-dark(${hue.light.stroke}, ${hue.dark.stroke})`;
-  const ink =
-    fill === "solid"
-      ? `light-dark(${hue.light.fill}, color-mix(in srgb, ${hue.dark.fill} 35%, transparent))`
-      : `light-dark(${hue.light.fill}, ${hue.dark.fill})`;
+  const ink = `light-dark(${hue.light.fill}, color-mix(in srgb, ${hue.dark.fill} ${fill === "solid" ? 35 : 60}%, transparent))`;
   const paths = useMemo(
     () =>
       generator.toPaths(

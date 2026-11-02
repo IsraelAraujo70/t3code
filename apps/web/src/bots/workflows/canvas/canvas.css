@@ -39,6 +39,17 @@
 .wf-canvas .wf-edge-label {
   font-family: "Excalifont", var(--font-sans, ui-sans-serif), sans-serif;
 }
+/* A background-colored halo keeps text readable over the sketch fill lines. */
+.wf-canvas .wf-name,
+.wf-canvas .wf-subtitle,
+.wf-canvas .wf-note {
+  text-shadow:
+    0 0 2px var(--background),
+    0 0 4px var(--background);
+}
+.wf-canvas .react-flow__attribution {
+  background: transparent;
+}
 .wf-canvas .wf-name {
   font-size: 17px;
   white-space: nowrap;

@@ -91,6 +91,8 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
           edgeTypes={edgeTypes}
           // A workflow with no saved viewport opens framed, like a run.
           fitView={mode === "run" || model.viewport === undefined}
+          // Wide workflows (ten columns and more) only fit below React Flow's default 0.5.
+          minZoom={0.15}
           {...(model.viewport ? { defaultViewport: model.viewport } : {})}
           nodesDraggable={editable}
           nodesConnectable={editable}

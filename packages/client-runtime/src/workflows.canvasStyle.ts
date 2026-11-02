@@ -157,7 +157,7 @@ export const CANVAS_ROUGH = {
   bowing: 0.8,
   strokeWidth: 1.6,
   fillWeight: 1,
-  hachureGap: 7,
+  hachureGap: 9,
   hachureAngle: -41,
 } as const;
 /** Dash of a `frame` outline. */
