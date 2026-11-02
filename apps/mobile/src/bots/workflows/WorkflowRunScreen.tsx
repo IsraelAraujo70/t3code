@@ -1,3 +1,4 @@
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import {
@@ -73,6 +74,12 @@ function RunContent({
 }) {
   const query = useWorkflowRun(environmentId, runId);
   const run = query.data;
+  const [showPayload, setShowPayload] = useState(false);
+  const payload = useEnvironmentQuery(
+    showPayload
+      ? workflowsEnvironment.runTrigger({ environmentId, input: { runId, maxBytes: 4096 } })
+      : null,
+  );
   const now = useNowMinuteMs();
   const activeMs = run ? liveActiveMs(run.summary, now) : null;
   const definition = run?.definition;
@@ -111,6 +118,28 @@ function RunContent({
         {!run && !query.error && <Text>Loading run…</Text>}
         {run && (
           <>
+            <ListSection title="Trigger">
+              <View className="gap-2 p-3">
+                <Text>
+                  {run.trigger.label} · {run.trigger.kind}
+                  {run.trigger.test ? " · test event" : ""}
+                </Text>
+                <ControlPill
+                  label="Show payload"
+                  variant="pill"
+                  onPress={() => setShowPayload(true)}
+                />
+                {payload.error && <Notice tone="danger" message={payload.error} />}
+                {showPayload && !payload.data && !payload.error && <Text>Loading payload…</Text>}
+                {payload.data && (
+                  <Text selectable>
+                    {payload.data.truncated
+                      ? "Payload is larger than 4 KiB: open it on desktop."
+                      : JSON.stringify(payload.data.payload, null, 2)}
+                  </Text>
+                )}
+              </View>
+            </ListSection>
             <WorkflowStatus
               label={runStatusLabel(run.summary.status)}
               tone={runStatusTone(run.summary.status)}
@@ -176,6 +205,7 @@ function RunContent({
             {graph && (
               <WorkflowGraph
                 model={graph}
+                firedTriggerId={run.trigger.id}
                 onPressNode={(node) => {
                   const row = rows.find((candidate) => candidate.node === node);
                   const y = row ? positions.current.get(row.key) : undefined;
