@@ -191,6 +191,7 @@ function blankDefinition(id: WorkflowId, title: string, project: string): Workfl
     home: { project },
     budget: { steps: 50, wall: "2h", tokens: 2_000_000 },
     fatigue: { consecutiveFailures: 3 },
+    triggers: { run: { kind: "manual", title: "Run now" } },
     nodes: {},
     edges: [],
   };

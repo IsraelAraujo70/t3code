@@ -37,7 +37,16 @@ describe("library templates", () => {
     const compiled = compileSource(NodeFS.readFileSync(NodePath.join(LIBRARY, name), "utf8"));
     expect(`${compiled.definition.id}.workflow.yaml`).toBe(name);
 
+    expect(
+      Object.values(compiled.definition.triggers ?? {}).some(
+        (trigger) => trigger.kind === "manual",
+      ),
+    ).toBe(true);
+
     if (name === "upstream-merge.workflow.yaml") {
+      const ask = compiled.definition.triggers?.ask;
+      expect(ask?.kind).toBe("bot");
+      expect(ask?.kind === "bot" && ask.description.trim().length > 0).toBe(true);
       const trigger = compiled.definition.triggers?.newtag;
       expect(
         triggerParams(trigger && "params" in trigger ? trigger.params : undefined, {

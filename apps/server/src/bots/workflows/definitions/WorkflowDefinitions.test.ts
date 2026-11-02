@@ -461,7 +461,7 @@ it.live("a workflow that calls a saved one stays valid after a restart", () =>
       yield* definitions.save(
         {
           source: (yield* librarySource("b")).replace(
-            /^triggers:.*$/m,
+            /^triggers:.*(?:\n[ \t]+.*)*/m,
             "triggers: { callable: { kind: call } }",
           ),
           message: "b",
@@ -578,7 +578,7 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
     (definitions) =>
       Effect.gen(function* () {
         const source = (yield* librarySource("inbox")).replace(
-          /^triggers:.*$/m,
+          /^triggers:.*(?:\n[ \t]+.*)*/m,
           "triggers: { push: { kind: webhook } }",
         );
         expect((yield* definitions.save({ source, message: "hook" }, { kind: "user" }))._tag).toBe(
