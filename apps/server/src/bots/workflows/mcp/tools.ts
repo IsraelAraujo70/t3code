@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as BotsService from "../../BotsService.ts";
 import * as WorkflowDefinitions from "../definitions/WorkflowDefinitions.ts";
 
@@ -27,6 +28,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
     BotsService.BotsService,
     WorkflowDefinitions.WorkflowDefinitions,
   ],
