@@ -41,7 +41,7 @@ import {
   WorkflowTriggerHookError,
 } from "./hook.ts";
 import { occurrenceKey } from "./occurrence.ts";
-import { listTriggerTargets, type TriggerTarget } from "./targets.ts";
+import { makeTriggerTargets, type TriggerTarget } from "./targets.ts";
 
 type HookFire = WorkflowTriggerHook["Service"]["fire"];
 
@@ -82,6 +82,7 @@ export const layerBindHook = Layer.effectDiscard(
     const engine = yield* Effect.serviceOption(WorkflowEngine);
     if (Option.isNone(binding) || Option.isNone(engine)) return;
     const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
+    const listTriggerTargets = yield* makeTriggerTargets;
     const fire: HookFire = Effect.fn("WorkflowWebhooks.fire")(function* (input) {
       const failed = (cause?: unknown) =>
         new WorkflowTriggerHookError({ taskId: input.taskId, cause });
@@ -171,6 +172,7 @@ export const makeReconciler = Effect.fn("WorkflowWebhooks.makeReconciler")(funct
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
+  const listTriggerTargets = yield* makeTriggerTargets;
 
   /** The trigger's secret, created once so a recreated task keeps the same one. */
   const secretFor = Effect.fn("WorkflowWebhooks.secretFor")(function* (

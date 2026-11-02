@@ -13,9 +13,10 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as BotsDb from "../BotsDb.ts";
-import { type Intent, runStream, type StoredFact, workflowStream } from "./facts.ts";
+import { type Intent, type NewFact, runStream, type StoredFact, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
 import { Journal, layerFromDb, WorkflowJournalError } from "./Journal.ts";
+import { layerCountingJournal, type FactReads } from "./testkit/countingJournal.ts";
 import { compile, runStarted } from "./testkit/decideHarness.ts";
 import { layerCatalog, makeFakeInterpreter } from "./testkit/fakeEngine.ts";
 import { make } from "./WorkflowEngine.ts";
@@ -124,6 +125,83 @@ it.effect("promotes an orphan trigger only once across repeated ticks", () =>
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(layerFromDb, layer, layerCatalog([twoSteps]))),
+    );
+  }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+it.effect("promotes behind 200 finished runs reading only the facts that can decide", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* makeFakeInterpreter({});
+    const reads: FactReads = { facts: 0, createdRows: 0 };
+    const journalLayer = layerCountingJournal(reads).pipe(Layer.provide(layerFromDb));
+    yield* Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/runs" });
+      const fired = (occurrence: string): NewFact => ({
+        stream: workflowStream("demo"),
+        key: occurrence,
+        fact: {
+          _tag: "TriggerFired",
+          runId: runIdFor("demo", occurrence),
+          ...request(occurrence),
+          at: "2026-11-02T00:00:00.000Z",
+        },
+      });
+      const outcome = (runId: string, status: string): NewFact => ({
+        stream: workflowStream("demo"),
+        key: `outcome:${runId}`,
+        fact: { _tag: "RunOutcome", runId, status },
+      });
+      yield* journal.append(
+        Array.from({ length: 200 }, (_, i): NewFact[] => {
+          const occurrence = `manual:old-${i}`;
+          const runId = runIdFor("demo", occurrence);
+          return [
+            fired(occurrence),
+            {
+              stream: workflowStream("demo"),
+              key: `created:${occurrence}`,
+              fact: { _tag: "RunCreated", runId, occurrence },
+            },
+            outcome(runId, "succeeded"),
+            { stream: runStream(runId), key: "started", fact: runStarted() },
+            {
+              stream: runStream(runId),
+              key: "ended",
+              fact: { _tag: "RunEnded", status: "succeeded", at: "2026-11-02T00:00:00.000Z" },
+            },
+          ];
+        }).flat(),
+      );
+      // The old runs settled days ago: none of them can charge in today's workflow day.
+      yield* TestClock.adjust("3 days");
+      const subscription = yield* journal.subscribe;
+      const runId = runIdFor("demo", "manual:new");
+      yield* journal.append([fired("manual:new")]);
+      reads.facts = 0;
+      yield* engine.tick;
+      const ended = yield* PubSub.take(subscription).pipe(
+        Effect.repeat({
+          until: (f) => f.stream === runStream(runId) && f.fact._tag === "RunEnded",
+        }),
+      );
+      assert.equal(ended.fact._tag === "RunEnded" && ended.fact.status, "succeeded");
+      assert.isBelow(reads.facts, 100);
+
+      // The fatigue limit still trips on the latest outcomes, behind 201 successes.
+      yield* journal.append([outcome("failed-1", "failed"), outcome("failed-2", "failed")]);
+      yield* journal.append([fired("manual:after")]);
+      reads.facts = 0;
+      yield* engine.tick;
+      assert.isBelow(reads.facts, 20);
+      const stream = yield* journal.read(workflowStream("demo"));
+      const skipped = stream.find((f) => f.key === "skipped:manual:after")?.fact;
+      assert.equal(skipped?._tag === "TriggerSkipped" && skipped.reason, "suspended");
+      assert.isTrue(stream.some((f) => f.key === "suspended:failed-2"));
+      assert.equal(stream.filter((f) => f.key === "created:manual:new").length, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(journalLayer, layer, layerCatalog([twoSteps]))),
     );
   }).pipe(Effect.provide(BotsDb.layerMemory)),
 );

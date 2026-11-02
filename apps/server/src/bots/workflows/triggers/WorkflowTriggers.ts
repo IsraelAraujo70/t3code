@@ -18,7 +18,7 @@ import { DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 import { forkParked } from "../../../serverActivation.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
 import { getCursor, setCursor, deleteCursor } from "./cursors.ts";
-import { listTriggerTargets, type TriggerTarget } from "./targets.ts";
+import { makeTriggerTargets, type TriggerTarget } from "./targets.ts";
 import { fireTrigger } from "./fire.ts";
 import {
   cronDecision,
@@ -60,6 +60,7 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
   const engine = options.engine ? Option.some(options.engine) : provided;
   const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const listTriggerTargets = yield* makeTriggerTargets;
   const fireEvent = Effect.fnUntraced(function* (stored: OrchestrationV2StoredEvent) {
     if (Option.isNone(engine)) return;
     const event = stored.event;

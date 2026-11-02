@@ -3,9 +3,10 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as TestClock from "effect/testing/TestClock";
 
 import { Journal, layerMemory } from "./Journal.ts";
-import { type NewFact, runStream } from "./facts.ts";
+import { type NewFact, runStream, workflowStream } from "./facts.ts";
 import { runStarted } from "./testkit/decideHarness.ts";
 
 it.effect("stores independent sequences, deduplicates, reads, and publishes committed facts", () =>
@@ -281,5 +282,95 @@ it.effect("writes a guarded fact only if none of the named kinds landed after it
     // Already stored: returned as usual, whatever its guard says now.
     const [again] = yield* journal.append([released(1)]);
     assert.deepEqual([again?.inserted, again?.fact.seq], [false, 3]);
+  }).pipe(Effect.provide(layerMemory)),
+);
+
+it.effect("reads a workflow's switch, backlog and live runs by kind, not its whole stream", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const stream = workflowStream("w");
+    const at = "2026-11-02T00:00:00.000Z";
+    const fired = (occurrence: string): NewFact => ({
+      stream,
+      key: occurrence,
+      fact: {
+        _tag: "TriggerFired",
+        runId: `run-${occurrence}`,
+        triggerId: "manual",
+        kind: "manual",
+        occurrence,
+        label: "Manual",
+        params: {},
+        payload: null,
+        causalDepth: 0,
+        parent: null,
+        at,
+      },
+    });
+    const outcome = (runId: string, status: string): NewFact => ({
+      stream,
+      key: `outcome:${runId}`,
+      fact: { _tag: "RunOutcome", runId, status },
+    });
+    const toggled = (key: string, enabled: boolean): NewFact => ({
+      stream,
+      key,
+      fact: { _tag: "Toggled", enabled, by: "test", at },
+    });
+    assert.deepEqual(yield* journal.workflowStatus("w"), { enabled: false, suspended: false });
+    yield* journal.append([
+      toggled("toggled:1", true),
+      fired("a"),
+      { stream, key: "created:a", fact: { _tag: "RunCreated", runId: "r1", occurrence: "a" } },
+      fired("b"),
+      {
+        stream,
+        key: "skipped:b",
+        fact: { _tag: "TriggerSkipped", occurrence: "b", reason: "busy" },
+      },
+      outcome("r1", "failed"),
+      outcome("r2", "failed"),
+      { stream, key: "suspended:r2", fact: { _tag: "Suspended", reason: "fatigue", at } },
+      toggled("toggled:2", false),
+    ]);
+    assert.deepEqual(yield* journal.workflowStatus("w"), { enabled: false, suspended: true });
+    yield* journal.append([
+      { stream, key: "unsuspended:1", fact: { _tag: "Unsuspended", by: "test", at } },
+      toggled("toggled:3", true),
+      outcome("r3", "failed"),
+      fired("c"),
+      outcome("r4", "succeeded"),
+      outcome("r5", "failed"),
+    ]);
+    assert.deepEqual(yield* journal.workflowStatus("w"), { enabled: true, suspended: false });
+    const backlog = yield* journal.workflowBacklog("w", 2);
+    assert.deepEqual(
+      backlog.map((f) => f.key),
+      ["c", "outcome:r4", "outcome:r5"],
+    );
+    assert.deepEqual(
+      (yield* journal.workflowBacklog("w", 9)).map((f) => f.key),
+      ["outcome:r3", "c", "outcome:r4", "outcome:r5"],
+    );
+
+    yield* journal.append([
+      { stream: runStream("mine"), key: "started", fact: runStarted({ workflowId: "w" }) },
+      { stream: runStream("done"), key: "started", fact: runStarted({ workflowId: "w" }) },
+      { stream: runStream("done"), key: "ended", fact: { _tag: "RunEnded", status: "failed", at } },
+      { stream: runStream("other"), key: "started", fact: runStarted({ workflowId: "x" }) },
+    ]);
+    assert.deepEqual(yield* journal.liveRunsOf("w"), ["mine"]);
+    assert.deepEqual(yield* journal.liveRunsOf("none"), []);
+
+    yield* TestClock.adjust("1 hour");
+    yield* journal.append([
+      { stream: runStream("done"), key: "late", fact: { _tag: "RunEnded", status: "failed", at } },
+    ]);
+    assert.deepEqual(yield* journal.runsTouchedSince("1970-01-01T00:30:00.000Z"), ["done"]);
+    assert.deepEqual(yield* journal.runsTouchedSince("1970-01-01T00:00:00.000Z"), [
+      "done",
+      "mine",
+      "other",
+    ]);
   }).pipe(Effect.provide(layerMemory)),
 );

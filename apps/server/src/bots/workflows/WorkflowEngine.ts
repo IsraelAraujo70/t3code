@@ -181,6 +181,8 @@ const nowIso = Clock.currentTimeMillis.pipe(
 /** Earlier runs of a workflow that teach its nodes' reservations. */
 const HISTORY_RUNS = 10;
 const CONTEXT_TTL_MS = 5_000;
+/** Longer than any workflow day, so a run that settled a charge today stored a fact inside it. */
+const DAY_WINDOW_MS = 48 * 3_600_000;
 
 const isStart = (intent: Intent) =>
   intent._tag === "StartTurn" || intent._tag === "StartUnit" || intent._tag === "StartChildRun";
@@ -218,9 +220,15 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     dayGate.withPermits(1)(
       Effect.gen(function* () {
         if (daySnapshot !== null && now - daySnapshot.at < CONTEXT_TTL_MS) return daySnapshot.runs;
+        // The first load reads only runs that are live or stored a fact inside DAY_WINDOW_MS.
         const ids = dayLoaded
           ? [...dirtyRuns]
-          : (yield* journal.createdRuns(null)).map((run) => run.runId);
+          : new Set([
+              ...(yield* journal.runsTouchedSince(
+                DateTime.formatIso(DateTime.makeUnsafe(now - DAY_WINDOW_MS)),
+              )),
+              ...(yield* journal.liveRuns),
+            ]);
         dayLoaded = true;
         dirtyRuns.clear();
         for (const id of ids) {
@@ -504,21 +512,22 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   const promote = Effect.fn("WorkflowEngine.promote")(function* (workflowId: string) {
     const results = yield* promoting.withPermits(1)(
       Effect.gen(function* () {
-        const facts = yield* journal.read(workflowStream(workflowId));
-        const created = new Set<string>();
-        for (const { fact } of facts) if (fact._tag === "RunCreated") created.add(fact.runId);
+        const current = yield* catalog.current(workflowId);
+        const facts = yield* journal.workflowBacklog(
+          workflowId,
+          current._tag === "Ready"
+            ? current.version.compiled.definition.fatigue.consecutiveFailures
+            : 0,
+        );
         // The journal's live runs count a reopened run, which already has an outcome.
-        const live = new Set(yield* journal.liveRuns);
         // wf-engine slice 8: an ended run still delivering its end notice or card is not busy.
-        const running = yield* Effect.filter(
-          [...created].filter((id) => live.has(id)),
-          (id) =>
-            journal.read(runStream(id)).pipe(Effect.map((f) => foldRun(id, f).ended === null)),
+        const running = yield* Effect.filter(yield* journal.liveRunsOf(workflowId), (id) =>
+          journal.read(runStream(id)).pipe(Effect.map((f) => foldRun(id, f).ended === null)),
         );
         const decided = decideWorkflow({
           workflowId,
           facts,
-          current: yield* catalog.current(workflowId),
+          current,
           liveRuns: running.length,
           now: yield* Clock.currentTimeMillis,
         });

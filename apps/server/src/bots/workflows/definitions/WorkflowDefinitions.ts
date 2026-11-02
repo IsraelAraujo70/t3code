@@ -48,7 +48,6 @@ import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskServ
 import { workflowHookTaskId } from "../triggers/hook.ts";
 import { Journal } from "../Journal.ts";
 import { workflowStream } from "../facts.ts";
-import { workflowStatus } from "../workflowStatus.ts";
 import * as Store from "./definitionsStore.ts";
 import { WorkflowRepo, layer as repoLayer } from "./WorkflowRepo.ts";
 import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
@@ -172,7 +171,7 @@ const make = Effect.gen(function* () {
   const bus = yield* PubSub.unbounded<string>();
   const lock = yield* Semaphore.make(1);
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const status = (id: string) => journal.read(workflowStream(id)).pipe(Effect.map(workflowStatus));
+  const status = journal.workflowStatus;
   const callGraph = new Map<string, ReadonlyArray<string>>();
   const calls = (nodes: Readonly<Record<string, WorkflowNode>>): string[] =>
     Object.values(nodes).flatMap((node) =>
