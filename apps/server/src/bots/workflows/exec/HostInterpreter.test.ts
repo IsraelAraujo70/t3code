@@ -99,6 +99,23 @@ describe("observe", () => {
       };
       yield* Effect.gen(function* () {
         const interpreter = yield* WorkflowInterpreter;
+        const journal = yield* Journal.Journal;
+        const parent = runStarted();
+        if (parent._tag !== "RunStarted") return yield* Effect.die("Expected RunStarted");
+        yield* journal.append([{ stream: runStream(RUN_ID), key: "started", fact: parent }]);
+        const child = yield* interpreter.execute(RUN_ID, {
+          _tag: "StartChildRun",
+          attempt: 1,
+          key: "child:c@1",
+          step: "c",
+          workflowId: "other",
+          params: {},
+        });
+        expect(child[0]?.fact).toMatchObject({
+          _tag: "TriggerFired",
+          payload: { parent: { runId: RUN_ID, workflowId: parent.workflowId, step: "c" } },
+        });
+
         const observed = yield* interpreter
           .observe(RUN_ID, intent, { _tag: "TurnStarted", threadId: "wf:x" })
           .pipe(Stream.runCollect, Effect.forkScoped);
@@ -108,7 +125,7 @@ describe("observe", () => {
         expect(
           facts.map((f) => [f.key, f.fact._tag === "TurnSettled" && f.fact.unobserved]),
         ).toEqual([["settled:a@1", true]]);
-      }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provide(executors))));
+      }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provideMerge(executors))));
     }).pipe(Effect.scoped),
   );
 });
