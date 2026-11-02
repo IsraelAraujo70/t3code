@@ -424,7 +424,6 @@ const make = Effect.gen(function* () {
               else if (
                 author.kind === "bot" &&
                 !author.canManageBots &&
-                (result.success.definition.triggers?.length ?? 0) > 0 &&
                 (yield* status(id)).enabled
               )
                 yield* toggle(id, false, by, `toggled:bot-save:${commit}`);

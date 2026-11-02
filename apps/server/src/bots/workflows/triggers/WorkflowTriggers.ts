@@ -74,7 +74,7 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
           ...(trigger.botId === undefined ? {} : { botId: trigger.botId }),
           ...(trigger.titlePrefix === undefined ? {} : { titlePrefix: trigger.titlePrefix }),
         };
-        if (!settledMatches(filters, payload)) continue;
+        if (!settledMatches(filters, { ...payload, lineage: thread.lineage })) continue;
         yield* fireTrigger(engine.value, target, {
           kind: "threadSettled",
           occurrence: occurrenceKey.settled(thread.id, stored.sequence),

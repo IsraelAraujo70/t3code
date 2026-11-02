@@ -1,4 +1,9 @@
 // @effect-diagnostics globalDate:off - Pure trigger boundaries accept explicit Date values without reading the clock.
+import {
+  isListedThreadLineage,
+  isWorkflowStepThreadId,
+  type OrchestrationV2AppThreadLineage,
+} from "@t3tools/contracts";
 import * as Cron from "effect/Cron";
 import * as Result from "effect/Result";
 
@@ -107,15 +112,18 @@ export const latestTag = (
   return tags.at(-1) ?? null;
 };
 
-// Replaced by isWorkflowStepThreadId from @t3tools/contracts when the hide work lands.
-const isWorkflowStepThread = (threadId: string) => threadId.startsWith("wf:");
-
 /** Matches all supplied filters while excluding workflow step threads. */
 export const settledMatches = (
   trigger: { readonly projectId?: string; readonly botId?: string; readonly titlePrefix?: string },
-  thread: { readonly threadId: string; readonly projectId: string; readonly title: string },
+  thread: {
+    readonly threadId: string;
+    readonly projectId: string;
+    readonly title: string;
+    readonly lineage: OrchestrationV2AppThreadLineage;
+  },
 ): boolean =>
-  !isWorkflowStepThread(thread.threadId) &&
+  !isWorkflowStepThreadId(thread.threadId) &&
+  isListedThreadLineage(thread.lineage) &&
   (trigger.projectId === undefined || trigger.projectId === thread.projectId) &&
   (trigger.botId === undefined || thread.threadId.startsWith(`bot:${trigger.botId}:`)) &&
   (trigger.titlePrefix === undefined || thread.title.startsWith(trigger.titlePrefix));

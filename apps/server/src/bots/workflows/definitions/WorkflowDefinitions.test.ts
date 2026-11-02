@@ -151,6 +151,7 @@ it.live("checks toggle permission and paginates committed history", () =>
           definition: {
             ...active.definition,
             title: "Bot edit",
+            triggers: [],
           },
           workflowId: id,
           baseRevision: active.revision,

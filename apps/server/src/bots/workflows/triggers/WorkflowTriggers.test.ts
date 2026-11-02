@@ -217,7 +217,15 @@ const orchestratorWith = (events: Array<{ sequence: number; event: unknown }>) =
 
 const settled = (sequence: number, id: string, title: string) => ({
   sequence,
-  event: { type: "thread.settled", payload: { id, projectId: "project-app", title } },
+  event: {
+    type: "thread.settled",
+    payload: {
+      id,
+      projectId: "project-app",
+      title,
+      lineage: { parentThreadId: null, rootThreadId: id, relationshipToParent: null },
+    },
+  },
 });
 
 it.effect("fires on threads that settle after it is on, never on step threads, and retries", () =>
