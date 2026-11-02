@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
-import * as BotsStore from "../../BotsStore.ts";
 import { BotPushDelivery, type BotPushData } from "../../push/BotPushDelivery.ts";
 import { failedNotice } from "./notices.ts";
 import { WorkflowNotices, layer } from "./WorkflowNotices.ts";
@@ -32,22 +31,15 @@ it.effect("delivers the notice to the owner's devices with environment and clock
       layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            BotsStore.layerMemory,
             Layer.succeed(ServerEnvironment, {
               getEnvironmentId: Effect.succeed(EnvironmentId.make("env")),
               getDescriptor: Effect.die("unused"),
             }),
             Layer.succeed(BotPushDelivery, {
               enabled: true,
-              deliver: (data, audience) =>
-                Effect.gen(function* () {
+              deliver: (data) =>
+                Effect.sync(() => {
                   received.push(data);
-                  assert.deepStrictEqual(yield* audience.devices.pipe(Effect.orDie), []);
-                  assert.deepStrictEqual(audience.notification, {
-                    title: "Title",
-                    body: "The run failed.",
-                  });
-                  yield* audience.drop("expired").pipe(Effect.orDie);
                 }),
             }),
           ),

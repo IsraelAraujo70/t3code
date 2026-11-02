@@ -3,7 +3,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
-import { BotsStore } from "../../BotsStore.ts";
 import * as KanbanStore from "../../kanban/KanbanStore.ts";
 import * as BotPushDelivery from "../../push/BotPushDelivery.ts";
 import * as WorkflowCards from "../card/WorkflowCards.ts";
@@ -24,7 +23,6 @@ export class WorkflowNotices extends Context.Service<
 export const layer = Layer.effect(
   WorkflowNotices,
   Effect.gen(function* () {
-    const store = yield* BotsStore;
     const environment = yield* ServerEnvironment;
     const delivery = yield* BotPushDelivery.BotPushDelivery;
     const deliver = Effect.fn("WorkflowNotices.deliver")(
@@ -37,11 +35,6 @@ export const layer = Layer.effect(
         const sentAt = yield* Clock.currentTimeMillis;
         yield* delivery.deliver(
           workflowPushData(input.notice, { ...input, environmentId, sentAt }),
-          {
-            devices: store.listPushDevices,
-            drop: store.deletePushDevice,
-            notification: { title: input.notice.title, body: input.notice.body },
-          },
         );
       },
       Effect.catchCause((cause) => Effect.logWarning("workflow notice delivery failed", { cause })),
