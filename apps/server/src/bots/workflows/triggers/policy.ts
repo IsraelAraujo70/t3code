@@ -57,7 +57,9 @@ export const resolveTrigger = (
   firedKind: string,
 ): (WorkflowTrigger & { readonly id: string }) | undefined => {
   const exact = triggers && Object.hasOwn(triggers, triggerId) ? triggers[triggerId] : undefined;
-  if (exact) return { ...exact, id: triggerId };
+  // A child run names its trigger "call", which can also be the id of another kind's trigger.
+  if (exact && (exact.kind === firedKind || !isOnDemandTrigger(firedKind)))
+    return { ...exact, id: triggerId };
   if (!isOnDemandTrigger(firedKind)) return undefined;
   const matches = Object.entries(triggers ?? {}).filter(([, value]) => value.kind === firedKind);
   const match = matches.length === 1 ? matches[0] : undefined;

@@ -16,6 +16,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./state/runtime.ts";
+import { createCommandPermissions } from "./state/commandPermissions.ts";
 import { foldRunDelta, joinRunPages } from "./workflows.run.ts";
 
 const M = BOTS_WS_METHODS;
@@ -79,7 +80,14 @@ export function createWorkflowsEnvironmentAtoms<R, E>(
     triggerListen: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:workflows:trigger-listen",
       tag: M.workflowsTriggerListen,
+      // While a listener lives the server captures the next delivery instead of running it:
+      // release it the moment the panel stops listening, and never re-arm after it ends.
+      idleTtlMs: 0,
+      completeWhen: (event) => event._tag !== "Listening",
     }),
+    /** Whether this session may listen for test events (an Operate-scoped stream). */
+    triggerListenPermission: createCommandPermissions(runtime, M.workflowsTriggerListen)
+      .permissionAtom,
     metrics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:workflows:metrics",
       tag: M.workflowsMetrics,

@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { EnvironmentId, WorkflowDocument, WorkflowRunId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../../components/ui/button";
 import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard";
@@ -48,6 +49,8 @@ export function WebhookTriggerPanel({
   const captured = event?._tag === "Captured" ? event.sample : sample.data;
   const { copyToClipboard } = useCopyToClipboard({ target: "webhook" });
   const runStart = useAtomCommand(workflowsEnvironment.runStart);
+  const canListen = useAtomValue(workflowsEnvironment.triggerListenPermission(environmentId));
+  const canRun = useAtomValue(workflowsEnvironment.runStart.permissionAtom(environmentId));
   const paths: string[] = [];
   const walk = (value: unknown, path: string) => {
     if (paths.length >= 30) return;
@@ -83,7 +86,7 @@ export function WebhookTriggerPanel({
       <Button
         size="sm"
         variant="outline"
-        disabled={!summary}
+        disabled={!summary || (!listening && !canListen)}
         onClick={() => setListening(!listening)}
       >
         {listening ? "Stop" : "Listen for test event"}
@@ -92,10 +95,11 @@ export function WebhookTriggerPanel({
         <p>Listening until {new Date(event.expiresAt).toLocaleTimeString()}</p>
       )}
       {event?._tag === "Expired" && <p>No event arrived</p>}
+      {listening && listener.error ? <p role="alert">{listener.error}</p> : null}
       <p>Events can take up to 10 s to arrive.</p>
       <Button
         size="sm"
-        disabled={!captured || !summary}
+        disabled={!captured || !summary || !canRun}
         onClick={() =>
           void runStart({
             environmentId,

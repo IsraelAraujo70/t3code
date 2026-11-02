@@ -58,4 +58,8 @@ it("resolves ids and only falls back for on-demand kinds", () => {
   expect(resolveTrigger(triggers, "run", "manual")?.id).toBe("run");
   expect(resolveTrigger(triggers, "call", "call")?.id).toBe("parent");
   expect(resolveTrigger(triggers, "missing", "cron")).toBeUndefined();
+  // A manual trigger named "call" does not swallow a child run's placeholder id.
+  expect(
+    resolveTrigger({ call: { kind: "manual" }, parent: { kind: "call" } }, "call", "call")?.id,
+  ).toBe("parent");
 });
