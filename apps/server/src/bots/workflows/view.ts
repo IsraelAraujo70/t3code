@@ -103,7 +103,9 @@ export const runSummary = (state: RunState, now?: number): WorkflowRunSummary =>
           entry.result?._tag === "PullRequestOpened" ? [entry.result.url] : [],
         )[0] ?? null,
     activeMs: activeMs(state, state.ended ? Date.parse(state.ended.at) : now),
-    activeSince: activeClockRunning(state, now) ? DateTime.formatIso(DateTime.makeUnsafe(now)) : null,
+    activeSince: activeClockRunning(state, now)
+      ? DateTime.formatIso(DateTime.makeUnsafe(now))
+      : null,
   };
 };
 

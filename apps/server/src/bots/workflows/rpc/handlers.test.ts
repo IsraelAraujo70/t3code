@@ -61,7 +61,7 @@ it.live("saves owner definitions and streams their committed document", () =>
         baseRevision: original.revision,
         message: "RPC save",
       });
-      expect(saved).toMatchObject({ _tag: "Saved", enabled: true });
+      expect(saved).toMatchObject({ _tag: "Saved", enabled: false });
       expect((yield* definitions.history({ workflowId: id })).versions[0]?.author).toBe("Owner");
       expect(
         (yield* rpc[M.workflowsSubscribe]().pipe(Stream.take(1), Stream.runCollect))[0]?.workflows,

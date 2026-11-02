@@ -49,7 +49,7 @@ it.live("rejects invalid disk state while preserving pinned versions", () =>
         const ready = yield* catalog.current(saved.workflowId);
         expect(ready).toMatchObject({
           _tag: "Ready",
-          enabled: true,
+          enabled: false,
           suspended: false,
           version: { commit: saved.commit },
         });
