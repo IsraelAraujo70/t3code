@@ -395,6 +395,9 @@ it("counts live active time from the caller clock", () => {
     activeMs: 1234,
     activeSince: "2026-11-02T10:00:01.234Z",
   });
-  const paused = { ...state, pauses: [{ at: "2026-11-02T10:00:00.000Z", resumedAt: null, reason: "user" }] };
+  const paused = {
+    ...state,
+    pauses: [{ at: "2026-11-02T10:00:00.000Z", resumedAt: null, reason: "user" as const }],
+  };
   expect(runSummary(paused, T0 + 1234).activeSince).toBeNull();
 });
