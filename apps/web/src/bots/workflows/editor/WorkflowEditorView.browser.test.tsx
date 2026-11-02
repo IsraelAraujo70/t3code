@@ -116,6 +116,24 @@ it("overwrites an invalid file with the draft and the current disk revision", as
   });
 });
 
+it("saves a field edit with the first Save press, before the field loses focus", async () => {
+  const save = vi.fn(async (_input: WorkflowSaveInput) => ({
+    ok: true as const,
+    result: { _tag: "Conflict" as const, workflowId: workflowId, base: null, current: fixture() },
+  }));
+  await using screen = await render(
+    <WorkflowEditorView environmentId={environmentId} document={fixture()} save={save} />,
+  );
+  await userEvent.fill(screen.getByRole("textbox", { name: "description" }), "Nightly demo");
+  await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+  await vi.waitFor(() => {
+    const input = save.mock.calls[0]?.[0];
+    expect(input && "definition" in input ? input.definition.description : null).toBe(
+      "Nightly demo",
+    );
+  });
+});
+
 it("opening a workflow leaves nothing to save", async () => {
   const save = vi.fn();
   await using screen = await render(
