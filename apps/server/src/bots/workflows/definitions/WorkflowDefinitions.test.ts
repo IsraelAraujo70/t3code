@@ -204,6 +204,41 @@ it.live("checks toggle permission and paginates committed history", () =>
   ),
 );
 
+it.live("disables bot edits before a failed version index", () =>
+  withDefinitions((definitions) =>
+    Effect.gen(function* () {
+      const id = decodeId("failed-bot-index");
+      yield* definitions.fromTemplate(
+        { templateId: decodeId("mcp-token-cut"), workflowId: id },
+        { kind: "user" },
+      );
+      yield* definitions.setEnabled(
+        decodeToggle({ workflowId: id, enabled: true, clientRequestId: "enable-failure-test" }),
+        { kind: "user" },
+      );
+      const doc = yield* definitions.document(id);
+      if (!doc.definition) throw new Error("Expected definition");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TRIGGER fail_bot_version BEFORE INSERT ON workflow_versions
+        WHEN NEW.author LIKE '%(bot)'
+        BEGIN SELECT RAISE(ABORT, 'injected'); END`;
+      yield* definitions
+        .save(
+          {
+            workflowId: id,
+            definition: { ...doc.definition, title: "Bot version" },
+            baseRevision: doc.revision,
+            message: "Bot version",
+          },
+          { kind: "bot", name: "Bot", canManageBots: false },
+        )
+        .pipe(Effect.flip);
+      const journal = yield* Journal.Journal;
+      expect(workflowStatus(yield* journal.read(workflowStream(id))).enabled).toBe(false);
+    }),
+  ),
+);
+
 it.live("saves canonical source without duplicate commits", () =>
   withDefinitions((definitions) =>
     Effect.gen(function* () {
@@ -215,7 +250,7 @@ it.live("saves canonical source without duplicate commits", () =>
       const first = yield* definitions.save({ source, message: "First" }, { kind: "user" });
       expect(first._tag).toBe("Saved");
       if (first._tag !== "Saved") return;
-      expect(first.enabled).toBe(true);
+      expect(first.enabled).toBe(false);
       const doc = yield* definitions.document(first.workflowId);
       expect(
         yield* fs.readFileString(`${definitions.repoPath}/${first.workflowId}.workflow.yaml`),
@@ -242,7 +277,7 @@ it.live("preserves and repairs invalid hand edits", () =>
       const first = yield* definitions.save({ source, message: "First" }, { kind: "user" });
       expect(first._tag).toBe("Saved");
       if (first._tag !== "Saved") return;
-      expect(first.enabled).toBe(true);
+      expect(first.enabled).toBe(false);
       const doc = yield* definitions.document(first.workflowId);
       expect(
         yield* fs.readFileString(`${definitions.repoPath}/${first.workflowId}.workflow.yaml`),
@@ -285,7 +320,7 @@ it.live("returns validation diagnostics", () =>
       const first = yield* definitions.save({ source, message: "First" }, { kind: "user" });
       expect(first._tag).toBe("Saved");
       if (first._tag !== "Saved") return;
-      expect(first.enabled).toBe(true);
+      expect(first.enabled).toBe(false);
       const doc = yield* definitions.document(first.workflowId);
       expect(
         yield* fs.readFileString(`${definitions.repoPath}/${first.workflowId}.workflow.yaml`),
@@ -308,7 +343,7 @@ it.live("ingests hand edits and emits documents", () =>
       const first = yield* definitions.save({ source, message: "First" }, { kind: "user" });
       expect(first._tag).toBe("Saved");
       if (first._tag !== "Saved") return;
-      expect(first.enabled).toBe(true);
+      expect(first.enabled).toBe(false);
       const doc = yield* definitions.document(first.workflowId);
       expect(
         yield* fs.readFileString(`${definitions.repoPath}/${first.workflowId}.workflow.yaml`),
@@ -342,7 +377,7 @@ it.live("rejects stale canvas edits", () =>
       const first = yield* definitions.save({ source, message: "First" }, { kind: "user" });
       expect(first._tag).toBe("Saved");
       if (first._tag !== "Saved") return;
-      expect(first.enabled).toBe(true);
+      expect(first.enabled).toBe(false);
       const doc = yield* definitions.document(first.workflowId);
       expect(
         yield* fs.readFileString(`${definitions.repoPath}/${first.workflowId}.workflow.yaml`),
@@ -386,7 +421,7 @@ it.live("creates bot workflows disabled", () =>
       const first = yield* definitions.save({ source, message: "First" }, { kind: "user" });
       expect(first._tag).toBe("Saved");
       if (first._tag !== "Saved") return;
-      expect(first.enabled).toBe(true);
+      expect(first.enabled).toBe(false);
       const doc = yield* definitions.document(first.workflowId);
       expect(
         yield* fs.readFileString(`${definitions.repoPath}/${first.workflowId}.workflow.yaml`),
@@ -489,6 +524,14 @@ it.live("a removal committed before a crash still turns the workflow off", () =>
       const statusOf = journal
         .read(workflowStream("gone"))
         .pipe(Effect.map((facts) => workflowStatus(facts).enabled));
+      yield* definitions.setEnabled(
+        decodeToggle({
+          workflowId: decodeId("gone"),
+          enabled: true,
+          clientRequestId: "enable-gone",
+        }),
+        { kind: "user" },
+      );
       expect(yield* statusOf).toBe(true);
       // The removal commit lands; the service never got to record the switch.
       yield* harness.git("rm", "-q", "gone.workflow.yaml");

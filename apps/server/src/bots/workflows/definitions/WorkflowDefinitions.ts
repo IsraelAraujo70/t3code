@@ -401,6 +401,9 @@ const make = Effect.gen(function* () {
               const reread = Option.getOrNull(yield* repo.read(id));
               if (file?.revision !== reread?.revision) continue;
               const by = author.kind === "user" ? "Owner" : `${author.name} (bot)`;
+              const current = yield* status(id);
+              if (current.enabled && (!file || (author.kind === "bot" && !author.canManageBots)))
+                yield* toggle(id, false, by, `toggled:save-off:${current.toggledSeq}`);
               if (file?.text !== canonical) {
                 const head = Option.getOrNull(yield* repo.head(id));
                 if (file && file.revision !== head?.revision)
@@ -413,20 +416,6 @@ const make = Effect.gen(function* () {
                 message: input.message.trim() || `Save ${id}`,
               });
               yield* index(id);
-              if (!file)
-                yield* toggle(
-                  id,
-                  author.kind === "user" || author.canManageBots,
-                  by,
-                  `toggled:created:${commit}`,
-                );
-              else if (author.kind === "bot" && !author.canManageBots) {
-                // Keyed to the activation it turns off: the same commit saved again after the owner
-                // turned the workflow back on disables it again.
-                const current = yield* status(id);
-                if (current.enabled)
-                  yield* toggle(id, false, by, `toggled:bot-save:${commit}:${current.toggledSeq}`);
-              }
               yield* PubSub.publish(bus, id);
               return {
                 _tag: "Saved" as const,

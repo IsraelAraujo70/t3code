@@ -1,4 +1,3 @@
-import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 /**
  * Workflow tools for bots (design §6). The handlers call the same `WorkflowDefinitions` and
  * `WorkflowEngine` methods as the RPCs. No tool decides a gate.
@@ -19,6 +18,7 @@ import {
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as BotsService from "../../BotsService.ts";
@@ -41,7 +41,7 @@ const WORKFLOW_LIST_LIMIT = 50;
 const NEEDS_MANAGE =
   "Only a bot the owner allowed to manage bots, in Settings → Bots, can do this.";
 const OWNER_ONLY =
-  "A bot the owner has not allowed to manage bots saves the workflow turned off; the owner turns it on in the app.";
+  "Every new workflow is saved turned off; a bot allowed to manage bots turns it on with workflow_set_enabled. A save by a bot without that permission also turns an existing workflow off until the owner turns it on in the app.";
 const GATES =
   "A gate waits for the owner: only they approve or reject it, in the run view of the T3 app, and no tool can. When a run waits at a gate, tell the user it needs their approval there; do not edit, cancel, or rerun the workflow to get past it.";
 
