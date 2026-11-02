@@ -2,16 +2,39 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import * as Schema from "effect/Schema";
 import { admits, flag, runCli, tokenBudget, type McpEvalVerdictOutput } from "./cli.ts";
 
 const ROOT = NodePath.resolve(import.meta.dirname, "../../..");
-type Usage = { input: number; output: number; cacheWrite: number; cacheRead: number };
-type Row = { id: string; pass: boolean; error?: string; usage?: Usage; shellUsage?: Usage };
-const rows = (file: string): Row[] =>
-  NodeFS.readFileSync(file, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Row);
+const UsageSchema = Schema.Struct({
+  input: Schema.Number,
+  output: Schema.Number,
+  cacheWrite: Schema.Number,
+  cacheRead: Schema.Number,
+});
+const RowSchema = Schema.Struct({
+  id: Schema.String,
+  pass: Schema.Boolean,
+  error: Schema.optional(Schema.String),
+  usage: Schema.optional(UsageSchema),
+  shellUsage: Schema.optional(UsageSchema),
+});
+type Row = typeof RowSchema.Type;
+const CaseSchema = Schema.Struct({
+  id: Schema.String,
+  setup: Schema.optional(Schema.Struct({ harness: Schema.optional(Schema.String) })),
+});
+const readLines = <A>(file: string, decode: (value: unknown) => A): A[] => {
+  try {
+    return NodeFS.readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => decode(JSON.parse(line)));
+  } catch (cause) {
+    throw new Error(`Invalid data in ${file}: ${String(cause)}`);
+  }
+};
+const rows = (file: string): Row[] => readLines(file, Schema.decodeUnknownSync(RowSchema));
 const finished = (items: Row[]) => items.filter((row) => row.error === undefined);
 const passes = (items: Row[]) => {
   const done = finished(items);
@@ -23,12 +46,7 @@ export function listCases(model: string): string[] {
   const dir = NodePath.join(ROOT, "evals/mcp-tool-use/cases");
   return NodeFS.readdirSync(dir)
     .filter((file) => file.endsWith(".ndjson"))
-    .flatMap((file) =>
-      NodeFS.readFileSync(NodePath.join(dir, file), "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { id: string; setup?: { harness?: string } }),
-    )
+    .flatMap((file) => readLines(NodePath.join(dir, file), Schema.decodeUnknownSync(CaseSchema)))
     .filter(
       (item) =>
         !item.setup?.harness ||
@@ -145,7 +163,13 @@ export function mcpEvalVerdict(): McpEvalVerdictOutput {
 if (import.meta.main) {
   if (process.argv.includes("--help"))
     process.stdout.write(
-      "--model <m> [--baseline <results.jsonl>] --out <dir> [--case <ids>] [--samples <n>]. WF_TOKEN_BUDGET limits uncached input + output; MCP_EVAL_RUN_TS overrides the runner. Regression: baseline majority passes, current majority fails. Exit 0: JSON verdict; exit 1: no verdict.",
+      `--model <m> [--baseline <results.jsonl>] --out <dir>
+[--case <ids>] [--samples <n>]
+WF_TOKEN_BUDGET limits uncached input + output.
+MCP_EVAL_RUN_TS overrides the runner.
+Regression: baseline majority passes, current majority fails.
+Exit 0: JSON verdict; exit 1: no verdict.
+`,
     );
   else await runCli(mcpEvalVerdict);
 }

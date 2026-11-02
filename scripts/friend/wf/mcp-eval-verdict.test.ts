@@ -6,8 +6,14 @@ import { listCases } from "./mcp-eval-verdict.ts";
 import { fixtureDir, runWfCli } from "./testRepo.ts";
 
 it("lists real cases for both harnesses", () => {
-  expect(listCases("gpt-test").length).toBeGreaterThan(0);
-  expect(listCases("claude-test").length).toBeGreaterThan(0);
+  const codex = listCases("gpt-6.1-sol");
+  const claude = listCases("claude-opus-5-5");
+  expect(codex).toContain("codex-same-model-subagents-stay-native");
+  expect(claude).not.toContain("codex-same-model-subagents-stay-native");
+  expect(claude).toContain("NAT-01");
+  expect(codex).not.toContain("NAT-01");
+  expect(codex).toContain("DEL-02");
+  expect(claude).toContain("DEL-02");
 });
 
 it("aggregates regressions and resumes without invoking the paid runner", () => {
@@ -70,6 +76,7 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
   });
   expect(runWfCli("mcp-eval-verdict.ts", args, { cwd: dir.path, env }).stdout).toBe(first.stdout);
   expect(NodeFS.readFileSync(calls, "utf8")).toBe("A\nB\nC\n");
+  NodeFS.writeFileSync(calls, "");
   const limited = runWfCli(
     "mcp-eval-verdict.ts",
     [...args.slice(0, -1), NodePath.join(dir.path, "limited")],
@@ -80,4 +87,51 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
     stopped: "budget",
     cases: { finished: 2 },
   });
+  expect(NodeFS.readFileSync(calls, "utf8")).toBe("A\nB\n");
+  const run = (name: string, fake: unknown, baselineArgs = ["--baseline", baseline]) =>
+    runWfCli(
+      "mcp-eval-verdict.ts",
+      [
+        "--model",
+        "gpt-test",
+        "--case",
+        "A,B",
+        ...baselineArgs,
+        "--out",
+        NodePath.join(dir.path, name),
+      ],
+      {
+        cwd: dir.path,
+        env: { ...env, FAKE_EVAL_TABLE: JSON.stringify(fake) },
+      },
+    );
+  const errors = run("errors", {
+    A: { rows: [row("A", true), { ...row("A", false), error: "failed" }] },
+    B: { rows: [{ ...row("B", false), error: "failed" }] },
+  });
+  expect(errors.status).toBe(0);
+  expect(JSON.parse(errors.stdout)).toMatchObject({
+    complete: false,
+    cases: { planned: 2, finished: 1 },
+    case_regressions: 0,
+    regressed: [],
+  });
+  const skipped = run("skipped", { A: table.A, B: { exit: 1, stderr: "No case matches --case." } });
+  expect(skipped.status).toBe(0);
+  expect(JSON.parse(skipped.stdout)).toMatchObject({
+    complete: true,
+    cases: { planned: 1, finished: 1 },
+  });
+  const failed = run("failed", { A: { exit: 1, stderr: "runner failure tail" } });
+  expect(failed.status).toBe(1);
+  expect(failed.stdout).toBe("");
+  expect(failed.stderr).toContain("runner failure tail");
+  const noBaseline = run("no-baseline", table, []);
+  expect(noBaseline.status).toBe(0);
+  expect(JSON.parse(noBaseline.stdout)).toMatchObject({ case_regressions: 0, regressed: [] });
+  NodeFS.writeFileSync(baseline, '{"id":42}\n');
+  const malformed = run("malformed", table);
+  expect(malformed.status).toBe(1);
+  expect(malformed.stdout).toBe("");
+  expect(malformed.stderr).toContain(baseline);
 });
