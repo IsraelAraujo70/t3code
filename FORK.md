@@ -380,6 +380,10 @@ Android Bots tab. It lists the bots host's workflows with their last run.
 - **Read the result.** A run ends ready for review (with a draft pull request), with no gain,
   blocked, or failed. Merging into `friend/main` stays your step.
 
+Any bot can run, cancel or turn on a workflow when you ask in your own message in its conversation,
+or when you allow it to manage bots in Settings → Bots. Messages from another bot, scheduled tasks
+and workflow steps do not count as your request.
+
 Each workflow is a file in `~/.t3/workflows/definitions` on the bots host. Saving in the editor
 commits it there, and a hand edit of the file shows up in the app. Two templates are not ready to run
 unattended yet, "Hillclimb de throughput no argo35" and "Correções viram enforcement estrutural";

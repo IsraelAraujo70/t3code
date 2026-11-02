@@ -10,7 +10,13 @@ import {
   WorkflowRunId,
   WorkflowRunView,
   WorkflowsError,
+  MessageId,
+  RunId,
+  ScheduledTaskId,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2Run,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,9 +30,10 @@ import * as Invocation from "../../../mcp/McpInvocationContext.ts";
 import * as Access from "../../../mcp/McpToolAccess.ts";
 import { liveThreadsLayer } from "../../../mcp/McpToolAccess.testkit.ts";
 import { WorkflowToolkit } from "./tools.ts";
-import { layer } from "./handlers.ts";
+import { layerOver } from "./handlers.ts";
 
 import { WorkflowEngine } from "../WorkflowEngine.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 
 const decodeView = Schema.decodeSync(WorkflowRunView);
 
@@ -34,6 +41,8 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
   thread: string,
   isBot = true,
   canManageBots = false,
+  message?: OrchestrationV2ConversationMessage,
+  readFails = false,
 ) {
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
   const record = (value: unknown) => Ref.update(calls, (values) => [...values, value]);
@@ -149,11 +158,46 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
             },
           }),
         ),
-      setEnabled: () => Effect.fail(new WorkflowsError({ code: "permission", message: "Denied" })),
+      setEnabled: (_input, author) =>
+        author.kind === "user" || author.canManageBots
+          ? Effect.succeed({
+              workflowId: WorkflowId.make("example"),
+              title: "Example",
+              description: null,
+              path: "example.yaml",
+              valid: true,
+              dirty: false,
+              enabled: true,
+              suspended: false,
+              diagnostics: 0,
+              triggers: [],
+              headCommit: null,
+              revision: null,
+              updatedAt: null,
+              lastRun: null,
+            })
+          : Effect.fail(new WorkflowsError({ code: "permission", message: "Denied" })),
     }),
   );
+  // Only the turn lookup is read; the run stands in for the projected one.
+  const turnRun = { id: RunId.make("run-test") } as OrchestrationV2Run;
+  const projections = yield* ProjectionStore.ProjectionStoreV2.pipe(
+    Effect.provide(
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getRunningTurnContext: () =>
+          readFails
+            ? Effect.fail(
+                new ProjectionStore.ProjectionStoreReadError({ threadId: ThreadId.make(thread) }),
+              )
+            : Effect.succeed({ run: turnRun, providerThread: undefined, providerTurn: undefined }),
+        getRunMessage: () => Effect.succeed(message),
+      }),
+    ),
+  );
   const toolkit = yield* WorkflowToolkit.pipe(
-    Effect.provide(Access.HandlersLayer.layer(layer).pipe(Layer.provide(dependencies))),
+    Effect.provide(
+      Access.HandlersLayer.layer(layerOver(projections)).pipe(Layer.provide(dependencies)),
+    ),
   );
   const run = <A extends { readonly result: unknown }, E, R, E2, R2>(
     handled: Effect.Effect<Stream.Stream<A, E, R>, E2, R2>,
@@ -251,5 +295,47 @@ it.effect("starts bot runs with their occurrence and refuses unprivileged mutati
     expect(yield* denied.run()).toMatchObject({ code: "capability_denied" });
     expect(yield* denied.cancel()).toMatchObject({ code: "capability_denied" });
     expect(yield* Ref.get(denied.calls)).toEqual(["botForThread", "botForThread"]);
+  }),
+);
+
+const ownerMessage: OrchestrationV2ConversationMessage = {
+  id: MessageId.make("message-test"),
+  threadId: ThreadId.make("bot:test:1"),
+  runId: RunId.make("run-test"),
+  nodeId: null,
+  role: "user",
+  text: "Run it",
+  createdBy: "user",
+  creationSource: "web",
+  attachments: [],
+  streaming: false,
+  createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+  updatedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+};
+it.effect("allows owner turns to run and enable workflows", () =>
+  Effect.gen(function* () {
+    const t = yield* setup("bot:test:1", true, false, ownerMessage);
+    expect(yield* t.run()).toMatchObject({ status: "queued" });
+    expect(yield* t.enable()).toEqual({ enabled: true });
+    yield* t.save();
+    expect((yield* Ref.get(t.calls)).at(-1)).toEqual({
+      kind: "bot",
+      name: "Test",
+      canManageBots: true,
+    });
+  }),
+);
+it.effect("refuses relayed scheduled server and unreadable turns", () =>
+  Effect.gen(function* () {
+    for (const message of [
+      { ...ownerMessage, senderThreadId: ThreadId.make("bot:other:1") },
+      { ...ownerMessage, scheduledTaskId: ScheduledTaskId.make("scheduled-test") },
+      { ...ownerMessage, creationSource: "server" as const },
+    ]) {
+      const t = yield* setup("bot:test:1", true, false, message);
+      expect(yield* t.run()).toMatchObject({ code: "capability_denied" });
+    }
+    const t = yield* setup("bot:test:1", true, false, ownerMessage, true);
+    expect(yield* t.run()).toMatchObject({ code: "capability_denied" });
   }),
 );

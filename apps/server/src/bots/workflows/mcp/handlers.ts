@@ -2,20 +2,51 @@ import {
   isWorkflowStepThreadId,
   OrchestratorMcpFailure,
   type WorkflowsError,
+  type OrchestrationV2ConversationMessage,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import type { Toolkit } from "effect/ai";
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as BotsService from "../../BotsService.ts";
 import * as WorkflowDefinitions from "../definitions/WorkflowDefinitions.ts";
 import { workflowRunWebPath } from "../notices/notices.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
 import { WorkflowToolkit } from "./tools.ts";
+
+/** Whether the opening message was typed by the owner in a client. */
+export const isOwnerMessage = (
+  message: Pick<
+    OrchestrationV2ConversationMessage,
+    "createdBy" | "creationSource" | "scheduledTaskId" | "senderThreadId"
+  >,
+): boolean =>
+  message.createdBy === "user" &&
+  (message.creationSource === "web" || message.creationSource === "mobile") &&
+  message.scheduledTaskId === undefined &&
+  message.senderThreadId === undefined;
+
+type Projections = Context.Service.Shape<typeof ProjectionStore.ProjectionStoreV2>;
+
+/** Whether the caller's running turn opened with the owner's own message. Any doubt is false. */
+const ownerTurnFrom = Effect.fn("WorkflowHandlers.ownerTurn")(
+  function* (projections: Projections) {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    if (!scope.thread) return false;
+    const { run } = yield* projections.getRunningTurnContext(scope.thread.threadId);
+    if (!run) return false;
+    const message = yield* projections.getRunMessage(scope.thread.threadId, run.id);
+    return message !== undefined && isOwnerMessage(message);
+  },
+  Effect.orElseSucceed(() => false),
+);
 
 const failure = (error: WorkflowsError) =>
   new OrchestratorMcpFailure({
@@ -82,7 +113,11 @@ const manage = (allowed: boolean) =>
           message: "This bot does not have permission to manage bots.",
         }),
       );
-export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
+type WorkflowTools = typeof WorkflowToolkit extends Toolkit.Toolkit<infer Tools> ? Tools : never;
+
+const handlers = (
+  ownerTurn: ReturnType<typeof ownerTurnFrom>,
+): McpToolAccess.Handlers<WorkflowTools> => ({
   workflow_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       yield* callerBot;
@@ -147,7 +182,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
             ...(input.workflowId !== undefined ? { workflowId: input.workflowId } : {}),
             ...(input.baseRevision !== undefined ? { baseRevision: input.baseRevision } : {}),
           },
-          author,
+          { ...author, canManageBots: author.canManageBots || (yield* ownerTurn) },
         )
         .pipe(Effect.mapError(failure));
       switch (result._tag) {
@@ -174,11 +209,15 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
   workflow_set_enabled: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { author } = yield* callerBot;
+      const mayManage = author.canManageBots || (yield* ownerTurn);
       const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
       const nonce = (yield* Random.nextIntBetween(0, 0xffffffff)).toString(16);
       const at = yield* Clock.currentTimeMillis;
       const summary = yield* definitions
-        .setEnabled({ ...input, clientRequestId: `mcp-${at}-${nonce}` }, author)
+        .setEnabled(
+          { ...input, clientRequestId: `mcp-${at}-${nonce}` },
+          { ...author, canManageBots: mayManage },
+        )
         .pipe(Effect.mapError(failure));
       return { enabled: summary.enabled };
     }),
@@ -186,7 +225,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
   workflow_run: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { bot } = yield* callerBot;
-      yield* manage(bot.canManageBots);
+      yield* manage(bot.canManageBots || (yield* ownerTurn));
       const engine = yield* engineAvailable;
       const id = input.clientRequestId ?? (yield* requestId);
       const { runId } = yield* engine
@@ -240,7 +279,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
   workflow_run_cancel: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { bot } = yield* callerBot;
-      yield* manage(bot.canManageBots);
+      yield* manage(bot.canManageBots || (yield* ownerTurn));
       const engine = yield* engineAvailable;
       const summary = yield* engine
         .controlRun(
@@ -260,3 +299,14 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     }),
   ),
 });
+
+/** The handlers over a given projection store; tests pass their own. */
+export const layerOver = (projections: Projections) =>
+  McpToolAccess.toLayer(WorkflowToolkit, handlers(ownerTurnFrom(projections)));
+
+export const layer = McpToolAccess.toLayer(
+  WorkflowToolkit,
+  Effect.gen(function* () {
+    return handlers(ownerTurnFrom(yield* ProjectionStore.ProjectionStoreV2));
+  }).pipe(Effect.provide(ProjectionStore.layer)),
+);
