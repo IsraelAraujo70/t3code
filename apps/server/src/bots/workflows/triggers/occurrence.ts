@@ -79,20 +79,24 @@ export const misfirePolicy = (
   };
 };
 
-/** Selects the highest matching remote tag in numeric version order. */
+/**
+ * The highest tag in `git ls-remote --tags --refs` output whose name matches `pattern`, a regular
+ * expression as the compiler checks it, in version order (v0.10.0 > v0.9.3). Unparsable lines and
+ * an invalid pattern match nothing.
+ */
 export const latestTag = (
   output: string,
   pattern: string,
 ): { readonly tag: string; readonly objectSha: string } | null => {
-  const glob = new RegExp(
-    `^${pattern
-      .split("*")
-      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join(".*")}$`,
-  );
+  let matcher: RegExp;
+  try {
+    matcher = new RegExp(pattern);
+  } catch {
+    return null;
+  }
   const tags = output.split(/\r?\n/).flatMap((line) => {
     const match = /^([a-fA-F0-9]+)\trefs\/tags\/(\S+)$/.exec(line);
-    return match && match[1] && match[2] && glob.test(match[2])
+    return match && match[1] && match[2] && matcher.test(match[2])
       ? [{ tag: match[2], objectSha: match[1] }]
       : [];
   });

@@ -72,13 +72,16 @@ describe("occurrences", () => {
       mode: "latest",
       graceMs: 3600000,
     });
-    expect(
-      latestTag(
-        "aaa\trefs/tags/v0.9.3\nbbb\trefs/tags/v0.10.0\nccc\trefs/tags/nightly-9\njunk",
-        "v*",
-      ),
-    ).toEqual({ tag: "v0.10.0", objectSha: "bbb" });
-    expect(latestTag("", "*")).toBeNull();
+    const remote =
+      "aaa\trefs/tags/v0.9.3\nbbb\trefs/tags/v0.10.0\nddd\trefs/tags/v0.11.0-nightly.1\nccc\trefs/tags/nightly-9\njunk";
+    // The upstream-merge template's pattern: stable releases only.
+    expect(latestTag(remote, "^v\\d+\\.\\d+\\.\\d+$")).toEqual({
+      tag: "v0.10.0",
+      objectSha: "bbb",
+    });
+    expect(latestTag(remote, "^v")).toEqual({ tag: "v0.11.0-nightly.1", objectSha: "ddd" });
+    expect(latestTag("", ".*")).toBeNull();
+    expect(latestTag(remote, "(")).toBeNull();
     expect(occurrenceKey.tag("r", "v", "a")).not.toBe(occurrenceKey.tag("r", "v", "b"));
   });
   it.each(["bot:b:1", "bot:b:t-abc", "wf:b:1", "bot:bb:1"])("settled %s", (threadId) => {
