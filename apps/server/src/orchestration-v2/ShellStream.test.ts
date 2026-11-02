@@ -316,6 +316,36 @@ describe("omitOlderSettledShells", () => {
     ]);
     expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
   });
+
+  it("drops idle workflow steps however recent, keeping live ones and those above a kept subagent", () => {
+    const step = (key: string) => `wf:wfr_0123456789abcdef0123:${key.padStart(16, "0")}`;
+    const steps = [
+      row(step("a"), null),
+      row(step("b"), 0),
+      row(step("c"), null, { activityRunStatus: "running" }),
+      row(step("d"), null),
+      shellFixture({
+        id: ThreadId.make("step-child"),
+        projectId: ProjectId.make("project-a"),
+        lineage: {
+          parentThreadId: ThreadId.make(step("d")),
+          relationshipToParent: "subagent",
+          rootThreadId: ThreadId.make(step("d")),
+        },
+        settledOverride: null,
+        settledAt: null,
+      }),
+    ];
+    const result = omit([...newest, ...steps]);
+    expect(result.threads.map((thread) => thread.id).slice(25)).toEqual([
+      step("c"),
+      step("d"),
+      "step-child",
+    ]);
+    expect(result.olderSettled.counts).toEqual([]);
+    // Without 25 settled threads there is no cut, and an idle step still drops.
+    expect(omit([row(step("e"), null)]).threads).toEqual([]);
+  });
 });
 
 describe("shellStreamItemsFromInitialSnapshot", () => {

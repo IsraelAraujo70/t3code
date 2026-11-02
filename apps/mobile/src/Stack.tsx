@@ -60,7 +60,10 @@ import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
-// Fork (friend): the bots host's live screen and kanban.
+// Fork (friend): the bots host, kanban and workflow routes.
+import { WorkflowsListScreen } from "./bots/workflows/WorkflowsListScreen";
+import { WorkflowDetailScreen } from "./bots/workflows/WorkflowDetailScreen";
+import { WorkflowRunScreen } from "./bots/workflows/WorkflowRunScreen";
 import { BotsComputerRouteScreen } from "./bots/BotsComputerRouteScreen";
 import { BotsKanbanRouteScreen } from "./bots/BotsKanbanRouteScreen";
 import { KanbanIssueScreen } from "./bots/kanban/KanbanIssueScreen";
@@ -850,6 +853,21 @@ const RootStackConfig = createWorkspaceStackNavigator({
     BotsKanbanIssue: createNativeStackScreen({
       screen: KanbanIssueScreen,
       linking: "bots/kanban/:environmentId/issues/:ticketId",
+      options: { headerShown: false },
+    }),
+    BotsWorkflows: createNativeStackScreen({
+      screen: WorkflowsListScreen,
+      linking: "bots/workflows/:environmentId",
+      options: { headerShown: false },
+    }),
+    BotsWorkflowRun: createNativeStackScreen({
+      screen: WorkflowRunScreen,
+      linking: "bots/workflows/:environmentId/runs/:runId",
+      options: { headerShown: false },
+    }),
+    BotsWorkflow: createNativeStackScreen({
+      screen: WorkflowDetailScreen,
+      linking: "bots/workflows/:environmentId/:workflowId",
       options: { headerShown: false },
     }),
     ThreadReview: createNativeStackScreen({

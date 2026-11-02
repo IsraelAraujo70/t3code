@@ -1,0 +1,163 @@
+schema: t3.workflow/v1
+id: argo35-hillclimb
+title: Hillclimb de throughput no argo35
+description: >-
+  Não suportado sem supervisão: as CLIs do bench (argo35_metric.py, sol_suites.py) ainda não estão
+  no checkout do computer-use-linux que o host usa. Não ative até elas entrarem.
+home: { project: computer-use-linux }
+params:
+  {
+    reps: { type: number, default: 3 },
+    from: { type: string, default: feat/cu-argo35-terra, pattern: "^[A-Za-z0-9._/-]+$" },
+  }
+triggers:
+  run: { kind: manual, title: Run now }
+  nightly:
+    { kind: cron, expr: "30 1 * * *", tz: America/Sao_Paulo, misfire: { mode: skip, grace: 1h } }
+concurrency: single
+budget: { steps: 300, wall: 7h, tokens: 15000000 }
+fatigue: { consecutiveFailures: 3 }
+models: { lead: { provider: claude, model: claude-opus-5-5, effort: high } }
+nodes:
+  climb:
+    kind: hillclimb
+    workspace:
+      {
+        project: computer-use-linux,
+        base: "{{coalesce(ledgerBest('argo35-throughput'), params.from)}}",
+      }
+    ledger: argo35-throughput
+    generator:
+      model: $lead
+      workspace: { project: computer-use-linux, readOnly: true }
+      prompt: |
+        Melhore o throughput ponta a ponta (sucessos por minuto de agente) do servidor MCP de computer use no
+        argo35-train sem reduzir sucesso. Leia bench/agent/METRIC.md. Nunca edite bench/, tarefas ou checkers;
+        nunca ajuste no holdout. Já tentado: {{ledgerDigest('argo35-throughput')}}. Proponha UM mecanismo novo.
+    build:
+      {
+        argv: [cargo, build, --release, --locked],
+        cwd: attempt,
+        heavy: true,
+        replay: safe,
+        artifact: target/release/computer-use-linux,
+      }
+    measure:
+      bench:
+        argv:
+          [
+            python3,
+            bench/agent/argo35_metric.py,
+            --suite,
+            argo35-train,
+            --reps,
+            "{{params.reps}}",
+            --base-bin,
+            "{{best.artifact}}",
+            --cand-bin,
+            "{{candidate.artifact}}",
+            --out,
+            "{{step.dir}}",
+          ]
+        cwd: { project: computer-use-linux, readOnly: true }
+        selfSerializing: true
+        replay: safe
+        parse: json
+        tokensFrom: tokens.total
+        tokenReservation: 1000000
+        timeout: 5h
+    objective: { expr: "m.bench.candidate.throughput", direction: max }
+    keep: >-
+      m.bench.complete && m.bench.errors == 0 && len(m.bench.regressed_tasks) == 0
+      && m.bench.candidate.success_rate >= m.bench.baseline.success_rate
+      && m.bench.throughput_ratio != null && m.bench.throughput_ratio >= 1.05
+    confirmWhen: "m.bench.candidate.throughput / origin.bench.candidate.throughput >= 1.5"
+    target: >-
+      m.bench.complete && m.bench.throughput_ratio != null && m.bench.throughput_ratio >= 1.5
+      && len(m.bench.regressed_tasks) == 0
+      && m.bench.candidate.success_rate >= m.bench.baseline.success_rate
+    plateau: { rounds: 4 }
+    budget: { iterations: 12, wall: 6h, tokens: 12000000 }
+  holdout:
+    kind: command
+    cwd: { project: computer-use-linux, readOnly: true }
+    argv:
+      [
+        python3,
+        bench/agent/argo35_metric.py,
+        --suite,
+        argo35-holdout,
+        --reps,
+        "3",
+        --base-bin,
+        "{{nodes.climb.output.origin.artifact}}",
+        --cand-bin,
+        "{{nodes.climb.output.best.artifact}}",
+        --out,
+        "{{step.dir}}",
+      ]
+    selfSerializing: true
+    parse: json
+    check: "out.complete && out.throughput_ratio != null && out.throughput_ratio >= 1.5 && len(out.regressed_tasks) == 0 && out.candidate.success_rate >= out.baseline.success_rate"
+  sol:
+    kind: command
+    cwd: { project: computer-use-linux, readOnly: true }
+    argv:
+      [
+        python3,
+        bench/agent/sol_suites.py,
+        --bin,
+        "{{nodes.climb.output.best.artifact}}",
+        --out,
+        "{{step.dir}}",
+      ] # sol-easy, sol-hard, sol-long + sol_regression.py
+    selfSerializing: true
+    check: "exit == 0"
+  win:
+    {
+      kind: output,
+      status: ready_for_review,
+      notify: true,
+      value: { best: "{{nodes.climb.output.bestBranch}}" },
+      pullRequest:
+        {
+          workspace: climb.best,
+          base: "{{params.from}}",
+          title: "argo35: {{nodes.climb.output.best.reading}}",
+          body: "Esta noite: barra atingida no treino contra a última base validada ({{nodes.climb.output.origin.sha}}), holdout e Sol sem regressão. O PR acumula as noites validadas desde {{params.from}}; cada uma está no ledger argo35-throughput.",
+        },
+      promote: { ledger: argo35-throughput, sha: "{{nodes.climb.output.bestSha}}" },
+      handoff: "Instalar o binário no caminho vivo do computer use fica com você.",
+    }
+  holdout_fail:
+    {
+      kind: output,
+      status: rejected,
+      notify: true,
+      value: { best: "{{nodes.climb.output.bestBranch}}" },
+      report: "Atingiu a barra no treino e falhou no holdout.",
+    }
+  sol_fail:
+    {
+      kind: output,
+      status: rejected,
+      notify: true,
+      value: { best: "{{nodes.climb.output.bestBranch}}" },
+      report: "Regressão nas suítes Sol.",
+    }
+  no_gain:
+    {
+      kind: output,
+      status: no_gain,
+      value:
+        { endedBy: "{{nodes.climb.output.endedBy}}", best: "{{nodes.climb.output.best.reading}}" },
+    }
+edges:
+  - climb:target -> holdout
+  - climb:no_gain -> no_gain
+  - climb:budget -> no_gain
+  - climb:blocked -> no_gain
+  - holdout:pass -> sol
+  - holdout:fail -> holdout_fail
+  - sol:pass -> win
+  - sol:fail -> sol_fail

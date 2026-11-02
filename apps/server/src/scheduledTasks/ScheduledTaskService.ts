@@ -1,3 +1,9 @@
+// Fork (friend): workflow tasks dispatch only to the engine and require engine ownership.
+import {
+  WorkflowTriggerHook,
+  WorkflowEngineCaller,
+  isWorkflowHookTaskId,
+} from "../bots/workflows/triggers/hook.ts";
 import {
   CommandId,
   MessageId,
@@ -405,6 +411,15 @@ export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(funct
 export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
+    // Fork (friend): the workflow engine is optional for ordinary scheduled tasks.
+    const workflowHook = yield* Effect.serviceOption(WorkflowTriggerHook);
+    const guardWorkflowTask = Effect.fn("ScheduledTaskService.guardWorkflowTask")(function* (
+      id: string | undefined,
+    ) {
+      if (id !== undefined && isWorkflowHookTaskId(id) && !(yield* WorkflowEngineCaller)) {
+        return yield* taskError("This task is managed by a workflow; change it in the workflow.");
+      }
+    });
     const sql = yield* SqlClient.SqlClient;
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
@@ -735,6 +750,8 @@ export const layer = Layer.effect(
       trigger: "scheduled" | "manual" | "webhook",
       webhook?: {
         readonly deliveryId: string;
+        // Fork (friend): Preserve the structured workflow delivery.
+        readonly request: WebhookRequest;
         readonly prompt: string;
         readonly dispatched: Ref.Ref<boolean>;
       },
@@ -776,6 +793,11 @@ export const layer = Layer.effect(
           )).length > 0
         )
           return { task: { ...active, lastRunStatus: "succeeded" as const }, threadId: null };
+        // Fork (friend): a scheduler tick must never launch a workflow thread.
+        if (isWorkflowHookTaskId(active.id) && trigger !== "webhook") {
+          if (trigger === "scheduled") return { task: active, threadId: null };
+          return yield* taskError("Workflow tasks fire only by webhook.");
+        }
         const parsedNextRunAt =
           active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
         if (
@@ -864,35 +886,58 @@ export const layer = Layer.effect(
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null
+          // Fork (friend): a workflow delivery goes to the engine hook, never to a thread launch,
+          // and its outcome takes the same completion path as a launch.
+          isWorkflowHookTaskId(active.id)
             ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(Effect.map((launched) => launched.threadId)),
+                Option.isSome(workflowHook) && webhook !== undefined
+                  ? workflowHook.value
+                      .fire({
+                        taskId: active.id,
+                        deliveryId: webhook.deliveryId,
+                        prompt,
+                        request: webhook.request,
+                      })
+                      .pipe(
+                        Effect.as(null),
+                        Effect.mapError((cause) =>
+                          taskError("The workflow engine did not accept this delivery.", {
+                            taskId: active.id,
+                            cause,
+                          }),
+                        ),
+                      )
+                  : Effect.fail(taskError("The workflow engine is not available.")),
               )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+            : active.threadId === null
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(Effect.map((launched) => launched.threadId)),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
+                  ),
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1104,6 +1149,8 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
+      // Fork (friend): only the engine manages workflow webhook tasks.
+      yield* guardWorkflowTask(input.id);
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1233,6 +1280,8 @@ export const layer = Layer.effect(
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",
     )(function* (input) {
+      // Fork (friend): only the engine manages workflow webhook tasks.
+      yield* guardWorkflowTask(input.id);
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
       const now = yield* localNow;
@@ -1293,7 +1342,9 @@ export const layer = Layer.effect(
       );
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(
+      // Fork (friend): protect workflow deletion before touching persistence.
+      guardWorkflowTask(input.id).pipe(
+        Effect.andThen(deleteRow(input.id)),
         Effect.andThen(forgetWebhookTask(input.id)),
         Effect.andThen(notifyChanged),
         Effect.as({ id: input.id }),
@@ -1346,6 +1397,10 @@ export const layer = Layer.effect(
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
     )(function* (input: ScheduledTaskRunNowInput) {
+      // Fork (friend): engine ownership does not permit manual webhook dispatch.
+      yield* guardWorkflowTask(input.id);
+      if (isWorkflowHookTaskId(input.id))
+        return yield* taskError("Workflow tasks fire only by webhook.");
       const task = yield* loadTask(input.id);
       if (task.schedule.type === "webhook") {
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
@@ -1362,6 +1417,8 @@ export const layer = Layer.effect(
     const rotateWebhookToken: ScheduledTaskService["Service"]["rotateWebhookToken"] = Effect.fn(
       "ScheduledTaskService.rotateWebhookToken",
     )(function* (input) {
+      // Fork (friend): only the engine manages workflow webhook tasks.
+      yield* guardWorkflowTask(input.id);
       const task = yield* loadTask(input.id);
       if (task.schedule.type !== "webhook") {
         return yield* taskError("Only webhook tasks have a URL token.", { taskId: input.id });
@@ -1665,6 +1722,8 @@ export const layer = Layer.effect(
       task: ScheduledTask,
       deliveryId: string,
       prompt: string,
+      // Fork (friend): Carry the request through immediate and pending dispatch.
+      request: WebhookRequest,
     ) {
       const runOutcome = (outcome: "started" | "skipped" | "failed") =>
         Effect.all([
@@ -1672,7 +1731,8 @@ export const layer = Layer.effect(
           Metrics.increment(Metrics.webhookRunsTotal, { outcome }),
         ]);
       const dispatched = yield* Ref.make(false);
-      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched }).pipe(
+      // Fork (friend): Deliver the structured request to workflow hooks.
+      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched, request }).pipe(
         Effect.flatMap(({ task: completed }) =>
           completed.lastRunStatus === "failed"
             ? runOutcome("failed").pipe(
@@ -2121,7 +2181,8 @@ export const layer = Layer.effect(
           }
           yield* observe("accepted");
           const permit = yield* webhookPermit(task.id);
-          yield* runWebhookDelivery(task, deliveryId, rendered.prompt).pipe(
+          // Fork (friend): Preserve the immediate request.
+          yield* runWebhookDelivery(task, deliveryId, rendered.prompt, request).pipe(
             permit.withPermits(1),
             Effect.ensuring(release),
             Effect.forkIn(serviceScope),
@@ -2196,7 +2257,12 @@ export const layer = Layer.effect(
                   const task = yield* decodePendingTask(entry.task_json);
                   const request = yield* decodePendingRequest(entry.request_json);
                   const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
-                  return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
+                  // Fork (friend): Keep the decoded request for workflow dispatch.
+                  return {
+                    task,
+                    request,
+                    rendered: renderWebhookPrompt(task.prompt, request, frameId),
+                  };
                 }).pipe(Effect.exit);
                 if (Exit.isFailure(prepared)) {
                   if (Cause.hasInterruptsOnly(prepared.cause))
@@ -2209,13 +2275,17 @@ export const layer = Layer.effect(
                   yield* remove;
                   continue;
                 }
-                const { task, rendered } = prepared.value;
+                // Fork (friend): Recover the durable structured request.
+                const { task, request, rendered } = prepared.value;
                 if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
                   yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
                   yield* releaseFailedDelivery(entry.delivery_id);
                 } else {
                   yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
-                  if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt)))
+                  // Fork (friend): Preserve the durable request.
+                  if (
+                    !(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt, request))
+                  )
                     return;
                 }
                 yield* remove;

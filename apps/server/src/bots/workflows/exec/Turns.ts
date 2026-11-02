@@ -1,0 +1,410 @@
+/**
+ * Agent steps as ordinary T3 threads on the bots' provider instances. Launch and send carry a
+ * `commandId` and a `messageId` derived from the run and the intent key, so a replay after a crash
+ * gets upstream's receipt back; the observed run is the one whose user message is ours.
+ */
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
+
+import {
+  CommandId,
+  type ModelSelection,
+  type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
+  ProviderInstanceId,
+  RuntimeRequestId,
+  ThreadId,
+  type WorkflowModelRef,
+} from "@t3tools/contracts";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
+
+import { ProjectService } from "../../../project/ProjectService.ts";
+import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegistry.ts";
+import { ThreadLaunchService } from "../../../orchestration-v2/ThreadLaunchService.ts";
+import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { type Intent, type NewFact, runStream } from "../facts.ts";
+import { WorkflowGit } from "../git/Workspaces.ts";
+import { commandIdFor, messageIdFor } from "../ids.ts";
+import { projectByRef } from "./projects.ts";
+import { type RequestItem, requestResponse, requestText } from "./requests.ts";
+import { lastJsonBlock, stepRuns, turnCost, unobservedTurn } from "./turnResult.ts";
+import { continuationChain, usageReport } from "../budget/budget.ts";
+
+type StartTurn = Extract<Intent, { readonly _tag: "StartTurn" }>;
+type AnswerRequest = Extract<Intent, { readonly _tag: "AnswerRequest" }>;
+
+export class WorkflowTurnError extends Data.TaggedError("WorkflowTurnError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+  /** Trying the same intent again cannot help (no such project, no instance, a disabled one). */
+  readonly permanent?: boolean;
+}> {}
+
+/** Prefixed to every step prompt: the bots' rules, which the engine's gates do not enforce. */
+const stepRules = (heavyScript: string) =>
+  [
+    "You are one step of a T3 workflow running unattended on the bots host.",
+    "Never deploy, restart services, merge into friend/main, force push, or edit ~/.t3/userdata/settings.json;",
+    "if the task needs one of these, stop and say so in your reply.",
+    `Run heavy commands (typecheck, tests, builds, installs) through ${heavyScript}, one at a time.`,
+  ].join(" ");
+
+const TERMINAL: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+]);
+/** How long one wait lasts before the observer reports pending runtime requests again. */
+const WAIT_CHUNK_MS = 15_000;
+/** The start recorded the thread after its message was accepted, so our run shows up quickly. */
+const FIND_RUN_TRIES = 30;
+
+export interface WorkflowTurnsOptions {
+  /** The heavy.sh the step prompt tells agents to use; it shares the lock heavy units take. */
+  readonly heavyScript: string;
+  /** The instance each workflow provider runs on; default: the first enabled instance of its driver. */
+  readonly instances?: {
+    readonly claude?: string | undefined;
+    readonly codex?: string | undefined;
+  };
+}
+
+export class WorkflowTurns extends Context.Service<
+  WorkflowTurns,
+  {
+    /** Launches the step's thread (`new`) or queues a follow-up (`continue`); returns the thread. */
+    readonly start: (runId: string, intent: StartTurn) => Effect.Effect<string, WorkflowTurnError>;
+    /** Pending runtime requests while the turn runs, then its TurnSettled. */
+    readonly observe: (
+      runId: string,
+      intent: StartTurn,
+    ) => Stream.Stream<NewFact, WorkflowTurnError>;
+    /** Interrupts the thread's active run; a thread that does not exist has nothing to stop. */
+    readonly interrupt: (
+      runId: string,
+      key: string,
+      threadId: string,
+    ) => Effect.Effect<void, WorkflowTurnError>;
+    readonly answer: (
+      runId: string,
+      intent: AnswerRequest,
+    ) => Effect.Effect<void, WorkflowTurnError>;
+  }
+>()("t3/bots/workflows/exec/Turns/WorkflowTurns") {}
+
+/** The turn item that carries a request's questions or approval details. */
+const requestItem = (
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  requestId: string,
+): RequestItem | undefined =>
+  items.find(
+    (
+      item,
+    ): item is Extract<
+      OrchestrationV2TurnItem,
+      { readonly type: "user_input_request" | "approval_request" }
+    > =>
+      (item.type === "user_input_request" || item.type === "approval_request") &&
+      item.requestId === requestId,
+  );
+
+/** Upstream's projection error for a thread it has never had. */
+const threadNotFound = (error: { readonly _tag: string; readonly cause?: unknown }) =>
+  error._tag === "OrchestratorProjectionError" &&
+  typeof error.cause === "object" &&
+  error.cause !== null &&
+  "_tag" in error.cause &&
+  error.cause._tag === "ProjectionStoreThreadNotFoundError";
+
+const settledStatus = (status: OrchestrationV2Run["status"]) =>
+  status === "completed" || status === "cancelled" || status === "interrupted"
+    ? status
+    : ("failed" as const);
+
+export const make = Effect.fn("WorkflowTurns.make")(function* (options: WorkflowTurnsOptions) {
+  const launches = yield* ThreadLaunchService;
+  const threads = yield* ThreadManagementService;
+  const projects = yield* ProjectService;
+  const registry = yield* ProviderInstanceRegistry;
+  const git = yield* WorkflowGit;
+
+  const fail = (message: string) => (cause: unknown) =>
+    new WorkflowTurnError({
+      message,
+      cause,
+      permanent:
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        cause._tag === "ThreadManagementProviderInstanceDisabledError",
+    });
+  const projection = (threadId: string) =>
+    threads
+      .getThreadProjection(ThreadId.make(threadId))
+      .pipe(Effect.mapError(fail("Could not read the step thread.")));
+
+  const project = Effect.fn("WorkflowTurns.project")(function* (ref: string) {
+    const snapshot = yield* projects.snapshot.pipe(
+      Effect.mapError(fail("Could not list projects.")),
+    );
+    const found = projectByRef(snapshot.projects, ref);
+    if (found === undefined) {
+      return yield* new WorkflowTurnError({
+        message: `There is no project "${ref}".`,
+        permanent: true,
+      });
+    }
+    return found;
+  });
+
+  const modelSelection = Effect.fn("WorkflowTurns.modelSelection")(function* (
+    ref: WorkflowModelRef,
+  ) {
+    let instanceId = options.instances?.[ref.provider];
+    if (instanceId === undefined) {
+      const driver = ref.provider === "claude" ? "claudeAgent" : "codex";
+      const instances = yield* registry.listInstances;
+      instanceId = instances.find((i) => i.enabled && i.driverKind === driver)?.instanceId;
+    }
+    if (instanceId === undefined) {
+      return yield* new WorkflowTurnError({
+        message: `No enabled provider instance runs ${ref.provider}.`,
+        permanent: true,
+      });
+    }
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make(instanceId),
+      model: ref.model,
+      ...(ref.effort === undefined
+        ? {}
+        : {
+            options: [
+              { id: ref.provider === "codex" ? "reasoningEffort" : "effort", value: ref.effort },
+            ],
+          }),
+    };
+    return selection;
+  });
+
+  /** Our run: the one whose user message is the id this intent sent, after the thread read fine. */
+  const ourRun = Effect.fn("WorkflowTurns.ourRun")(function* (runId: string, intent: StartTurn) {
+    const messageId = messageIdFor(runId, intent.key);
+    return (yield* projection(intent.threadId)).runs.find((r) => r.userMessageId === messageId);
+  });
+
+  const settledFact = Effect.fn("WorkflowTurns.settledFact")(function* (
+    runId: string,
+    intent: StartTurn,
+    run: OrchestrationV2Run,
+    resultRun: OrchestrationV2Run,
+  ) {
+    const thread = yield* projection(intent.threadId);
+    const { text } = subagentResultForRun(thread, resultRun);
+    const { output, error } = lastJsonBlock(text);
+    const headSha = yield* git.head(intent.workspace.path).pipe(Effect.option);
+    // wf-engine slice 7.
+    const treeHash = yield* git.tree(intent.workspace.path).pipe(Effect.option);
+    const nudge = intent.key.startsWith("nudge:");
+    const fact: NewFact = {
+      stream: runStream(runId),
+      key: `settled:${intent.step}@${intent.attempt}${nudge ? ":nudge" : ""}`,
+      fact: {
+        _tag: "TurnSettled",
+        step: intent.step,
+        attempt: intent.attempt,
+        // The reply consumed is the result run's, so its status is the turn's.
+        status: settledStatus(resultRun.status),
+        text: text.slice(0, 16_384),
+        output,
+        outputError: error,
+        cost: turnCost(
+          stepRuns(thread.runs, run, resultRun),
+          thread.attempts,
+          thread.providerTurns,
+        ),
+        headSha: headSha._tag === "Some" ? headSha.value : null,
+        treeHash: treeHash._tag === "Some" ? treeHash.value : null,
+      },
+    };
+    return fact;
+  });
+
+  const pendingRequests = Effect.fn("WorkflowTurns.pendingRequests")(function* (
+    runId: string,
+    intent: StartTurn,
+  ) {
+    const thread = yield* projection(intent.threadId);
+    return thread.runtimeRequests
+      .filter((request) => request.status === "pending")
+      .map((request): NewFact => ({
+        stream: runStream(runId),
+        key: `request:${request.id}`,
+        fact: {
+          _tag: "RuntimeRequest",
+          step: intent.step,
+          attempt: intent.attempt,
+          threadId: intent.threadId,
+          requestId: request.id,
+          requestKind: request.kind,
+          text: requestText(request.kind, requestItem(thread.turnItems, request.id)),
+        },
+      }));
+  });
+
+  const observe = (runId: string, intent: StartTurn): Stream.Stream<NewFact, WorkflowTurnError> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        // A read that fails fails the stream, which the interpreter retries; only reads that
+        // succeed and show no run for our message, for FIND_RUN_TRIES seconds, mean it was lost.
+        let run: OrchestrationV2Run | undefined;
+        for (let tries = 0; run === undefined && tries < FIND_RUN_TRIES; tries++) {
+          run = yield* ourRun(runId, intent);
+          if (run === undefined) yield* Effect.sleep("1 second");
+        }
+        if (run === undefined) {
+          return Stream.make(
+            // No run for our message: no agent ran for it, so replaying it is safe.
+            unobservedTurn(
+              runId,
+              intent,
+              "lost",
+              "The step thread has no run for the workflow's message.",
+            ),
+          );
+        }
+        const projectId = (yield* projection(intent.threadId)).thread.projectId;
+        // Waits in chunks; between chunks it reports the requests the agent is waiting on.
+        const chunk: Stream.Stream<NewFact, WorkflowTurnError> = Stream.unwrap(
+          Effect.gen(function* () {
+            const waited = yield* threads
+              .waitForThread({
+                projectId,
+                threadId: ThreadId.make(intent.threadId),
+                runId: run.id,
+                timeoutMs: WAIT_CHUNK_MS,
+                untilDelegatedWorkSettled: true,
+              })
+              .pipe(Effect.mapError(fail("Could not wait for the step thread.")));
+            const ended = waited.run;
+            if (!waited.timedOut && ended !== null && TERMINAL.has(ended.status)) {
+              return Stream.fromEffect(settledFact(runId, intent, run, waited.resultRun ?? ended));
+            }
+            // wf-engine slice 8: usage the provider reported so far feeds the decider's watchdog.
+            const live = yield* projection(intent.threadId);
+            const usage = usageReport(
+              runId,
+              intent,
+              turnCost(continuationChain(live.runs, run), live.attempts, live.providerTurns)
+                .billable,
+              DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+            );
+            return Stream.concat(
+              Stream.fromIterable([
+                ...(yield* pendingRequests(runId, intent)),
+                ...(usage === null ? [] : [usage]),
+              ]),
+              Stream.suspend(() => chunk),
+            );
+          }),
+        );
+        return chunk;
+      }),
+    );
+
+  return WorkflowTurns.of({
+    start: Effect.fn("WorkflowTurns.start")(function* (runId: string, intent: StartTurn) {
+      const text = `${stepRules(options.heavyScript)}\n\n${intent.prompt}`;
+      const commandId = commandIdFor(runId, intent.key);
+      const messageId = messageIdFor(runId, intent.key);
+      if (intent.mode === "continue") {
+        const thread = yield* projection(intent.threadId);
+        yield* threads
+          .sendToThread({
+            projectId: thread.thread.projectId,
+            commandId,
+            threadId: ThreadId.make(intent.threadId),
+            messageId,
+            text,
+            attachments: [],
+            mode: "queue",
+            createdBy: "system",
+            creationSource: "server",
+          })
+          .pipe(Effect.mapError(fail("Could not send to the step thread.")));
+        return intent.threadId;
+      }
+      const target = yield* project(intent.projectRef);
+      const launched = yield* launches
+        .launch({
+          commandId,
+          threadId: ThreadId.make(intent.threadId),
+          projectId: target.id,
+          title: intent.title,
+          generateTitle: false,
+          modelSelection: yield* modelSelection(intent.model),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "existing_worktree", worktreePath: intent.workspace.path },
+          initialMessage: { messageId, text, attachments: [] },
+          createdBy: "system",
+          creationSource: "server",
+        })
+        .pipe(Effect.mapError(fail("Could not launch the step thread.")));
+      return launched.threadId;
+    }),
+    observe,
+    interrupt: Effect.fn("WorkflowTurns.interrupt")(function* (
+      runId: string,
+      key: string,
+      threadId: string,
+    ) {
+      // Only a thread that does not exist has nothing to stop; any other read error is a failed stop.
+      const thread = yield* threads.getThreadProjection(ThreadId.make(threadId)).pipe(
+        Effect.asSome,
+        Effect.catch((error) =>
+          threadNotFound(error)
+            ? Effect.succeedNone
+            : Effect.fail(fail("Could not read the step thread to stop it.")(error)),
+        ),
+      );
+      if (thread._tag === "None") return;
+      yield* threads
+        .interruptThread({
+          projectId: thread.value.thread.projectId,
+          commandId: commandIdFor(runId, key),
+          threadId: ThreadId.make(threadId),
+          reason: "The workflow stopped this step.",
+        })
+        .pipe(Effect.mapError(fail("Could not interrupt the step thread.")));
+    }),
+    answer: Effect.fn("WorkflowTurns.answer")(function* (runId: string, intent: AnswerRequest) {
+      const thread = yield* projection(intent.threadId);
+      const response = requestResponse(
+        requestItem(thread.turnItems, intent.requestId),
+        intent.answer,
+      );
+      if (Result.isFailure(response)) {
+        return yield* new WorkflowTurnError({ message: response.failure, permanent: true });
+      }
+      yield* threads
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make(commandIdFor(runId, intent.key)),
+          threadId: ThreadId.make(intent.threadId),
+          requestId: RuntimeRequestId.make(intent.requestId),
+          ...response.success,
+        })
+        .pipe(Effect.mapError(fail("Could not answer the step's request.")));
+    }),
+  });
+});
+
+export const layer = (options: WorkflowTurnsOptions) => Layer.effect(WorkflowTurns, make(options));

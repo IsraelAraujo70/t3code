@@ -1,3 +1,4 @@
+import { WorkflowDefinitions } from "./workflows/definitions/WorkflowDefinitions.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
@@ -29,6 +30,7 @@ const connect = (scopes: ReadonlyArray<AuthEnvironmentScope>, calls: Array<strin
     Effect.provide(
       Layer.mergeAll(
         BotsRpc.layerHandlers.pipe(
+          Layer.provide(Layer.mock(WorkflowDefinitions)({ repoPath: "" })),
           Layer.provide(
             Layer.mock(BotsService.BotsService)({
               setBotLinkedEnvironments: (input) =>

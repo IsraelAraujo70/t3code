@@ -78,7 +78,9 @@ import {
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 // Fork (friend): bots read and write their own memories, allowed bots manage bots, threads
-// watch threads, and responsible bots work the kanban, over /mcp.
+// watch threads, manage workflow definitions, and responsible bots work the kanban, over /mcp.
+import * as WorkflowHandlers from "../bots/workflows/mcp/handlers.ts";
+import { WorkflowToolkit } from "../bots/workflows/mcp/tools.ts";
 import * as KanbanHandlers from "../bots/kanban/handlers.ts";
 import { KanbanToolkit } from "../bots/kanban/tools.ts";
 import * as BotMemoryHandlers from "../bots/mcp/handlers.ts";
@@ -1187,4 +1189,5 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(BotManagementToolkit, BotMemoryHandlers.managementLayer),
   toolkitRegistration(ThreadWatchToolkit, ThreadWatchHandlers.layer),
   toolkitRegistration(KanbanToolkit, KanbanHandlers.layer),
+  toolkitRegistration(WorkflowToolkit, WorkflowHandlers.layer),
 ).pipe(Layer.provideMerge(layerMcpTransport));

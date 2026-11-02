@@ -1,0 +1,94 @@
+schema: t3.workflow/v1
+id: mcp-token-cut
+title: Cortar tokens das definições de ferramentas MCP sem regressão de comportamento
+home: { project: t3code }
+triggers:
+  run: { kind: manual, title: Run now }
+  weekly: { kind: cron, expr: "0 2 * * 6", tz: America/Sao_Paulo }
+budget: { steps: 200, wall: 10h, tokens: 8000000, usd: 40 }
+fatigue: { consecutiveFailures: 3 }
+models: { lead: { provider: claude, model: claude-opus-5-5, effort: high } }
+nodes:
+  cut:
+    kind: hillclimb
+    workspace: { project: t3code, base: friend/main }
+    ledger: mcp-token-cut
+    generator:
+      model: $lead
+      workspace: { project: t3code, readOnly: true }
+      prompt: |
+        Encurte descrições e schemas de ferramentas MCP (apps/server/src/mcp/toolkits/*/tools.ts,
+        apps/server/src/bots/**/tools.ts) sem perder orientação de roteamento ou segurança. Uma mudança
+        coerente por tentativa. Já tentado: {{ledgerDigest('mcp-token-cut')}}
+    # Attempt worktrees start without node_modules, and both measures import effect.
+    build: { argv: [vp, i], cwd: attempt, heavy: true, replay: safe }
+    measure:
+      tokens:
+        {
+          argv: [node, scripts/friend/wf/mcp-token-count.ts, --json],
+          cwd: attempt,
+          parse: json,
+          replay: safe,
+        }
+      evals:
+        {
+          argv:
+            [
+              node,
+              scripts/friend/wf/mcp-eval-verdict.ts,
+              --model,
+              claude-opus-5-5,
+              --baseline,
+              "{{coalesce(origin.evals.resultsPath, '')}}",
+              --out,
+              "{{step.dir}}",
+            ],
+          cwd: attempt,
+          parse: json,
+          heavy: true,
+          tokensFrom: usage.total_tokens,
+          tokenReservation: 500000,
+          timeout: 2h,
+        }
+    objective: { expr: "m.tokens.total", direction: min }
+    keep: "m.evals.complete && m.evals.case_regressions == 0 && m.tokens.method == origin.tokens.method && m.tokens.total <= best.tokens.total * 0.97"
+    target: "m.evals.complete && m.evals.case_regressions == 0 && m.tokens.total <= origin.tokens.total * 0.7"
+    plateau: { rounds: 3 }
+    budget: { iterations: 10, wall: 9h, tokens: 7000000 }
+  # cut.best is a fresh worktree: the review's check:changed needs node_modules there.
+  deps: { kind: command, cwd: cut.best, heavy: true, replay: safe, argv: [vp, i] }
+  review:
+    kind: interrogate
+    target: { workspace: cut.best, baseRef: friend/main }
+    intent: "Texto de ferramenta MCP encurtado; confirmar que nenhuma orientação de roteamento ou segurança se perdeu."
+    mode: panel
+    reviewers: [{ provider: codex, model: gpt-6.1-sol, effort: high }, $lead]
+    lead: $lead
+    checks: [{ argv: [vp, run, check:changed, friend/main], cwd: cut.best, heavy: true }]
+    rounds: 3
+  done:
+    {
+      kind: output,
+      status: ready_for_review,
+      notify: true,
+      value: { before: "{{nodes.cut.output.origin}}", after: "{{nodes.cut.output.best}}" },
+      pullRequest:
+        {
+          workspace: cut.best,
+          base: friend/main,
+          title: "Corte de tokens MCP",
+          body: "Antes e depois no corpo da execução.",
+        },
+      handoff: "Servir as ferramentas novas exige restart; isso é seu.",
+    }
+  no_gain: { kind: output, status: no_gain, value: { endedBy: "{{nodes.cut.output.endedBy}}" } }
+  stuck: { kind: output, status: blocked, notify: true, value: {} }
+edges:
+  [
+    "cut:target -> deps",
+    "deps -> review",
+    "cut:no_gain -> no_gain",
+    "cut:budget -> no_gain",
+    "review:approve -> done",
+    "review:stuck -> stuck",
+  ]

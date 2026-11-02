@@ -17,6 +17,7 @@ import * as KanbanThreadStarter from "./kanban/KanbanThreadStarter.ts";
 import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import { BotRotation } from "./rotation/BotRotation.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
+import * as WorkflowRpc from "./workflows/rpc/handlers.ts";
 
 /** Tags ws.ts omits from upstream's handler group; their handlers come from `layer`. */
 export const BOTS_RPC_TAGS = Object.values(BOTS_WS_METHODS);
@@ -41,7 +42,9 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
     const kanban = yield* KanbanService;
     const threadStarter = yield* KanbanThreadStarter.KanbanThreadStarter;
     const aiFilter = yield* KanbanAiFilter.KanbanAiFilter;
+    const workflows = yield* WorkflowRpc.handlers;
     return ServerBotsRpcGroup.of({
+      ...workflows,
       [BOTS_WS_METHODS.directorySubscribe]: () => bots.directory,
       [BOTS_WS_METHODS.botCreate]: (input) => bots.createBot(input),
       [BOTS_WS_METHODS.botUpdate]: (input) => bots.updateBot(input),

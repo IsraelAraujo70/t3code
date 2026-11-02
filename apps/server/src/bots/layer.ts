@@ -7,8 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { BotsError, KanbanError } from "@t3tools/contracts";
+import { BotsError, KanbanError, WorkflowsError } from "@t3tools/contracts";
 
+import * as BotsDb from "./BotsDb.ts";
 import { isBotsHost, NOT_BOTS_HOST_MESSAGE } from "./BotsHost.ts";
 import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
@@ -22,6 +23,51 @@ import * as BotQueueReactor from "./queue/BotQueueReactor.ts";
 import * as BotRotation from "./rotation/BotRotation.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
+import * as Workflows from "./workflows/layer.ts";
+import * as WorkflowNotices from "./workflows/notices/WorkflowNotices.ts";
+
+import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinitions.ts";
+import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
+import { layer as WorkflowTriggersLayer } from "./workflows/triggers/WorkflowTriggers.ts";
+import * as WorkflowWebhooks from "./workflows/triggers/webhook.ts";
+
+/**
+ * Workflows on the bots host: the engine block (engine, catalog, definitions, journal) with the
+ * hand-edit watcher, the trigger sources and the webhook side on top of it, so they see the
+ * engine. BotsDb, the same layer the engine block keeps private, backs their cursors.
+ */
+export const layerWorkflows = Layer.mergeAll(
+  WatcherLayer,
+  WorkflowTriggersLayer,
+  WorkflowWebhooks.layerBindHook,
+  WorkflowWebhooks.layerReconcileOnHost,
+).pipe(Layer.provideMerge(Workflows.layer), Layer.provide(BotsDb.layer));
+const workflowsNotHost = () =>
+  Effect.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }));
+const layerWorkflowsOff = Layer.succeed(
+  WorkflowDefinitions.WorkflowDefinitions,
+  WorkflowDefinitions.WorkflowDefinitions.of({
+    repoPath: "",
+    changes: Stream.empty,
+    snapshot: Stream.fail(
+      new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }),
+    ),
+    documentChanges: () =>
+      Stream.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE })),
+    list: workflowsNotHost(),
+    document: workflowsNotHost,
+    validate: workflowsNotHost,
+    save: workflowsNotHost,
+    fromTemplate: workflowsNotHost,
+    setEnabled: workflowsNotHost,
+    botEntries: workflowsNotHost,
+    delete: workflowsNotHost,
+    restore: workflowsNotHost,
+    history: workflowsNotHost,
+    template: workflowsNotHost,
+    ingest: workflowsNotHost,
+  }),
+);
 
 const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE }));
 
@@ -159,6 +205,7 @@ export const layerOff = Layer.mergeAll(
   layerServiceOff,
   layerThreadWatchOff,
   layerKanbanOff,
+  layerWorkflowsOff,
 );
 
 /** The bots store, instructions and host MCP tools for the orchestration runtime. */
@@ -166,9 +213,12 @@ export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? Layer.mergeAll(BotsInstructions.layer, HostMcpForward.layer).pipe(
-            Layer.provideMerge(BotsStore.layer),
-          )
+        ? Layer.mergeAll(
+            BotsInstructions.layer,
+            HostMcpForward.layer,
+            // The scheduled-task service, below the runtime, reads the workflow webhook hook here.
+            WorkflowWebhooks.layerHook,
+          ).pipe(Layer.provideMerge(BotsStore.layer))
         : Layer.mergeAll(layerStoreOff, layerInstructionsOff),
     ),
   ),
@@ -194,9 +244,18 @@ export const layerService = Layer.unwrap(
             Layer.provideMerge(BotRotation.layer),
             Layer.provideMerge(BotsService.layer),
             Layer.provideMerge(ThreadWatchStore.layer),
+            // wf-engine slice 8: the host interpreter reads notices, run cards (over the kanban
+            // service, so it comes after) and pull requests from this context.
+            Layer.provideMerge(layerWorkflows.pipe(Layer.provide(WorkflowNotices.deliveryLayer))),
             Layer.provideMerge(KanbanService.layer),
           )
-        : Layer.mergeAll(layerServiceOff, layerThreadWatchOff, layerKanbanOff, layerRotationOff),
+        : Layer.mergeAll(
+            layerServiceOff,
+            layerThreadWatchOff,
+            layerKanbanOff,
+            layerRotationOff,
+            layerWorkflowsOff,
+          ),
     ),
   ),
 );

@@ -41,7 +41,9 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
-// Fork (friend): a bot conversation's header shows the bot's face.
+// Fork (friend): bot faces and workflow step backlinks in the header.
+import { isWorkflowStepThreadId } from "@t3tools/contracts";
+import { WorkflowStepCrumb } from "~/bots/workflows/WorkflowStepCrumb";
 import { isBotConversationThread } from "@t3tools/client-runtime/bot-chat";
 import { BotHeaderAvatar } from "~/bots/BotHeaderAvatar";
 import { GuestShareIndicator } from "./GuestShareControls";
@@ -295,6 +297,8 @@ export const ChatHeader = memo(function ChatHeader({
         {/* Fork (friend): the bot's face replaces the Scratch project crumb. */}
         {isBotConversationThread(activeThreadId) ? (
           <BotHeaderAvatar threadId={activeThreadId} />
+        ) : isWorkflowStepThreadId(activeThreadId) ? (
+          <WorkflowStepCrumb environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         ) : activeProject ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">

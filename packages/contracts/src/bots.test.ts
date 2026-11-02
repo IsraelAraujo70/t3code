@@ -12,6 +12,7 @@ import {
   KanbanTicketPatch,
   parseBotThreadId,
   parseBotThreadOwner,
+  WORKFLOWS_WS_METHODS,
 } from "./bots.ts";
 import { ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
@@ -50,6 +51,35 @@ describe("kanban RPCs", () => {
         expect(BOTS_GUARDED_RPC_SCOPES[method]).toBe(AuthOrchestrationOperateScope);
       }
     }
+  });
+});
+
+describe("workflows RPCs", () => {
+  it("guards every write, run and gate decision with the operate scope and scopes every read", () => {
+    const reads = new Set<string>([
+      WORKFLOWS_WS_METHODS.workflowsSubscribe,
+      WORKFLOWS_WS_METHODS.workflowsDocumentSubscribe,
+      WORKFLOWS_WS_METHODS.workflowsValidate,
+      WORKFLOWS_WS_METHODS.workflowsHistory,
+      WORKFLOWS_WS_METHODS.workflowsRunsList,
+      WORKFLOWS_WS_METHODS.workflowsRunGet,
+      WORKFLOWS_WS_METHODS.workflowsRunSubscribe,
+      WORKFLOWS_WS_METHODS.workflowsRunStep,
+      WORKFLOWS_WS_METHODS.workflowsRunTrigger,
+      WORKFLOWS_WS_METHODS.workflowsTriggerSample,
+      WORKFLOWS_WS_METHODS.workflowsMetrics,
+      WORKFLOWS_WS_METHODS.workflowsLedger,
+    ]);
+    for (const method of Object.values(WORKFLOWS_WS_METHODS)) {
+      const read = reads.has(method);
+      expect(BOTS_RPC_SCOPES[method]).toBe(
+        read ? AuthOrchestrationReadScope : AuthOrchestrationOperateScope,
+      );
+      expect(Object.hasOwn(BOTS_GUARDED_RPC_SCOPES, method)).toBe(!read);
+    }
+    expect(BOTS_GUARDED_RPC_SCOPES[WORKFLOWS_WS_METHODS.workflowsGateDecide]).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 });
 
