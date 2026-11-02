@@ -144,11 +144,12 @@ const outcome = (seq: number, runId: string, status: string): StoredFact => ({
 it("suspends after the fatigue limit of failed outcomes in a row and skips the waiting triggers", () => {
   const facts = [outcome(1, "r1", "failed"), outcome(2, "r2", "budget_exhausted"), trigger(3)];
   const result = decideWorkflow({ ...input(), facts });
-  expect(result.map((x) => [x.key, x.fact._tag])).toEqual([
-    ["suspended:r2", "Suspended"],
-    ["skipped:manual:3", "TriggerSkipped"],
+  expect(result.map((x) => [x.stream, x.key, x.fact._tag])).toEqual([
+    ["workflow:demo", "suspended:r2", "Suspended"],
+    ["run:r2", "notify:suspended", "IntentRecorded"],
+    ["workflow:demo", "skipped:manual:3", "TriggerSkipped"],
   ]);
-  expect(result[1]?.fact._tag === "TriggerSkipped" && result[1].fact.reason).toBe("suspended");
+  expect(result[2]?.fact._tag === "TriggerSkipped" && result[2].fact.reason).toBe("suspended");
 });
 
 it.each([

@@ -32,6 +32,8 @@ export const Intent = Schema.TaggedUnion({
     model: WorkflowModelRef,
     access: Schema.Literals(["read", "write"]),
     reservation: Schema.Number,
+    // wf-engine slice 7: a block child carries its own timeout; graph nodes read theirs from the definition.
+    timeoutMs: Schema.optional(Schema.Number),
   },
   /** One command in its own systemd unit; `heavy` takes the heavy.sh lock inside the unit. */
   StartUnit: {
@@ -46,6 +48,9 @@ export const Intent = Schema.TaggedUnion({
     env: Schema.Record(Schema.String, Text),
     /** How the interpreter turns stdout into `UnitExited.out`; absent is "none". */
     parse: Schema.optional(Schema.Literals(["none", "json", "json-last-line"])),
+    // wf-engine slice 8: a paid command reserves tokens and is charged `out[tokensFrom]`.
+    reservation: Schema.optional(Schema.Number),
+    tokensFrom: Schema.optional(Text),
   },
   /** A git worktree of `projectRef` at `baseRef`; `branch` null makes it detached and disposable. */
   PrepareWorkspace: {
@@ -102,6 +107,8 @@ export const Intent = Schema.TaggedUnion({
   /** The run's kanban card; it points at the run and never links a step thread. */
   UpsertCard: {
     key: Text,
+    // wf-engine slice 8: the kanban project of `card.project`.
+    project: Text,
     column: Schema.Literals(["todo", "in_progress", "in_review", "done"]),
     title: Text,
     runPath: Text,
@@ -122,6 +129,8 @@ export const Intent = Schema.TaggedUnion({
     attempt: Schema.Number,
     workflowId: Text,
     params: Schema.Record(Schema.String, Json),
+    // wf-engine slice 8: the child's whole token budget, reserved in the parent until it ends.
+    reservation: Schema.optional(Schema.Number),
   },
 });
 export type Intent = typeof Intent.Type;
@@ -164,6 +173,8 @@ export const RunFact = Schema.TaggedUnion({
   MapExpanded: { step: Text, items: Schema.Array(Json) },
   /** Key `iter:<step>:<index>`. */
   IterationStarted: { step: Text, index: Schema.Number },
+  // wf-engine slice 7: a block pins a decision of its own under `block:<step>:<id>`.
+  BlockAdvanced: { step: Text, id: Text, event: Json },
   /** Key `resolved:<step>@<attempt>`. `port` null sends every successor down a dead path. */
   StepResolved: {
     step: Text,
@@ -228,6 +239,8 @@ export const RunFact = Schema.TaggedUnion({
     cost: WorkflowStepCost,
     /** HEAD of the step's worktree after the turn, read by the engine, never taken from the agent. */
     headSha: Schema.optional(NullableText),
+    // wf-engine slice 7: `git rev-parse HEAD^{tree}` next to headSha; the ledger refuses a tree twice.
+    treeHash: Schema.optional(NullableText),
     /** The engine could not observe the turn's end: its outcome is unknown and Israel decides. */
     unobserved: Schema.optional(Schema.Boolean),
   },
@@ -245,6 +258,8 @@ export const RunFact = Schema.TaggedUnion({
     parseError: Schema.optional(NullableText),
     headSha: Schema.optional(NullableText),
   },
+  // wf-engine slice 8: usage a provider reports mid-turn, key `usage:<intent key>:<n>` (n = multiple of the reservation).
+  TurnUsageReported: { step: Text, attempt: Schema.Number, billable: Schema.Number, at: Text },
   /** Key `request:<requestId>`. */
   RuntimeRequest: {
     step: Text,
@@ -322,7 +337,36 @@ export const WorkflowFact = Schema.TaggedUnion({
 });
 export type WorkflowFact = typeof WorkflowFact.Type;
 
-export const Fact = Schema.Union([RunFact, WorkflowFact]);
+// wf-engine slice 7: the ledger stream `ledger:<ledgerId>`, shared by every run (§3.1).
+export const LedgerFact = Schema.TaggedUnion({
+  /** Key `entry:<key>`: the first run to register a key owns it. */
+  EntryRegistered: {
+    key: Text,
+    workflowId: Text,
+    runId: Text,
+    step: Text,
+    hypothesis: Text,
+    barHash: Text,
+    at: Text,
+  },
+  /** Key `tree:<treeHash>`: the first entry measured with that tree. */
+  TreeSeen: { treeHash: Text, entryKey: Text, runId: Text },
+  /** Key `resolved:<key>`. */
+  EntryResolved: {
+    key: Text,
+    verdict: Schema.Literals(["kept", "rejected", "invalid", "duplicate", "abandoned"]),
+    before: Json,
+    after: Json,
+    sha: NullableText,
+    note: NullableText,
+    at: Text,
+  },
+  /** Key `validated:<key>`: an output's `promote` approved a kept entry; only these become a base. */
+  EntryValidated: { key: Text, runId: Text, at: Text },
+});
+export type LedgerFact = typeof LedgerFact.Type;
+
+export const Fact = Schema.Union([RunFact, WorkflowFact, LedgerFact]);
 export type Fact = typeof Fact.Type;
 export type FactTag = Fact["_tag"];
 
@@ -349,3 +393,5 @@ export interface StoredFact {
 
 export const runStream = (runId: string) => `run:${runId}`;
 export const workflowStream = (workflowId: string) => `workflow:${workflowId}`;
+// wf-engine slice 7.
+export const ledgerStream = (ledgerId: string) => `ledger:${ledgerId}`;

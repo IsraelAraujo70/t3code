@@ -40,7 +40,10 @@ export type IntentResult = Exclude<
       | "RuntimeRequest"
       | "GateDecided"
       | "ControlRequested"
-      | "ChildRunEnded";
+      | "ChildRunEnded"
+      // wf-engine slices 7-8.
+      | "BlockAdvanced"
+      | "TurnUsageReported";
   }
 >;
 
@@ -70,6 +73,9 @@ export interface StepAttempt {
   readonly exited: UnitExited | null;
   readonly child: ChildRunEnded | null;
   readonly resolved: StepResolved | null;
+  // wf-engine slice 8: when each charge lands in a workflow day (the main turn or unit, and the nudge).
+  readonly settledAt?: string | null;
+  readonly nudgeSettledAt?: string | null;
   /** Resolved by the run's end, not by its own outcome: a reopening runs it again. */
   readonly stoppedByEnd: boolean;
 }
@@ -123,6 +129,25 @@ export interface RunState {
   }>;
   /** By workspace name. */
   readonly workspaces: ReadonlyMap<string, WorkspaceReady>;
+  // wf-engine slices 7-8: block events by block step, every pause with its end, mid-turn usage.
+  readonly blocks: ReadonlyMap<string, ReadonlyArray<BlockEventEntry>>;
+  readonly pauses: ReadonlyArray<PauseSpan>;
+  /** Highest billable a provider reported mid-turn, by start intent key. */
+  readonly usage: ReadonlyMap<string, number>;
   /** Branches of this run that a newer run took over after it ended. */
   readonly releasedBranches: ReadonlySet<string>;
+}
+
+/** A `BlockAdvanced` fact of one block step, in journal order. */
+export interface BlockEventEntry {
+  readonly id: string;
+  readonly seq: number;
+  readonly event: Json;
+}
+
+export interface PauseSpan {
+  readonly reason: RunPaused["reason"];
+  readonly at: string;
+  /** null while the pause is open. */
+  readonly resumedAt: string | null;
 }

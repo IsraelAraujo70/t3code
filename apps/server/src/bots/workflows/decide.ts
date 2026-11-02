@@ -36,12 +36,32 @@ import {
   type Intent,
   type NewFact,
   type RunFact,
+  ledgerStream,
   runStream,
   workflowStream,
 } from "./facts.ts";
 import { runIdFor, stepThreadId } from "./ids.ts";
 import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import { liveTarget } from "./fold.ts";
+// wf-engine slices 7-8.
+import { emptyLedger, ledgerBest, ledgerDigest, type LedgerState } from "./blocks/ledger.ts";
+import { blockBegun, type BlockHost } from "./blocks/run.ts";
+import { runBlockNode } from "./blocks/registry.ts";
+import type { BlockNode } from "./blocks/types.ts";
+import {
+  activeDeadline,
+  activeMs,
+  type BudgetContext,
+  DEFAULT_TURN_RESERVATION,
+  effectiveCeilings,
+  fatigueStreak,
+  overrunTurns,
+  reservationOf,
+  reservedTokens,
+  spentTokens,
+} from "./budget/budget.ts";
+import { cardColumnOf, cardIntent } from "./card/cardIntent.ts";
+import { failedNotice, finishedNotice, needsYouNotice } from "./notices/notices.ts";
 import type { GateDecided, RunState, StepAttempt } from "./state.ts";
 
 export interface DecideContext {
@@ -54,6 +74,9 @@ export interface DecideContext {
     readonly workflowId: string;
     readonly triggerId: string;
   }>;
+  // wf-engine slices 7-8: the ledgers of `ledgerIdsOf(compiled)`, folded fresh before each pass, and the budget the engine tracks.
+  readonly ledgers?: ReadonlyMap<string, LedgerState>;
+  readonly budget?: BudgetContext;
 }
 
 /** A lost turn, or a lost command that may run again, is replayed this often (crash recovery). */
@@ -180,7 +203,10 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
   // A start still executing (or being abandoned) has no receipt yet, so it counts as live too.
   const live = [...state.intents.values()].filter(
     (entry) =>
-      liveTarget(entry, state) !== null || (isStart(entry.intent) && entry.result === null),
+      liveTarget(entry, state) !== null ||
+      (isStart(entry.intent) && entry.result === null) ||
+      // wf-engine slice 8: a pull request still pushing needs its worktree.
+      (entry.intent._tag === "OpenPullRequest" && entry.result === null),
   );
   if (interrupts.length > 0 || live.length > 0) return interrupts;
   const ended = state.ended;
@@ -223,7 +249,29 @@ export const decide = (
 ): ReadonlyArray<NewFact> => {
   const started = state.started;
   if (started === null) return [];
-  if (state.ended !== null) return afterEnd(compiled, state, ctx.now);
+  if (state.ended !== null) {
+    // wf-engine slice 8: a card that waited on the previous one still reaches done after the end.
+    const card = compiled.definition.card;
+    const done =
+      card === undefined
+        ? null
+        : cardIntent(
+            state,
+            { project: card.project, title: compiled.definition.title, runId: state.runId },
+            "done",
+          );
+    const after = afterEnd(compiled, state, ctx.now);
+    return done === null
+      ? after
+      : [
+          ...after,
+          {
+            stream: runStream(state.runId),
+            key: done.key,
+            fact: { _tag: "IntentRecorded", intent: done },
+          },
+        ];
+  }
   const definition = compiled.definition;
   const runId = state.runId;
   const stream = runStream(runId);
@@ -258,9 +306,13 @@ export const decide = (
   const record = (intent: Intent) => {
     if (has(intent.key)) return;
     // Every start, an accept, a nudge or a judge included, spends a step of the budget.
-    if (isStart(intent) && !admits()) return;
+    // wf-engine slice 8: and its token reservation must fit what is left.
+    if (isStart(intent) && !admits(reservationOf(intent))) return;
     emit(intent.key, { _tag: "IntentRecorded", intent });
-    if (isStart(intent)) startsNow += 1;
+    if (isStart(intent)) {
+      startsNow += 1;
+      reservedNow += reservationOf(intent);
+    }
     if (
       intent._tag === "StartTurn" ||
       intent._tag === "StartUnit" ||
@@ -373,6 +425,28 @@ export const decide = (
     return a.threadId !== null || a.unit !== null ? "running" : "dispatched";
   };
 
+  /** The head the last turn or command in `name` left, among attempts that began after `seq`. */
+  const headSince = (name: string, seq: number): string | null => {
+    let head: string | null = null;
+    let at = seq;
+    for (const attempts of state.attempts.values()) {
+      for (const a of attempts) {
+        if (a.firstSeq <= seq || a.lastSeq <= at) continue;
+        const intent = state.intents.get(`turn:${stepKey(a.step, a.attempt)}`)?.intent;
+        const unit = state.intents.get(`unit:${stepKey(a.step, a.attempt)}`)?.intent;
+        const used =
+          (intent?._tag === "StartTurn" && intent.workspace.name === name) ||
+          (unit?._tag === "StartUnit" && unit.cwd.name === name);
+        const seen = a.exited?.headSha ?? a.nudge?.headSha ?? a.settled?.headSha ?? null;
+        if (used && seen !== null) {
+          head = seen;
+          at = a.lastSeq;
+        }
+      }
+    }
+    return head;
+  };
+
   /** The fold keeps each workspace's head at the last observation that reported one. */
   const workspaceHead = (name: string): string | null =>
     state.workspaces.get(name)?.headSha ?? null;
@@ -420,7 +494,11 @@ export const decide = (
         path: ready?.path ?? null,
       };
     }
+    const ledgerOf = (id: string) => ctx.ledgers?.get(id) ?? emptyLedger(id);
     return {
+      // wf-engine slice 7: ledgerBest only ever names a validated entry.
+      ledgerBest: (id) => ledgerBest(ledgerOf(id)),
+      ledgerDigest: (id) => ledgerDigest(ledgerOf(id)),
       roots: {
         params: started.params as JsonValue,
         trigger: triggerRoot(),
@@ -512,9 +590,16 @@ export const decide = (
     }
     const decl = definition.workspaces?.[use];
     if (decl === undefined || !Object.hasOwn(definition.workspaces ?? {}, use)) {
-      return Result.fail(
-        `workspace ${use} is a block export, which arrives with the blocks (slice 7)`,
-      );
+      // wf-engine slice 7: `<node>.<name>` is a worktree a block exported when it finished.
+      const exported = blockExport(level, use);
+      if (exported === null) return Result.fail(`workspace ${use} was not exported by a block`);
+      if (access === "write")
+        return Result.succeed({
+          name: exported.name,
+          path: exported.path,
+          project: exported.project,
+        });
+      return disposable(exported.project, exported.head);
     }
     const env = envFor(level);
     const project = render(decl.project, env);
@@ -552,6 +637,121 @@ export const decide = (
       return Result.succeed({ name: use, path: ready.path, project: project.success });
     return disposable(project.success, workspaceHead(use) ?? ready.headSha);
   };
+
+  // wf-engine slice 7: what a finished block exported, from its resolution's `exports`.
+  const blockExport = (
+    level: Level,
+    use: string,
+  ): {
+    name: string;
+    path: string;
+    project: string;
+    branch: string | null;
+    head: string;
+  } | null => {
+    const dot = use.indexOf(".");
+    if (dot <= 0) return null;
+    const owner = findStep(level, use.slice(0, dot));
+    const resolvedAt = owner === null ? null : latest(owner);
+    const output = resolvedAt?.resolved?.output ?? null;
+    const exports =
+      output !== null && typeof output === "object" && !Array.isArray(output)
+        ? (output as { readonly [k: string]: Json })["exports"]
+        : undefined;
+    const entry =
+      exports !== null && typeof exports === "object" && !Array.isArray(exports)
+        ? (exports as { readonly [k: string]: Json })[use.slice(dot + 1)]
+        : undefined;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const e = entry as { readonly [k: string]: Json };
+    const text = (k: string) => (typeof e[k] === "string" ? (e[k] as string) : null);
+    const name = text("name");
+    const path = text("path");
+    const project = text("project");
+    const head = text("head");
+    if (name === null || path === null || project === null || head === null) return null;
+    // Turns and commands in the worktree after the export move its head (an interrogate lead's fixes).
+    const after = headSince(name, resolvedAt?.lastSeq ?? 0);
+    return { name, path, project, branch: text("branch"), head: after ?? head };
+  };
+
+  // wf-engine slice 8: an output's pull request, from a declared workspace or a block export.
+  const pullRequestOf = (
+    pr: NonNullable<Extract<WorkflowNode, { readonly kind: "output" }>["pullRequest"]>,
+    step: string,
+    level: Level,
+  ): Result.Result<Extract<Intent, { readonly _tag: "OpenPullRequest" }>, string> => {
+    const exported = blockExport(level, pr.workspace);
+    const ready = state.workspaces.get(pr.workspace);
+    const workspace =
+      exported !== null
+        ? { name: exported.name, branch: exported.branch, head: exported.head }
+        : ready === undefined
+          ? null
+          : {
+              name: pr.workspace,
+              branch: ready.branch,
+              head: workspaceHead(pr.workspace) ?? ready.headSha,
+            };
+    if (workspace === null) return Result.fail(`workspace ${pr.workspace} was never prepared`);
+    if (workspace.branch === null || !/^wf\/[A-Za-z0-9._/-]{1,120}$/.test(workspace.branch))
+      return Result.fail(`workspace ${pr.workspace} has no wf/… branch to publish`);
+    const env = envFor(level);
+    const base = render(pr.base, env);
+    const title = render(pr.title, env);
+    const body = render(pr.body, env);
+    if (Result.isFailure(base)) return Result.fail(base.failure);
+    if (Result.isFailure(title)) return Result.fail(title.failure);
+    if (Result.isFailure(body)) return Result.fail(body.failure);
+    return Result.succeed({
+      _tag: "OpenPullRequest",
+      key: `pr:${step}`,
+      workspace: workspace.name,
+      branch: workspace.branch,
+      sha: workspace.head,
+      base: base.success,
+      title: title.success,
+      body: body.success,
+    });
+  };
+
+  // wf-engine slice 7: the decider's primitives a block runs on, over its level.
+  const blockHost = (level: Level): BlockHost => ({
+    state,
+    now: ctx.now,
+    runDir: ctx.runDir,
+    title: definition.title,
+    workflowId: started.workflowId,
+    ledgers: ctx.ledgers ?? new Map(),
+    defaultReservation: Math.min(DEFAULT_TURN_RESERVATION, ceilings.tokens),
+    has,
+    latest,
+    record,
+    emit: (key, fact, target) => emit(key, fact, target),
+    resolve: (step, attempt, status, port, output = null, error = null) =>
+      resolve(step, attempt, status, port, output, error),
+    approval,
+    stepDir,
+    render: (template, roots) => render(template, envFor(level, roots)),
+    evaluate: (expr, roots) => evaluate(expr, envFor(level, roots)),
+    model: (use) => resolveModelUse(use, definition.models),
+    namedWorkspace: (name) => {
+      const exported = blockExport(level, name);
+      if (exported !== null) return { ...exported, headSha: exported.head };
+      const ready = state.workspaces.get(name);
+      const prepared = state.intents.get(`ws:${name}`)?.intent;
+      if (ready === undefined || prepared?._tag !== "PrepareWorkspace") return null;
+      return {
+        name,
+        path: ready.path,
+        project: prepared.projectRef,
+        branch: ready.branch,
+        headSha: workspaceHead(name) ?? ready.headSha,
+      };
+    },
+  });
+  const runBlockStep = (node: BlockNode, step: string, attempt: number, level: Level) =>
+    runBlockNode(node, step, attempt, blockHost(level));
 
   // ── Dispatch and progress per kind ──────────────────────────────────────────────────────────
 
@@ -593,7 +793,8 @@ export const decide = (
         mode: "continue",
         prompt: prompt.success + outputInstruction(node),
         // The compiler keeps a thread on one model; the reservation is this step's own.
-        reservation: node.tokenReservation ?? 0,
+        // wf-engine slice 8: estimated like a new turn when the node names none.
+        reservation: node.tokenReservation ?? turnEstimate(step),
       });
       return;
     }
@@ -621,7 +822,8 @@ export const decide = (
       prompt: prompt.success + outputInstruction(node),
       model: model.success,
       access,
-      reservation: node.tokenReservation ?? 0,
+      // wf-engine slice 8: the node's own reservation, else its history, else the host default.
+      reservation: node.tokenReservation ?? turnEstimate(step),
     });
   };
 
@@ -907,6 +1109,19 @@ export const decide = (
             : durationMs(node.timeout),
         env: Object.fromEntries(Object.entries(envVars.success).map(([k, v]) => [k, String(v)])),
         parse: node.parse ?? "none",
+        // wf-engine slice 8: a paid command reserves its tokens and learns them as WF_TOKEN_BUDGET.
+        ...(node.tokensFrom === undefined
+          ? {}
+          : {
+              tokensFrom: node.tokensFrom,
+              reservation: node.tokenReservation ?? 0,
+              env: {
+                ...Object.fromEntries(
+                  Object.entries(envVars.success).map(([k, v]) => [k, String(v)]),
+                ),
+                WF_TOKEN_BUDGET: String(node.tokenReservation ?? 0),
+              },
+            }),
       });
       return;
     }
@@ -1012,18 +1227,31 @@ export const decide = (
   };
 
   const dispatched = [...state.intents.values()].filter((e) => isStart(e.intent)).length;
-  const overWall = ctx.now >= Date.parse(started.at) + started.budget.wallMs;
-  /** A ready step was refused because the run used every step of its budget. */
+  // wf-engine slice 8: the latest ceilings, active time only, and tokens charged plus reserved.
+  const ceilings = effectiveCeilings(state);
+  const overWall = activeMs(state, ctx.now) >= ceilings.wallMs;
+  const spent = spentTokens(state);
+  const committed = spent + reservedTokens(state);
+  const overTokens = spent >= ceilings.tokens;
+  let reservedNow = 0;
+  /** A ready step was refused because the run used every step or token of its budget. */
   let refused = false;
   /** Whether the run takes new work: not paused, cancelling or past its wall. */
   const open = () => !pausedNow && !cancelling && !overWall;
-  /** Whether a start fits the step budget; only starts spend it, so outputs and branches still run. */
-  const admits = () => {
+  /** Whether a start fits the step budget and, with its reservation, the token budget. */
+  const admits = (reservation = 0) => {
     if (!open()) return false;
-    if (dispatched + startsNow < started.budget.steps) return true;
+    if (
+      dispatched + startsNow < ceilings.steps &&
+      committed + reservedNow + reservation <= ceilings.tokens
+    )
+      return true;
     refused = true;
     return false;
   };
+  // A reservation never exceeds the whole token budget, or a small run could never start a turn.
+  const turnEstimate = (step: string) =>
+    Math.min(ctx.budget?.estimate(nodeIdOfStep(step)) ?? DEFAULT_TURN_RESERVATION, ceilings.tokens);
 
   /** Starts attempt `attempt` of a step: guards, then the kind's first intent or fact. */
   const dispatch = (node: WorkflowNode, step: string, attempt: number, level: Level) => {
@@ -1074,6 +1302,27 @@ export const decide = (
           return resolve(step, attempt, "failed", "fail", null, report.failure);
         if (handoff !== null && Result.isFailure(handoff))
           return resolve(step, attempt, "failed", "fail", null, handoff.failure);
+        // wf-engine slice 8: the engine publishes the journal's sha as a draft pull request.
+        const published =
+          node.pullRequest === undefined ? null : pullRequestOf(node.pullRequest, step, level);
+        if (published !== null && Result.isFailure(published))
+          return resolve(step, attempt, "failed", "fail", null, published.failure);
+        if (published !== null) record(published.success);
+        // wf-engine slice 7: `promote` marks the kept ledger entry of that sha as validated.
+        if (node.promote !== undefined) {
+          const sha = render(node.promote.sha, env);
+          if (Result.isFailure(sha))
+            return resolve(step, attempt, "failed", "fail", null, sha.failure);
+          const ledger = ctx.ledgers?.get(node.promote.ledger);
+          for (const entry of ledger?.entries.values() ?? []) {
+            if (entry.verdict !== "kept" || entry.sha !== sha.success) continue;
+            emit(
+              `validated:${entry.key}`,
+              { _tag: "EntryValidated", key: entry.key, runId, at: nowIso },
+              ledgerStream(node.promote.ledger),
+            );
+          }
+        }
         resolve(step, attempt, "succeeded", null, valueResult.success as Json);
         if (level.parent === null) {
           emit(once("output"), {
@@ -1095,14 +1344,8 @@ export const decide = (
       case "arena":
       case "graph":
       case "interrogate":
-        return resolve(
-          step,
-          attempt,
-          "failed",
-          "fail",
-          null,
-          `${node.kind} blocks arrive with slice 7`,
-        );
+        // wf-engine slice 7.
+        return runBlockStep(node, step, attempt, level);
     }
   };
 
@@ -1124,6 +1367,11 @@ export const decide = (
       attempt,
       workflowId: node.workflow,
       params: params.success as { readonly [key: string]: Json },
+      // wf-engine slice 8: the child's whole budget, so concurrent calls never spend the same balance.
+      // A child larger than what is left is refused, never clipped.
+      reservation:
+        ctx.budget?.childTokens?.(node.workflow) ??
+        Math.min(DEFAULT_TURN_RESERVATION, ceilings.tokens),
     });
   };
 
@@ -1262,7 +1510,10 @@ export const decide = (
   function stepForward(compiled: CompiledNode, step: string, level: Level) {
     const node = compiled.node;
     const current = latest(step);
-    if (current === undefined) {
+    // wf-engine slice 7: a block has no attempt until it resolves; once begun it keeps running.
+    if (current === undefined && isBlock(node) && blockBegun(state, step, 1)) {
+      runBlockStep(node, step, 1, level);
+    } else if (current === undefined) {
       if (!startStep(compiled, step, level)) return;
     } else if (resolutionOf(current) === null) {
       progress(node, step, current, level);
@@ -1303,6 +1554,36 @@ export const decide = (
         return false;
       }
     }
+    // wf-engine slice 7: `once` registers its key in the ledger; a key another step owns skips this one.
+    if (node.once !== undefined) {
+      const key = render(node.once.key, envFor(level));
+      if (Result.isFailure(key)) {
+        resolve(step, 1, "failed", "fail", null, key.failure);
+        return true;
+      }
+      const owner = ctx.ledgers?.get(node.once.ledger)?.entries.get(key.success);
+      if (owner !== undefined && (owner.runId !== runId || owner.step !== step)) {
+        skip(step, "once");
+        return false;
+      }
+      if (owner === undefined) {
+        emit(
+          `entry:${key.success}`,
+          {
+            _tag: "EntryRegistered",
+            key: key.success,
+            workflowId: definition.id,
+            runId,
+            step,
+            hypothesis: node.title ?? step,
+            barHash: "",
+            at: nowIso,
+          },
+          ledgerStream(node.once.ledger),
+        );
+        return false;
+      }
+    }
     dispatch(node, step, 1, level);
     return true;
   }
@@ -1338,6 +1619,12 @@ export const decide = (
       case "map":
       case "loop":
         return progressBody(node, step, a.attempt, level);
+      // wf-engine slice 7: a block reads its children even when the budget admits nothing new.
+      case "hillclimb":
+      case "arena":
+      case "graph":
+      case "interrogate":
+        return runBlockStep(node, step, a.attempt, level);
       default:
         return dispatch(node, step, a.attempt, level);
     }
@@ -1392,8 +1679,45 @@ export const decide = (
       at: nowIso,
     });
   }
-  if (toggle?.control.control === "resume" && state.paused?.reason === "user") {
+  // wf-engine slice 8: a resume also lifts a fatigue pause.
+  if (
+    toggle?.control.control === "resume" &&
+    (state.paused?.reason === "user" || state.paused?.reason === "fatigue")
+  ) {
     emit(`resume:${toggle.key}`, { _tag: "RunResumed", at: nowIso });
+  }
+
+  // wf-engine slice 8: the host's daily cap pauses the run; the next workflow day resumes it.
+  const day = ctx.budget?.day ?? null;
+  if (day !== null && day.spent >= day.cap && !pausedNow) {
+    const pause = state.pauseCount + 1;
+    emit(`pause:${pause}`, {
+      _tag: "RunPaused",
+      reason: "daily_cap",
+      detail: `${day.spent} of ${day.cap} tokens today`,
+      at: nowIso,
+    });
+    record(needsYouNotice(definition.title, runId, { _tag: "daily_cap", pause, cap: day.cap }));
+  } else if (day !== null && day.spent < day.cap && state.paused?.reason === "daily_cap") {
+    emit(`resume:${state.resumeCount + 1}`, { _tag: "RunResumed", at: nowIso });
+  }
+  // wf-engine slice 8: failures in a row pause the run once, with one notice per pause.
+  const streak = fatigueStreak(state);
+  // A pass that just resumed reads the streak from before the resume, so it does not count.
+  if (
+    streak >= definition.fatigue.consecutiveFailures &&
+    state.paused === null &&
+    !pausedNow &&
+    !cancelling
+  ) {
+    const pause = state.pauseCount + 1;
+    emit(`pause:${pause}`, {
+      _tag: "RunPaused",
+      reason: "fatigue",
+      detail: `${streak} failures in a row`,
+      at: nowIso,
+    });
+    record(needsYouNotice(definition.title, runId, { _tag: "fatigue", pause, streak }));
   }
 
   // 2. Runtime requests: decline, or ask Israel when the step allows it.
@@ -1465,15 +1789,18 @@ export const decide = (
       at: nowIso,
     });
   }
+  // wf-engine slice 8: the watchdog stops a turn whose reported usage reached twice its reservation.
+  const overrun = new Set(overrunTurns(state).map((entry) => entry.intent.key));
+  interruptLive((intent) => overrun.has(intent.key));
   // Units enforce their own timeout (StartUnit.timeoutMs); a turn past its step's timeout is interrupted.
   interruptLive((intent) => {
     if (intent._tag !== "StartTurn") return false;
+    // wf-engine slice 7: a block child's turn carries its own timeout.
     const limit = nodeAt(compiled, intent.step)?.timeout;
+    const limitMs = intent.timeoutMs ?? (limit === undefined ? undefined : durationMs(limit));
     const startedAt = latest(intent.step)?.startedAt ?? null;
     return (
-      limit !== undefined &&
-      startedAt !== null &&
-      ctx.now >= Date.parse(startedAt) + durationMs(limit)
+      limitMs !== undefined && startedAt !== null && ctx.now >= Date.parse(startedAt) + limitMs
     );
   });
 
@@ -1515,41 +1842,38 @@ export const decide = (
           childRunId: runId,
           status,
           output: value,
+          // wf-engine slice 8: what the child was charged, so the parent charges it too.
+          // Work still in flight is charged its reservation and marked partial, never as settled.
           cost: {
-            billable: 0,
+            billable: spent + reservedTokens(state),
             input: 0,
             output: 0,
             cacheRead: 0,
-            usage: "unavailable",
+            usage: reservedTokens(state) > 0 ? "partial" : "complete",
             usdEstimate: null,
           },
         },
         runStream(started.parent.runId),
       );
     }
-    const runPath = `/workflows/runs/${runId}`;
+    // wf-engine slice 8: one end notice: finished (ready for review, no gain, or `notify`) or failed.
     if (status === "succeeded") {
       const node = outputNodeReached(compiled, state, out);
-      if (node?.notify === true) {
-        record({
-          _tag: "Notify",
-          key: once("notify:end"),
-          kind: "finished",
-          title: definition.title,
-          body: node.status,
-          runPath,
-        });
-      }
+      const reached = out.find((f) => f.fact._tag === "OutputSet")?.fact ?? state.output;
+      const finished =
+        node === undefined
+          ? null
+          : finishedNotice(definition.title, runId, {
+              status: node.status,
+              notify: node.notify === true,
+              report: reached?._tag === "OutputSet" ? reached.report : null,
+            });
+      // A reopened run ends again under its generation's key.
+      if (finished !== null) record({ ...finished, key: once(finished.key) });
       return;
     }
-    record({
-      _tag: "Notify",
-      key: once("notify:end"),
-      kind: "failed",
-      title: definition.title,
-      body: status,
-      runPath,
-    });
+    const failed = failedNotice(definition.title, runId, status);
+    record({ ...failed, key: once(failed.key) });
     if (status !== "failed" || started.causalDepth + 1 >= 2) return;
     for (const subscriber of ctx.failureSubscribers) {
       if (subscriber.workflowId === started.workflowId) continue;
@@ -1578,38 +1902,67 @@ export const decide = (
   if (cancelling) endWith("cancelled");
   else if (outputReached) endWith("succeeded");
   else if (outcome.done) endWith(outcome.failed === null ? "succeeded" : "failed");
-  else if (overWall || (refused && !anyRunning())) endWith("budget_exhausted");
+  // wf-engine slice 8: out of tokens ends the run like out of time.
+  else if (overWall || overTokens || (refused && !anyRunning())) endWith("budget_exhausted");
 
   // Needs-you notices: one per opened gate, keyed by the gate.
   for (const fact of out) {
     if (fact.fact._tag !== "IntentRecorded" || fact.fact.intent._tag !== "OpenGate") continue;
     const gate = fact.fact.intent;
-    record({
-      _tag: "Notify",
-      key: `notify:gate:${gate.gateKey}`,
-      kind: "needs_you",
-      title: definition.title,
-      body: gate.ask,
-      runPath: `/workflows/runs/${runId}`,
-    });
+    record(
+      needsYouNotice(definition.title, runId, {
+        _tag: "gate",
+        gateKey: gate.gateKey,
+        ask: gate.ask,
+      }),
+    );
+  }
+
+  // wf-engine slice 8: the run's kanban card follows its status; it never names a step thread.
+  if (definition.card !== undefined) {
+    const endedNow = out.some((f) => f.fact._tag === "RunEnded");
+    const waiting =
+      pausedNow ||
+      [...state.gates.values()].some(
+        (g) => g.decision === null && !decidedNow.has(g.intent.gateKey),
+      ) ||
+      out.some((f) => f.fact._tag === "IntentRecorded" && f.fact.intent._tag === "OpenGate");
+    const column = cardColumnOf({ ended: endedNow, waiting, started: dispatched + startsNow > 0 });
+    const card = cardIntent(
+      state,
+      { project: definition.card.project, title: definition.title, runId },
+      column,
+    );
+    if (card !== null) record(card);
   }
   return out;
 };
 
-/** The node a step key names: the last path segment, without its `[i]` index. */
+const BLOCK_KINDS = new Set<WorkflowNode["kind"]>(["hillclimb", "arena", "graph", "interrogate"]);
+const isBlock = (node: WorkflowNode): node is BlockNode => BLOCK_KINDS.has(node.kind);
+
+/**
+ * The node a step key names, walking its path through map and loop bodies. A block's children and
+ * a step's `accept`/`judge` sub-steps name no node of their own (wf-engine slice 7).
+ */
 const nodeAt = (compiled: CompiledWorkflow, step: string): WorkflowNode | undefined => {
-  const id = nodeIdOfStep(step);
-  const search = (graph: CompiledGraph): WorkflowNode | undefined => {
-    for (const [nodeId, node] of graph.nodes) {
-      if (nodeId === id) return node.node;
-      if (node.body !== null) {
-        const found = search(node.body);
-        if (found !== undefined) return found;
-      }
+  let graph: CompiledGraph | null = compiled.root;
+  let found: WorkflowNode | undefined;
+  // An agent's `accept`/`judge` sub-step belongs to the agent's node.
+  const path = isSubStep(step) ? step.slice(0, step.lastIndexOf("/")) : step;
+  for (const segment of path.split("/")) {
+    if (graph === null) return undefined;
+    const id = segment.replace(/\[\d+\]$/, "");
+    const node = graph.nodes.get(id);
+    if (node === undefined) {
+      // A retried container's fresh body is scoped `<step>/r<n>`; it stays on the same body.
+      if (found !== undefined && /^r\d+$/.test(id)) continue;
+      return undefined;
     }
-    return undefined;
-  };
-  return search(compiled.root);
+    found = node.node;
+    graph = node.body;
+  }
+  return found;
 };
 
 const outputNodeReached = (
@@ -1636,10 +1989,15 @@ export const nextDeadline = (
   compiled: CompiledWorkflow,
   state: RunState,
   now: number,
+  // wf-engine slice 8: the day's turn wakes a run paused by the daily cap.
+  budget?: BudgetContext,
 ): number | null => {
   const started = state.started;
   if (started === null || state.ended !== null) return null;
-  const candidates: number[] = [Date.parse(started.at) + started.budget.wallMs];
+  // wf-engine slice 8: the wall counts active time only, so its deadline moves with pauses and gates.
+  const wall = activeDeadline(state, now, effectiveCeilings(state).wallMs);
+  const candidates: number[] = wall === null ? [] : [wall];
+  if (state.paused?.reason === "daily_cap" && budget?.day) candidates.push(budget.day.endsAt);
   for (const gate of state.gates.values()) {
     if (gate.decision === null && gate.intent.expiresAt !== null)
       candidates.push(Date.parse(gate.intent.expiresAt));
@@ -1649,11 +2007,13 @@ export const nextDeadline = (
     if (intent._tag !== "StartTurn" || liveTarget(entry, state) === null) continue;
     if (state.keys.has(`interrupt:${intent.key}`)) continue;
     const timeout = nodeAt(compiled, intent.step)?.timeout;
+    // wf-engine slice 7: a block child's turn carries its own timeout.
+    const timeoutMs = intent.timeoutMs ?? (timeout === undefined ? undefined : durationMs(timeout));
     const startedAt = state.attempts
       .get(intent.step)
       ?.find((a) => a.attempt === intent.attempt)?.startedAt;
-    if (timeout !== undefined && startedAt != null) {
-      candidates.push(Date.parse(startedAt) + durationMs(timeout));
+    if (timeoutMs !== undefined && startedAt != null) {
+      candidates.push(Date.parse(startedAt) + timeoutMs);
     }
   }
   for (const attempts of state.attempts.values()) {

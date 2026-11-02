@@ -21,6 +21,8 @@ import {
   type WorkflowStepCost,
 } from "@t3tools/contracts";
 import { runIdFor } from "./ids.ts";
+// wf-engine slice 7.
+import { blockViews } from "./blocks/registry.ts";
 import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import type { StoredFact } from "./facts.ts";
 import type { RunState, StepAttempt } from "./state.ts";
@@ -280,7 +282,8 @@ export const runDelta = (
     summary: runSummary(state),
     steps: stepViews(compiled, state).filter((v) => changedAfter(state, v, afterSeq)),
     gates: gateViews(state).filter((g) => (state.gates.get(g.key)?.lastSeq ?? 0) > afterSeq),
-    blocks: [],
+    // wf-engine slice 7.
+    blocks: blockViews(compiled, state, afterSeq),
   };
 };
 

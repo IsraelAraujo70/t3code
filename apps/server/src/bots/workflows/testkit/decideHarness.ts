@@ -10,6 +10,8 @@ import {
   type CompiledWorkflow,
 } from "@t3tools/shared/workflows";
 
+import { foldLedger, type LedgerState } from "../blocks/ledger.ts";
+import type { BudgetContext } from "../budget/budget.ts";
 import { decide, nextDeadline } from "../decide.ts";
 import type { Fact, NewFact, RunFact, StoredFact } from "../facts.ts";
 import { foldRun } from "../fold.ts";
@@ -114,6 +116,9 @@ export const unitExited = (
  */
 export class TestRun {
   readonly facts: StoredFact[] = [];
+  /** Facts of `ledger:*` streams, shared by every run (other runs' registrations included). */
+  readonly ledgerFacts: StoredFact[] = [];
+  budget: BudgetContext | undefined = undefined;
   readonly compiled: CompiledWorkflow;
   readonly failureSubscribers: ReadonlyArray<{
     readonly workflowId: string;
@@ -151,18 +156,41 @@ export class TestRun {
     return foldRun(RUN_ID, this.facts);
   }
 
+  /** Appends a ledger fact unless its stream already holds the key, as the journal would. */
+  addLedger(stream: string, key: string, fact: Fact, at: number = T0): this {
+    if (this.ledgerFacts.some((f) => f.stream === stream && f.key === key)) return this;
+    this.ledgerFacts.push({ stream, seq: this.ledgerFacts.length + 1, key, fact, at: iso(at) });
+    return this;
+  }
+
+  ledgers(): ReadonlyMap<string, LedgerState> {
+    const ids = new Set(this.ledgerFacts.map((f) => f.stream.slice("ledger:".length)));
+    return new Map([...ids].map((id) => [id, foldLedger(id, this.ledgerFacts)]));
+  }
+
   decide(now: number = T0 + 1_000): ReadonlyArray<NewFact> {
     return decide(this.compiled, this.state(), {
       now,
       runDir: `/runs/${RUN_ID}`,
       failureSubscribers: this.failureSubscribers,
+      ledgers: this.ledgers(),
+      ...(this.budget === undefined ? {} : { budget: this.budget }),
     });
   }
 
+  /** One pass, appending what it emitted to the run's stream and to the ledger streams. */
   drive(now: number = T0 + 1_000): ReadonlyArray<NewFact> {
     const out = this.decide(now);
-    for (const f of out) if (f.stream === `run:${RUN_ID}`) this.add(f.key, f.fact, now);
+    for (const f of out) {
+      if (f.stream === `run:${RUN_ID}`) this.add(f.key, f.fact, now);
+      else if (f.stream.startsWith("ledger:")) this.addLedger(f.stream, f.key, f.fact, now);
+    }
     return out;
+  }
+
+  /** The result of a recorded intent, as the interpreter would store it. */
+  result(intentKey: string, fact: Fact, at: number = T0): this {
+    return this.add(`result:${intentKey}`, fact, at);
   }
 
   deadline(now: number = T0): number | null {

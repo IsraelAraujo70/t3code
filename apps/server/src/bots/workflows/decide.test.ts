@@ -154,6 +154,8 @@ describe("decide", () => {
       "run:wfr_00000000000000000000 skip:stuck",
       "run:wfr_00000000000000000000 ended",
       "workflow:demo outcome:wfr_00000000000000000000",
+      // A run ready for review always sends its "finished" notice (slice 8).
+      "run:wfr_00000000000000000000 notify:end",
     ]);
   });
 });

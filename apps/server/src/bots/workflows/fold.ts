@@ -26,6 +26,10 @@ export const emptyRunState = (runId: string): RunState => ({
   requests: new Map(),
   controls: [],
   workspaces: new Map(),
+  // wf-engine slices 7-8.
+  blocks: new Map(),
+  pauses: [],
+  usage: new Map(),
   releasedBranches: new Set(),
 });
 
@@ -94,7 +98,24 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
     case "Toggled":
     case "Suspended":
     case "Unsuspended":
+    // wf-engine slice 7: ledger facts live in their own streams.
+    case "EntryRegistered":
+    case "TreeSeen":
+    case "EntryResolved":
+    case "EntryValidated":
       break;
+    // wf-engine slices 7-8.
+    case "BlockAdvanced":
+      next.blocks = new Map(next.blocks).set(fact.step, [
+        ...(next.blocks.get(fact.step) ?? []),
+        { id: fact.id, seq: stored.seq, event: fact.event },
+      ]);
+      break;
+    case "TurnUsageReported": {
+      const key = stored.key.slice("usage:".length, stored.key.lastIndexOf(":"));
+      next.usage = new Map(next.usage).set(key, Math.max(next.usage.get(key) ?? 0, fact.billable));
+      break;
+    }
     case "RunStarted":
       next.started = fact;
       break;
@@ -123,10 +144,16 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
     case "RunPaused":
       next.paused = fact;
       next.pauseCount++;
+      // wf-engine slice 8.
+      next.pauses = [...next.pauses, { reason: fact.reason, at: fact.at, resumedAt: null }];
       break;
     case "RunResumed":
       next.paused = null;
       next.resumeCount++;
+      // wf-engine slice 8.
+      next.pauses = next.pauses.map((p, i) =>
+        i === next.pauses.length - 1 && p.resumedAt === null ? { ...p, resumedAt: fact.at } : p,
+      );
       break;
     case "IntentRecorded": {
       const intent = fact.intent;
@@ -160,12 +187,15 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       updateAttempt(
         fact.step,
         fact.attempt,
-        stored.key.endsWith(":nudge") ? { nudge: fact } : { settled: fact },
+        // wf-engine slice 8: settledAt.
+        stored.key.endsWith(":nudge")
+          ? { nudge: fact, nudgeSettledAt: stored.at }
+          : { settled: fact, settledAt: stored.at },
       );
       next.workspaces = advanceHead(next, fact);
       break;
     case "UnitExited":
-      updateAttempt(fact.step, fact.attempt, { exited: fact });
+      updateAttempt(fact.step, fact.attempt, { exited: fact, settledAt: stored.at });
       next.workspaces = advanceHead(next, fact);
       break;
     case "StepResolved":

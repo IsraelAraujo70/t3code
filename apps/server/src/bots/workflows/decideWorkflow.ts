@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import { matchesWhole } from "@t3tools/shared/workflows";
 import { runStream, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
+import { suspendedNotice } from "./notices/notices.ts";
 import type { CurrentVersion } from "./Catalog.ts";
 import type { NewFact, StoredFact } from "./facts.ts";
 
@@ -28,6 +29,17 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
   if (tripped !== null) {
     keys.add(tripped.key);
     output.push(tripped);
+    // wf-engine slice 8: one "needs you" per suspension, delivered by the failed run's own actor.
+    if (input.current._tag === "Ready") {
+      const { title, fatigue } = input.current.version.compiled.definition;
+      const failed = tripped.key.slice("suspended:".length);
+      const intent = suspendedNotice(title, failed, fatigue.consecutiveFailures);
+      output.push({
+        stream: runStream(failed),
+        key: intent.key,
+        fact: { _tag: "IntentRecorded", intent },
+      });
+    }
   }
   const suspendedNow = tripped !== null;
   for (const entry of [...input.facts].sort((a, b) => a.seq - b.seq)) {
