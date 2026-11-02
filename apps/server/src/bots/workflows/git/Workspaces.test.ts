@@ -26,7 +26,7 @@ it.effect("prepares, adopts, merges, advances and removes isolated worktrees", (
     const path = NodePath.join(root, "work");
     NodeFS.mkdirSync(path);
     NodeFS.writeFileSync(NodePath.join(path, "junk"), "junk");
-    const input = { repoRoot: repo, path, baseRef: base, branch: "work" };
+    const input = { repoRoot: repo, path, baseRef: base, branch: "work", runId: "r1" };
     expect((yield* service.prepare(input)).headSha).toBe(base);
     NodeChildProcess.execFileSync("git", ["-C", path, "commit", "--allow-empty", "-m", "next"]);
     const next = yield* service.head(path);
@@ -50,8 +50,38 @@ it.effect("prepares, adopts, merges, advances and removes isolated worktrees", (
     expect((yield* service.prepare({ ...input, branch: null })).headSha).toBe(base);
     yield* service.remove({ repoRoot: repo, path });
     // The branch survives its worktree; a new run on it would start from the old head.
-    const refused = yield* service.prepare(input).pipe(Effect.flip);
+    const refused = yield* service.prepare({ ...input, runId: "r2" }).pipe(Effect.flip);
     expect(refused.permanent).toBe(true);
+    expect(refused.owner).toBe("r1");
+    expect(git("config", "--get", "branch.work.wfrun")).toBe("r1");
+    expect((yield* service.prepare(input)).headSha).toBe(next);
+    NodeFS.writeFileSync(NodePath.join(path, "retained"), "intact");
+    expect(
+      (yield* service.release({ repoRoot: repo, branch: "work", owner: "r2" }).pipe(Effect.flip))
+        .permanent,
+    ).toBe(true);
+    yield* service.release({ repoRoot: repo, branch: "work", owner: "r1" });
+    yield* service.release({ repoRoot: repo, branch: "work", owner: "r1" });
+    expect(yield* service.head(path)).toBe(next);
+    expect(NodeFS.readFileSync(NodePath.join(path, "retained"), "utf8")).toBe("intact");
+    expect(
+      NodeChildProcess.execFileSync("git", ["-C", path, "rev-parse", "--abbrev-ref", "HEAD"], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("HEAD");
+    expect(git("rev-parse", "refs/wf-runs/r1/work")).toBe(next);
+    yield* service.remove({ repoRoot: repo, path });
+    expect((yield* service.prepare({ ...input, runId: "r2" })).headSha).toBe(base);
+    yield* service.remove({ repoRoot: repo, path });
+    git("branch", "manual", base);
+    expect((yield* service.prepare({ ...input, branch: "manual" }).pipe(Effect.flip)).owner).toBe(
+      null,
+    );
+    expect(yield* service.resolveRef({ repoRoot: repo, ref: "HEAD" })).toBe(merged);
+    expect(yield* service.resolveRef({ repoRoot: repo, ref: "work" })).toBe(base);
+    expect(
+      (yield* service.resolveRef({ repoRoot: repo, ref: "unknown" }).pipe(Effect.flip)).permanent,
+    ).toBe(true);
     const badBase = yield* service
       .prepare({ ...input, branch: "work-bad", baseRef: "no-such-ref" })
       .pipe(Effect.flip);

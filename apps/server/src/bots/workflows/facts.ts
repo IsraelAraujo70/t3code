@@ -64,6 +64,8 @@ export const Intent = Schema.TaggedUnion({
     ]),
   },
   RemoveWorkspace: { key: Text, name: Text },
+  /** The sha a ref of a project resolves to, without a checkout (a read-only pin). */
+  ResolveRef: { key: Text, projectRef: Text, ref: Text },
   Interrupt: {
     key: Text,
     step: Text,
@@ -187,11 +189,15 @@ export const RunFact = Schema.TaggedUnion({
   },
   /** Key `resume:<n>`. */
   RunResumed: { at: Text },
-  /** Key `ended`. */
+  /** Key `ended` (`ended:<n>` after the n-th reopening). */
   RunEnded: {
     status: Schema.Literals(["succeeded", "failed", "cancelled", "budget_exhausted"]),
     at: Text,
   },
+  /** Key `reopen:<control key>`: a retry of `step` brought a failed run back to running. */
+  RunReopened: { step: Text, by: Text, at: Text },
+  /** Key `released:<branch>`: run `to` took over this ended run's branch; it cannot reopen on it. */
+  BranchReleased: { branch: Text, to: Text },
 
   // Results of intents, key `result:<intent key>`.
   TurnStarted: { threadId: Text },
@@ -199,6 +205,7 @@ export const RunFact = Schema.TaggedUnion({
   WorkspaceReady: { name: Text, path: Text, branch: NullableText, headSha: Text },
   GitOpDone: { sha: Text },
   WorkspaceRemoved: {},
+  RefResolved: { sha: Text },
   Interrupted: {},
   Answered: {},
   GateOpened: { gateKey: Text, at: Text },
@@ -324,6 +331,11 @@ export interface NewFact {
   readonly stream: string;
   readonly key: string;
   readonly fact: Fact;
+  /**
+   * Written only if no fact of these kinds landed in its stream after `after`, checked in the
+   * append's transaction (a fact already stored under its key is returned as usual).
+   */
+  readonly guard?: { readonly absent: ReadonlyArray<string>; readonly after: number };
 }
 
 /** A fact as the journal holds it. */

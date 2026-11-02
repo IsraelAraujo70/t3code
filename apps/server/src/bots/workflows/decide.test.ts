@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 
-import { decide } from "./decide.ts";
+import { decide, retryRefusal } from "./decide.ts";
 import type { Fact, NewFact, StoredFact } from "./facts.ts";
 import { foldRun } from "./fold.ts";
 import {
@@ -1122,5 +1122,227 @@ describe("review regressions", () => {
       expect(keysOf(run.drive()).some((k) => k.startsWith("resume:"))).toBe(false);
       expect(run.state().paused?.reason).toBe("ambiguous");
     });
+  });
+});
+
+describe("retry, reopening and cleanup", () => {
+  const done = { kind: "output", status: "ready_for_review", value: {} };
+  const retry = (step: string): Fact => ({
+    _tag: "ControlRequested",
+    control: "retry",
+    step,
+    by: "user",
+    at: iso(T0),
+  });
+  const spawned = (run: TestRun, step: string, attempt = 1) =>
+    run.add(`result:unit:${step}@${attempt}`, {
+      _tag: "UnitSpawned",
+      unit: `u-${step}`,
+      at: iso(T0),
+    });
+  const failedRun = () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: { a: commandNode, b: commandNode, done },
+          edges: ["a -> b", "b -> done"],
+        }),
+      ),
+    );
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    run.drive();
+    return run;
+  };
+
+  it("reopens a failed run for a retry and runs on to a second end", () => {
+    const run = failedRun();
+    expect(run.state().ended?.status).toBe("failed");
+    expect(retryRefusal(run.compiled, run.state(), "a")).toBeNull();
+    run.add("control:r1", retry("a"));
+    const lastSeq = run.state().lastSeq;
+    // A takeover recorded after this read refuses the reopening in the journal.
+    expect(run.decide().find((f) => f.key === "reopen:control:r1")?.guard).toEqual({
+      absent: ["BranchReleased"],
+      after: lastSeq,
+    });
+    expect(keysOf(run.drive())).toContain("reopen:control:r1");
+    expect(keysOf(run.drive())).toContain("unit:a@2");
+    spawned(run, "a", 2);
+    run.add("exited:a@2", unitExited("a", 2, 0));
+    // The successor the first failure cut off runs now.
+    expect(keysOf(run.drive())).toContain("unit:b@1");
+    spawned(run, "b");
+    run.add("exited:b@1", unitExited("b", 1, 0));
+    const end = keysOf(run.drive());
+    expect(end).toEqual(
+      expect.arrayContaining(["ended:1", `workflow:demo outcome:${RUN_ID}:1`, "output:1"]),
+    );
+    expect(run.state().ended?.status).toBe("succeeded");
+  });
+
+  it("runs again what the end stopped, once it has stopped", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: { a: commandNode, b: commandNode, done },
+          edges: ["a -> done", "b -> done"],
+        }),
+      ),
+    );
+    run.add("result:unit:b@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    expect(keysOf(run.drive())).toContain("interrupt:unit:b@1");
+    run.add("control:r1", retry("a"));
+    // b's unit is still stopping: nothing reopens yet.
+    expect(keysOf(run.drive()).filter((k) => k.startsWith("reopen:"))).toEqual([]);
+    run.add("exited:b@1", unitExited("b", 1, null, { signal: "SIGTERM" }));
+    expect(keysOf(run.drive())).toContain("reopen:control:r1");
+    expect(keysOf(run.drive())).toEqual(expect.arrayContaining(["unit:a@2", "unit:b@2"]));
+  });
+
+  it("waits for a start the end is still abandoning before it reopens", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: { a: commandNode, b: commandNode, done },
+          edges: ["a -> done", "b -> done"],
+        }),
+      ),
+    );
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    run.drive();
+    expect(run.state().intents.get("unit:b@1")?.result).toBeNull();
+    run.add("control:r1", retry("a"));
+    expect(keysOf(run.drive()).filter((k) => k.startsWith("reopen:"))).toEqual([]);
+    run.add("result:unit:b@1", {
+      _tag: "IntentFailed",
+      error: "The run ended before this step started.",
+      retryable: false,
+    });
+    expect(keysOf(run.drive())).toContain("reopen:control:r1");
+  });
+
+  it("runs the successor a failure cut off once a live retry succeeds", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: {
+            a: { ...commandNode, continueOnFail: true },
+            b: commandNode,
+            slow: commandNode,
+            done,
+          },
+          edges: ["a -> b", "b -> done", "slow -> done"],
+          // done waits for any one path; slow keeps the run alive meanwhile.
+        }),
+      ),
+    );
+    run.add("result:unit:slow@1", { _tag: "UnitSpawned", unit: "s", at: iso(T0) });
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    expect(keysOf(run.drive())).toContain("skip:b");
+    expect(run.state().ended).toBeNull();
+    run.add("control:r1", retry("a"));
+    expect(keysOf(run.drive())).toContain("unit:a@2");
+    spawned(run, "a", 2);
+    run.add("exited:a@2", unitExited("a", 2, 0));
+    expect(keysOf(run.drive())).toContain("unit:b@1");
+  });
+
+  it("refuses a retry the run cannot take", () => {
+    const consumed = prepare(
+      TestRun.start(
+        compile({
+          nodes: { a: commandNode, fix: commandNode, done },
+          edges: ["a:fail -> fix", "fix -> done", "a -> done"],
+        }),
+      ),
+    );
+    spawned(consumed, "a");
+    consumed.add("exited:a@1", unitExited("a", 1, 1));
+    consumed.drive();
+    expect(retryRefusal(consumed.compiled, consumed.state(), "a")).toBe("fix already ran after a");
+
+    const child = prepare(
+      TestRun.start(
+        compile({ nodes: { a: commandNode, done }, edges: ["a -> done"] }),
+        runStarted({ parent: { runId: "wfr_00000000000000000009", step: "call@1" } }),
+      ),
+    );
+    spawned(child, "a");
+    child.add("exited:a@1", unitExited("a", 1, 1));
+    child.drive();
+    expect(retryRefusal(child.compiled, child.state(), "a")).toBe(
+      "retry the call step in the parent run",
+    );
+
+    const released = failedRun();
+    released.add("released:wf/demo", { _tag: "BranchReleased", branch: "wf/demo", to: "wfr_9" });
+    expect(retryRefusal(released.compiled, released.state(), "a")).toBe(
+      "its branch wf/demo went to a newer run",
+    );
+
+    const cancelled = failedRun();
+    expect(retryRefusal(cancelled.compiled, cancelled.state(), "each[0]/w")).toMatch(/contains/);
+    expect(retryRefusal(cancelled.compiled, cancelled.state(), "b")).toBe("b has not run");
+  });
+
+  it("removes the worktrees retain lets go once the run ends", () => {
+    const readOnly = {
+      kind: "command",
+      cwd: { project: "t3code", readOnly: true },
+      argv: ["node", "x.ts"],
+    };
+    const ended = (retain: string | undefined, exit: number) => {
+      const run = TestRun.start(
+        compile({
+          workspaces: {
+            integ: {
+              project: "t3code",
+              base: "friend/main",
+              branch: "wf/demo",
+              ...(retain === undefined ? {} : { retain }),
+            },
+          },
+          nodes: { r: readOnly, w: commandNode, done },
+          edges: ["r -> w", "w -> done"],
+        }),
+      );
+      run.drive();
+      expect(run.intent("pin:t3code")).toMatchObject({ _tag: "ResolveRef", ref: "HEAD" });
+      run.add("result:pin:t3code", { _tag: "RefResolved", sha: "p1" });
+      run.drive();
+      expect(run.intent("ws:r@1")).toMatchObject({ _tag: "PrepareWorkspace", baseRef: "p1" });
+      run.add("result:ws:r@1", {
+        _tag: "WorkspaceReady",
+        name: "r@1",
+        path: "/runs/x/r",
+        branch: null,
+        headSha: "p1",
+      });
+      run.drive();
+      spawned(run, "r");
+      run.add("exited:r@1", unitExited("r", 1, 0));
+      run.drive();
+      run.add("result:ws:integ", {
+        _tag: "WorkspaceReady",
+        name: "integ",
+        path: "/runs/x/integ",
+        branch: "wf/demo",
+        headSha: "a1",
+      });
+      run.drive();
+      spawned(run, "w");
+      run.add("exited:w@1", unitExited("w", 1, exit));
+      run.drive();
+      return keysOf(run.drive()).filter((k) => k.startsWith("rm:"));
+    };
+    expect(ended(undefined, 1)).toEqual(["rm:r@1"]);
+    expect(ended(undefined, 0)).toEqual(["rm:r@1", "rm:integ"]);
+    expect(ended("always", 0)).toEqual(["rm:r@1"]);
+    expect(ended("never", 1)).toEqual(["rm:r@1", "rm:integ"]);
   });
 });

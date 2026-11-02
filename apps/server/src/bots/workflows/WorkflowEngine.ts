@@ -40,12 +40,13 @@ import {
   type WorkflowRunView,
   type WorkflowStepDetail,
   type WorkflowRunStepInput,
+  parseWorkflowStepThreadId,
 } from "@t3tools/contracts";
 import type { CompiledWorkflow } from "@t3tools/shared/workflows";
 
 import { forkParked } from "../../serverActivation.ts";
 import { WorkflowCatalog } from "./Catalog.ts";
-import { decide, nextDeadline } from "./decide.ts";
+import { decide, nextDeadline, retryRefusal } from "./decide.ts";
 import { decideWorkflow } from "./decideWorkflow.ts";
 import { type Intent, type NewFact, runStream, workflowStream } from "./facts.ts";
 import { canonicalParams } from "./params.ts";
@@ -109,6 +110,8 @@ export class WorkflowEngine extends Context.Service<
     readonly runState: (runId: string) => Effect.Effect<RunState, WorkflowJournalError>;
     /** Promotes pending triggers and starts an actor for every live run without one. */
     readonly tick: Effect.Effect<void, WorkflowJournalError>;
+    /** Folds again every run whose projection row is missing or behind its stream. */
+    readonly rebuildProjection: Effect.Effect<void, WorkflowJournalError>;
 
     // The RPC surface (packages/contracts/src/workflowsRpc.ts); `by` names who asked.
     readonly startRun: (
@@ -157,7 +160,6 @@ class RetryLater extends Data.TaggedError("RetryLater")<{
 const MAX_INTENT_TRIES = 10;
 
 const DEFAULT_TICK = Duration.seconds(5);
-const STEP_THREAD_ID = /^wf:wfr_[a-f0-9]{20}:[a-f0-9]{16,64}$/;
 const DURATION_UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000 } as const;
 const durationMs = (text: string): number =>
   Number(text.slice(0, -1)) * DURATION_UNIT_MS[text.slice(-1) as keyof typeof DURATION_UNIT_MS];
@@ -175,6 +177,22 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   const catalog = yield* WorkflowCatalog;
   const actors = yield* FiberMap.make<string, void, WorkflowJournalError>();
   const promoting = yield* Semaphore.make(1);
+  /** Actors start and stop under this gate; `running` holds every run with a live actor. */
+  const actorGate = yield* Semaphore.make(1);
+  const running = new Set<string>();
+  /**
+   * Under the gate, an actor with nothing left re-reads its stream and exits only if nothing new
+   * arrived; `ensureActor` starts one unless one runs. A fact written before `ensureActor` (a
+   * retry on an ended run) is therefore always seen by some actor.
+   */
+  const tryExit = (runId: string, afterSeq: number) =>
+    actorGate.withPermits(1)(
+      Effect.gen(function* () {
+        if ((yield* journal.read(runStream(runId), afterSeq)).length > 0) return false;
+        running.delete(runId);
+        return true;
+      }),
+    );
   const retryEvery = options.retryEvery ?? DEFAULT_RETRY;
 
   /**
@@ -223,7 +241,10 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     const wake = yield* Queue.unbounded<void>();
     let state = foldRun(runId, yield* journal.read(stream));
     const started = state.started;
-    if (started === null) return;
+    if (started === null) {
+      yield* tryExit(runId, state.lastSeq);
+      return;
+    }
     const version = yield* catalog.pinned(started.workflowId, started.commit);
     const failureSubscribers = yield* catalog.failureSubscribers(started.workflowId);
     const runDir = `${options.runsDir}/${runId}`;
@@ -247,9 +268,14 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         { onlyIfMissing: true },
       );
 
+    let projected = -1;
     while (true) {
       for (const fact of yield* journal.read(stream, state.lastSeq))
         state = applyRunFact(state, fact);
+      if (state.lastSeq > projected) {
+        yield* project(state);
+        projected = state.lastSeq;
+      }
       // Decide until quiet before executing anything: a cancel that arrived while the server was
       // down ends the run first, so a stale start is abandoned instead of executed.
       // One instant for the decision and the next deadline, so none falls between two reads.
@@ -281,7 +307,8 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         [...state.intents.values()].every((e) => e.result !== null) &&
         (yield* FiberMap.size(work)) === 0
       ) {
-        return;
+        if (yield* tryExit(runId, state.lastSeq)) return;
+        continue;
       }
       const deadline = nextDeadline(version.compiled, state, now);
       const waitFrom = yield* Clock.currentTimeMillis;
@@ -300,18 +327,55 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   });
 
   const ensureActor = (runId: string) =>
-    FiberMap.run(
-      actors,
-      runId,
-      Effect.scoped(runActor(runId)).pipe(
-        Effect.tapCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.void
-            : Effect.logError("workflow run actor failed; the tick revives it", { runId, cause }),
-        ),
-      ),
-      { onlyIfMissing: true },
-    ).pipe(Effect.asVoid);
+    actorGate.withPermits(1)(
+      Effect.suspend(() => {
+        if (running.has(runId)) return Effect.void;
+        running.add(runId);
+        // Replaces an actor that already decided to exit but has not left the map yet.
+        return FiberMap.run(
+          actors,
+          runId,
+          Effect.scoped(runActor(runId)).pipe(
+            Effect.tapCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.void
+                : Effect.logError("workflow run actor failed; the tick revives it", {
+                    runId,
+                    cause,
+                  }),
+            ),
+            Effect.onError(() =>
+              actorGate.withPermits(1)(Effect.sync(() => running.delete(runId))),
+            ),
+          ),
+        ).pipe(Effect.asVoid);
+      }),
+    );
+
+  /** The run's row in the projection lists read; a failure to write it never stops the run. */
+  const project = (state: RunState) =>
+    state.started === null
+      ? Effect.void
+      : journal
+          .putRun({
+            summary: runSummary(state),
+            lastSeq: state.lastSeq,
+            pendingIntents: [...state.intents.values()].filter((e) => e.result === null).length,
+            parentRunId: state.started.parent?.runId ?? null,
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("workflow run projection failed", { runId: state.runId, error }),
+            ),
+          );
+
+  /** At boot: rows missing or behind their stream are folded again (a crash between append and row). */
+  const rebuildProjection = Effect.gen(function* () {
+    for (const { runId, projected, stream } of yield* journal.projectionLag) {
+      if (projected !== null && projected >= stream) continue;
+      yield* project(foldRun(runId, yield* journal.read(runStream(runId))));
+    }
+  }).pipe(Effect.withSpan("WorkflowEngine.rebuildProjection"));
 
   /** Turns the workflow's pending TriggerFired facts into runs, skips or waits; one at a time. */
   const promote = Effect.fn("WorkflowEngine.promote")(function* (workflowId: string) {
@@ -319,23 +383,24 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       Effect.gen(function* () {
         const facts = yield* journal.read(workflowStream(workflowId));
         const created = new Set<string>();
-        const ended = new Set<string>();
-        for (const { fact } of facts) {
-          if (fact._tag === "RunCreated") created.add(fact.runId);
-          if (fact._tag === "RunOutcome") ended.add(fact.runId);
-        }
+        for (const { fact } of facts) if (fact._tag === "RunCreated") created.add(fact.runId);
+        // The journal's live runs count a reopened run, which already has an outcome.
+        const live = new Set(yield* journal.liveRuns);
         const decided = decideWorkflow({
           workflowId,
           facts,
           current: yield* catalog.current(workflowId),
-          liveRuns: [...created].filter((id) => !ended.has(id)).length,
+          liveRuns: [...created].filter((id) => live.has(id)).length,
           now: yield* Clock.currentTimeMillis,
         });
         return yield* journal.append(decided);
       }),
     );
     for (const { fact } of results) {
-      if (fact.fact._tag === "RunCreated") yield* ensureActor(fact.fact.runId);
+      if (fact.fact._tag !== "RunCreated") continue;
+      // Listed at once, before its actor's first pass.
+      yield* project(foldRun(fact.fact.runId, yield* journal.read(runStream(fact.fact.runId))));
+      yield* ensureActor(fact.fact.runId);
     }
   });
 
@@ -517,6 +582,13 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       const control = input.control;
       // An unknown run fails here, before a control could open a stream for it.
       yield* summaryOf(input.runId);
+      if (control._tag === "retry") {
+        const { state, compiled } = yield* startedRun(input.runId);
+        const refusal = retryRefusal(compiled, state, control.step);
+        if (refusal !== null) {
+          return yield* new WorkflowJournalError({ message: `Cannot retry: ${refusal}.` });
+        }
+      }
       yield* journal.append([
         {
           stream: runStream(input.runId),
@@ -539,6 +611,8 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           },
         },
       ]);
+      // An ended run's actor is gone; a retry that reopens it needs one.
+      yield* ensureActor(input.runId);
       return yield* summaryOf(input.runId);
     }),
     gateDecide: Effect.fn("WorkflowEngine.gateDecide")(function* (input: WorkflowGateDecideInput) {
@@ -555,11 +629,15 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       );
     }),
     listRuns: Effect.fn("WorkflowEngine.listRuns")(function* (input: WorkflowRunsListInput) {
-      const all = (yield* summariesOf(input.workflowId ?? null))
-        .map(({ summary }) => summary)
-        .filter((summary) => input.status === undefined || summary.status === input.status);
-      const page = pageOf(all, input.cursor, input.limit ?? 50);
-      return { runs: page.page, nextCursor: page.next };
+      const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+      const limit = input.limit ?? 50;
+      const page = yield* journal.runs({
+        workflowId: input.workflowId ?? null,
+        status: input.status ?? null,
+        offset,
+        limit,
+      });
+      return { runs: page.runs, nextCursor: page.more ? String(offset + limit) : null };
     }),
     metrics: Effect.fn("WorkflowEngine.metrics")(function* (input: WorkflowMetricsInput) {
       const since = input.since === undefined ? null : Date.parse(input.since);
@@ -620,7 +698,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     ledger: Effect.fn("WorkflowEngine.ledger")(function* (_input: WorkflowLedgerInput) {
       return yield* Effect.succeed({ entries: [], nextCursor: null });
     }),
-    isStepThread: (threadId: string) => STEP_THREAD_ID.test(threadId),
+    isStepThread: (threadId: string) => parseWorkflowStepThreadId(threadId) !== null,
   };
 
   const engine = {
@@ -698,6 +776,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       return foldRun(runId, yield* journal.read(runStream(runId)));
     }),
     tick,
+    rebuildProjection,
   };
   return WorkflowEngine.of({ ...engine, ...rpc });
 });
@@ -709,9 +788,14 @@ export const layer = (options: WorkflowEngineOptions) =>
     Effect.gen(function* () {
       const engine = yield* make(options);
       yield* forkParked(
-        engine.tick.pipe(
-          Effect.catch((error) => Effect.logWarning("workflow tick failed", error)),
-          Effect.repeat(Schedule.spaced(options.tickEvery ?? DEFAULT_TICK)),
+        engine.rebuildProjection.pipe(
+          Effect.catch((error) => Effect.logWarning("workflow projection rebuild failed", error)),
+          Effect.andThen(
+            engine.tick.pipe(
+              Effect.catch((error) => Effect.logWarning("workflow tick failed", error)),
+              Effect.repeat(Schedule.spaced(options.tickEvery ?? DEFAULT_TICK)),
+            ),
+          ),
         ),
       );
       return engine;

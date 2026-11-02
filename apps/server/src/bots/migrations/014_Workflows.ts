@@ -25,7 +25,7 @@ export default Effect.gen(function* () {
   steps_used INTEGER NOT NULL, tokens_billable INTEGER NOT NULL, tokens_cache_read INTEGER NOT NULL,
   tokens_reserved INTEGER NOT NULL, usd_estimate REAL, active_ms INTEGER NOT NULL, open_gates INTEGER NOT NULL,
   pending_intents INTEGER NOT NULL, last_seq INTEGER NOT NULL, parent_run_id TEXT, card_ticket_id TEXT,
-  pull_request_url TEXT)`;
+  pull_request_url TEXT, summary_json TEXT NOT NULL DEFAULT '')`;
   yield* sql`CREATE INDEX workflow_runs_live ON workflow_runs (status, pending_intents)`;
   yield* sql`CREATE INDEX workflow_runs_by_workflow ON workflow_runs (workflow_id, started_at DESC)`;
   yield* sql`CREATE TABLE workflow_step_threads (thread_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_key TEXT NOT NULL, attempt INTEGER NOT NULL)`;

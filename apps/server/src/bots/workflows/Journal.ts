@@ -4,6 +4,7 @@
  * stream in the batch; a fact whose (stream, key) is already stored is not written again, and the
  * caller gets the stored one. One process writes (the bots host), so seq is `MAX(seq) + 1` inside it.
  */
+import { WorkflowRunSummary, type WorkflowRunStatus } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -29,10 +30,38 @@ export interface AppendResult {
   readonly inserted: boolean;
 }
 
+/** One run's row in the projection read by run lists. */
+export interface RunRow {
+  readonly summary: WorkflowRunSummary;
+  readonly lastSeq: number;
+  readonly pendingIntents: number;
+  readonly parentRunId: string | null;
+}
+
 export class Journal extends Context.Service<
   Journal,
   {
+    readonly putRun: (row: RunRow) => Effect.Effect<void, WorkflowJournalError>;
+    readonly runs: (query: {
+      readonly workflowId: string | null;
+      readonly status: WorkflowRunStatus | null;
+      readonly offset: number;
+      readonly limit: number;
+    }) => Effect.Effect<
+      { readonly runs: ReadonlyArray<WorkflowRunSummary>; readonly more: boolean },
+      WorkflowJournalError
+    >;
+    readonly lastRuns: Effect.Effect<ReadonlyMap<string, WorkflowRunSummary>, WorkflowJournalError>;
+    readonly projectionLag: Effect.Effect<
+      ReadonlyArray<{
+        readonly runId: string;
+        readonly projected: number | null;
+        readonly stream: number;
+      }>,
+      WorkflowJournalError
+    >;
     /** Results in batch order. An empty batch is a no-op. */
+    /** One result per stored fact, in order; a guarded fact whose guard fails is skipped. */
     readonly append: (
       batch: ReadonlyArray<NewFact>,
     ) => Effect.Effect<ReadonlyArray<AppendResult>, WorkflowJournalError>;
@@ -77,6 +106,8 @@ interface Row {
 }
 const fail = (cause: unknown) =>
   new WorkflowJournalError({ message: "Workflow journal operation failed", cause });
+const decodeRunSummary = Schema.decodeUnknownEffect(WorkflowRunSummary);
+const encodeRunSummary = Schema.encodeSync(WorkflowRunSummary);
 const decodeFact = Schema.decodeUnknownEffect(Fact);
 const encodeFact = Schema.encodeSync(Fact);
 const decode = Effect.fn("Journal.decode")(function* (row: Row) {
@@ -95,7 +126,80 @@ const make = Effect.gen(function* () {
       yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND key = ${key}`;
     return rows[0] ? Option.some(yield* decode(rows[0])) : Option.none();
   }, Effect.mapError(fail));
+  const decodeSummary = Effect.fn("Journal.decodeSummary")(function* (row: {
+    readonly summary_json: string;
+  }) {
+    const json = yield* Effect.try({
+      try: () => JSON.parse(row.summary_json) as unknown,
+      catch: fail,
+    });
+    return yield* decodeRunSummary(json).pipe(Effect.mapError(fail));
+  });
   return Journal.of({
+    putRun: Effect.fn("Journal.putRun")(function* (row) {
+      const s = row.summary;
+      const summary = yield* Effect.try({
+        try: () => JSON.stringify(encodeRunSummary(s)),
+        catch: fail,
+      });
+      const values = {
+        run_id: s.runId,
+        workflow_id: s.workflowId,
+        commit_sha: s.commit ?? "",
+        hash: s.hash ?? "",
+        status: s.status,
+        trigger_kind: s.trigger.kind,
+        started_at: s.startedAt,
+        ended_at: s.endedAt,
+        output_status: s.outputStatus,
+        steps_used: s.stepsUsed,
+        tokens_billable: s.cost.billable,
+        tokens_cache_read: s.cost.cacheRead,
+        tokens_reserved: s.reservedTokens,
+        usd_estimate: s.cost.usdEstimate,
+        active_ms: 0,
+        open_gates: s.openGates,
+        pending_intents: row.pendingIntents,
+        last_seq: row.lastSeq,
+        parent_run_id: row.parentRunId,
+        card_ticket_id: null,
+        pull_request_url: s.pullRequest,
+        summary_json: summary,
+      };
+      yield* sql`INSERT INTO workflow_runs ${sql.insert(values)} ON CONFLICT(run_id) DO UPDATE SET ${sql.update(values)} WHERE excluded.last_seq >= workflow_runs.last_seq`;
+    }, Effect.mapError(fail)),
+    runs: Effect.fn("Journal.runs")(function* (query) {
+      const rows = yield* sql<{
+        readonly summary_json: string;
+      }>`SELECT summary_json FROM workflow_runs
+        WHERE summary_json != '' AND (${query.workflowId} IS NULL OR workflow_id = ${query.workflowId})
+        AND (${query.status} IS NULL OR status = ${query.status})
+        ORDER BY started_at DESC, run_id ASC LIMIT ${query.limit + 1} OFFSET ${query.offset}`;
+      return {
+        runs: yield* Effect.forEach(rows.slice(0, query.limit), decodeSummary),
+        more: rows.length > query.limit,
+      };
+    }, Effect.mapError(fail)),
+    lastRuns: Effect.gen(function* () {
+      const rows = yield* sql<{
+        readonly summary_json: string;
+      }>`SELECT r.summary_json FROM workflow_runs r
+        WHERE r.summary_json != '' AND NOT EXISTS (SELECT 1 FROM workflow_runs n
+          WHERE n.summary_json != '' AND n.workflow_id = r.workflow_id AND
+          (n.started_at > r.started_at OR (n.started_at = r.started_at AND n.run_id < r.run_id)))`;
+      const summaries = yield* Effect.forEach(rows, decodeSummary);
+      return new Map(summaries.map((s) => [s.workflowId, s]));
+    }).pipe(Effect.mapError(fail)),
+    projectionLag: sql<{
+      readonly runId: string;
+      readonly projected: number | null;
+      readonly stream: number;
+    }>`
+      SELECT substr(f.stream, 5) AS runId, CASE WHEN r.summary_json != '' THEN r.last_seq ELSE NULL END AS projected,
+        MAX(f.seq) AS stream FROM workflow_facts f
+      LEFT JOIN workflow_runs r ON r.run_id = substr(f.stream, 5)
+      WHERE f.stream LIKE 'run:%' AND EXISTS (SELECT 1 FROM workflow_facts s WHERE s.stream = f.stream AND s.kind = 'RunStarted')
+      GROUP BY f.stream ORDER BY runId`.pipe(Effect.mapError(fail)),
     append: Effect.fn("Journal.append")(function* (batch) {
       if (batch.length === 0) return [];
       return yield* Effect.uninterruptible(
@@ -104,6 +208,14 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               const results: AppendResult[] = [];
               for (const item of batch) {
+                if (item.guard !== undefined && Option.isNone(yield* get(item.stream, item.key))) {
+                  const kinds = JSON.stringify(item.guard.absent);
+                  const newer = yield* sql<{ readonly one: number }>`
+                    SELECT 1 AS one FROM workflow_facts WHERE stream = ${item.stream}
+                    AND seq > ${item.guard.after} AND kind IN (SELECT value FROM json_each(${kinds})) LIMIT 1`;
+                  // A refused fact is not stored and has no result.
+                  if (newer.length > 0) continue;
+                }
                 const at = new Date(yield* Clock.currentTimeMillis).toISOString();
                 const payload = yield* Effect.try({
                   try: () => JSON.stringify(encodeFact(item.fact)),
@@ -137,7 +249,7 @@ const make = Effect.gen(function* () {
     liveRuns: sql<{
       readonly id: string;
     }>`SELECT substr(stream, 5) AS id FROM workflow_facts f WHERE stream LIKE 'run:%' AND
-      ((kind = 'RunStarted' AND NOT EXISTS (SELECT 1 FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunEnded'))
+      ((kind = 'RunStarted' AND (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunEnded') <= (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunReopened'))
       OR (kind = 'IntentRecorded' AND NOT EXISTS (SELECT 1 FROM workflow_facts r WHERE r.stream = f.stream AND r.key = 'result:' || f.key)))
       GROUP BY stream ORDER BY id`.pipe(
       Effect.map((rows) => rows.map((row) => row.id)),

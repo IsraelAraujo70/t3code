@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import type { WorkflowRunDelta } from "@t3tools/contracts";
+import { type WorkflowRunDelta, WorkflowStepKey } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -463,4 +463,54 @@ it.effect("stores a retryable failure as final after the last try", () =>
       Effect.provide(Layer.mergeAll(layerFromDb, layer, layerCatalog([twoSteps]))),
     );
   }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+it.effect(
+  "reopens a failed run when Israel retries its failed step, and lists it from the projection",
+  () =>
+    Effect.gen(function* () {
+      const units: Record<string, { readonly exit: number }> = { test: { exit: 1 } };
+      const { layer } = yield* makeFakeInterpreter({ units });
+      yield* Effect.gen(function* () {
+        const journal = yield* Journal;
+        const subscription = yield* journal.subscribe;
+        const engine = yield* make({ runsDir: "/runs" });
+        const { runId } = yield* engine.start(request("manual:retry"));
+        const reach = (key: string) =>
+          PubSub.take(subscription).pipe(
+            Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === key }),
+          );
+        yield* reach("ended");
+        units.test = { exit: 0 };
+        yield* engine.controlRun(
+          {
+            runId,
+            control: { _tag: "retry", step: WorkflowStepKey.make("test") },
+            clientRequestId: "r1",
+          },
+          "user",
+        );
+        yield* reach("ended:1");
+        yield* engine.rebuildProjection;
+        const page = yield* engine.listRuns({});
+        assert.deepEqual(
+          page.runs.map((run) => [run.runId, run.status]),
+          [[runId, "succeeded"]],
+        );
+        const refused = yield* engine
+          .controlRun(
+            {
+              runId,
+              control: { _tag: "retry", step: WorkflowStepKey.make("test") },
+              clientRequestId: "r2",
+            },
+            "user",
+          )
+          .pipe(Effect.flip);
+        assert.match(refused.message, /Cannot retry: test succeeded/);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layerFromDb, layer, layerCatalog([twoSteps]))),
+      );
+    }).pipe(Effect.provide(BotsDb.layerMemory)),
 );

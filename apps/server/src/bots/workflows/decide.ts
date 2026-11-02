@@ -67,10 +67,9 @@ type Resolution = Extract<RunFact, { readonly _tag: "StepResolved" }>;
 type ResolvedStatus = Resolution["status"];
 
 /**
- * When a resolved attempt runs again, or null: the one rule dispatch and deadlines share. A matching
- * retry policy waits its backoff; a lost attempt is the engine's crash recovery and replays at once,
- * a bounded number of times; an ambiguous one is Israel's rerun. `markedFailed`: Israel answered an
- * ambiguous gate with "fail"; the original may still run, so nothing retries it.
+ * When a resolved attempt runs again, or null; dispatch and deadlines share it. `rerun` (a retry, or
+ * what a reopened run's end stopped) and ambiguous go at once; "fail" on an ambiguous gate ends it;
+ * a matching retry policy waits its backoff; lost replays at once, a bounded number of times.
  */
 const retryReadyAt = (
   node: WorkflowNode,
@@ -78,8 +77,10 @@ const retryReadyAt = (
   status: ResolvedStatus,
   resolvedAt: string,
   markedFailed: boolean,
+  rerun: boolean,
 ): number | null => {
   const at = Date.parse(resolvedAt);
+  if (rerun && status !== "succeeded") return at;
   if (markedFailed) return null;
   if (status === "ambiguous") return at;
   if (status === "succeeded" || status === "cancelled") return null;
@@ -133,6 +134,88 @@ const interruptsAfterEnd = (state: RunState): ReadonlyArray<NewFact> =>
   });
 const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
+/** The top-level steps an edge from `step` leads to. */
+const successorsOf = (compiled: CompiledWorkflow, step: string): ReadonlyArray<string> =>
+  compiled.root.edges.filter((edge) => edge.from === step).map((edge) => edge.to);
+
+/**
+ * Why `step` cannot be retried now, or null. A retry runs the step's latest attempt again like
+ * Israel's "rerun", so the failure must not have led anywhere yet; a failed run reopens for it.
+ */
+export const retryRefusal = (
+  compiled: CompiledWorkflow,
+  state: RunState,
+  step: string,
+): string | null => {
+  if (state.started === null) return "the run has not started";
+  if (step.includes("/")) return `retry the step that contains ${step}`;
+  const node = nodeAt(compiled, step);
+  const latestAttempt = state.attempts.get(step)?.at(-1);
+  if (node === undefined || latestAttempt === undefined) return `${step} has not run`;
+  if (latestAttempt.resolved === null) return `${step} is still running`;
+  if (latestAttempt.resolved.status === "succeeded") return `${step} succeeded`;
+  const after = successorsOf(compiled, step).find((next) => state.attempts.has(next));
+  if (after !== undefined) return `${after} already ran after ${step}`;
+  if (state.ended === null) return null;
+  if (state.ended.status !== "failed") return `the run ended ${state.ended.status}`;
+  if (state.started.parent !== null) return "retry the call step in the parent run";
+  const declared = compiled.definition.workspaces ?? {};
+  const removed = [...state.workspaces.keys()].find(
+    (name) => Object.hasOwn(declared, name) && state.keys.has(`rm:${name}`),
+  );
+  if (removed !== undefined) return `the worktree ${removed} was already removed`;
+  const given = [...state.workspaces.values()].find(
+    (w) => w.branch !== null && state.releasedBranches.has(w.branch),
+  );
+  return given?.branch == null ? null : `its branch ${given.branch} went to a newer run`;
+};
+
+/**
+ * After the end: stop what is still live, reopen for a retry once nothing is, or remove the
+ * worktrees `retain` lets go. A disposable read-only checkout always goes; a declared worktree stays
+ * when `retain` is `always`, or `on_failure` (the default) and the run did not succeed.
+ */
+const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
+  const interrupts = interruptsAfterEnd(state);
+  // A start still executing (or being abandoned) has no receipt yet, so it counts as live too.
+  const live = [...state.intents.values()].filter(
+    (entry) =>
+      liveTarget(entry, state) !== null || (isStart(entry.intent) && entry.result === null),
+  );
+  if (interrupts.length > 0 || live.length > 0) return interrupts;
+  const ended = state.ended;
+  if (ended === null) return [];
+  const retry = state.controls.find(
+    (c) =>
+      c.seq > state.endedSeq &&
+      c.control.control === "retry" &&
+      c.control.step !== null &&
+      retryRefusal(compiled, state, c.control.step) === null,
+  );
+  if (retry?.control.step != null) {
+    // A newer run taking a branch over after this read refuses the reopening, atomically.
+    const reopened: NewFact = {
+      stream: runStream(state.runId),
+      key: `reopen:${retry.key}`,
+      fact: { _tag: "RunReopened", step: retry.control.step, by: retry.control.by, at: isoOf(now) },
+      guard: { absent: ["BranchReleased"], after: state.lastSeq },
+    };
+    return [reopened];
+  }
+  const declared = compiled.definition.workspaces ?? {};
+  return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
+    const decl = Object.hasOwn(declared, name) ? declared[name] : undefined;
+    const retain = decl?.retain ?? "on_failure";
+    const keep =
+      decl !== undefined &&
+      (retain === "always" || (retain === "on_failure" && ended.status !== "succeeded"));
+    const key = `rm:${name}`;
+    if (keep || state.keys.has(key)) return [];
+    const intent: Intent = { _tag: "RemoveWorkspace", key, name };
+    return [{ stream: runStream(state.runId), key, fact: { _tag: "IntentRecorded", intent } }];
+  });
+};
+
 export const decide = (
   compiled: CompiledWorkflow,
   state: RunState,
@@ -140,13 +223,15 @@ export const decide = (
 ): ReadonlyArray<NewFact> => {
   const started = state.started;
   if (started === null) return [];
-  if (state.ended !== null) return interruptsAfterEnd(state);
+  if (state.ended !== null) return afterEnd(compiled, state, ctx.now);
   const definition = compiled.definition;
   const runId = state.runId;
   const stream = runStream(runId);
   const out: NewFact[] = [];
   const emittedKeys = new Set<string>();
   const nowIso = isoOf(ctx.now);
+  /** Keys written once per run carry the reopening count after the first end. */
+  const once = (key: string) => (state.generation === 0 ? key : `${key}:${state.generation}`);
 
   const has = (key: string) => state.keys.has(key) || emittedKeys.has(key);
   let cancelling = false;
@@ -232,9 +317,14 @@ export const decide = (
     exited: null,
     child: null,
     resolved: null,
+    stoppedByEnd: false,
   });
   const skippedNow = new Set<string>();
-  const isSkipped = (step: string) => state.skipped.has(step) || skippedNow.has(step);
+  // A dead path is derived again every pass, so a retried step that now succeeds reopens it.
+  const isSkipped = (step: string) => {
+    const stored = state.skipped.get(step);
+    return (stored !== undefined && stored !== "dead-path") || skippedNow.has(step);
+  };
   const skip = (step: string, reason: "guard" | "dead-path" | "once") => {
     skippedNow.add(step);
     emit(`skip:${step}`, { _tag: "StepSkipped", step, reason });
@@ -242,8 +332,25 @@ export const decide = (
 
   const markedFailed = (step: string, attempt: number) =>
     decisionOf(`ambiguous:${stepKey(step, attempt)}`)?.option === "fail";
+  /** Israel's retry of the step after this attempt, or the run's end stopped it and it reopened. */
+  const rerunWanted = (a: StepAttempt) =>
+    a.stoppedByEnd ||
+    state.controls.some(
+      (c) =>
+        c.control.control === "retry" &&
+        c.control.step === a.step &&
+        c.seq > a.firstSeq &&
+        retryRefusal(compiled, state, a.step) === null,
+    );
   const willRetry = (node: WorkflowNode, a: StepAttempt, r: Resolution): boolean =>
-    retryReadyAt(node, a.attempt, r.status, r.at, markedFailed(a.step, a.attempt)) !== null;
+    retryReadyAt(
+      node,
+      a.attempt,
+      r.status,
+      r.at,
+      markedFailed(a.step, a.attempt),
+      rerunWanted(a),
+    ) !== null;
 
   const finalOf = (node: WorkflowNode, step: string): Final | null => {
     if (isSkipped(step)) return { status: "skipped", port: null, output: null };
@@ -397,18 +504,11 @@ export const decide = (
       const pinKey = `pin:${project.success}`;
       const pin = resultOf(pinKey);
       if (pin?._tag === "IntentFailed") return Result.fail(pin.error);
-      if (pin?._tag !== "WorkspaceReady") {
-        record({
-          _tag: "PrepareWorkspace",
-          key: pinKey,
-          name: `pin-${project.success}`,
-          projectRef: project.success,
-          baseRef: "HEAD",
-          branch: null,
-        });
+      if (pin?._tag !== "RefResolved") {
+        record({ _tag: "ResolveRef", key: pinKey, projectRef: project.success, ref: "HEAD" });
         return Result.succeed(null);
       }
-      return disposable(project.success, pin.headSha);
+      return disposable(project.success, pin.sha);
     }
     const decl = definition.workspaces?.[use];
     if (decl === undefined || !Object.hasOwn(definition.workspaces ?? {}, use)) {
@@ -976,7 +1076,7 @@ export const decide = (
           return resolve(step, attempt, "failed", "fail", null, handoff.failure);
         resolve(step, attempt, "succeeded", null, valueResult.success as Json);
         if (level.parent === null) {
-          emit("output", {
+          emit(once("output"), {
             _tag: "OutputSet",
             status: node.status,
             value: valueResult.success as { readonly [key: string]: Json },
@@ -1171,7 +1271,14 @@ export const decide = (
     const a = latest(step);
     const r = a === undefined ? null : resolutionOf(a);
     if (a === undefined || r === null || !open()) return;
-    const ready = retryReadyAt(node, a.attempt, r.status, r.at, markedFailed(step, a.attempt));
+    const ready = retryReadyAt(
+      node,
+      a.attempt,
+      r.status,
+      r.at,
+      markedFailed(step, a.attempt),
+      rerunWanted(a),
+    );
     if (ready !== null && ctx.now >= ready) dispatch(node, step, a.attempt + 1, level);
   }
 
@@ -1271,8 +1378,10 @@ export const decide = (
 
   // 1. Controls. Any cancel cancels; of pause and resume only the latest acts, keyed by its own
   // control so it applies once and an old pause never comes back after a resume.
-  for (const { control } of state.controls) if (control.control === "cancel") cancelling = true;
-  const toggle = [...state.controls]
+  // Controls before the run last reopened were for the run that ended.
+  const liveControls = state.controls.filter((c) => c.seq > state.reopenedSeq);
+  for (const { control } of liveControls) if (control.control === "cancel") cancelling = true;
+  const toggle = [...liveControls]
     .reverse()
     .find(({ control }) => control.control === "pause" || control.control === "resume");
   if (toggle?.control.control === "pause" && !pausedNow) {
@@ -1380,7 +1489,7 @@ export const decide = (
 
   // 5. The end: atomic with its outcome, its notices and the runs it starts.
   const endWith = (status: "succeeded" | "failed" | "cancelled" | "budget_exhausted") => {
-    emit("ended", { _tag: "RunEnded", status, at: nowIso });
+    emit(once("ended"), { _tag: "RunEnded", status, at: nowIso });
     interruptLive();
     // Nothing stays running in an ended run: every attempt without an outcome ends with it. An
     // accept or judge sub-step is never resolved itself; views read its own exit or settle.
@@ -1392,7 +1501,7 @@ export const decide = (
       }
     }
     emit(
-      `outcome:${runId}`,
+      once(`outcome:${runId}`),
       { _tag: "RunOutcome", runId, status },
       workflowStream(started.workflowId),
     );
@@ -1424,7 +1533,7 @@ export const decide = (
       if (node?.notify === true) {
         record({
           _tag: "Notify",
-          key: `notify:end`,
+          key: once("notify:end"),
           kind: "finished",
           title: definition.title,
           body: node.status,
@@ -1435,7 +1544,7 @@ export const decide = (
     }
     record({
       _tag: "Notify",
-      key: `notify:end`,
+      key: once("notify:end"),
       kind: "failed",
       title: definition.title,
       body: status,
@@ -1444,7 +1553,7 @@ export const decide = (
     if (status !== "failed" || started.causalDepth + 1 >= 2) return;
     for (const subscriber of ctx.failureSubscribers) {
       if (subscriber.workflowId === started.workflowId) continue;
-      const occurrence = `run-failed:${runId}`;
+      const occurrence = once(`run-failed:${runId}`);
       emit(
         occurrence,
         {
@@ -1552,7 +1661,8 @@ export const nextDeadline = (
     const node = a === undefined ? undefined : nodeAt(compiled, a.step);
     if (a?.resolved == null || node === undefined) continue;
     const marked = state.gates.get(`ambiguous:${a.step}@${a.attempt}`)?.decision?.option === "fail";
-    const ready = retryReadyAt(node, a.attempt, a.resolved.status, a.resolved.at, marked);
+    // A rerun is dispatched in the pass that sees it, so it needs no deadline.
+    const ready = retryReadyAt(node, a.attempt, a.resolved.status, a.resolved.at, marked, false);
     if (ready !== null) candidates.push(ready);
   }
   const future = candidates.filter((at) => Number.isFinite(at) && at > now);

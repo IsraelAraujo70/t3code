@@ -17,8 +17,10 @@ export class WorkflowGitError extends Data.TaggedError("WorkflowGitError")<{
   readonly message: string;
   /** The compare-and-swap of `advance` lost: the ref is neither `from` nor `to`. */
   readonly conflict?: boolean;
-  /** Retrying cannot help: the branch already exists outside this worktree. */
+  /** Retrying cannot help without changing the input or branch ownership. */
   readonly permanent?: boolean;
+  /** The branch exists and belongs to this run, or to no workflow run (null). */
+  readonly owner?: string | null;
 }> {}
 
 export interface PreparedWorktree {
@@ -32,8 +34,8 @@ export class WorkflowGit extends Context.Service<
   WorkflowGit,
   {
     /**
-     * A worktree of `repoRoot` at `path`: on `branch` created from `baseRef` (a branch that already
-     * exists elsewhere is refused), or detached at `baseRef` when `branch` is null. A worktree already at `path` on the
+     * A worktree of `repoRoot` at `path`: on an owned `branch` or one created from `baseRef`,
+     * or detached at `baseRef` when `branch` is null. A worktree already at `path` on the
      * expected branch is adopted; anything else there is removed and rebuilt. Prunes stale worktrees first.
      */
     readonly prepare: (input: {
@@ -41,7 +43,19 @@ export class WorkflowGit extends Context.Service<
       readonly path: string;
       readonly baseRef: string;
       readonly branch: string | null;
+      readonly runId: string;
     }) => Effect.Effect<PreparedWorktree, WorkflowGitError>;
+    /** Gives up an owned branch while retaining its commits and worktrees. */
+    readonly release: (input: {
+      readonly repoRoot: string;
+      readonly branch: string;
+      readonly owner: string;
+    }) => Effect.Effect<void, WorkflowGitError>;
+    /** Resolves a commit without creating a checkout. */
+    readonly resolveRef: (input: {
+      readonly repoRoot: string;
+      readonly ref: string;
+    }) => Effect.Effect<string, WorkflowGitError>;
     /** HEAD of a worktree, as a full sha. */
     readonly head: (path: string) => Effect.Effect<string, WorkflowGitError>;
     /**
@@ -134,21 +148,68 @@ const make = Effect.sync(() =>
           (yield* git(repoRoot, ["show-ref", "--verify", `refs/heads/${branch}`]).pipe(
             Effect.option,
           ));
-        // Adopting it would start this run from an earlier run's head, not from baseRef.
-        if (exists && exists._tag === "Some") {
-          return yield* new WorkflowGitError({
-            message: `Branch ${branch} already exists from an earlier run; delete it or name another branch.`,
-            permanent: true,
-          });
+        if (branch !== null && exists && exists._tag === "Some") {
+          const configured = yield* git(repoRoot, [
+            "config",
+            "--get",
+            `branch.${branch}.wfrun`,
+          ]).pipe(Effect.option);
+          const owner = configured._tag === "Some" ? configured.value : null;
+          if (owner !== input.runId)
+            return yield* new WorkflowGitError({
+              message: `Branch ${branch} belongs to ${owner ?? "no workflow run"}`,
+              permanent: true,
+              owner,
+            });
+          yield* git(repoRoot, ["worktree", "add", path, branch]);
+        } else {
+          // The owner goes in first: a crash after creating the branch must not leave it ownerless.
+          if (branch !== null)
+            yield* git(repoRoot, ["config", `branch.${branch}.wfrun`, input.runId]);
+          yield* git(
+            repoRoot,
+            branch === null
+              ? ["worktree", "add", "--detach", path, baseRef]
+              : ["worktree", "add", "-b", branch, path, baseRef],
+          );
         }
-        yield* git(
-          repoRoot,
-          branch === null
-            ? ["worktree", "add", "--detach", path, baseRef]
-            : ["worktree", "add", "-b", branch, path, baseRef],
-        );
       }
       return { path, branch, headSha: yield* head(path) };
+    }),
+    resolveRef: Effect.fn("WorkflowGit.resolveRef")(function* ({ repoRoot, ref }) {
+      return yield* git(repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`]).pipe(
+        Effect.mapError(
+          (error) => new WorkflowGitError({ message: error.message, permanent: true }),
+        ),
+      );
+    }),
+    release: Effect.fn("WorkflowGit.release")(function* ({ repoRoot, branch, owner }) {
+      const exists = yield* git(repoRoot, ["show-ref", "--verify", `refs/heads/${branch}`]).pipe(
+        Effect.option,
+      );
+      if (exists._tag === "None") return;
+      const configured = yield* git(repoRoot, ["config", "--get", `branch.${branch}.wfrun`]).pipe(
+        Effect.option,
+      );
+      const actual = configured._tag === "Some" ? configured.value : null;
+      if (actual !== owner)
+        return yield* new WorkflowGitError({
+          message: `Branch ${branch} belongs to ${actual ?? "no workflow run"}`,
+          permanent: true,
+          owner: actual,
+        });
+      const listing = yield* git(repoRoot, ["worktree", "list", "--porcelain"]);
+      for (const entry of listing.split("\n\n")) {
+        const lines = entry.split("\n");
+        if (lines.includes(`branch refs/heads/${branch}`))
+          yield* git(lines[0]!.slice("worktree ".length), ["switch", "--detach"]);
+      }
+      yield* git(repoRoot, [
+        "update-ref",
+        `refs/wf-runs/${owner}/${branch}`,
+        `refs/heads/${branch}`,
+      ]);
+      yield* git(repoRoot, ["branch", "-D", branch]);
     }),
     advance: Effect.fn("WorkflowGit.advance")(function* ({ repoRoot, branch, from, to }) {
       const ref = `refs/heads/${branch}`;

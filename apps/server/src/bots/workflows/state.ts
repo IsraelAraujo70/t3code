@@ -33,6 +33,8 @@ export type IntentResult = Exclude<
       | "RunPaused"
       | "RunResumed"
       | "RunEnded"
+      | "RunReopened"
+      | "BranchReleased"
       | "TurnSettled"
       | "UnitExited"
       | "RuntimeRequest"
@@ -68,6 +70,8 @@ export interface StepAttempt {
   readonly exited: UnitExited | null;
   readonly child: ChildRunEnded | null;
   readonly resolved: StepResolved | null;
+  /** Resolved by the run's end, not by its own outcome: a reopening runs it again. */
+  readonly stoppedByEnd: boolean;
 }
 
 export interface GateState {
@@ -83,6 +87,11 @@ export interface RunState {
   readonly lastSeq: number;
   readonly started: RunStarted | null;
   readonly ended: RunEnded | null;
+  /** Seq of the latest RunEnded, and of the latest RunReopened (0 when never). */
+  readonly endedSeq: number;
+  readonly reopenedSeq: number;
+  /** How often the run was reopened: once-per-run keys carry it after the first end. */
+  readonly generation: number;
   readonly output: OutputSet | null;
   /** The open pause; null while the run is not paused. */
   readonly paused: RunPaused | null;
@@ -114,4 +123,6 @@ export interface RunState {
   }>;
   /** By workspace name. */
   readonly workspaces: ReadonlyMap<string, WorkspaceReady>;
+  /** Branches of this run that a newer run took over after it ended. */
+  readonly releasedBranches: ReadonlySet<string>;
 }

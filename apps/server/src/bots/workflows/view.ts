@@ -208,7 +208,8 @@ export const stepViews = (
       cost: sumCosts([a.settled?.cost, a.nudge?.cost]),
       evidence: null,
     }));
-  for (const step of [...state.skipped.keys()].sort())
+  // A dead path a retry reopened keeps its old skip fact; the attempts it got since are the truth.
+  for (const step of [...state.skipped.keys()].filter((s) => !state.attempts.has(s)).sort())
     views.push({
       key: WorkflowStepKey.make(step),
       ...nodeInfo(step),
