@@ -146,3 +146,45 @@ it.effect("baselines tags, respects pollMinutes and fires only new tags", () =>
     expect(requests[0]?.occurrence).toBe("tag:https://example.com/repo.git:v2:abcdef");
   }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
 );
+
+it.effect("baselines repository merges and limits queries to ten minutes", () =>
+  Effect.gen(function* () {
+    yield* seed({ id: "pr", kind: "prMerged", scope: "repo", repo: "owner/repo" });
+    yield* toggle(true, "on");
+    let queries = 0;
+    let merged = "2026-01-01T00:00:00Z";
+    const requests: TriggerRequest[] = [];
+    const service = yield* make({
+      listPulls: () =>
+        Effect.sync(() => {
+          queries++;
+          return JSON.stringify([
+            {
+              number: 1,
+              title: "Change",
+              html_url: "https://example.com/1",
+              merged_at: merged,
+              merge_commit_sha: "abc",
+              base: { ref: "main" },
+            },
+          ]);
+        }),
+      engine: {
+        start: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return { runId };
+          }),
+      },
+    });
+    yield* service.poll(new Date("2026-01-01T00:01:00Z"));
+    expect(requests).toHaveLength(0);
+    merged = "2026-01-01T00:05:00Z";
+    yield* service.poll(new Date("2026-01-01T00:02:00Z"));
+    expect(queries).toBe(1);
+    yield* service.poll(new Date("2026-01-01T00:11:00Z"));
+    yield* service.poll(new Date("2026-01-01T00:21:00Z"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.occurrence).toBe("pr:owner/repo#1:abc");
+  }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
+);

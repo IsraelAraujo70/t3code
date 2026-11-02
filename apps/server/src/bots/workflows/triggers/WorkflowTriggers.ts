@@ -1,4 +1,7 @@
 // @effect-diagnostics globalDateInEffect:off deterministicKeys:off - Poll accepts explicit Date watermarks; the service key follows the workflow trigger contract.
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -15,21 +18,126 @@ import { WorkflowEngine } from "../WorkflowEngine.ts";
 import { getCursor, setCursor, deleteCursor } from "./cursors.ts";
 import { listTriggerTargets, type TriggerTarget } from "./targets.ts";
 import { fireTrigger } from "./fire.ts";
-import { cronDecision, misfirePolicy, latestTag, occurrenceKey } from "./occurrence.ts";
+import {
+  cronDecision,
+  misfirePolicy,
+  latestTag,
+  occurrenceKey,
+  settledMatches,
+} from "./occurrence.ts";
+
+const decodePulls = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        number: Schema.Number,
+        title: Schema.String,
+        html_url: Schema.String,
+        merged_at: Schema.NullOr(Schema.String),
+        merge_commit_sha: Schema.NullOr(Schema.String),
+        base: Schema.Struct({ ref: Schema.String }),
+      }),
+    ),
+  ),
+);
 
 export const make = Effect.fn("WorkflowTriggers.make")(function* (
   options: {
     readonly engine?: Pick<WorkflowEngine["Service"], "start">;
+    readonly listPulls?: (repo: string) => Effect.Effect<string, Error>;
     readonly listTags?: (remote: string) => Effect.Effect<string, Error>;
   } = {},
 ) {
+  const orchestrator = yield* Effect.serviceOption(OrchestratorV2);
   const provided = yield* Effect.serviceOption(WorkflowEngine);
   const engine = options.engine ? Option.some(options.engine) : provided;
   const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const poll = Effect.fn("WorkflowTriggers.poll")(function* (now: Date) {
     if (Option.isNone(engine)) return;
-    for (const target of yield* listTriggerTargets) {
+    const targets = yield* listTriggerTargets;
+    if (Option.isSome(orchestrator)) {
+      for (const eventType of ["thread.settled", "thread.pull-request-link-updated"] as const) {
+        yield* Effect.gen(function* () {
+          const source = `events:${eventType}`;
+          const cursor = yield* getCursor(source);
+          const events = yield* Stream.runCollect(
+            orchestrator.value.streamStoredEventsFrom({
+              eventType,
+              afterSequence: Option.isSome(cursor) ? Number(cursor.value) : 0,
+            }),
+          );
+          for (const stored of events) {
+            if (Option.isSome(cursor))
+              for (const target of targets) {
+                if (!target.enabled) continue;
+                const event = stored.event;
+                const trigger = target.trigger;
+                if (event.type === "thread.settled" && trigger.kind === "threadSettled") {
+                  const thread = event.payload;
+                  const payload = {
+                    threadId: thread.id,
+                    projectId: thread.projectId,
+                    title: thread.title,
+                  };
+                  if (
+                    settledMatches(
+                      {
+                        ...(trigger.projectId === undefined
+                          ? {}
+                          : { projectId: trigger.projectId }),
+                        ...(trigger.botId === undefined ? {} : { botId: trigger.botId }),
+                        ...(trigger.titlePrefix === undefined
+                          ? {}
+                          : { titlePrefix: trigger.titlePrefix }),
+                      },
+                      payload,
+                    )
+                  )
+                    yield* fireTrigger(engine.value, target, {
+                      kind: "threadSettled",
+                      occurrence: occurrenceKey.settled(thread.id, stored.sequence),
+                      label: `thread settled: ${thread.title.slice(0, 80)}`,
+                      payload,
+                    });
+                }
+                if (
+                  event.type === "thread.pull-request-link-updated" &&
+                  trigger.kind === "prMerged" &&
+                  trigger.scope === "linked"
+                ) {
+                  const link = event.payload;
+                  if (
+                    link.repository !== trigger.repo ||
+                    link.snapshot?.state !== "merged" ||
+                    (trigger.base && link.snapshot.baseBranch !== trigger.base)
+                  )
+                    continue;
+                  yield* fireTrigger(engine.value, target, {
+                    kind: "prMerged",
+                    occurrence: occurrenceKey.prMerged(
+                      link.repository,
+                      link.number,
+                      link.watch?.headSha ?? "merged",
+                    ),
+                    label: `PR #${link.number} merged`,
+                    payload: {
+                      repo: link.repository,
+                      number: link.number,
+                      title: link.snapshot.title,
+                      url: link.url,
+                      mergeSha: link.watch?.headSha ?? null,
+                    },
+                  });
+                }
+              }
+            yield* setCursor(source, String(stored.sequence));
+          }
+          if (Option.isNone(cursor) && events.length === 0) yield* setCursor(source, "0");
+        }).pipe(Effect.catchCause(Effect.logWarning));
+      }
+    }
+    for (const target of targets) {
       // One trigger's failure (the engine, git, the database) leaves its cursor and the others alone.
       yield* pollTarget(target, now).pipe(
         Effect.catchCause((cause) =>
@@ -46,6 +154,53 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
     if (Option.isNone(engine)) return;
     {
       const trigger = target.trigger;
+      if (trigger.kind === "prMerged" && trigger.scope === "repo") {
+        const source = `pr:${target.workflowId}:${trigger.id}`;
+        if (!target.enabled) {
+          yield* deleteCursor(source);
+          return;
+        }
+        const cursor = yield* getCursor(source);
+        const previous = Option.isSome(cursor) ? cursor.value.split("|") : null;
+        if (previous && now.getTime() - Date.parse(previous[0] ?? "") < 600000) return;
+        const output = yield* (
+          options.listPulls
+            ? options.listPulls(trigger.repo)
+            : spawner.string(
+                ChildProcess.make("gh", [
+                  "api",
+                  `repos/${trigger.repo}/pulls?state=closed&sort=updated&direction=desc&per_page=50`,
+                ]),
+              )
+        ).pipe(Effect.timeout("60 seconds"));
+        const pulls = yield* decodePulls(output);
+        let latest = previous?.[1] ?? "";
+        for (const pr of pulls
+          .filter((pr) => pr.merged_at && (!trigger.base || pr.base.ref === trigger.base))
+          .sort((a, b) => (a.merged_at ?? "").localeCompare(b.merged_at ?? ""))) {
+          if (!pr.merged_at) continue;
+          if (previous && pr.merged_at > (previous[1] ?? ""))
+            yield* fireTrigger(engine.value, target, {
+              kind: "prMerged",
+              occurrence: occurrenceKey.prMerged(
+                trigger.repo,
+                pr.number,
+                pr.merge_commit_sha ?? "merged",
+              ),
+              label: `PR #${pr.number} merged`,
+              payload: {
+                repo: trigger.repo,
+                number: pr.number,
+                title: pr.title,
+                url: pr.html_url,
+                mergeSha: pr.merge_commit_sha,
+              },
+            });
+          if (pr.merged_at > latest) latest = pr.merged_at;
+        }
+        yield* setCursor(source, `${now.toISOString()}|${latest || now.toISOString()}`);
+        return;
+      }
       if (trigger.kind !== "cron" && trigger.kind !== "upstreamTag") return;
       const source = `${trigger.kind === "cron" ? "cron" : "tag"}:${target.workflowId}:${trigger.id}`;
       if (!target.enabled) {
