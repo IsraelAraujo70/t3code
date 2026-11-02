@@ -10,6 +10,7 @@ import type {
   WorkflowRunDelta,
   WorkflowRunId,
   WorkflowRunStatus,
+  WorkflowRunSummary,
   WorkflowRunView,
   WorkflowStepAttemptView,
   WorkflowStepStatus,
@@ -52,12 +53,13 @@ export interface WorkflowRunApi {
   readonly foldRunDelta: (view: WorkflowRunView, delta: WorkflowRunDelta) => WorkflowRunView;
   /**
    * Joins the `run.get` pages of one read (first page first) into one view with every attempt and
-   * no `nextStepsCursor`. Null when the run moved between pages: pages are offsets into a list
-   * that can shift, so the reader starts over rather than risk a lost attempt.
+   * no `nextStepsCursor`, keeping the smallest seq so subscriptions replay changes during the read.
    */
   readonly joinRunPages: (
     pages: readonly [WorkflowRunView, ...WorkflowRunView[]],
-  ) => WorkflowRunView | null;
+  ) => WorkflowRunView;
+  /** Active time including elapsed time since the running summary's anchor. */
+  readonly liveActiveMs: (summary: WorkflowRunSummary, nowMs: number) => number | null;
   /**
    * One status per node id for the graph: the latest attempt of each step key, then, across the
    * instances of one node (`each[0]/x`, `each[1]/x`), the most urgent one: waiting_gate > running
@@ -168,17 +170,20 @@ export const foldRunDelta: WorkflowRunApi["foldRunDelta"] = (view, delta) =>
         blocks: upsert(view.blocks, delta.blocks, (b) => b.step),
         gates: upsert(view.gates, delta.gates, (g) => g.key),
       };
-export const joinRunPages: WorkflowRunApi["joinRunPages"] = ([first, ...rest]) =>
-  rest.some((page) => page.seq !== first.seq)
+export const joinRunPages: WorkflowRunApi["joinRunPages"] = ([first, ...rest]) => ({
+  ...first,
+  seq: rest.reduce((seq, page) => Math.min(seq, page.seq), first.seq),
+  nextStepsCursor: null,
+  steps: rest.reduce<readonly WorkflowStepAttemptView[]>(
+    (steps, page) => upsert(steps, page.steps, attemptKey),
+    first.steps,
+  ),
+});
+export const liveActiveMs: WorkflowRunApi["liveActiveMs"] = (summary, nowMs) =>
+  summary.activeMs === null
     ? null
-    : {
-        ...first,
-        nextStepsCursor: null,
-        steps: rest.reduce<readonly WorkflowStepAttemptView[]>(
-          (steps, page) => upsert(steps, page.steps, attemptKey),
-          first.steps,
-        ),
-      };
+    : summary.activeMs +
+      (summary.activeSince === null ? 0 : Math.max(0, nowMs - Date.parse(summary.activeSince)));
 export const stepRows: WorkflowRunApi["stepRows"] = (steps) => {
   const groups = new Map<string, WorkflowStepAttemptView[]>();
   for (const step of steps) {

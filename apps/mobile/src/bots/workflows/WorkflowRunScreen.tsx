@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   formatDuration,
+  liveActiveMs,
   formatTokens,
   formatUsd,
   isRunActive,
@@ -73,6 +74,7 @@ function RunContent({
   const query = useWorkflowRun(environmentId, runId);
   const run = query.data;
   const now = useNowMinuteMs();
+  const activeMs = run ? liveActiveMs(run.summary, now) : null;
   const definition = run?.definition;
   const steps = run?.steps;
   const control = useAtomCommand(workflowsEnvironment.runControl);
@@ -119,8 +121,7 @@ function RunContent({
             <Text>
               {run.summary.trigger.label} · {run.summary.trigger.kind}
               {"\n"}Started {run.summary.startedAt}
-              {"\n"}Active duration{" "}
-              {run.summary.activeMs === null ? "unknown" : formatDuration(run.summary.activeMs)}
+              {"\n"}Active duration {activeMs === null ? "unknown" : formatDuration(activeMs)}
               {"\n"}
               {formatTokens(run.summary.cost.billable)} tokens ·{" "}
               {formatUsd(run.summary.cost.usdEstimate)} · {run.summary.cost.usage} usage

@@ -128,7 +128,7 @@ type RunReadOf<A> = Effect.Effect<A, Effect.Error<RunRead>, Effect.Services<RunR
 type RunPages = readonly [WorkflowRunView, ...WorkflowRunView[]];
 /**
  * Every `run.get` page joined, so no screen ever sees a partial set of attempts (a node's status
- * would read as pending). Starts over when the run moved between pages.
+ * would read as pending).
  */
 const readWholeRun = (runId: RunId): RunReadOf<WorkflowRunView> => {
   const morePages = (pages: RunPages): RunReadOf<RunPages> => {
@@ -139,10 +139,7 @@ const readWholeRun = (runId: RunId): RunReadOf<WorkflowRunView> => {
   };
   return readRun(runId).pipe(
     Effect.flatMap((first) => morePages([first])),
-    Effect.flatMap((pages) => {
-      const view = joinRunPages(pages);
-      return view === null ? readWholeRun(runId) : Effect.succeed(view);
-    }),
+    Effect.map(joinRunPages),
   );
 };
 const runDeltas = (runId: RunId, afterSeq: number) =>

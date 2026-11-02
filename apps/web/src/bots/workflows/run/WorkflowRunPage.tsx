@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   formatDuration,
+  liveActiveMs,
   formatTokens,
   formatUsd,
   stepRows,
@@ -80,6 +81,7 @@ function RunContent({
   const canOperate = useAtomValue(workflowsEnvironment.runControl.permissionAtom(environmentId));
   const now = Date.parse(`${useNowMinute()}:00Z`);
   const summary = view.summary;
+  const activeMs = liveActiveMs(summary, now);
   // oxlint-disable-next-line t3code/no-manual-memo -- Keep canvas identity stable across clock ticks as required by the run view.
   const model = useMemo(
     () =>
@@ -195,9 +197,7 @@ function RunContent({
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Active time</dt>
-              <dd className="mt-1">
-                {summary.activeMs === null ? "unknown" : formatDuration(summary.activeMs)}
-              </dd>
+              <dd className="mt-1">{activeMs === null ? "unknown" : formatDuration(activeMs)}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Steps used</dt>

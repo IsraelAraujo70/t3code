@@ -17,7 +17,7 @@ import {
   type WorkflowRunView,
   type WorkflowRunDelta,
 } from "@t3tools/contracts";
-import { foldRunDelta, joinRunPages } from "./workflows.run.ts";
+import { foldRunDelta, joinRunPages, liveActiveMs } from "./workflows.run.ts";
 import { WorkflowStepKey, WorkflowNodeId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -201,7 +201,13 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     ["c", 1, "pending"],
     ["a", 2, "running"],
   ]);
-  expect(joinRunPages([view, { ...view, seq: 2 }])).toBeNull();
+  const mixed = joinRunPages([
+    { ...view, seq: 2 },
+    { ...view, seq: 1, steps: [step("a", 2, "running")] },
+  ]);
+  expect(mixed.seq).toBe(1);
+  expect(mixed.steps).toEqual([first, step("a", 2, "running")]);
+  expect(mixed.nextStepsCursor).toBeNull();
 });
 
 it("presents statuses and run controls consistently", () => {
@@ -226,4 +232,33 @@ it("presents statuses and run controls consistently", () => {
     id = WorkflowRunId.make("wfr_00000000000000000000");
   expect(workflowRunHref(env, id)).toBe(`/workflows/remote%2Fenv/runs/${id}`);
   expect(workflowRunAlertPath(env, id)).toBe(`/bots/workflows/remote%2Fenv/runs/${id}`);
+});
+
+it("computes live active time from the summary anchor", () => {
+  const summary = decodeSummary({
+    runId: "wfr_00000000000000000000",
+    workflowId: "demo",
+    title: "Demo",
+    hash: null,
+    commit: null,
+    status: "running",
+    pausedFor: null,
+    skipReason: null,
+    trigger: { kind: "manual", label: "Manual" },
+    startedAt: "2026-01-01T00:00:00.000Z",
+    endedAt: null,
+    outputStatus: null,
+    stepsUsed: 1,
+    cost: { billable: 0, input: 0, output: 0, cacheRead: 0, usage: "complete", usdEstimate: 0 },
+    reservedTokens: 0,
+    openGates: 0,
+    pullRequest: null,
+    activeMs: null,
+    activeSince: null,
+  });
+  expect(liveActiveMs(summary, 2000)).toBeNull();
+  expect(liveActiveMs({ ...summary, activeMs: 100 }, 2000)).toBe(100);
+  const running = { ...summary, activeMs: 100, activeSince: "1970-01-01T00:00:01.000Z" };
+  expect(liveActiveMs(running, 2000)).toBe(1100);
+  expect(liveActiveMs(running, 500)).toBe(100);
 });
