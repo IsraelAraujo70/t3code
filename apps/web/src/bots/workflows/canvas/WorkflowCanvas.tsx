@@ -112,6 +112,9 @@ function RoughEdge(props: EdgeProps) {
         label={props.label}
         labelX={labelX}
         labelY={labelY}
+        // The port name is a caption; the wide interaction path under it takes the clicks.
+        labelShowBg={false}
+        labelStyle={{ pointerEvents: "none", fontSize: 10, fill: "var(--muted-foreground)" }}
         style={{ stroke: "transparent" }}
       />
     </>
