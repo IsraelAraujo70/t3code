@@ -33,7 +33,8 @@ The server must speak MCP Streamable HTTP (`POST <url>`, stateless is fine) and 
 
 ## Rules
 
-- Only the bots listed get the servers; any other bot gets nothing. Only
+- Only the bots listed get the servers; any other bot gets nothing. The agent steps of a workflow
+  that works for a listed bot (`bot: <id>` in the workflow) get that bot's servers too. Only
   Claude instances take them: a bot on Codex or another provider gets no forwarded tools.
 - `name` matches `[a-z0-9_-]+`, is unique per bot, and is not `t3-code`.
 - `url` is `http` or `https` on the literal address `127.0.0.1` or `[::1]`, without credentials.

@@ -399,6 +399,17 @@ a workflow only when you ask in your own message in its conversation, or when yo
 bots in Settings → Bots. Messages from another bot, scheduled tasks and workflow steps do not count
 as your request.
 
+A workflow can work for one bot, which turns a bot's scheduled routine into a workflow. Pick the bot
+in the workflow settings (or set `bot: <bot id>` in the YAML). Its agent steps then get that bot's
+host MCP servers, the same tools the bot has (see [Host MCP servers for a bot](docs/friend/bot-host-mcp.md)),
+and an output with **Post to bot** (`postToBot: true`) puts its report in the bot's conversation,
+once per run. The bot wakes and tells you what the report says; that reply replaces the run's
+"finished" notification. An empty report posts nothing, so a routine that renders its report only
+when there is news stays quiet otherwise. A bot can bind a workflow only to itself and cannot change
+a workflow that works for another bot; you can bind any bot. If the bot is deleted, the steps run
+without its tools and the run page shows a warning. An example routine is in
+[`docs/friend/workflows-design.md`](docs/friend/workflows-design.md) §6.1.
+
 Each workflow is a file in `~/.t3/workflows/definitions` on the bots host. Saving in the editor
 commits it there, and a hand edit of the file shows up in the app. Two templates are not ready to run
 unattended yet, "Hillclimb de throughput no argo35" and "Correções viram enforcement estrutural";

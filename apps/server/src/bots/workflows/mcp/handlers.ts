@@ -153,9 +153,10 @@ const handlers = (
         })(),
         lastRun: w.lastRun ? { runId: w.lastRun.runId, status: w.lastRun.status } : null,
       }));
-      if (!input.includeTemplates) return { workflows };
+      if (!input.includeTemplates) return { you: bot.id, workflows };
       const snapshot = yield* Stream.runHead(definitions.snapshot).pipe(Effect.mapError(failure));
       return {
+        you: bot.id,
         workflows,
         templates: Option.isSome(snapshot)
           ? snapshot.value.templates.map((t) => ({ id: t.templateId, title: t.title }))
