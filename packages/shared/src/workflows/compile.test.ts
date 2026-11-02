@@ -72,6 +72,48 @@ interface FailingCase {
 
 const FAILING: ReadonlyArray<FailingCase> = [
   {
+    name: "duplicate manual triggers",
+    code: "trigger",
+    path: "triggers.second",
+    change: (def) => {
+      def.triggers = { first: { kind: "manual" }, second: { kind: "manual" } };
+    },
+  },
+  {
+    name: "trigger collides with node",
+    code: "trigger",
+    path: "triggers.plan",
+    change: (def) => {
+      def.triggers = { plan: { kind: "manual" } };
+    },
+  },
+  {
+    name: "blank bot description",
+    code: "trigger",
+    path: "triggers.bot.description",
+    change: (def) => {
+      def.triggers = { bot: { kind: "bot", description: "   " } };
+    },
+  },
+  {
+    name: "callee has no call trigger",
+    code: "trigger",
+    path: "nodes.plan.workflow",
+    host: { ...HOST, callTargets: new Map() },
+    change: (def) => {
+      def.nodes.plan = { kind: "call", workflow: "other", params: {} };
+    },
+  },
+  {
+    name: "callee refuses caller",
+    code: "trigger",
+    path: "nodes.plan.workflow",
+    host: { ...HOST, callTargets: new Map([["other", { from: ["allowed"] }]]) },
+    change: (def) => {
+      def.nodes.plan = { kind: "call", workflow: "other", params: {} };
+    },
+  },
+  {
     name: "a field of the wrong type",
     code: "schema",
     path: "nodes.plan.prompt",

@@ -459,7 +459,13 @@ it.live("a workflow that calls a saved one stays valid after a restart", () =>
   withDefinitions((definitions, harness) =>
     Effect.gen(function* () {
       yield* definitions.save(
-        { source: yield* librarySource("b"), message: "b" },
+        {
+          source: (yield* librarySource("b")).replace(
+            /^triggers:.*$/m,
+            "triggers: { callable: { kind: call } }",
+          ),
+          message: "b",
+        },
         { kind: "user" },
       );
       const callee = (yield* definitions.document("b")).definition!;

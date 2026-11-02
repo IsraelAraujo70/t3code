@@ -549,6 +549,8 @@ export const WorkflowTrigger = Schema.Union([
 ]);
 export type WorkflowTrigger = typeof WorkflowTrigger.Type;
 export type WorkflowTriggerKind = WorkflowTrigger["kind"];
+/** Started by a caller who passes the params; at most one of each per workflow. */
+export const WORKFLOW_ON_DEMAND_TRIGGER_KINDS = ["manual", "bot", "call"] as const;
 
 export const WorkflowRunBudget = Schema.Struct({
   steps: PositiveInt,
