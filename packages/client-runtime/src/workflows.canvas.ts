@@ -83,9 +83,9 @@ export interface FromCanvasResult {
  * WorkflowCanvasApi["toCanvasModel"] = …`.
  */
 export interface WorkflowCanvasApi {
-  /** Edge ids come from the endpoints and the written port: `a:ok->b`, `a->b`. */
-  /** The kind and its principal configuration, resolving named models. */
+  /** `kind · detail`: the model and effort (`$name` resolved), the command, the question… */
   readonly nodeSubtitle: (node: WorkflowNode, models: WorkflowDefinition["models"]) => string;
+  /** Edge ids come from the endpoints and the written port: `a:ok->b`, `a->b`. */
   readonly canvasEdgeId: (from: string, port: string | null, to: string) => string;
   /**
    * The canvas of a definition. Stored positions win; `autoLayout` fills every node without one.
@@ -237,7 +237,6 @@ export const nextNodeId: WorkflowCanvasApi["nextNodeId"] = (definition, kind) =>
   for (let n = 2; findNode(definition, id); n++) id = `${kind}_${n}`;
   return id;
 };
-/** Summarizes a node's kind and principal configuration for the canvas. */
 export const nodeSubtitle: WorkflowCanvasApi["nodeSubtitle"] = (node, models) => {
   let detail: string;
   switch (node.kind) {
