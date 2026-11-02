@@ -1,4 +1,8 @@
-import { fromCanvasModel, toCanvasModel } from "@t3tools/client-runtime/workflows";
+import {
+  fromCanvasModel,
+  toCanvasModel,
+  withTriggerStates,
+} from "@t3tools/client-runtime/workflows";
 import type {
   EnvironmentId,
   WorkflowDocument,
@@ -54,7 +58,16 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
   } | null>(null);
   const [serverDiagnostics, setServerDiagnostics] = useState<ReadonlyArray<WorkflowDiagnostic>>([]);
   const current = state.draft ?? state.base.definition;
-  const model = current === null ? null : toCanvasModel(current);
+  const model =
+    current === null
+      ? null
+      : withTriggerStates(toCanvasModel(current), {
+          enabled: new Map(
+            props.document.triggers
+              .filter((trigger) => trigger.kind !== "manual")
+              .map((trigger) => [trigger.id, trigger.enabled]),
+          ),
+        });
   const compiled = state.draft === null ? null : compileWorkflow(state.draft, DEFAULT_HOST_LIMITS);
   const diagnostics = [
     ...(compiled === null
@@ -244,6 +257,8 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
             >
               <fieldset disabled={saving}>
                 <Inspector
+                  environmentId={props.environmentId}
+                  document={props.document}
                   definition={current}
                   selected={selected}
                   diagnostics={diagnostics}

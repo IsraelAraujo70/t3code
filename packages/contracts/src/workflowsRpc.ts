@@ -25,6 +25,7 @@ import {
   WorkflowLedgerId,
   WorkflowLedgerVerdict,
   WorkflowMetricReading,
+  WorkflowNodeKey,
   WorkflowRunId,
   WorkflowRunStatus,
   WorkflowRunSummary,
@@ -53,10 +54,16 @@ const PageLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(200));
 export const WorkflowTriggerSummary = Schema.Struct({
   id: Schema.String,
   kind: Schema.String,
+  /** The trigger's `title`; null when it has none. */
+  title: Schema.NullOr(Schema.String),
   /** Human text: `0 3 * * * (America/Sao_Paulo)`, `tag v* on upstream`. */
   label: Schema.String,
   /** A webhook trigger's public URL once its task exists; null for other kinds. */
   webhookUrl: Schema.NullOr(Schema.String),
+  /** The trigger's own switch (on until turned off); a `manual` trigger is always on. */
+  enabled: Schema.Boolean,
+  /** The last event this trigger received, test events included. */
+  lastFiredAt: Schema.NullOr(IsoDateTime),
 });
 export type WorkflowTriggerSummary = typeof WorkflowTriggerSummary.Type;
 
@@ -124,6 +131,8 @@ export const WorkflowDocument = Schema.Struct({
   diagnostics: Schema.Array(WorkflowDiagnostic),
   enabled: Schema.Boolean,
   suspended: Schema.Boolean,
+  /** The HEAD triggers with their switches; empty while the file does not compile. */
+  triggers: Schema.Array(WorkflowTriggerSummary),
   /** Author of the last commit: `Israel`, `Israel (hand edit)`, `Ralph (bot)`. */
   updatedBy: Schema.NullOr(Schema.String),
   updatedAt: Schema.NullOr(IsoDateTime),
@@ -206,6 +215,8 @@ export type WorkflowFromTemplateInput = typeof WorkflowFromTemplateInput.Type;
 
 export const WorkflowSetEnabledInput = Schema.Struct({
   workflowId: WorkflowId,
+  /** Switches this trigger only; absent switches the whole workflow. */
+  triggerId: Schema.optional(WorkflowNodeKey),
   enabled: Schema.Boolean,
   clientRequestId: ClientRequestId,
 });
@@ -250,7 +261,10 @@ export type WorkflowHistoryPage = typeof WorkflowHistoryPage.Type;
 
 export const WorkflowRunStartInput = Schema.Struct({
   workflowId: WorkflowId,
+  /** Absent: the workflow's `manual` trigger with these params. */
   params: Schema.optional(Schema.Record(Schema.String, WorkflowParamValue)),
+  /** A webhook trigger: run its last captured event through its `params` mapping (test mode). */
+  testTrigger: Schema.optional(WorkflowNodeKey),
   /** The same id with other params is an error, never the old run. */
   clientRequestId: ClientRequestId,
 });
@@ -323,9 +337,23 @@ export const WorkflowRunGetInput = Schema.Struct({
 });
 export type WorkflowRunGetInput = typeof WorkflowRunGetInput.Type;
 
+/** The trigger that started a run. The payload is read apart (`run.trigger`): it can be 256 KiB. */
+export const WorkflowRunTriggerView = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.String,
+  label: Schema.String,
+  occurrence: Schema.String,
+  /** Started by "run with this event" on a captured test event. */
+  test: Schema.Boolean,
+  /** Size of the payload's JSON. */
+  payloadBytes: NonNegativeInt,
+});
+export type WorkflowRunTriggerView = typeof WorkflowRunTriggerView.Type;
+
 /** A run with its pinned definition; `run.subscribe` sends the rest as deltas after `seq`. */
 export const WorkflowRunView = Schema.Struct({
   summary: WorkflowRunSummary,
+  trigger: WorkflowRunTriggerView,
   /** The pinned version; null while queued or skipped. */
   definition: Schema.NullOr(WorkflowDefinition),
   seq: NonNegativeInt,
@@ -399,6 +427,43 @@ export const WorkflowGateDecideInput = Schema.Struct({
   note: Schema.optional(Schema.String.check(Schema.isMaxLength(4_000))),
 });
 export type WorkflowGateDecideInput = typeof WorkflowGateDecideInput.Type;
+
+export const WorkflowRunTriggerInput = Schema.Struct({
+  runId: WorkflowRunId,
+  /** Longer payloads come back as `null` with `truncated` (Android asks for 4 KiB). */
+  maxBytes: Schema.optional(PositiveInt),
+});
+export type WorkflowRunTriggerInput = typeof WorkflowRunTriggerInput.Type;
+
+export const WorkflowRunTriggerPayload = Schema.Struct({
+  payload: Schema.Unknown,
+  truncated: Schema.Boolean,
+});
+export type WorkflowRunTriggerPayload = typeof WorkflowRunTriggerPayload.Type;
+
+export const WorkflowTriggerRefInput = Schema.Struct({
+  workflowId: WorkflowId,
+  triggerId: WorkflowNodeKey,
+});
+export type WorkflowTriggerRefInput = typeof WorkflowTriggerRefInput.Type;
+
+/** The last event a trigger received: a real one (with its run) or a captured test event. */
+export const WorkflowTriggerSample = Schema.Struct({
+  triggerId: Schema.String,
+  at: IsoDateTime,
+  test: Schema.Boolean,
+  runId: Schema.NullOr(WorkflowRunId),
+  payload: Schema.Unknown,
+});
+export type WorkflowTriggerSample = typeof WorkflowTriggerSample.Type;
+
+/** `trigger.listen` emits Listening, then Captured or Expired, and ends. */
+export const WorkflowTriggerListenEvent = Schema.Union([
+  Schema.TaggedStruct("Listening", { url: Schema.String, expiresAt: IsoDateTime }),
+  Schema.TaggedStruct("Captured", { sample: WorkflowTriggerSample }),
+  Schema.TaggedStruct("Expired", {}),
+]);
+export type WorkflowTriggerListenEvent = typeof WorkflowTriggerListenEvent.Type;
 
 export const WorkflowMetricsInput = Schema.Struct({
   workflowId: WorkflowId,
@@ -479,6 +544,9 @@ export const WORKFLOWS_WS_METHODS = {
   workflowsRunSubscribe: "bots.workflows.run.subscribe",
   workflowsRunStep: "bots.workflows.run.step",
   workflowsRunControl: "bots.workflows.run.control",
+  workflowsRunTrigger: "bots.workflows.run.trigger",
+  workflowsTriggerSample: "bots.workflows.trigger.sample",
+  workflowsTriggerListen: "bots.workflows.trigger.listen",
   workflowsGateDecide: "bots.workflows.gate.decide",
   workflowsMetrics: "bots.workflows.metrics",
   workflowsLedger: "bots.workflows.ledger",
@@ -567,6 +635,24 @@ const WorkflowsRunControlRpc = Rpc.make(M.workflowsRunControl, {
   success: WorkflowRunSummary,
   error: WorkflowsRpcError,
 });
+/** The payload of the trigger that started a run, read when its card opens. */
+const WorkflowsRunTriggerRpc = Rpc.make(M.workflowsRunTrigger, {
+  payload: WorkflowRunTriggerInput,
+  success: WorkflowRunTriggerPayload,
+  error: WorkflowsRpcError,
+});
+const WorkflowsTriggerSampleRpc = Rpc.make(M.workflowsTriggerSample, {
+  payload: WorkflowTriggerRefInput,
+  success: Schema.NullOr(WorkflowTriggerSample),
+  error: WorkflowsRpcError,
+});
+/** Test mode of a webhook trigger: the next delivery in 120 s is captured and starts no run. */
+const WorkflowsTriggerListenRpc = Rpc.make(M.workflowsTriggerListen, {
+  payload: WorkflowTriggerRefInput,
+  success: WorkflowTriggerListenEvent,
+  error: WorkflowsRpcError,
+  stream: true,
+});
 /** Owner-only approval of a gate: no MCP tool pairs with it, so no bot or step can decide one. */
 const WorkflowsGateDecideRpc = Rpc.make(M.workflowsGateDecide, {
   payload: WorkflowGateDecideInput,
@@ -600,6 +686,9 @@ export const WORKFLOWS_RPCS = [
   WorkflowsRunSubscribeRpc,
   WorkflowsRunStepRpc,
   WorkflowsRunControlRpc,
+  WorkflowsRunTriggerRpc,
+  WorkflowsTriggerSampleRpc,
+  WorkflowsTriggerListenRpc,
   WorkflowsGateDecideRpc,
   WorkflowsMetricsRpc,
   WorkflowsLedgerRpc,
@@ -614,6 +703,8 @@ export const WORKFLOWS_GUARDED_RPC_SCOPES = {
   [M.workflowsRestore]: AuthOrchestrationOperateScope,
   [M.workflowsRunStart]: AuthOrchestrationOperateScope,
   [M.workflowsRunControl]: AuthOrchestrationOperateScope,
+  // Listening changes what the next delivery does: it is captured instead of starting a run.
+  [M.workflowsTriggerListen]: AuthOrchestrationOperateScope,
   // The user's session only, never a tool: bots and workflow steps never approve a gate.
   [M.workflowsGateDecide]: AuthOrchestrationOperateScope,
 } as const;
@@ -627,6 +718,8 @@ export const WORKFLOWS_READ_RPC_SCOPES = {
   [M.workflowsRunGet]: AuthOrchestrationReadScope,
   [M.workflowsRunSubscribe]: AuthOrchestrationReadScope,
   [M.workflowsRunStep]: AuthOrchestrationReadScope,
+  [M.workflowsRunTrigger]: AuthOrchestrationReadScope,
+  [M.workflowsTriggerSample]: AuthOrchestrationReadScope,
   [M.workflowsMetrics]: AuthOrchestrationReadScope,
   [M.workflowsLedger]: AuthOrchestrationReadScope,
 } as const;

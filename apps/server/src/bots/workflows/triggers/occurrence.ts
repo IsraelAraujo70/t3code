@@ -11,6 +11,7 @@ import * as Result from "effect/Result";
 export const occurrenceKey = {
   cron: (id: string, at: Date) => `cron:${id}:${at.toISOString()}`,
   webhook: (id: string) => `webhook:${id}`,
+  test: (triggerId: string, id: string) => `test:${triggerId}:${id}`,
   manual: (id: string) => `manual:${id}`,
   bot: (id: string, request: string) => `bot:${id}:${request}`,
   tag: (remote: string, tag: string, sha: string) => `tag:${remote}:${tag}:${sha}`,

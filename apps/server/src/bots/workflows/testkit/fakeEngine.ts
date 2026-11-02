@@ -19,7 +19,7 @@ import { WorkflowInterpreter } from "../Interpreter.ts";
 import { cost } from "./decideHarness.ts";
 
 /** Every workflow is enabled at commit "c1". */
-export const layerCatalog = (workflows: ReadonlyArray<CompiledWorkflow>) =>
+export const layerCatalog = (workflows: ReadonlyArray<CompiledWorkflow>, enabled = true) =>
   Layer.succeed(
     WorkflowCatalog,
     WorkflowCatalog.of({
@@ -32,8 +32,9 @@ export const layerCatalog = (workflows: ReadonlyArray<CompiledWorkflow>) =>
           : {
               _tag: "Ready" as const,
               version: { workflowId, commit: "c1", compiled },
-              enabled: true,
+              enabled,
               suspended: false,
+              off: new Set<string>(),
             };
       }),
       pinned: Effect.fn("WorkflowCatalog.pinned")(function* (workflowId: string, commit: string) {

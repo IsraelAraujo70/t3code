@@ -1,12 +1,15 @@
 import type { Node, Edge } from "@xyflow/react";
 import type {
+  CanvasTrigger,
   CanvasAdapter,
   CanvasModel,
   CanvasNode,
   CanvasAnnotation,
 } from "@t3tools/client-runtime/workflows";
 
-export type WorkflowFlowNode = Node<{ model: CanvasNode } | { annotation: CanvasAnnotation }>;
+export type WorkflowFlowNode = Node<
+  { model: CanvasNode } | { annotation: CanvasAnnotation } | { trigger: CanvasTrigger }
+>;
 export type ReactFlowScene = {
   nodes: WorkflowFlowNode[];
   edges: Edge[];
@@ -18,6 +21,17 @@ export const reactFlowAdapter: CanvasAdapter<ReactFlowScene> = {
   fromModel: (model, mode) => ({
     ...(model.viewport ? { viewport: model.viewport } : {}),
     nodes: [
+      ...model.triggers.map((trigger): WorkflowFlowNode => ({
+        id: trigger.id,
+        type: "workflow",
+        position: { x: trigger.x, y: trigger.y },
+        width: trigger.w,
+        height: trigger.h,
+        data: { trigger },
+        draggable: mode === "edit",
+        connectable: false,
+        deletable: mode === "edit",
+      })),
       ...model.nodes.map((node): WorkflowFlowNode => ({
         id: node.id,
         type: "workflow",
@@ -41,17 +55,44 @@ export const reactFlowAdapter: CanvasAdapter<ReactFlowScene> = {
         connectable: false,
       })),
     ],
-    edges: model.edges.map((edge) => ({
-      id: edge.id,
-      source: edge.from,
-      target: edge.to,
-      sourceHandle: edge.port,
-      type: "rough",
-      ...(edge.port === null ? {} : { label: edge.port }),
-    })),
+    edges: [
+      ...model.entries.map((edge) => ({
+        id: edge.id,
+        source: edge.from,
+        target: edge.to,
+        type: "rough",
+        selectable: false,
+        deletable: false,
+        data: { entry: true },
+      })),
+      ...model.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.from,
+        target: edge.to,
+        sourceHandle: edge.port,
+        type: "rough",
+        ...(edge.port === null ? {} : { label: edge.port }),
+      })),
+    ],
   }),
   toModel: (scene): CanvasModel => ({
     ...(scene.viewport ? { viewport: scene.viewport } : {}),
+    triggers: scene.nodes.flatMap((node) =>
+      "trigger" in node.data
+        ? [
+            {
+              ...node.data.trigger,
+              x: node.position.x,
+              y: node.position.y,
+              w: node.width ?? node.data.trigger.w,
+              h: node.height ?? node.data.trigger.h,
+            },
+          ]
+        : [],
+    ),
+    entries: scene.edges
+      .filter((edge) => edge.data?.entry === true)
+      .map((edge) => ({ id: edge.id, from: edge.source, to: edge.target })),
     nodes: scene.nodes.flatMap((node) =>
       "model" in node.data
         ? [
@@ -78,11 +119,13 @@ export const reactFlowAdapter: CanvasAdapter<ReactFlowScene> = {
           ]
         : [],
     ),
-    edges: scene.edges.map((edge) => ({
-      id: edge.id,
-      from: edge.source,
-      to: edge.target,
-      port: edge.sourceHandle ?? null,
-    })),
+    edges: scene.edges
+      .filter((edge) => edge.data?.entry !== true)
+      .map((edge) => ({
+        id: edge.id,
+        from: edge.source,
+        to: edge.target,
+        port: edge.sourceHandle ?? null,
+      })),
   }),
 };

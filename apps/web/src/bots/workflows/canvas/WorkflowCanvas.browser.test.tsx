@@ -7,6 +7,8 @@ import { LazyWorkflowCanvas as WorkflowCanvas } from "./LazyWorkflowCanvas";
 
 function fixture(): CanvasModel {
   return {
+    triggers: [],
+    entries: [],
     nodes: [0, 1, 2].map((n) => ({
       id: `n${n}`,
       kind: "agent",
@@ -162,4 +164,59 @@ it("draws map and loop frames dashed", async () => {
   await expect.element(screen.getByText("Node 0")).toBeVisible();
   const dashed = document.querySelectorAll('[data-id="each"] svg path[stroke-dasharray="8 6"]');
   expect(dashed.length).toBeGreaterThan(0);
+});
+
+it("draws trigger entries and selects and deletes a trigger", async () => {
+  const base = fixture();
+  const model: CanvasModel = {
+    ...base,
+    nodes: base.nodes.slice(0, 2),
+    edges: [],
+    annotations: [],
+    triggers: [
+      {
+        id: "manual",
+        kind: "manual",
+        label: "Start manually",
+        subtitle: "",
+        x: -280,
+        y: 0,
+        w: 200,
+        h: 80,
+      },
+      {
+        id: "hook",
+        kind: "webhook",
+        label: "Incoming hook",
+        subtitle: "",
+        x: -280,
+        y: 150,
+        w: 200,
+        h: 80,
+        enabled: false,
+      },
+    ],
+    entries: ["manual", "hook"].flatMap((from) =>
+      base.nodes.slice(0, 2).map((node) => ({ id: from + node.id, from, to: node.id })),
+    ),
+  };
+  const selected = vi.fn();
+  const changed = vi.fn();
+  await using screen = await render(
+    <div style={{ width: 900, height: 500 }}>
+      <WorkflowCanvas model={model} mode="edit" onSelectNode={selected} onChange={changed} />
+    </div>,
+  );
+  await expect.element(screen.getByText("Start manually")).toBeVisible();
+  await expect.element(screen.getByText("Incoming hook")).toBeVisible();
+  await expect.element(screen.getByText("Off")).toBeVisible();
+  await vi.waitFor(() => expect(document.querySelectorAll('[data-entry="true"]')).toHaveLength(4));
+  await userEvent.click(screen.getByText("Incoming hook"));
+  expect(selected).toHaveBeenLastCalledWith("hook");
+  await userEvent.keyboard("{Delete}");
+  await vi.waitFor(() => {
+    const next: CanvasModel | undefined = changed.mock.lastCall?.[0];
+    expect(next?.triggers.map((trigger) => trigger.id)).toEqual(["manual"]);
+    expect(next?.entries).toHaveLength(2);
+  });
 });

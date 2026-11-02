@@ -22,7 +22,10 @@ import { make } from "./WorkflowTriggers.ts";
 import { getCursor } from "./cursors.ts";
 
 const runId = Schema.decodeSync(WorkflowRunId)("wfr_00000000000000000000");
-const seed = Effect.fn("test.seed")(function* (trigger: WorkflowTrigger) {
+const seed = Effect.fn("test.seed")(function* ({
+  id,
+  ...trigger
+}: WorkflowTrigger & { readonly id: string }) {
   yield* insertVersion({
     workflow_id: "daily",
     commit_sha: "head",
@@ -36,7 +39,7 @@ const seed = Effect.fn("test.seed")(function* (trigger: WorkflowTrigger) {
       id: "daily",
       title: "Daily",
       home: { project: "project" },
-      triggers: [trigger],
+      triggers: { [id]: trigger },
       budget: { steps: 10, wall: "1h", tokens: 100 },
       fatigue: { consecutiveFailures: 3 },
       nodes: {},
@@ -115,6 +118,45 @@ it.effect(
     }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
 );
 
+it.effect("resets cron while its own switch is off and fires after re-enabling", () =>
+  Effect.gen(function* () {
+    yield* seed({ id: "clock", kind: "cron", expr: "0 3 * * *", tz: "UTC" });
+    yield* toggle(true, "on");
+    const requests: TriggerRequest[] = [];
+    const service = yield* make({
+      engine: {
+        start: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return { runId };
+          }),
+      },
+    });
+    yield* service.poll(new Date("2026-01-01T02:59:00Z"));
+    const journal = yield* Journal;
+    yield* journal.append([
+      {
+        stream: workflowStream("daily"),
+        key: "trigger-toggled:clock:off",
+        fact: { _tag: "TriggerToggled", triggerId: "clock", enabled: false, by: "test", at: "now" },
+      },
+    ]);
+    yield* service.poll(new Date("2026-01-01T03:00:30Z"));
+    expect(requests).toHaveLength(0);
+    expect(Option.isNone(yield* getCursor("cron:daily:clock"))).toBe(true);
+    yield* journal.append([
+      {
+        stream: workflowStream("daily"),
+        key: "trigger-toggled:clock:on",
+        fact: { _tag: "TriggerToggled", triggerId: "clock", enabled: true, by: "test", at: "now" },
+      },
+    ]);
+    yield* service.poll(new Date("2026-01-02T02:59:00Z"));
+    yield* service.poll(new Date("2026-01-02T03:00:30Z"));
+    expect(requests).toHaveLength(1);
+  }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
+);
+
 it.effect("reads each head commit's triggers once and the switch on every listing", () =>
   Effect.gen(function* () {
     const reads: FactReads = { facts: 0, createdRows: 0 };
@@ -177,7 +219,7 @@ it.effect("reads each head commit's triggers once and the switch on every listin
           id: "daily",
           title: "Daily",
           home: { project: "project" },
-          triggers: [{ ...clock, id: "later" }],
+          triggers: { later: { kind: "cron", expr: clock.expr, tz: clock.tz } },
           budget: { steps: 10, wall: "1h", tokens: 100 },
           fatigue: { consecutiveFailures: 3 },
           nodes: {},

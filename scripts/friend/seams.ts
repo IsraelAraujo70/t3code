@@ -250,7 +250,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/scheduledTasks/ScheduledTaskService.ts",
-    markers: 11,
+    markers: 18,
     why: "rebindThread moves bot tasks; workflow webhook tasks require engine ownership and dispatch through its optional hook",
   },
   {

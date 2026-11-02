@@ -8,6 +8,7 @@ import {
   WorkflowDocRevision,
   WorkflowHash,
   WorkflowId,
+  WorkflowNodeId,
   WorkflowLedgerEntry,
   WorkflowLedgerId,
   WorkflowLedgerVerdict,
@@ -45,13 +46,31 @@ const OWNER_ONLY =
 const GATES =
   "A gate waits for the owner: only they approve or reject it, in the run view of the T3 app, and no tool can. When a run waits at a gate, tell the user it needs their approval there; do not edit, cancel, or rerun the workflow to get past it.";
 
+const RUNNABLE =
+  "Only a workflow whose `bot` entry is set can be run by you: it has a bot trigger that allows you. `description` says when to run it and `params` what to pass; `on: false` means the run would be skipped until the workflow and that trigger are on.";
+
 const Limit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: WORKFLOW_LIST_LIMIT }));
 const ParamValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
+const BotEntry = Schema.Struct({
+  trigger: Schema.String,
+  description: Schema.String,
+  params: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      type: Schema.Literals(["string", "number", "boolean"]),
+      description: Schema.optional(Schema.String),
+      default: Schema.optional(ParamValue),
+      pattern: Schema.optional(Schema.String),
+      /** No default: workflow_run must pass it. */
+      required: Schema.Boolean,
+    }),
+  ),
+  on: Schema.Boolean,
+});
 
 const WorkflowListTool = Tool.make("workflow_list", {
   ...shared,
-  description:
-    "List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. `includeTemplates` adds the ready-made workflows; read one with workflow_template to see the YAML format.",
+  description: `List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. ${RUNNABLE} \`includeTemplates\` adds the ready-made workflows; read one with workflow_template to see the YAML format.`,
   parameters: Schema.Struct({ includeTemplates: Schema.optional(Schema.Boolean) }),
   success: Schema.Struct({
     workflows: Schema.Array(
@@ -61,6 +80,8 @@ const WorkflowListTool = Tool.make("workflow_list", {
         valid: Schema.Boolean,
         enabled: Schema.Boolean,
         triggers: Schema.Array(Schema.String),
+        /** null: you cannot run this workflow. */
+        bot: Schema.NullOr(BotEntry),
         lastRun: Schema.NullOr(Schema.Struct({ runId: WorkflowRunId, status: WorkflowRunStatus })),
       }),
     ),
@@ -127,8 +148,12 @@ const WorkflowSaveTool = Tool.make("workflow_save", {
 
 const WorkflowSetEnabledTool = Tool.make("workflow_set_enabled", {
   ...shared,
-  description: `Turn a workflow's triggers on or off. ${NEEDS_MANAGE}`,
-  parameters: Schema.Struct({ workflowId: WorkflowId, enabled: Schema.Boolean }),
+  description: `Turn a workflow on or off, or with \`triggerId\` only one of its triggers (a trigger runs only while the workflow is on too). ${NEEDS_MANAGE}`,
+  parameters: Schema.Struct({
+    workflowId: WorkflowId,
+    triggerId: Schema.optional(WorkflowNodeId),
+    enabled: Schema.Boolean,
+  }),
   success: Schema.Struct({ enabled: Schema.Boolean }),
 })
   .annotate(Tool.Readonly, false)
@@ -137,7 +162,7 @@ const WorkflowSetEnabledTool = Tool.make("workflow_set_enabled", {
 
 const WorkflowRunTool = Tool.make("workflow_run", {
   ...shared,
-  description: `Start a run now. The same \`clientRequestId\` returns the same run instead of starting another. ${NEEDS_MANAGE}`,
+  description: `Start a run through the workflow's bot trigger, with \`params\` as its \`bot\` entry in workflow_list describes them. A workflow without a \`bot\` entry for you cannot be run: tell the user the owner can add a bot trigger in the workflow editor. The same \`clientRequestId\` returns the same run instead of starting another. ${NEEDS_MANAGE}`,
   parameters: Schema.Struct({
     workflowId: WorkflowId,
     params: Schema.optional(Schema.Record(Schema.String, ParamValue)),

@@ -750,6 +750,8 @@ export const layer = Layer.effect(
       trigger: "scheduled" | "manual" | "webhook",
       webhook?: {
         readonly deliveryId: string;
+        // Fork (friend): Preserve the structured workflow delivery.
+        readonly request: WebhookRequest;
         readonly prompt: string;
         readonly dispatched: Ref.Ref<boolean>;
       },
@@ -890,7 +892,12 @@ export const layer = Layer.effect(
             ? yield* Effect.exit(
                 Option.isSome(workflowHook) && webhook !== undefined
                   ? workflowHook.value
-                      .fire({ taskId: active.id, deliveryId: webhook.deliveryId, prompt })
+                      .fire({
+                        taskId: active.id,
+                        deliveryId: webhook.deliveryId,
+                        prompt,
+                        request: webhook.request,
+                      })
                       .pipe(
                         Effect.as(null),
                         Effect.mapError((cause) =>
@@ -1715,6 +1722,8 @@ export const layer = Layer.effect(
       task: ScheduledTask,
       deliveryId: string,
       prompt: string,
+      // Fork (friend): Carry the request through immediate and pending dispatch.
+      request: WebhookRequest,
     ) {
       const runOutcome = (outcome: "started" | "skipped" | "failed") =>
         Effect.all([
@@ -1722,7 +1731,8 @@ export const layer = Layer.effect(
           Metrics.increment(Metrics.webhookRunsTotal, { outcome }),
         ]);
       const dispatched = yield* Ref.make(false);
-      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched }).pipe(
+      // Fork (friend): Deliver the structured request to workflow hooks.
+      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched, request }).pipe(
         Effect.flatMap(({ task: completed }) =>
           completed.lastRunStatus === "failed"
             ? runOutcome("failed").pipe(
@@ -2171,7 +2181,8 @@ export const layer = Layer.effect(
           }
           yield* observe("accepted");
           const permit = yield* webhookPermit(task.id);
-          yield* runWebhookDelivery(task, deliveryId, rendered.prompt).pipe(
+          // Fork (friend): Preserve the immediate request.
+          yield* runWebhookDelivery(task, deliveryId, rendered.prompt, request).pipe(
             permit.withPermits(1),
             Effect.ensuring(release),
             Effect.forkIn(serviceScope),
@@ -2246,7 +2257,12 @@ export const layer = Layer.effect(
                   const task = yield* decodePendingTask(entry.task_json);
                   const request = yield* decodePendingRequest(entry.request_json);
                   const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
-                  return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
+                  // Fork (friend): Keep the decoded request for workflow dispatch.
+                  return {
+                    task,
+                    request,
+                    rendered: renderWebhookPrompt(task.prompt, request, frameId),
+                  };
                 }).pipe(Effect.exit);
                 if (Exit.isFailure(prepared)) {
                   if (Cause.hasInterruptsOnly(prepared.cause))
@@ -2259,13 +2275,17 @@ export const layer = Layer.effect(
                   yield* remove;
                   continue;
                 }
-                const { task, rendered } = prepared.value;
+                // Fork (friend): Recover the durable structured request.
+                const { task, request, rendered } = prepared.value;
                 if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
                   yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
                   yield* releaseFailedDelivery(entry.delivery_id);
                 } else {
                   yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
-                  if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt)))
+                  // Fork (friend): Preserve the durable request.
+                  if (
+                    !(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt, request))
+                  )
                     return;
                 }
                 yield* remove;

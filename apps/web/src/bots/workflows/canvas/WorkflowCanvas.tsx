@@ -130,7 +130,9 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
               ),
             });
           }}
-          onNodeClick={(_, node) => onSelectNode?.("model" in node.data ? node.id : null)}
+          onNodeClick={(_, node) =>
+            onSelectNode?.("model" in node.data || "trigger" in node.data ? node.id : null)
+          }
           onPaneClick={() => {
             setMenu(null);
             onSelectNode?.(null);
@@ -163,7 +165,8 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
           }
           onEdgeContextMenu={(e, edge) => {
             e.preventDefault();
-            if (editable) setMenu({ x: e.clientX, y: e.clientY, edge: edge.id });
+            if (editable && edge.data?.entry !== true)
+              setMenu({ x: e.clientX, y: e.clientY, edge: edge.id });
           }}
           onPaneContextMenu={(e) => {
             e.preventDefault();

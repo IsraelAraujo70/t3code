@@ -6,10 +6,12 @@ import type {
   WorkflowGateView,
   WorkflowRunDelta,
   WorkflowRunSummary,
+  WorkflowRunTriggerView,
   WorkflowStepAttemptView,
   WorkflowStepDetail,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import type { Json } from "effect/Schema";
 import type { CompiledWorkflow } from "@t3tools/shared/workflows";
 
 import {
@@ -75,7 +77,11 @@ export const runSummary = (state: RunState, now?: number): WorkflowRunSummary =>
     status: state.ended?.status ?? (state.paused ? "paused" : "running"),
     pausedFor: state.paused?.reason ?? null,
     skipReason: null,
-    trigger: started.trigger,
+    trigger: {
+      id: started.trigger.id ?? started.trigger.kind,
+      kind: started.trigger.kind,
+      label: started.trigger.label,
+    },
     startedAt: started.at,
     endedAt: state.ended?.at ?? null,
     outputStatus: state.output?.status ?? null,
@@ -109,6 +115,22 @@ export const runSummary = (state: RunState, now?: number): WorkflowRunSummary =>
   };
 };
 
+/** The header of a run's trigger card; the payload itself is read on demand. */
+export const runTriggerView = (trigger: {
+  readonly id?: string | undefined;
+  readonly kind: string;
+  readonly occurrence: string;
+  readonly label: string;
+  readonly payload: Json;
+}): WorkflowRunTriggerView => ({
+  id: trigger.id ?? trigger.kind,
+  kind: trigger.kind,
+  label: trigger.label,
+  occurrence: trigger.occurrence,
+  test: trigger.occurrence.startsWith("test:"),
+  payloadBytes: JSON.stringify(trigger.payload ?? null).length,
+});
+
 /**
  * A run that has no RunStarted yet, from its workflow's stream: `queued` while its TriggerFired
  * waits, `skipped` with the reason once a TriggerSkipped answered it. null when the occurrence is unknown.
@@ -136,7 +158,7 @@ export const pendingSummary = (
       status: skipped ? "skipped" : "queued",
       skipReason: skipped?._tag === "TriggerSkipped" ? skipped.reason : null,
       pausedFor: null,
-      trigger: f,
+      trigger: { id: f.triggerId, kind: f.kind, label: f.label },
       startedAt: f.at,
       endedAt: null,
       outputStatus: null,

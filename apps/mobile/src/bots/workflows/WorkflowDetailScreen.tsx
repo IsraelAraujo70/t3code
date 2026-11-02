@@ -1,3 +1,5 @@
+import * as Clipboard from "expo-clipboard";
+import { relativeTime } from "../../lib/time";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
@@ -98,12 +100,14 @@ function DetailContent({
             {document.definition && (
               <>
                 <View className="flex-row flex-wrap gap-2">
-                  <ControlPill
-                    label="Run now"
-                    variant="primary"
-                    disabled={!canRun || !document.valid}
-                    onPress={() => setShowRun(true)}
-                  />
+                  {document.triggers.some((trigger) => trigger.kind === "manual") && (
+                    <ControlPill
+                      label="Run now"
+                      variant="primary"
+                      disabled={!canRun || !document.valid}
+                      onPress={() => setShowRun(true)}
+                    />
+                  )}
                   {document.valid && (
                     <ControlPill
                       label="Edit"
@@ -115,10 +119,44 @@ function DetailContent({
                 </View>
                 <WorkflowGraph model={toCanvasModel(document.definition)} />
                 <ListSection title="Triggers">
-                  {(document.definition.triggers ?? []).map((trigger) => (
-                    <Text key={trigger.id}>
-                      {trigger.id} · {trigger.kind}
-                    </Text>
+                  {document.triggers.map((trigger) => (
+                    <View key={trigger.id} className="gap-2 p-3">
+                      <Text>{trigger.title ?? trigger.id}</Text>
+                      <Text>{trigger.label}</Text>
+                      {trigger.kind !== "manual" && (
+                        <Switch
+                          accessibilityLabel={`Enable ${trigger.title ?? trigger.id}`}
+                          value={trigger.enabled !== false}
+                          disabled={pending || !canEnable}
+                          onValueChange={async (enabled) => {
+                            setPending(true);
+                            await enable({
+                              environmentId,
+                              input: {
+                                workflowId,
+                                triggerId: trigger.id,
+                                enabled,
+                                clientRequestId: Crypto.randomUUID(),
+                              },
+                            });
+                            setPending(false);
+                          }}
+                        />
+                      )}
+                      {trigger.lastFiredAt && (
+                        <Text>Last event {relativeTime(trigger.lastFiredAt)}</Text>
+                      )}
+                      {trigger.kind === "webhook" && trigger.webhookUrl && (
+                        <>
+                          <Text selectable>{trigger.webhookUrl}</Text>
+                          <ControlPill
+                            label="Copy"
+                            variant="pill"
+                            onPress={() => void Clipboard.setStringAsync(trigger.webhookUrl!)}
+                          />
+                        </>
+                      )}
+                    </View>
                   ))}
                 </ListSection>
                 {showRun && (

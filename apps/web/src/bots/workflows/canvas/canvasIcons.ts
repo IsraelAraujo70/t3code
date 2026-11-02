@@ -1,4 +1,14 @@
 import {
+  MousePointerClick,
+  BotMessageSquare,
+  CornerDownRight,
+  Webhook,
+  Clock,
+  Tag,
+  // oxlint-disable-next-line no-restricted-imports -- Workflow trigger icons use the shared canvas icon registry.
+  GitMerge,
+  CircleCheckBig,
+  TriangleAlert,
   Bot,
   SquareTerminal,
   Hand,
@@ -19,6 +29,15 @@ import {
 } from "lucide-react";
 import type { CanvasIcon } from "@t3tools/client-runtime/workflows";
 export const canvasIcons: Record<CanvasIcon, LucideIcon> = {
+  manual: MousePointerClick,
+  botTrigger: BotMessageSquare,
+  called: CornerDownRight,
+  webhook: Webhook,
+  cron: Clock,
+  tag: Tag,
+  merged: GitMerge,
+  settled: CircleCheckBig,
+  alarm: TriangleAlert,
   agent: Bot,
   command: SquareTerminal,
   gate: Hand,

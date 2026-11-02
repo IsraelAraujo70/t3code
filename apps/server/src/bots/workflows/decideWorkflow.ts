@@ -3,10 +3,11 @@
  * Pure, like `decide`; the engine appends what it returns in one transaction.
  */
 import * as DateTime from "effect/DateTime";
-import { matchesWhole } from "@t3tools/shared/workflows";
+import { decodeRunParams } from "@t3tools/shared/workflows";
 import { runStream, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
 import { suspendedNotice } from "./notices/notices.ts";
+import { callerOf, originOf, resolveTrigger, triggerBlock } from "./triggers/policy.ts";
 import type { CurrentVersion } from "./Catalog.ts";
 import type { NewFact, StoredFact } from "./facts.ts";
 
@@ -85,36 +86,29 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
       skip("invalid");
       continue;
     }
-    if (!current.enabled) {
-      skip("disabled");
-      continue;
-    }
-    if (current.suspended || suspendedNow) {
-      skip("suspended");
-      continue;
-    }
     const { definition } = current.version.compiled;
-    const declarations = definition.params ?? {};
-    const params: Record<string, string | number | boolean> = {};
-    let valid = Object.keys(trigger.params).every((key) => Object.hasOwn(declarations, key));
-    for (const [name, spec] of Object.entries(declarations)) {
-      const value = Object.hasOwn(trigger.params, name) ? trigger.params[name] : spec.default;
-      if (
-        (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") ||
-        typeof value !== spec.type
-      ) {
-        valid = false;
-        continue;
-      }
-      if (typeof value === "string" && spec.pattern !== undefined) {
-        if (!matchesWhole(spec.pattern, value)) valid = false;
-      }
-      params[name] = value;
+    const resolved = resolveTrigger(definition.triggers, trigger.triggerId, trigger.kind);
+    const block = triggerBlock({
+      trigger: resolved,
+      firedKind: trigger.kind,
+      origin: originOf(trigger.occurrence),
+      status: {
+        enabled: current.enabled,
+        suspended: current.suspended || suspendedNow,
+        off: current.off,
+      },
+      caller: callerOf(trigger.kind, trigger.payload),
+    });
+    if (block !== null || resolved === undefined) {
+      skip(block ?? "invalid");
+      continue;
     }
-    if (!valid) {
+    const decoded = decodeRunParams(definition.params, trigger.params);
+    if (!decoded.ok) {
       skip("invalid");
       continue;
     }
+    const params = decoded.params;
     const concurrency = definition.concurrency ?? "single";
     if (busy && concurrency === "queue") break;
     if (busy && concurrency === "single") {
@@ -143,7 +137,13 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
         hash: current.version.compiled.hash,
         title: definition.title,
         params,
-        trigger: { kind: trigger.kind, occurrence, label: trigger.label, payload: trigger.payload },
+        trigger: {
+          id: resolved.id,
+          kind: trigger.kind,
+          occurrence,
+          label: trigger.label,
+          payload: trigger.payload,
+        },
         budget: {
           steps: definition.budget.steps,
           wallMs,

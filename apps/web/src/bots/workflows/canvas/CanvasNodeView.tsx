@@ -10,6 +10,7 @@ import {
   CANVAS_ROUGH,
   CANVAS_FRAME_DASH,
   CANVAS_STATUS_MARKS,
+  canvasTriggerType,
   canvasStatusMark,
   canvasShapePath,
   canvasSeed,
@@ -24,7 +25,10 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
   const [editing, setEditing] = useState(false);
   const model = "model" in data ? data.model : null;
   const annotation = "annotation" in data ? data.annotation : null;
-  const style = CANVAS_NODE_STYLES[model?.kind ?? "note"];
+  const trigger = "trigger" in data ? data.trigger : null;
+  const content = model ?? trigger;
+  const style =
+    CANVAS_NODE_STYLES[trigger ? canvasTriggerType(trigger.kind) : (model?.kind ?? "note")];
   const { shape, fill } = style;
   const hue = CANVAS_HUES[style.hue];
   const stroke = `light-dark(${hue.light.stroke}, ${hue.dark.stroke})`;
@@ -42,7 +46,15 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
       ),
     [id, shape, fill, width, height],
   );
-  const mark = model?.status ? canvasStatusMark(model.status) : undefined;
+  const mark = trigger
+    ? trigger.fired === true
+      ? "ok"
+      : trigger.fired === false
+        ? "dim"
+        : undefined
+    : model?.status
+      ? canvasStatusMark(model.status)
+      : undefined;
   const status = mark ? CANVAS_STATUS_MARKS[mark] : undefined;
   const tone = status
     ? `var(--${status.tone === "danger" ? "destructive" : status.tone === "muted" ? "muted-foreground" : status.tone})`
@@ -109,14 +121,19 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
               if (e.key === "Escape") e.currentTarget.blur();
             }}
           />
-        ) : model ? (
+        ) : content ? (
           <>
             <Icon size={16} color={stroke} />
             <div className="wf-label">
-              <div className="wf-name">{model.label}</div>
-              <div className="wf-subtitle" title={model.subtitle}>
-                {model.subtitle}
+              <div className="wf-name">{content.label}</div>
+              <div className="wf-subtitle" title={content.subtitle}>
+                {content.subtitle}
               </div>
+              {trigger?.enabled === false && (
+                <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground">
+                  Off
+                </span>
+              )}
             </div>
           </>
         ) : (
@@ -132,6 +149,14 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
         >
           <Badge size={13} color="white" />
         </span>
+      )}
+      {trigger && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          isConnectable={false}
+          style={{ background: "var(--background)", borderColor: stroke, width: 8, height: 8 }}
+        />
       )}
       {model && (
         <>

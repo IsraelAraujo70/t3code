@@ -9,10 +9,11 @@ const decodeDefinition = Schema.decodeEffect(Schema.fromJsonString(WorkflowDefin
 
 export interface TriggerTarget {
   readonly workflowId: string;
+  /** The workflow switch and the trigger's own switch. */
   readonly enabled: boolean;
   /** The workflow's `home.project` reference, as the definition names it. */
   readonly home: string;
-  readonly trigger: WorkflowTrigger;
+  readonly trigger: WorkflowTrigger & { readonly id: string };
 }
 
 /**
@@ -25,7 +26,7 @@ export const makeTriggerTargets = Effect.sync(() => {
     {
       readonly commit: string;
       readonly home: string;
-      readonly triggers: ReadonlyArray<WorkflowTrigger>;
+      readonly triggers: ReadonlyArray<WorkflowTrigger & { readonly id: string }>;
     }
   >();
   return Effect.gen(function* () {
@@ -44,14 +45,22 @@ export const makeTriggerTargets = Effect.sync(() => {
         head = {
           commit: row.head_commit,
           home: definition.home.project,
-          triggers: definition.triggers ?? [],
+          triggers: Object.entries(definition.triggers ?? {}).map(([id, trigger]) => ({
+            ...trigger,
+            id,
+          })),
         };
         heads.set(row.workflow_id, head);
       }
       if (head.triggers.length === 0) continue;
-      const { enabled } = yield* journal.workflowStatus(row.workflow_id);
+      const status = yield* journal.workflowStatus(row.workflow_id);
       for (const trigger of head.triggers)
-        targets.push({ workflowId: row.workflow_id, enabled, home: head.home, trigger });
+        targets.push({
+          workflowId: row.workflow_id,
+          enabled: status.enabled && !status.off.has(trigger.id),
+          home: head.home,
+          trigger,
+        });
     }
     return targets;
   });

@@ -1,3 +1,4 @@
+import { decodeRunParams } from "@t3tools/shared/workflows";
 import {
   isWorkflowStepThreadId,
   OrchestratorMcpFailure,
@@ -120,14 +121,31 @@ const handlers = (
 ): McpToolAccess.Handlers<WorkflowTools> => ({
   workflow_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      yield* callerBot;
+      const { bot } = yield* callerBot;
       const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      const entries = yield* definitions.botEntries(bot.id).pipe(Effect.mapError(failure));
       const workflows = (yield* definitions.list.pipe(Effect.mapError(failure))).map((w) => ({
         id: w.workflowId,
         title: w.title,
         valid: w.valid,
         enabled: w.enabled,
         triggers: w.triggers.map((t) => t.label),
+        bot: (() => {
+          const entry = entries.find((entry) => entry.workflowId === w.workflowId);
+          return entry
+            ? {
+                trigger: entry.triggerId,
+                description: entry.description,
+                on: entry.on,
+                params: Object.fromEntries(
+                  Object.entries(entry.params).map(([name, spec]) => [
+                    name,
+                    { ...spec, required: spec.default === undefined },
+                  ]),
+                ),
+              }
+            : null;
+        })(),
         lastRun: w.lastRun ? { runId: w.lastRun.runId, status: w.lastRun.status } : null,
       }));
       if (!input.includeTemplates) return { workflows };
@@ -225,18 +243,45 @@ const handlers = (
   workflow_run: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { bot } = yield* callerBot;
+      const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
+      const entries = yield* definitions.botEntries(bot.id).pipe(Effect.mapError(failure));
+      const entry = entries.find((entry) => entry.workflowId === input.workflowId);
+      if (!entry) {
+        const document = yield* definitions
+          .document(input.workflowId)
+          .pipe(Effect.mapError(failure));
+        const hasBotTrigger = Object.values(document.definition?.triggers ?? {}).some(
+          (trigger) => trigger.kind === "bot",
+        );
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: hasBotTrigger
+            ? "This workflow's bot trigger does not allow this bot."
+            : "This workflow has no bot trigger, so no bot can run it. The owner can add one in the workflow editor.",
+        });
+      }
       yield* manage(bot.canManageBots || (yield* ownerTurn));
+      const decoded = decodeRunParams(entry.params, input.params ?? {});
+      if (!decoded.ok)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: decoded.errors.map((error) => error.message).join("; "),
+        });
+      const scope = yield* McpInvocationContext.McpInvocationContext;
       const engine = yield* engineAvailable;
       const id = input.clientRequestId ?? (yield* requestId);
       const { runId } = yield* engine
         .start({
           workflowId: input.workflowId,
-          triggerId: "bot",
+          triggerId: entry.triggerId,
           kind: "bot",
           occurrence: `bot:${bot.id}:${id}`,
           label: `Run by ${bot.name} (bot)`,
-          params: input.params ?? {},
-          payload: null,
+          params: decoded.params,
+          payload: {
+            bot: { id: bot.id, name: bot.name },
+            threadId: scope.thread?.threadId ?? null,
+          },
           causalDepth: 0,
           parent: null,
         })

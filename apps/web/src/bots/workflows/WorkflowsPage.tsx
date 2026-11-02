@@ -1,3 +1,4 @@
+import { TriggerIcon } from "./run/TriggerIcon";
 import { formatTokens, formatUsd } from "@t3tools/client-runtime/workflows";
 import type {
   EnvironmentId,
@@ -178,9 +179,20 @@ function WorkflowRow(props: {
           ) : null}
         </div>
         {workflow.triggers.length > 0 ? (
-          <p className="truncate text-muted-foreground text-xs">
-            {workflow.triggers.map((trigger) => trigger.label).join(" · ")}
-          </p>
+          <div className="flex flex-wrap gap-1 text-xs text-muted-foreground">
+            {workflow.triggers.map((trigger) => {
+              return (
+                <span
+                  key={trigger.id}
+                  className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5"
+                >
+                  <TriggerIcon kind={trigger.kind} />
+                  {trigger.title ?? trigger.label}
+                  {trigger.enabled === false ? " · off" : null}
+                </span>
+              );
+            })}
+          </div>
         ) : null}
         {lastRun === null ? null : (
           <Link
@@ -208,16 +220,18 @@ function WorkflowRow(props: {
             }).then((result) => reportCommandResult("Could not change the workflow", result))
           }
         />
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={!workflow.valid}
-          onClick={props.onRun}
-          aria-label="Run now"
-        >
-          <PlayIcon className="size-3.5" />
-          Run
-        </Button>
+        {workflow.triggers.some((trigger) => trigger.kind === "manual") ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!workflow.valid}
+            onClick={props.onRun}
+            aria-label="Run now"
+          >
+            <PlayIcon className="size-3.5" />
+            Run
+          </Button>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost-muted"

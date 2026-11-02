@@ -18,7 +18,10 @@ export const fireTrigger = Effect.fn("WorkflowTriggers.fireTrigger")(function* (
     kind: occurrence.kind,
     label: occurrence.label,
   };
-  const params = triggerParams(target.trigger.params, trigger);
+  const params = triggerParams(
+    "params" in target.trigger ? target.trigger.params : undefined,
+    trigger,
+  );
   return yield* engine.start({
     ...occurrence,
     workflowId: target.workflowId,

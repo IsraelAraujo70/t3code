@@ -72,6 +72,48 @@ interface FailingCase {
 
 const FAILING: ReadonlyArray<FailingCase> = [
   {
+    name: "duplicate manual triggers",
+    code: "trigger",
+    path: "triggers.second",
+    change: (def) => {
+      def.triggers = { first: { kind: "manual" }, second: { kind: "manual" } };
+    },
+  },
+  {
+    name: "trigger collides with node",
+    code: "trigger",
+    path: "triggers.plan",
+    change: (def) => {
+      def.triggers = { plan: { kind: "manual" } };
+    },
+  },
+  {
+    name: "blank bot description",
+    code: "trigger",
+    path: "triggers.bot.description",
+    change: (def) => {
+      def.triggers = { bot: { kind: "bot", description: "   " } };
+    },
+  },
+  {
+    name: "callee has no call trigger",
+    code: "trigger",
+    path: "nodes.plan.workflow",
+    host: { ...HOST, callTargets: new Map() },
+    change: (def) => {
+      def.nodes.plan = { kind: "call", workflow: "other", params: {} };
+    },
+  },
+  {
+    name: "callee refuses caller",
+    code: "trigger",
+    path: "nodes.plan.workflow",
+    host: { ...HOST, callTargets: new Map([["other", { from: ["allowed"] }]]) },
+    change: (def) => {
+      def.nodes.plan = { kind: "call", workflow: "other", params: {} };
+    },
+  },
+  {
     name: "a field of the wrong type",
     code: "schema",
     path: "nodes.plan.prompt",
@@ -274,25 +316,21 @@ const FAILING: ReadonlyArray<FailingCase> = [
   {
     name: "a cron expression that does not parse",
     code: "trigger",
-    path: "triggers[0].expr",
-    change: (d) => (d.triggers = [{ id: "nightly", kind: "cron", expr: "61 * * * *", tz: "UTC" }]),
+    path: "triggers.nightly.expr",
+    change: (d) => (d.triggers = { nightly: { kind: "cron", expr: "61 * * * *", tz: "UTC" } }),
   },
   {
     name: "an unknown time zone",
     code: "trigger",
-    path: "triggers[0].expr",
+    path: "triggers.nightly.expr",
     change: (d) =>
-      (d.triggers = [{ id: "nightly", kind: "cron", expr: "0 3 * * *", tz: "Mars/Olympus" }]),
+      (d.triggers = { nightly: { kind: "cron", expr: "0 3 * * *", tz: "Mars/Olympus" } }),
   },
   {
-    name: "two triggers with one id",
-    code: "trigger",
-    path: "triggers[1].id",
-    change: (d) =>
-      (d.triggers = [
-        { id: "go", kind: "cron", expr: "0 3 * * *", tz: "UTC" },
-        { id: "go", kind: "workflowFailed" },
-      ]),
+    name: "a trigger id that is not a node-style id",
+    code: "schema",
+    path: "triggers.Go",
+    change: (d) => (d.triggers = { Go: { kind: "cron", expr: "0 3 * * *", tz: "UTC" } }),
   },
   {
     name: "a workflow calling itself",

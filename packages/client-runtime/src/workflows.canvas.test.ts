@@ -4,6 +4,9 @@ import * as Result from "effect/Result";
 import { WorkflowNode, type WorkflowDefinition, type WorkflowNodeKind } from "@t3tools/contracts";
 import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 import {
+  defaultTriggerConfig,
+  nextTriggerId,
+  withTriggerStates,
   autoLayout,
   nodeSubtitle,
   canvasEdgeId,
@@ -16,6 +19,7 @@ import {
   updateNode,
   withNodeStatuses,
   CANVAS_NODE_SIZE,
+  CANVAS_TRIGGER_SIZE,
 } from "./workflows.canvas.ts";
 const decodeNode = Schema.decodeSync(WorkflowNode);
 const kinds: WorkflowNodeKind[] = [
@@ -220,4 +224,53 @@ describe("node subtitles", () => {
       }),
     ).toBe(expected);
   });
+});
+
+it("round trips trigger entries, positions and namespace changes", () => {
+  const d = {
+    ...fixture(),
+    triggers: { manual: defaultTriggerConfig("manual"), cron: defaultTriggerConfig("cron") },
+  };
+  expect(CANVAS_TRIGGER_SIZE).toEqual({ w: 180, h: 56 });
+  const model = toCanvasModel(d, { positions: {}, annotations: [] });
+  expect(fromCanvasModel(model, d).definition.triggers).toEqual(d.triggers);
+  expect(
+    fromCanvasModel({ ...model, triggers: model.triggers.slice(1) }, d).definition.triggers,
+  ).toEqual({ cron: d.triggers.cron });
+  const added = fromCanvasModel(
+    {
+      ...model,
+      triggers: [...model.triggers, { ...model.triggers[0]!, id: "called", kind: "call" }],
+    },
+    d,
+  );
+  expect(added.definition.triggers?.called).toEqual(defaultTriggerConfig("call"));
+  expect(added.diagnostics).toEqual([]);
+  expect(nextTriggerId(d, "manual")).toBe("manual_2");
+  expect(
+    nextNodeId({ ...d, triggers: { command_2: defaultTriggerConfig("manual") } }, "command"),
+  ).toBe("command_3");
+  expect(nextTriggerId(d, "call")).toBe("call");
+  for (const t of model.triggers) {
+    expect(model.nodes.filter((n) => n.parent === null).every((n) => t.x < n.x)).toBe(true);
+    const roots = model.nodes.filter(
+      (n) => n.parent === null && !model.edges.some((e) => e.to === n.id),
+    );
+    expect(model.entries.filter((e) => e.from === t.id).map((e) => e.to)).toEqual(
+      roots.map((n) => n.id),
+    );
+  }
+  const renamed = renameNode(
+    { ...d, canvas: { positions: { manual: { x: 1, y: 2 } }, annotations: [] } },
+    "manual",
+    "start",
+  );
+  expect(renamed.triggers?.start).toEqual(d.triggers.manual);
+  expect(renamed.canvas?.positions.start).toEqual({ x: 1, y: 2 });
+  const states = withTriggerStates(model, { enabled: new Map([["cron", false]]), fired: "manual" });
+  expect(states.triggers.map((t) => [t.id, t.fired, t.enabled])).toEqual(
+    model.triggers.map((t) => [t.id, t.id === "manual", t.id === "cron" ? false : undefined]),
+  );
+  expect(withTriggerStates(model, {}).triggers.every((t) => t.fired === undefined)).toBe(true);
+  expect(autoLayout(fixture())).toEqual(autoLayout({ ...fixture(), triggers: {} }));
 });

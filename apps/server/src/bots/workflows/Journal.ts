@@ -42,6 +42,34 @@ export interface RunRow {
 export class Journal extends Context.Service<
   Journal,
   {
+    readonly triggerSample: (
+      workflowId: string,
+      triggerId: string,
+    ) => Effect.Effect<
+      Option.Option<{
+        readonly at: string;
+        readonly occurrence: string;
+        readonly runId: string | null;
+        readonly test: boolean;
+        readonly payload: Schema.Json;
+      }>,
+      WorkflowJournalError
+    >;
+    readonly triggerLastFired: Effect.Effect<
+      ReadonlyArray<{
+        readonly workflowId: string;
+        readonly triggerId: string;
+        readonly at: string;
+      }>,
+      WorkflowJournalError
+    >;
+    readonly captureTestDelivery: (input: {
+      readonly workflowId: string;
+      readonly triggerId: string;
+      readonly deliveryId: string;
+      readonly payload: Schema.Json;
+    }) => Effect.Effect<"captured" | "replayed", WorkflowJournalError>;
+    readonly isTestDelivery: (deliveryId: string) => Effect.Effect<boolean, WorkflowJournalError>;
     readonly putRun: (row: RunRow) => Effect.Effect<void, WorkflowJournalError>;
     readonly runs: (query: {
       readonly workflowId: string | null;
@@ -131,6 +159,7 @@ const fail = (cause: unknown) =>
   new WorkflowJournalError({ message: "Workflow journal operation failed", cause });
 const decodeRunSummary = Schema.decodeUnknownEffect(WorkflowRunSummary);
 const encodeRunSummary = Schema.encodeSync(WorkflowRunSummary);
+const decodePayload = Schema.decodeEffect(Schema.fromJsonString(Schema.Json));
 const decodeFact = Schema.decodeUnknownEffect(Fact);
 const encodeFact = Schema.encodeSync(Fact);
 const decode = Effect.fn("Journal.decode")(function* (row: Row) {
@@ -165,6 +194,49 @@ const make = Effect.gen(function* () {
     return yield* decodeRunSummary(json).pipe(Effect.mapError(fail));
   });
   return Journal.of({
+    triggerSample: Effect.fn("Journal.triggerSample")(function* (workflowId, triggerId) {
+      const rows = yield* sql<{
+        at: string;
+        occurrence: string;
+        runId: string | null;
+        test: number;
+        payload_json: string;
+      }>`SELECT at, occurrence, run_id AS runId, test, payload_json FROM workflow_trigger_samples WHERE workflow_id = ${workflowId} AND trigger_id = ${triggerId}`;
+      if (!rows[0]) return Option.none();
+      const row = rows[0];
+      const payload = yield* decodePayload(row.payload_json);
+      return Option.some({
+        at: row.at,
+        occurrence: row.occurrence,
+        runId: row.runId,
+        test: row.test === 1,
+        payload,
+      });
+    }, Effect.mapError(fail)),
+    triggerLastFired: sql<{
+      workflowId: string;
+      triggerId: string;
+      at: string;
+    }>`SELECT workflow_id AS workflowId, trigger_id AS triggerId, at FROM workflow_trigger_samples ORDER BY workflow_id, trigger_id`.pipe(
+      Effect.mapError(fail),
+    ),
+    isTestDelivery: Effect.fn("Journal.isTestDelivery")(function* (deliveryId) {
+      const rows =
+        yield* sql`SELECT 1 FROM workflow_test_deliveries WHERE delivery_id = ${deliveryId}`;
+      return rows.length > 0;
+    }, Effect.mapError(fail)),
+    captureTestDelivery: Effect.fn("Journal.captureTestDelivery")(function* (input) {
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const at = new Date(yield* Clock.currentTimeMillis).toISOString();
+          const rows =
+            yield* sql`INSERT INTO workflow_test_deliveries (delivery_id, workflow_id, trigger_id, at) VALUES (${input.deliveryId}, ${input.workflowId}, ${input.triggerId}, ${at}) ON CONFLICT DO NOTHING RETURNING delivery_id`;
+          if (rows.length === 0) return "replayed" as const;
+          yield* sql`INSERT INTO workflow_trigger_samples (workflow_id, trigger_id, at, occurrence, run_id, test, payload_json) VALUES (${input.workflowId}, ${input.triggerId}, ${at}, ${"test-capture:" + input.deliveryId}, NULL, 1, ${JSON.stringify(input.payload)}) ON CONFLICT(workflow_id, trigger_id) DO UPDATE SET at=excluded.at, occurrence=excluded.occurrence, run_id=excluded.run_id, test=excluded.test, payload_json=excluded.payload_json`;
+          return "captured" as const;
+        }),
+      );
+    }, Effect.mapError(fail)),
     putRun: Effect.fn("Journal.putRun")(function* (row) {
       const s = row.summary;
       const summary = yield* Effect.try({
@@ -258,6 +330,14 @@ const make = Effect.gen(function* () {
                 const fact = rows[0]
                   ? { ...item, seq: rows[0].seq, at }
                   : Option.getOrThrow(yield* get(item.stream, item.key));
+                if (
+                  rows.length > 0 &&
+                  item.stream.startsWith("workflow:") &&
+                  item.fact._tag === "TriggerFired"
+                ) {
+                  const fired = item.fact;
+                  yield* sql`INSERT INTO workflow_trigger_samples (workflow_id, trigger_id, at, occurrence, run_id, test, payload_json) VALUES (${item.stream.slice("workflow:".length)}, ${fired.triggerId}, ${fired.at}, ${fired.occurrence}, ${fired.runId}, ${fired.occurrence.startsWith("test:") ? 1 : 0}, ${JSON.stringify(fired.payload)}) ON CONFLICT(workflow_id, trigger_id) DO UPDATE SET at=excluded.at, occurrence=excluded.occurrence, run_id=excluded.run_id, test=excluded.test, payload_json=excluded.payload_json`;
+                }
                 results.push({ fact, inserted: rows.length > 0 });
               }
               return results;
@@ -301,9 +381,9 @@ const make = Effect.gen(function* () {
       const stream = workflowStream(workflowId);
       // Without table stats SQLite takes the primary key and walks the whole stream for MAX(seq).
       const rows =
-        yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND seq IN (
+        yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND (seq IN (SELECT MAX(seq) FROM workflow_facts INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind = 'TriggerToggled' GROUP BY json_extract(payload_json, '$.triggerId')) OR seq IN (
         (SELECT MAX(seq) FROM workflow_facts INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind = 'Toggled'),
-        (SELECT MAX(seq) FROM workflow_facts INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind IN ('Suspended', 'Unsuspended')))
+        (SELECT MAX(seq) FROM workflow_facts INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind IN ('Suspended', 'Unsuspended'))))
         ORDER BY seq`;
       return workflowStatus(yield* Effect.forEach(rows, decode));
     }, Effect.mapError(fail)),

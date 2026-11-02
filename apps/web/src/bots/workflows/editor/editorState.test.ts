@@ -18,6 +18,7 @@ const definition: WorkflowDefinition = {
   edges: [],
 };
 const doc: WorkflowDocument = {
+  triggers: [],
   workflowId: workflowId,
   source: "",
   definition,

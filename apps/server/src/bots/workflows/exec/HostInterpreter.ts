@@ -198,7 +198,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           occurrence,
           label: `${parent.title} → ${intent.step}`,
           params: intent.params,
-          payload: null,
+          payload: { parent: { runId, workflowId: parent.workflowId, step: intent.step } },
           causalDepth: parent.causalDepth + 1,
           parent: { runId, step: intent.step },
           at,

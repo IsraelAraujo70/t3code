@@ -1,3 +1,14 @@
+import { AsyncResult } from "effect/reactivity";
+import { useAtomCommand } from "../../../state/use-atom-command";
+import {
+  EnvironmentId,
+  WorkflowId,
+  WorkflowDocRevision,
+  type WorkflowDocument,
+} from "@t3tools/contracts";
+vi.mock("../../../state/use-atom-command", () => ({
+  useAtomCommand: vi.fn(() => vi.fn(async () => ({ _tag: "Success", value: {} }))),
+}));
 import { defaultNodeConfig } from "@t3tools/client-runtime/workflows";
 import { WorkflowNode, type WorkflowDefinition, type WorkflowNodeKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -8,6 +19,10 @@ import { render } from "../../../../test/render";
 import { Inspector } from "./Inspector";
 
 const decodeNode = Schema.decodeOption(WorkflowNode);
+
+const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
+const decodeWorkflowId = Schema.decodeSync(WorkflowId);
+const decodeRevision = Schema.decodeSync(WorkflowDocRevision);
 
 function fixture(): WorkflowDefinition {
   return {
@@ -241,4 +256,112 @@ it("renders every node kind with a schema-valid default and nested diagnostics",
   );
   await expect.element(screen.getByText(/Nested issue/)).toBeVisible();
   await expect.element(screen.getByText(/Other issue/)).not.toBeInTheDocument();
+});
+
+it("edits a cron trigger through the trigger schema", async () => {
+  const onChange = vi.fn();
+  const definition = {
+    ...fixture(),
+    triggers: { clock: { kind: "cron" as const, expr: "0 * * * *", tz: "UTC" } },
+  };
+  await using screen = await render(
+    <Inspector
+      definition={definition}
+      selected="clock"
+      diagnostics={[]}
+      readOnly={false}
+      onChange={onChange}
+      onSelect={vi.fn()}
+    />,
+  );
+  await userEvent.fill(screen.getByRole("textbox", { name: "expr", exact: true }), "0 2 * * *");
+  await userEvent.keyboard("{Enter}");
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({
+      triggers: { clock: { kind: "cron", expr: "0 2 * * *", tz: "UTC" } },
+    }),
+  );
+});
+
+it("hides the switch for manual triggers", async () => {
+  await using screen = await render(
+    <Inspector
+      definition={{ ...fixture(), triggers: { manual: { kind: "manual" } } }}
+      selected="manual"
+      diagnostics={[]}
+      readOnly={false}
+      onChange={vi.fn()}
+      onSelect={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("switch").elements()).toHaveLength(0);
+  await expect.element(screen.getByText(/Run now opens the form/)).toBeVisible();
+});
+
+it("shows a saved webhook URL, edits its title and switches that trigger immediately", async () => {
+  const command = vi.fn(async () => AsyncResult.success(undefined));
+  vi.mocked(useAtomCommand).mockReturnValue(command);
+  const onChange = vi.fn();
+  const environmentId = decodeEnvironmentId("host");
+  const document: WorkflowDocument = {
+    workflowId: decodeWorkflowId("demo"),
+    source: "",
+    definition: { ...fixture(), triggers: { hook: { kind: "webhook" } } },
+    revision: decodeRevision("a".repeat(40)),
+    headCommit: null,
+    hash: null,
+    valid: true,
+    dirty: false,
+    diagnostics: [],
+    enabled: true,
+    suspended: false,
+    updatedBy: null,
+    updatedAt: null,
+    triggers: [
+      {
+        id: "hook",
+        kind: "webhook",
+        title: null,
+        label: "Webhook",
+        webhookUrl: "https://example.test/hook",
+        enabled: true,
+        lastFiredAt: null,
+      },
+    ],
+  };
+  if (!document.definition) throw new Error("Missing definition");
+  await using screen = await render(
+    <Inspector
+      environmentId={environmentId}
+      document={document}
+      definition={document.definition}
+      selected="hook"
+      diagnostics={[]}
+      readOnly={false}
+      onChange={onChange}
+      onSelect={vi.fn()}
+    />,
+  );
+  await expect
+    .element(screen.getByText("https://example.test/hook", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(screen.getByRole("textbox", { name: "replayKey", exact: true }))
+    .toBeVisible();
+  await userEvent.fill(screen.getByRole("textbox", { name: "title", exact: true }), "Issue event");
+  await userEvent.keyboard("{Enter}");
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({ triggers: { hook: { kind: "webhook", title: "Issue event" } } }),
+  );
+  screen.getByRole("switch", { name: "On", exact: true }).element().focus();
+  await userEvent.keyboard(" ");
+  expect(command).toHaveBeenCalledWith({
+    environmentId,
+    input: {
+      workflowId: document.workflowId,
+      triggerId: "hook",
+      enabled: false,
+      clientRequestId: expect.any(String),
+    },
+  });
 });

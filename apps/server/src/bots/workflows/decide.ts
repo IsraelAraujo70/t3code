@@ -23,6 +23,7 @@ import {
   parseExpr,
   parseTemplate,
   renderTemplate,
+  renderPrompt,
   triggerParams,
   resolveModelUse,
   type CompiledGraph,
@@ -468,7 +469,11 @@ export const decide = (
 
   const triggerRoot = (): JsonValue => {
     const payload = started.trigger.payload as JsonValue;
-    const base = { kind: started.trigger.kind, label: started.trigger.label };
+    const base = {
+      id: started.trigger.id ?? started.trigger.kind,
+      kind: started.trigger.kind,
+      label: started.trigger.label,
+    };
     return payload !== null && typeof payload === "object" && !Array.isArray(payload)
       ? { ...payload, ...base }
       : { ...base, payload };
@@ -521,6 +526,14 @@ export const decide = (
     const parsed = parseTemplate(text);
     if (Result.isFailure(parsed)) return Result.fail(parsed.failure.message);
     const rendered = renderTemplate(parsed.success, env);
+    return Result.isFailure(rendered)
+      ? Result.fail(rendered.failure.message)
+      : Result.succeed(rendered.success);
+  };
+  const promptRender = (text: string, env: EvalEnv): Result.Result<string, string> => {
+    const parsed = parseTemplate(text);
+    if (Result.isFailure(parsed)) return Result.fail(parsed.failure.message);
+    const rendered = renderPrompt(parsed.success, env);
     return Result.isFailure(rendered)
       ? Result.fail(rendered.failure.message)
       : Result.succeed(rendered.success);
@@ -779,7 +792,10 @@ export const decide = (
         resolve(step, attempt, "failed", "fail", null, `the thread of ${continued} does not exist`);
         return;
       }
-      const prompt = render(node.prompt, envFor(level, { step: { dir: stepDir(step, attempt) } }));
+      const prompt = promptRender(
+        node.prompt,
+        envFor(level, { step: { dir: stepDir(step, attempt) } }),
+      );
       if (Result.isFailure(prompt))
         return void resolve(step, attempt, "failed", "fail", null, prompt.failure);
       record({
@@ -803,7 +819,10 @@ export const decide = (
     const model = resolveModelUse(node.model, definition.models);
     if (Result.isFailure(model))
       return void resolve(step, attempt, "failed", "fail", null, model.failure);
-    const prompt = render(node.prompt, envFor(level, { step: { dir: stepDir(step, attempt) } }));
+    const prompt = promptRender(
+      node.prompt,
+      envFor(level, { step: { dir: stepDir(step, attempt) } }),
+    );
     if (Result.isFailure(prompt))
       return void resolve(step, attempt, "failed", "fail", null, prompt.failure);
     const key = `turn:${stepKey(step, attempt)}`;

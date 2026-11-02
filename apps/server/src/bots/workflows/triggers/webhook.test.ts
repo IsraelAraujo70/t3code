@@ -1,3 +1,11 @@
+import * as Deferred from "effect/Deferred";
+import * as Stream from "effect/Stream";
+import { WorkflowDocument } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { TriggerSamples } from "./samples.ts";
+import * as Samples from "./samples.ts";
+import { WorkflowDefinitions } from "../definitions/WorkflowDefinitions.ts";
+import { webhookPayload } from "./webhookPayload.ts";
 // @effect-diagnostics preferSchemaOverJson:off - Fixtures store the definition JSON as the store does.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -26,17 +34,21 @@ import { type TriggerRequest, WorkflowEngine } from "../WorkflowEngine.ts";
 import { WorkflowEngineCaller, WorkflowTriggerHook } from "./hook.ts";
 import { layerBindHook, layerHook, makeReconciler } from "./webhook.ts";
 
+const decodeDocument = Schema.decodeSync(WorkflowDocument);
+
+const request = { method: "POST", path: "/", query: "", headers: {}, bodyText: '{"ref":"main"}' };
+
 const HOOK = "wf-hook:inbox:push";
 const runId = WorkflowRunId.make("wfr_00000000000000000000");
 
 const seed = Effect.fn("test.seed")(function* (
-  triggers: ReadonlyArray<WorkflowTrigger>,
+  triggers: ReadonlyArray<WorkflowTrigger & { readonly id: string }>,
   commit = `head-${triggers.length}`,
 ) {
   yield* insertVersion({
     workflow_id: "inbox",
     commit_sha: commit,
-    revision: "rev",
+    revision: "a".repeat(40),
     semantic_hash: "hash",
     source: "",
     author: "test",
@@ -46,7 +58,7 @@ const seed = Effect.fn("test.seed")(function* (
       id: "inbox",
       title: "Inbox",
       home: { project: "app" },
-      triggers,
+      triggers: Object.fromEntries(triggers.map(({ id, ...trigger }) => [id, trigger])),
       budget: { steps: 10, wall: "1h", tokens: 100 },
       fatigue: { consecutiveFailures: 3 },
       nodes: {},
@@ -57,7 +69,7 @@ const seed = Effect.fn("test.seed")(function* (
     workflow_id: "inbox",
     path: "inbox.workflow.yaml",
     head_commit: commit,
-    revision: "rev",
+    revision: "a".repeat(40),
     title: "Inbox",
     valid: 1,
     dirty: 0,
@@ -75,7 +87,7 @@ const seed = Effect.fn("test.seed")(function* (
   ]);
 });
 
-const push: WorkflowTrigger = {
+const push: WorkflowTrigger & { readonly id: string } = {
   id: "push",
   kind: "webhook",
   signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
@@ -97,9 +109,11 @@ it.effect("a delivery becomes the trigger's TriggerFired once the engine is boun
     const requests: Array<TriggerRequest> = [];
     yield* Effect.gen(function* () {
       const hook = yield* WorkflowTriggerHook;
-      yield* hook.fire({ taskId: HOOK, deliveryId: "d1", prompt: '{"ref":"main"}' });
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "d1", prompt: '{"ref":"main"}' });
       for (const taskId of ["wf-hook:inbox", "wf-hook:inbox:gone", "wf-hook:other:push"]) {
-        const exit = yield* Effect.exit(hook.fire({ taskId, deliveryId: "d2", prompt: "x" }));
+        const exit = yield* Effect.exit(
+          hook.fire({ request, taskId, deliveryId: "d2", prompt: "x" }),
+        );
         assert.isTrue(Exit.isFailure(exit));
       }
     }).pipe(
@@ -113,9 +127,9 @@ it.effect("a delivery becomes the trigger's TriggerFired once the engine is boun
       triggerId: "push",
       kind: "webhook",
       occurrence: "webhook:d1",
-      payload: { text: '{"ref":"main"}' },
+      payload: webhookPayload(request, '{"ref":"main"}'),
     });
-  }).pipe(Effect.provide(db)),
+  }).pipe(Effect.scoped, Effect.provide(db)),
 );
 
 it.effect("a delivery before the engine waits for it, and fails after 60 s without it", () =>
@@ -126,7 +140,7 @@ it.effect("a delivery before the engine waits for it, and fails after 60 s witho
     const hook = Context.get(context, WorkflowTriggerHook);
     // Waits, then completes once the engine side binds the hook.
     const waiting = yield* hook
-      .fire({ taskId: HOOK, deliveryId: "early", prompt: "x" })
+      .fire({ request, taskId: HOOK, deliveryId: "early", prompt: "x" })
       .pipe(Effect.forkChild);
     yield* Layer.build(layerBindHook.pipe(Layer.provide(recordingEngine(requests)))).pipe(
       Effect.provideContext(context),
@@ -136,7 +150,7 @@ it.effect("a delivery before the engine waits for it, and fails after 60 s witho
 
     const unbound = Context.get(yield* Layer.build(layerHook), WorkflowTriggerHook);
     const late = yield* unbound
-      .fire({ taskId: HOOK, deliveryId: "late", prompt: "x" })
+      .fire({ request, taskId: HOOK, deliveryId: "late", prompt: "x" })
       .pipe(Effect.exit, Effect.forkChild);
     yield* TestClock.adjust("60 seconds");
     assert.isTrue(Exit.isFailure(yield* Fiber.join(late)));
@@ -259,4 +273,72 @@ it.effect("a workflow whose home project is unknown gets no task", () =>
     }).pipe(Effect.provide(service));
     expect(calls).toEqual([]);
   }).pipe(Effect.provide(Layer.mergeAll(db, NodeServices.layer))),
+);
+
+it.effect("a captured delivery replay never reaches the engine", () =>
+  Effect.gen(function* () {
+    yield* seed([push]);
+    const requests: Array<TriggerRequest> = [];
+    yield* Effect.gen(function* () {
+      const hook = yield* WorkflowTriggerHook;
+      const samples = yield* TriggerSamples;
+      const ready = yield* Deferred.make<void>();
+      const listener = yield* samples.listen("inbox", "push").pipe(
+        Stream.tap(() => Deferred.succeed(ready, undefined)),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(ready);
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "test", prompt: "x" });
+      yield* Fiber.join(listener);
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "test", prompt: "x" });
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "normal", prompt: "x" });
+    }).pipe(
+      Effect.provide(
+        layerBindHook.pipe(
+          Layer.provideMerge(layerHook),
+          Layer.provide(recordingEngine(requests)),
+          Layer.provideMerge(
+            Samples.layer.pipe(
+              Layer.provide(
+                Layer.mock(WorkflowDefinitions)({
+                  repoPath: "/unused",
+                  document: () =>
+                    Effect.succeed(
+                      decodeDocument({
+                        workflowId: "inbox",
+                        source: "",
+                        definition: null,
+                        revision: "a".repeat(40),
+                        headCommit: null,
+                        hash: null,
+                        valid: true,
+                        dirty: false,
+                        diagnostics: [],
+                        enabled: true,
+                        suspended: false,
+                        triggers: [
+                          {
+                            id: "push",
+                            kind: "webhook",
+                            title: null,
+                            label: "push",
+                            webhookUrl: "https://example.com/hook",
+                            enabled: true,
+                            lastFiredAt: null,
+                          },
+                        ],
+                        updatedBy: null,
+                        updatedAt: null,
+                      }),
+                    ),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(requests.map((entry) => entry.occurrence)).toEqual(["webhook:normal"]);
+  }).pipe(Effect.scoped, Effect.provide(db)),
 );

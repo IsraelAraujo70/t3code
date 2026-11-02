@@ -55,6 +55,7 @@ export function createBotsEnvironmentAtoms<R, E>(
       | "workflowsSubscribe"
       | "workflowsDocumentSubscribe"
       | "workflowsRunSubscribe"
+      | "workflowsTriggerListen"
       | "dictationTranscribe"
       | "voiceSession"
       | "voiceReady"

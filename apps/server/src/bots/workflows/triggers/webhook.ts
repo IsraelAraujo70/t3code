@@ -32,6 +32,7 @@ import * as WorkflowDefinitions from "../definitions/WorkflowDefinitions.ts";
 import { Journal } from "../Journal.ts";
 import { projectByRef } from "../exec/projects.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
+import { TriggerSamples } from "./samples.ts";
 import { fireTrigger } from "./fire.ts";
 import {
   asWorkflowEngine,
@@ -42,6 +43,7 @@ import {
 } from "./hook.ts";
 import { occurrenceKey } from "./occurrence.ts";
 import { makeTriggerTargets, type TriggerTarget } from "./targets.ts";
+import { webhookPayload } from "./webhookPayload.ts";
 
 type HookFire = WorkflowTriggerHook["Service"]["fire"];
 
@@ -80,6 +82,7 @@ export const layerBindHook = Layer.effectDiscard(
   Effect.gen(function* () {
     const binding = yield* Effect.serviceOption(WorkflowHookBinding);
     const engine = yield* Effect.serviceOption(WorkflowEngine);
+    const samples = yield* Effect.serviceOption(TriggerSamples);
     if (Option.isNone(binding) || Option.isNone(engine)) return;
     const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
     const listTriggerTargets = yield* makeTriggerTargets;
@@ -95,18 +98,32 @@ export const layerBindHook = Layer.effectDiscard(
           candidate.trigger.kind === "webhook",
       );
       if (target === undefined) return yield* failed();
+      const payload = webhookPayload(input.request, input.prompt);
+      if (Option.isSome(samples)) {
+        const result = yield* samples.value
+          .capture({
+            workflowId: target.workflowId,
+            triggerId: target.trigger.id,
+            deliveryId: input.deliveryId,
+            payload,
+          })
+          .pipe(Effect.mapError(failed));
+        if (result !== "fire") return;
+      }
       yield* fireTrigger(engine.value, target, {
         kind: "webhook",
         occurrence: occurrenceKey.webhook(input.deliveryId),
         label: "webhook",
-        payload: { text: input.prompt },
+        payload,
       }).pipe(Effect.mapError(failed));
     }, Effect.provideContext(context));
     yield* Deferred.succeed(binding.value.fire, fire);
   }),
 );
 
-type WebhookTrigger = Extract<WorkflowTrigger, { readonly kind: "webhook" }>;
+type WebhookTrigger = Extract<WorkflowTrigger, { readonly kind: "webhook" }> & {
+  readonly id: string;
+};
 
 /** The task a webhook trigger needs, without its secret. */
 const desiredTask = (

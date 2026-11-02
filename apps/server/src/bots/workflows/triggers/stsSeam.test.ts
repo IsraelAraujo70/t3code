@@ -84,7 +84,12 @@ const dispatchPending = (workers: Map<string, Effect.Effect<void>>) =>
 
 const recordingHook = Effect.gen(function* () {
   const calls = yield* Ref.make<
-    ReadonlyArray<{ readonly taskId: string; readonly deliveryId: string; readonly prompt: string }>
+    ReadonlyArray<{
+      readonly taskId: string;
+      readonly deliveryId: string;
+      readonly prompt: string;
+      readonly request: import("../../../scheduledTasks/webhookTemplate.ts").WebhookRequest;
+    }>
   >([]);
   const hook = WorkflowTriggerHook.of({
     fire: (input) => Ref.update(calls, (rows) => [...rows, input]),
@@ -180,6 +185,7 @@ it.effect("an accepted workflow delivery survives a restart and fires the hook o
                 yield* restarted.get("webhook-coalescing")!;
                 const rows = yield* Ref.get(calls);
                 assert.equal(rows.length, 1);
+                assert.equal(rows[0]?.request.bodyText, new TextDecoder().decode(body));
                 assert.equal(rows[0]?.taskId, HOOK_ID);
                 assert.equal(
                   rows[0]?.deliveryId,
@@ -194,6 +200,29 @@ it.effect("an accepted workflow delivery survives a restart and fires the hook o
           assert.equal(yield* Queue.size(launches), 0);
         }),
       { workers: new Map(), hook },
+    );
+  }),
+);
+
+it.effect("an immediate workflow delivery preserves its request", () =>
+  Effect.gen(function* () {
+    const { calls, hook } = yield* recordingHook;
+    const delivered = yield* Deferred.make<void>();
+    const immediateHook = WorkflowTriggerHook.of({
+      fire: (input) =>
+        hook.fire(input).pipe(Effect.andThen(Deferred.succeed(delivered, undefined))),
+    });
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const { task } = yield* asWorkflowEngine(service.upsert(yield* taskInput(HOOK_ID)));
+          assert.equal((yield* service.triggerWebhook(requestFor(task)))._tag, "accepted");
+          yield* Deferred.await(delivered);
+          const rows = yield* Ref.get(calls);
+          assert.equal(rows.length, 1);
+          assert.equal(rows[0]?.request.bodyText, new TextDecoder().decode(body));
+        }),
+      { workers: new Map(), hook: immediateHook },
     );
   }),
 );

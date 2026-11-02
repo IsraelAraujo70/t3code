@@ -12,15 +12,20 @@ params:
       pattern: "^(https://[A-Za-z0-9.-]+|)/[A-Za-z0-9._/-]+$",
     }
 triggers:
-  - { id: weekly, kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
-  - {
-      id: newtag,
-      kind: upstreamTag,
-      remote: "https://github.com/pingdotgg/t3code",
-      pattern: '^v\d+\.\d+\.\d+$',
-      pollMinutes: 120,
-      params: { upstream: "{{trigger.remote}}" },
-    }
+  run: { kind: manual, title: Run now }
+  weekly: { kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
+  newtag:
+    kind: upstreamTag
+    remote: "https://github.com/pingdotgg/t3code"
+    pattern: '^v\d+\.\d+\.\d+$'
+    pollMinutes: 120
+    params: { upstream: "{{trigger.remote}}" }
+  ask:
+    kind: bot
+    title: Pedido de um bot
+    description: >-
+      Use when the user asks to merge the latest upstream T3 Code release into friend/main.
+      Pass `base` only when they name another branch.
 concurrency: single
 budget: { steps: 60, wall: 8h, tokens: 4000000 }
 fatigue: { consecutiveFailures: 3 }

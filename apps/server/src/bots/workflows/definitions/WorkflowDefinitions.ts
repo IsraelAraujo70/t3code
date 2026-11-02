@@ -17,17 +17,19 @@ import {
   type WorkflowHistoryInput,
   type WorkflowHistoryPage,
   type WorkflowNode,
+  type WorkflowParamSpec,
   type WorkflowRestoreInput,
   type WorkflowSaveInput,
   type WorkflowSaveResult,
   type WorkflowSetEnabledInput,
   type WorkflowsSnapshot,
   type WorkflowSummary,
-  type WorkflowTrigger,
+  type WorkflowDefinition,
+  type WorkflowTriggerSummary,
   type WorkflowValidateInput,
   type WorkflowValidateResult,
 } from "@t3tools/contracts";
-import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
+import { compileWorkflow, DEFAULT_HOST_LIMITS, triggerLabel } from "@t3tools/shared/workflows";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -53,6 +55,16 @@ import { WorkflowRepo, layer as repoLayer } from "./WorkflowRepo.ts";
 import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
 
 /** Who writes. Commit author: `Owner`, `Owner (hand edit)` for ingestion, `<name> (bot)`. */
+/** A workflow as a tool for one bot (`workflow_list`'s `bot` entry, `workflow_run`'s check). */
+export interface BotEntry {
+  readonly workflowId: string;
+  readonly triggerId: string;
+  readonly description: string;
+  readonly params: Readonly<Record<string, WorkflowParamSpec>>;
+  /** A run would start now: the workflow and the trigger are on and it is not suspended. */
+  readonly on: boolean;
+}
+
 export type WorkflowAuthor =
   | { readonly kind: "user" }
   | { readonly kind: "bot"; readonly name: string; readonly canManageBots: boolean };
@@ -90,6 +102,8 @@ export class WorkflowDefinitions extends Context.Service<
       input: WorkflowSetEnabledInput,
       author: WorkflowAuthor,
     ) => Effect.Effect<WorkflowSummary, WorkflowsError>;
+    /** The workflows `botId` may run: valid HEADs with a `bot` trigger whose `bots` lists it or is absent. */
+    readonly botEntries: (botId: string) => Effect.Effect<ReadonlyArray<BotEntry>, WorkflowsError>;
     readonly delete: (
       input: WorkflowDeleteInput,
       author: WorkflowAuthor,
@@ -127,22 +141,24 @@ const internal = (cause: unknown) =>
 /** Template ids are file names in the library; the pattern keeps `../` out of the path. */
 const WORKFLOW_ID = /^[a-z][a-z0-9-]{0,62}$/;
 
-const label = (trigger: WorkflowTrigger): string => {
-  switch (trigger.kind) {
-    case "cron":
-      return `${trigger.expr} (${trigger.tz})`;
-    case "webhook":
-      return "webhook";
-    case "upstreamTag":
-      return `tag ${trigger.pattern} on ${trigger.remote}`;
-    case "prMerged":
-      return `PR merged in ${trigger.repo}`;
-    case "threadSettled":
-      return "thread settled";
-    case "workflowFailed":
-      return `${trigger.workflow ?? "any"} failed`;
-  }
-};
+/** The summaries of a definition's triggers; `urls` maps webhook task ids to their public URLs. */
+const triggerSummaries = (
+  workflowId: string,
+  triggers: WorkflowDefinition["triggers"],
+  urls: ReadonlyMap<string, string>,
+  off: ReadonlySet<string> = new Set(),
+  fired: ReadonlyMap<string, string> = new Map(),
+): Array<WorkflowTriggerSummary> =>
+  Object.entries(triggers ?? {}).map(([id, trigger]) => ({
+    id,
+    kind: trigger.kind,
+    title: trigger.title ?? null,
+    label: triggerLabel(trigger),
+    webhookUrl:
+      trigger.kind === "webhook" ? (urls.get(workflowHookTaskId(workflowId, id)) ?? null) : null,
+    enabled: trigger.kind === "manual" || !off.has(id),
+    lastFiredAt: fired.get(JSON.stringify([workflowId, id])) ?? null,
+  }));
 const make = Effect.gen(function* () {
   const repo = yield* WorkflowRepo;
   // Webhook triggers are scheduled tasks; their URLs come from there when the service is present.
@@ -173,6 +189,7 @@ const make = Effect.gen(function* () {
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const status = journal.workflowStatus;
   const callGraph = new Map<string, ReadonlyArray<string>>();
+  const callTargets = new Map<string, { readonly from: ReadonlyArray<string> | null }>();
   const calls = (nodes: Readonly<Record<string, WorkflowNode>>): string[] =>
     Object.values(nodes).flatMap((node) =>
       node.kind === "call"
@@ -183,13 +200,20 @@ const make = Effect.gen(function* () {
     );
   const refreshGraph = Effect.fn("WorkflowDefinitions.refreshGraph")(function* () {
     callGraph.clear();
+    callTargets.clear();
     for (const id of yield* repo.listIds) {
       const file = Option.getOrNull(yield* repo.read(id));
       if (!file) continue;
       const parsed = parseWorkflowSource(file.text);
       if (Result.isFailure(parsed)) continue;
       const compiled = compileWorkflow(parsed.success, DEFAULT_HOST_LIMITS);
-      if (Result.isSuccess(compiled)) callGraph.set(id, calls(compiled.success.definition.nodes));
+      if (Result.isSuccess(compiled)) {
+        callGraph.set(id, calls(compiled.success.definition.nodes));
+        const trigger = Object.values(compiled.success.definition.triggers ?? {}).find(
+          (trigger) => trigger.kind === "call",
+        );
+        if (trigger?.kind === "call") callTargets.set(id, { from: trigger.from ?? null });
+      }
     }
   });
   const compile = (input: WorkflowValidateInput) => {
@@ -197,7 +221,7 @@ const make = Effect.gen(function* () {
       "source" in input ? parseWorkflowSource(input.source) : Result.succeed(input.definition);
     return Result.isFailure(parsed)
       ? Result.fail([parsed.failure])
-      : compileWorkflow(parsed.success, { ...DEFAULT_HOST_LIMITS, callGraph });
+      : compileWorkflow(parsed.success, { ...DEFAULT_HOST_LIMITS, callGraph, callTargets });
   };
   /** A file compiles only under its own name: `<id>.workflow.yaml` must say `id: <id>`. */
   const compileFile = (id: string, text: string) => {
@@ -225,23 +249,44 @@ const make = Effect.gen(function* () {
       return yield* internal("Canonical hash mismatch");
     return { diagnostics: [], normalizedSource, semanticHash: result.success.hash };
   });
-  const document = Effect.fn("WorkflowDefinitions.document")(function* (id: string) {
+  const lastFired = journal.triggerLastFired.pipe(
+    Effect.map(
+      (rows) =>
+        new Map(rows.map((row) => [JSON.stringify([row.workflowId, row.triggerId]), row.at])),
+    ),
+  );
+  const document = Effect.fn("WorkflowDefinitions.document")(function* (
+    id: string,
+    fired?: ReadonlyMap<string, string>,
+  ) {
+    const samples = fired ?? (yield* lastFired);
     const file = yield* repo.read(id);
     if (Option.isNone(file))
       return yield* new WorkflowsError({ code: "not-found", message: "Workflow not found." });
     const head = Option.getOrNull(yield* repo.head(id));
     const result = compileFile(id, file.value.text);
+    const definition = Result.isSuccess(result) ? result.success.definition : null;
+    const { enabled, suspended, off } = yield* status(id);
+    const hasWebhook = Object.values(definition?.triggers ?? {}).some((t) => t.kind === "webhook");
     return {
       workflowId: workflowId(id),
       source: file.value.text,
       revision: revision(file.value.revision),
       headCommit: head?.commit ?? null,
-      definition: Result.isSuccess(result) ? result.success.definition : null,
+      definition,
       hash: Result.isSuccess(result) ? result.success.hash : null,
       valid: Result.isSuccess(result),
       dirty: head?.revision !== file.value.revision,
       diagnostics: Result.isFailure(result) ? result.failure : [],
-      ...(yield* status(id)),
+      enabled,
+      suspended,
+      triggers: triggerSummaries(
+        id,
+        definition?.triggers,
+        hasWebhook ? yield* webhookUrls : new Map<string, string>(),
+        off,
+        samples,
+      ),
       updatedBy: head?.author ?? null,
       updatedAt: head?.at ?? null,
     };
@@ -258,7 +303,7 @@ const make = Effect.gen(function* () {
         valid: Number(d.valid),
         dirty: Number(d.dirty),
         diagnostics_json: JSON.stringify(d.diagnostics),
-        triggers_json: JSON.stringify(d.definition?.triggers ?? []),
+        triggers_json: JSON.stringify(d.definition?.triggers ?? {}),
         scanned_at: yield* now,
       }),
     );
@@ -433,10 +478,10 @@ const make = Effect.gen(function* () {
   );
   const list = Effect.fn("WorkflowDefinitions.list")(function* () {
     yield* refreshGraph();
-    const urls = yield* webhookUrls;
     const lastRuns = yield* journal.lastRuns;
+    const fired = yield* lastFired;
     return yield* Effect.forEach(yield* repo.listIds, (id) =>
-      document(id).pipe(
+      document(id, fired).pipe(
         Effect.map((d) => ({
           workflowId: workflowId(id),
           title: d.definition?.title ?? id,
@@ -447,15 +492,7 @@ const make = Effect.gen(function* () {
           enabled: d.enabled,
           suspended: d.suspended,
           diagnostics: d.diagnostics.length,
-          triggers: (d.definition?.triggers ?? []).map((trigger) => ({
-            id: trigger.id,
-            kind: trigger.kind,
-            label: label(trigger),
-            webhookUrl:
-              trigger.kind === "webhook"
-                ? (urls.get(workflowHookTaskId(id, trigger.id)) ?? null)
-                : null,
-          })),
+          triggers: d.triggers,
           headCommit: d.headCommit,
           revision: d.revision,
           updatedAt: d.updatedAt,
@@ -508,12 +545,7 @@ const make = Effect.gen(function* () {
             templateId: workflowId(file.replace(/\.workflow\.yaml$/, "")),
             title: definition.title,
             description: definition.description ?? null,
-            triggers: (definition.triggers ?? []).map((trigger) => ({
-              id: trigger.id,
-              kind: trigger.kind,
-              label: label(trigger),
-              webhookUrl: null,
-            })),
+            triggers: triggerSummaries(definition.id, definition.triggers, new Map()),
           });
         }
         return { repoPath: repo.root, workflows, deleted, templates };
@@ -548,12 +580,48 @@ const make = Effect.gen(function* () {
     if (author.kind === "bot" && !author.canManageBots)
       return yield* new WorkflowsError({ code: "permission", message: "Cannot manage workflows." });
     yield* document(input.workflowId);
-    yield* toggle(
-      input.workflowId,
-      input.enabled,
-      authorName(author),
-      `toggled:${input.clientRequestId}`,
-    );
+    if (input.triggerId !== undefined) {
+      const head = Option.getOrNull(yield* repo.head(input.workflowId));
+      const source = head
+        ? Option.getOrNull(yield* repo.show(input.workflowId, head.commit))
+        : null;
+      const compiled = source === null ? null : compileFile(input.workflowId, source);
+      const triggers =
+        compiled && Result.isSuccess(compiled) ? compiled.success.definition.triggers : undefined;
+      const trigger =
+        triggers && Object.hasOwn(triggers, input.triggerId)
+          ? triggers[input.triggerId]
+          : undefined;
+      if (!trigger)
+        return yield* new WorkflowsError({
+          code: "not-found",
+          message: `This workflow has no trigger ${input.triggerId}.`,
+        });
+      if (trigger.kind === "manual")
+        return yield* new WorkflowsError({
+          code: "invalid-request",
+          message: "A manual trigger has no switch: Run now always works.",
+        });
+      yield* journal.append([
+        {
+          stream: workflowStream(input.workflowId),
+          key: `trigger-toggled:${input.triggerId}:${input.clientRequestId}`,
+          fact: {
+            _tag: "TriggerToggled",
+            triggerId: input.triggerId,
+            enabled: input.enabled,
+            by: authorName(author),
+            at: yield* now,
+          },
+        },
+      ]);
+    } else
+      yield* toggle(
+        input.workflowId,
+        input.enabled,
+        authorName(author),
+        `toggled:${input.clientRequestId}`,
+      );
     yield* PubSub.publish(bus, input.workflowId);
     return yield* summary(input.workflowId);
   }, Effect.mapError(internal));
@@ -670,6 +738,33 @@ const make = Effect.gen(function* () {
     template,
     fromTemplate,
     setEnabled,
+    botEntries: Effect.fn("WorkflowDefinitions.botEntries")(function* (botId: string) {
+      const fired = yield* lastFired;
+      const entries: BotEntry[] = [];
+      for (const id of [...(yield* repo.listIds)].sort()) {
+        const d = yield* document(id, fired);
+        // A dirty file is not the version that runs; only a committed, valid HEAD is offered.
+        if (!d.valid || d.dirty || d.definition === null) continue;
+        for (const [triggerId, trigger] of Object.entries(d.definition.triggers ?? {})) {
+          if (
+            trigger.kind !== "bot" ||
+            (trigger.bots !== undefined && !trigger.bots.includes(botId))
+          )
+            continue;
+          entries.push({
+            workflowId: id,
+            triggerId,
+            description: trigger.description,
+            params: d.definition.params ?? {},
+            on:
+              d.enabled &&
+              !d.suspended &&
+              d.triggers.some((summary) => summary.id === triggerId && summary.enabled),
+          });
+        }
+      }
+      return entries;
+    }, Effect.mapError(internal)),
     delete: remove,
     restore,
     history,

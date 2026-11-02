@@ -5,9 +5,11 @@ import {
   WORKFLOWS_RPCS,
   WORKFLOWS_WS_METHODS as M,
   WorkflowRunId,
+  WorkflowId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import { RpcGroup } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -17,7 +19,11 @@ import * as RpcAuthorization from "../../../auth/RpcAuthorization.ts";
 const group = RpcGroup.make(...WORKFLOWS_RPCS)
   .omit(
     ...WORKFLOWS_RPCS.map((rpc) => rpc._tag).filter(
-      (tag) => tag !== M.workflowsValidate && tag !== M.workflowsGateDecide,
+      (tag) =>
+        tag !== M.workflowsValidate &&
+        tag !== M.workflowsGateDecide &&
+        tag !== M.workflowsTriggerSample &&
+        tag !== M.workflowsTriggerListen,
     ),
   )
   .middleware(RpcScopeAuthorization);
@@ -37,6 +43,10 @@ describe("workflow RPC authorization", () => {
                 Effect.andThen(Effect.die("a read-only session reached the gate handler")),
               ),
             ),
+            group.toLayerHandler(M.workflowsTriggerSample, () => Effect.succeed(null)),
+            group.toLayerHandler(M.workflowsTriggerListen, () =>
+              Stream.die("read-only listen reached handler"),
+            ),
             RpcAuthorization.layer([AuthOrchestrationReadScope]),
           ),
         ),
@@ -49,6 +59,14 @@ describe("workflow RPC authorization", () => {
           gateKey: "deploy",
           option: "approve",
         }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+      const ref = { workflowId: WorkflowId.make("inbox"), triggerId: "push" };
+      expect(yield* client[M.workflowsTriggerSample](ref)).toBeNull();
+      expect(
+        yield* client[M.workflowsTriggerListen](ref).pipe(Stream.runCollect, Effect.flip),
       ).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: AuthOrchestrationOperateScope,

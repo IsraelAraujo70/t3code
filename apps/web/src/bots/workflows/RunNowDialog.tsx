@@ -58,6 +58,10 @@ export function RunNowDialog(props: {
               This workflow has errors. Fix them in the editor before running it.
             </p>
           </DialogPanel>
+        ) : !Object.values(document.data.definition.triggers ?? {}).some(
+            (trigger) => trigger.kind === "manual",
+          ) ? (
+          <DialogPanel>This workflow has no manual trigger.</DialogPanel>
         ) : (
           <RunNowForm
             key={document.data.revision}

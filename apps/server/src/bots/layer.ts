@@ -60,6 +60,7 @@ const layerWorkflowsOff = Layer.succeed(
     save: workflowsNotHost,
     fromTemplate: workflowsNotHost,
     setEnabled: workflowsNotHost,
+    botEntries: workflowsNotHost,
     delete: workflowsNotHost,
     restore: workflowsNotHost,
     history: workflowsNotHost,

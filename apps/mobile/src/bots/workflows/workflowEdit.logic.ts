@@ -39,9 +39,9 @@ export function workflowEditDraft(definition: WorkflowDefinition): WorkflowEditD
       ]),
     ),
     cron: Object.fromEntries(
-      (definition.triggers ?? [])
-        .filter((trigger) => trigger.kind === "cron")
-        .map((trigger) => [trigger.id, { expr: trigger.expr, tz: trigger.tz }]),
+      Object.entries(definition.triggers ?? {}).flatMap(([id, trigger]) =>
+        trigger.kind === "cron" ? [[id, { expr: trigger.expr, tz: trigger.tz }]] : [],
+      ),
     ),
     agents,
     budget: {
@@ -90,10 +90,11 @@ export function compileWorkflowEdit(definition: WorkflowDefinition, draft: Workf
   edited = {
     ...edited,
     ...(definition.params ? { params } : {}),
-    triggers: (definition.triggers ?? []).map((trigger) =>
-      trigger.kind === "cron" && draft.cron[trigger.id]
-        ? { ...trigger, ...draft.cron[trigger.id] }
-        : trigger,
+    triggers: Object.fromEntries(
+      Object.entries(definition.triggers ?? {}).map(([id, trigger]) => [
+        id,
+        trigger.kind === "cron" && draft.cron[id] ? { ...trigger, ...draft.cron[id] } : trigger,
+      ]),
     ),
     budget: {
       ...definition.budget,

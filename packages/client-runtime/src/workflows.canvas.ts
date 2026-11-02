@@ -11,9 +11,12 @@ import type {
   WorkflowGraph,
   WorkflowNode,
   WorkflowNodeKind,
+  WorkflowTrigger,
+  WorkflowTriggerKind,
   WorkflowStepStatus,
 } from "@t3tools/contracts";
 import {
+  triggerLabel,
   compileWorkflow,
   DEFAULT_HOST_LIMITS,
   formatEdge,
@@ -57,7 +60,32 @@ export interface CanvasEdge {
   readonly to: string;
 }
 
+export interface CanvasTrigger {
+  /** Id of the trigger; it shares the node namespace, so it also keys `canvas.positions`. */
+  readonly id: string;
+  readonly kind: WorkflowTriggerKind;
+  /** The trigger's `title`, else its id. */
+  readonly label: string;
+  /** `triggerLabel(trigger)`. */
+  readonly subtitle: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** Set by the editor: the trigger's own switch (a manual trigger has none). */
+  readonly enabled?: boolean;
+  /** Set on the run screen: true for the trigger that started this run, false for the others. */
+  readonly fired?: boolean;
+}
+/** A dashed edge from a trigger to a top-level node without incoming edges; never edited. */
+export interface CanvasEntryEdge {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+}
 export interface CanvasModel {
+  readonly triggers: ReadonlyArray<CanvasTrigger>;
+  readonly entries: ReadonlyArray<CanvasEntryEdge>;
   /** Parents before their children, so a sub-flow renderer always meets the parent first. */
   readonly nodes: ReadonlyArray<CanvasNode>;
   readonly edges: ReadonlyArray<CanvasEdge>;
@@ -83,6 +111,15 @@ export interface FromCanvasResult {
  * WorkflowCanvasApi["toCanvasModel"] = …`.
  */
 export interface WorkflowCanvasApi {
+  /** A schema-valid trigger configuration. */
+  readonly defaultTriggerConfig: (kind: WorkflowTriggerKind) => WorkflowTrigger;
+  /** The first free id across triggers and steps. */
+  readonly nextTriggerId: (definition: WorkflowDefinition, kind: WorkflowTriggerKind) => string;
+  /** Applies editor switches and the run's fired trigger. */
+  readonly withTriggerStates: (
+    model: CanvasModel,
+    states: { enabled?: ReadonlyMap<string, boolean>; fired?: string | null },
+  ) => CanvasModel;
   /** `kind · detail`: the model and effort (`$name` resolved), the command, the question… */
   readonly nodeSubtitle: (node: WorkflowNode, models: WorkflowDefinition["models"]) => string;
   /** Edge ids come from the endpoints and the written port: `a:ok->b`, `a->b`. */
@@ -139,6 +176,44 @@ export interface WorkflowCanvasApi {
   ) => CanvasModel;
 }
 
+export const CANVAS_TRIGGER_SIZE = { w: 180, h: 56 } as const;
+export const defaultTriggerConfig: WorkflowCanvasApi["defaultTriggerConfig"] = (kind) => {
+  switch (kind) {
+    case "bot":
+      return { kind, description: "Describe when a bot should run this workflow" };
+    case "cron":
+      return { kind, expr: "0 9 * * *", tz: "UTC" };
+    case "upstreamTag":
+      return {
+        kind,
+        remote: "https://github.com/owner/repo",
+        pattern: "^v[0-9]+",
+        pollMinutes: 60,
+      };
+    case "prMerged":
+      return { kind, scope: "linked", repo: "owner/repo" };
+    default:
+      return { kind };
+  }
+};
+export const nextTriggerId: WorkflowCanvasApi["nextTriggerId"] = (definition, kind) => {
+  const base = kind.toLowerCase();
+  let id = base;
+  for (let n = 2; findNode(definition, id) || definition.triggers?.[id]; n++) id = `${base}_${n}`;
+  return id;
+};
+export const withTriggerStates: WorkflowCanvasApi["withTriggerStates"] = (model, states) => ({
+  ...model,
+  triggers: model.triggers.map(({ enabled: _enabled, fired: _fired, ...trigger }) => {
+    const enabled = states.enabled?.get(trigger.id);
+    return {
+      ...trigger,
+      ...(enabled === undefined ? {} : { enabled }),
+      // On a run screen every trigger is marked: the one that started it, or not.
+      ...(states.fired === undefined ? {} : { fired: trigger.id === states.fired }),
+    };
+  }),
+});
 export const CANVAS_NODE_SIZE = { w: 220, h: 72 } as const;
 export const canvasEdgeId: WorkflowCanvasApi["canvasEdgeId"] = (from, port, to) =>
   `${from}${port === null ? "" : `:${port}`}->${to}`;
@@ -234,7 +309,7 @@ export const findNode: WorkflowCanvasApi["findNode"] = (definition, id) => {
 };
 export const nextNodeId: WorkflowCanvasApi["nextNodeId"] = (definition, kind) => {
   let id: string = kind;
-  for (let n = 2; findNode(definition, id); n++) id = `${kind}_${n}`;
+  for (let n = 2; findNode(definition, id) || definition.triggers?.[id]; n++) id = `${kind}_${n}`;
   return id;
 };
 export const nodeSubtitle: WorkflowCanvasApi["nodeSubtitle"] = (node, models) => {
@@ -309,7 +384,9 @@ export const autoLayout: WorkflowCanvasApi["autoLayout"] = (definition, fixed = 
       for (const edge of edges.filter((e) => e.from === id && remaining.has(e.to)))
         ranks.set(edge.to, Math.max(ranks.get(edge.to) ?? 0, (ranks.get(id) ?? 0) + 1));
     }
-    let x = 24;
+    let x =
+      24 +
+      (!nested && Object.keys(definition.triggers ?? {}).length ? CANVAS_TRIGGER_SIZE.w + 120 : 0);
     let width = 48;
     let height = nested ? 80 : 48;
     for (const rank of [...new Set(ranks.values())].sort((a, b) => a - b)) {
@@ -333,6 +410,9 @@ export const autoLayout: WorkflowCanvasApi["autoLayout"] = (definition, fixed = 
     return { w: width, h: height };
   };
   visit(definition, false);
+  Object.keys(definition.triggers ?? {}).forEach((id, index) => {
+    positions[id] = fixed[id] ?? { x: 24, y: 24 + index * (CANVAS_TRIGGER_SIZE.h + 72) };
+  });
   return positions;
 };
 export const toCanvasModel: WorkflowCanvasApi["toCanvasModel"] = (
@@ -368,7 +448,24 @@ export const toCanvasModel: WorkflowCanvasApi["toCanvasModel"] = (
     }
   };
   visit(definition, null);
+  const triggers = Object.entries(definition.triggers ?? {}).map(([id, trigger]) => ({
+    id,
+    kind: trigger.kind,
+    label: trigger.title ?? id,
+    subtitle: triggerLabel(trigger),
+    x: layout?.positions[id]?.x ?? positions[id]?.x ?? 24,
+    y: layout?.positions[id]?.y ?? positions[id]?.y ?? 24,
+    w: layout?.positions[id]?.w ?? CANVAS_TRIGGER_SIZE.w,
+    h: layout?.positions[id]?.h ?? CANVAS_TRIGGER_SIZE.h,
+  }));
+  const roots = Object.keys(definition.nodes).filter(
+    (id) => !edges.some((edge) => edge.to === id && Object.hasOwn(definition.nodes, edge.from)),
+  );
   return {
+    triggers,
+    entries: triggers.flatMap((trigger) =>
+      roots.map((to) => ({ id: `${trigger.id}=>${to}`, from: trigger.id, to })),
+    ),
     nodes,
     edges,
     annotations: layout?.annotations ?? [],
@@ -403,20 +500,34 @@ export const fromCanvasModel: WorkflowCanvasApi["fromCanvasModel"] = (model, pre
   const viewport = model.viewport ?? previous.canvas?.viewport;
   const canvas = {
     positions: Object.fromEntries(
-      model.nodes.map((n) => [
+      [...model.nodes, ...model.triggers].map((n) => [
         n.id,
         {
           x: n.x,
           y: n.y,
-          ...(n.w !== CANVAS_NODE_SIZE.w ? { w: n.w } : {}),
-          ...(n.h !== CANVAS_NODE_SIZE.h ? { h: n.h } : {}),
+          ...(n.w !==
+          (model.triggers.some((t) => t.id === n.id) ? CANVAS_TRIGGER_SIZE.w : CANVAS_NODE_SIZE.w)
+            ? { w: n.w }
+            : {}),
+          ...(n.h !==
+          (model.triggers.some((t) => t.id === n.id) ? CANVAS_TRIGGER_SIZE.h : CANVAS_NODE_SIZE.h)
+            ? { h: n.h }
+            : {}),
         },
       ]),
     ),
     annotations: model.annotations,
     ...(viewport ? { viewport } : {}),
   };
-  const definition = { ...previous, ...rebuild(null), canvas };
+  const triggers = Object.fromEntries(
+    model.triggers.map((t) => [t.id, previous.triggers?.[t.id] ?? defaultTriggerConfig(t.kind)]),
+  );
+  const definition = {
+    ...previous,
+    ...rebuild(null),
+    ...(previous.triggers || model.triggers.length ? { triggers } : {}),
+    canvas,
+  };
   const compiled = compileWorkflow(definition, DEFAULT_HOST_LIMITS);
   return { definition, canvas, diagnostics: Result.isFailure(compiled) ? compiled.failure : [] };
 };
@@ -447,6 +558,16 @@ export const updateNode: WorkflowCanvasApi["updateNode"] = (definition, id, node
 });
 export const renameNode: WorkflowCanvasApi["renameNode"] = (definition, from, to) => ({
   ...definition,
+  ...(definition.triggers?.[from]
+    ? {
+        triggers: Object.fromEntries(
+          Object.entries(definition.triggers).map(([id, trigger]) => [
+            id === from ? to : id,
+            trigger,
+          ]),
+        ),
+      }
+    : {}),
   ...transformGraph(
     definition,
     (id, node) => [

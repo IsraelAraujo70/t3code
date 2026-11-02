@@ -3,9 +3,10 @@
 import { useMemo } from "react";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
 import rough from "roughjs";
-import { canvasSeed } from "@t3tools/client-runtime/workflows";
+import { CANVAS_FRAME_DASH, canvasSeed } from "@t3tools/client-runtime/workflows";
 const generator = rough.generator();
 export function RoughEdge(props: EdgeProps) {
+  const entry = props.data?.entry === true;
   const [path, labelX, labelY] = getBezierPath(props);
   const paths = useMemo(
     () =>
@@ -24,7 +25,7 @@ export function RoughEdge(props: EdgeProps) {
   );
   return (
     <>
-      <g pointerEvents="none">
+      <g pointerEvents="none" data-entry={entry ? "true" : undefined}>
         {paths.map((p) => (
           <path
             key={p.d}
@@ -35,11 +36,12 @@ export function RoughEdge(props: EdgeProps) {
                 ? "var(--ring)"
                 : "color-mix(in srgb, var(--foreground) 65%, transparent)"
             }
+            strokeDasharray={entry ? CANVAS_FRAME_DASH.join(" ") : undefined}
             strokeWidth={p.strokeWidth}
           />
         ))}
       </g>
-      {props.label && (
+      {!entry && props.label && (
         <EdgeLabelRenderer>
           <div
             className="wf-edge-label"
@@ -62,7 +64,14 @@ export function RoughEdge(props: EdgeProps) {
           strokeWidth={p.strokeWidth}
         />
       ))}
-      <BaseEdge id={props.id} path={path} interactionWidth={24} style={{ stroke: "transparent" }} />
+      {!entry && (
+        <BaseEdge
+          id={props.id}
+          path={path}
+          interactionWidth={24}
+          style={{ stroke: "transparent" }}
+        />
+      )}
     </>
   );
 }

@@ -151,7 +151,7 @@ it.live("checks toggle permission and paginates committed history", () =>
           definition: {
             ...active.definition,
             title: "Bot edit",
-            triggers: [],
+            triggers: {},
           },
           workflowId: id,
           baseRevision: active.revision,
@@ -459,7 +459,13 @@ it.live("a workflow that calls a saved one stays valid after a restart", () =>
   withDefinitions((definitions, harness) =>
     Effect.gen(function* () {
       yield* definitions.save(
-        { source: yield* librarySource("b"), message: "b" },
+        {
+          source: (yield* librarySource("b")).replace(
+            /^triggers:.*(?:\n[ \t]+.*)*/m,
+            "triggers: { callable: { kind: call } }",
+          ),
+          message: "b",
+        },
         { kind: "user" },
       );
       const callee = (yield* definitions.document("b")).definition!;
@@ -572,8 +578,8 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
     (definitions) =>
       Effect.gen(function* () {
         const source = (yield* librarySource("inbox")).replace(
-          /^triggers:.*$/m,
-          "triggers: [{ id: push, kind: webhook }]",
+          /^triggers:.*(?:\n[ \t]+.*)*/m,
+          "triggers: { push: { kind: webhook } }",
         );
         expect((yield* definitions.save({ source, message: "hook" }, { kind: "user" }))._tag).toBe(
           "Saved",
@@ -583,8 +589,11 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
           {
             id: "push",
             kind: "webhook",
+            title: null,
             label: "webhook",
             webhookUrl: "https://hooks.example.com/api/hooks/wf-hook%3Ainbox%3Apush/token",
+            enabled: true,
+            lastFiredAt: null,
           },
         ]);
       }),
@@ -626,7 +635,7 @@ it.live("shows each workflow's newest projected run as its last run", () =>
         status: "failed",
         pausedFor: null,
         skipReason: null,
-        trigger: { kind: "manual", label: "Manual" },
+        trigger: { id: "manual", kind: "manual", label: "Manual" },
         startedAt: "2026-11-02T00:00:00.000Z",
         endedAt: "2026-11-02T00:10:00.000Z",
         outputStatus: null,
@@ -648,6 +657,130 @@ it.live("shows each workflow's newest projected run as its last run", () =>
       yield* journal.putRun({ summary: run, lastSeq: 9, pendingIntents: 0, parentRunId: null });
       const listed = (yield* definitions.list).find((d) => d.workflowId === saved.workflowId);
       expect(listed?.lastRun).toEqual(run);
+    }),
+  ),
+);
+
+it.live("switches individual triggers and exposes bot entries", () =>
+  withDefinitions((definitions) =>
+    Effect.gen(function* () {
+      const id = decodeId("trigger-switches");
+      yield* definitions.fromTemplate(
+        { templateId: decodeId("mcp-token-cut"), workflowId: id },
+        { kind: "user" },
+      );
+      const d = yield* definitions.document(id);
+      if (!d.definition) throw new Error("Expected definition");
+      expect(
+        (yield* definitions.save(
+          {
+            workflowId: id,
+            baseRevision: d.revision,
+            message: "Triggers",
+            definition: {
+              ...d.definition,
+              triggers: {
+                first: { kind: "bot", description: "First" },
+                other: { kind: "webhook" },
+                manual: { kind: "manual" },
+              },
+            },
+          },
+          { kind: "user" },
+        ))._tag,
+      ).toBe("Saved");
+      const input = decodeToggle({
+        workflowId: id,
+        triggerId: "first",
+        enabled: false,
+        clientRequestId: "off",
+      });
+      yield* definitions.setEnabled(input, { kind: "user" });
+      const journal = yield* Journal.Journal;
+      yield* journal.append([
+        {
+          stream: workflowStream(id),
+          key: "fired:test",
+          fact: {
+            _tag: "TriggerFired",
+            runId: "test",
+            triggerId: "first",
+            kind: "bot",
+            occurrence: "test",
+            label: "test",
+            params: {},
+            payload: null,
+            causalDepth: 0,
+            parent: null,
+            at: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      ]);
+      expect(
+        (yield* definitions.document(id)).triggers.find((t) => t.id === "first")?.lastFiredAt,
+      ).toBe("2026-01-01T00:00:00.000Z");
+      expect(
+        (yield* definitions.list)[0]?.triggers.find((t) => t.id === "first")?.lastFiredAt,
+      ).toBe("2026-01-01T00:00:00.000Z");
+      const count = (yield* journal.read(workflowStream(id))).length;
+      yield* definitions.setEnabled(input, { kind: "user" });
+      expect((yield* journal.read(workflowStream(id))).length).toBe(count);
+      for (const triggers of [
+        (yield* definitions.document(id)).triggers,
+        (yield* definitions.list)[0]!.triggers,
+      ]) {
+        expect(triggers.find((t) => t.id === "first")?.enabled).toBe(false);
+        expect(triggers.find((t) => t.id === "other")?.enabled).toBe(true);
+      }
+      expect(yield* definitions.botEntries("mine")).toMatchObject([
+        { triggerId: "first", on: false },
+      ]);
+      for (const [triggerId, code] of [
+        ["missing", "not-found"],
+        ["manual", "invalid-request"],
+      ] as const) {
+        expect(
+          yield* definitions
+            .setEnabled(decodeToggle({ ...input, triggerId }), { kind: "user" })
+            .pipe(Effect.flip),
+        ).toMatchObject({ code });
+      }
+      yield* definitions.setEnabled(
+        decodeToggle({ ...input, enabled: true, clientRequestId: "on" }),
+        { kind: "user" },
+      );
+      expect(
+        (yield* definitions.document(id)).triggers.find((t) => t.id === "first")?.enabled,
+      ).toBe(true);
+      yield* definitions.setEnabled(
+        decodeToggle({ workflowId: id, enabled: true, clientRequestId: "workflow-on" }),
+        { kind: "user" },
+      );
+      const on = yield* definitions.document(id);
+      expect(yield* definitions.botEntries("mine")).toEqual([
+        {
+          workflowId: id,
+          triggerId: "first",
+          description: "First",
+          params: on.definition?.params ?? {},
+          on: true,
+        },
+      ]);
+      if (!on.definition) throw new Error("Expected definition");
+      yield* definitions.save(
+        {
+          workflowId: id,
+          baseRevision: on.revision,
+          message: "Only another bot",
+          definition: {
+            ...on.definition,
+            triggers: { first: { kind: "bot", description: "First", bots: ["someone"] } },
+          },
+        },
+        { kind: "user" },
+      );
+      expect(yield* definitions.botEntries("mine")).toEqual([]);
+      expect(yield* definitions.botEntries("someone")).toMatchObject([{ triggerId: "first" }]);
     }),
   ),
 );

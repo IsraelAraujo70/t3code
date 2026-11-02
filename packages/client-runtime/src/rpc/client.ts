@@ -56,6 +56,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof BOTS_WS_METHODS.workflowsSubscribe
   | typeof BOTS_WS_METHODS.workflowsDocumentSubscribe
   | typeof BOTS_WS_METHODS.workflowsRunSubscribe
+  | typeof BOTS_WS_METHODS.workflowsTriggerListen
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeShell
