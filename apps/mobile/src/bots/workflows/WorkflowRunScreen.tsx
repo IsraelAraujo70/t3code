@@ -147,6 +147,9 @@ function RunContent({
             {(run.summary.pausedFor ?? run.summary.skipReason) && (
               <Notice message={run.summary.pausedFor ?? run.summary.skipReason ?? ""} />
             )}
+            {run.warnings?.map((warning) => (
+              <Notice key={warning} message={warning} />
+            ))}
             <Text>
               {run.summary.trigger.label} · {run.summary.trigger.kind}
               {"\n"}Started {run.summary.startedAt}
