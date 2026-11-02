@@ -446,6 +446,7 @@ const make = Effect.gen(function* () {
   const list = Effect.fn("WorkflowDefinitions.list")(function* () {
     yield* refreshGraph();
     const urls = yield* webhookUrls;
+    const lastRuns = yield* journal.lastRuns;
     return yield* Effect.forEach(yield* repo.listIds, (id) =>
       document(id).pipe(
         Effect.map((d) => ({
@@ -470,7 +471,7 @@ const make = Effect.gen(function* () {
           headCommit: d.headCommit,
           revision: d.revision,
           updatedAt: d.updatedAt,
-          lastRun: null,
+          lastRun: lastRuns.get(id) ?? null,
         })),
       ),
     );

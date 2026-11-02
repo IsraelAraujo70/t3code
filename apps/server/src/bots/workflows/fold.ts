@@ -7,6 +7,9 @@ export const emptyRunState = (runId: string): RunState => ({
   lastSeq: 0,
   started: null,
   ended: null,
+  endedSeq: 0,
+  reopenedSeq: 0,
+  generation: 0,
   output: null,
   paused: null,
   pauseCount: 0,
@@ -23,6 +26,7 @@ export const emptyRunState = (runId: string): RunState => ({
   requests: new Map(),
   controls: [],
   workspaces: new Map(),
+  releasedBranches: new Set(),
 });
 
 /**
@@ -71,6 +75,7 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       exited: null,
       child: null,
       resolved: null,
+      stoppedByEnd: false,
     };
     const entry = { ...previous, ...patch, lastSeq: stored.seq };
     if (index < 0) entries.push(entry);
@@ -95,7 +100,23 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       break;
     case "RunEnded":
       next.ended = fact;
+      next.endedSeq = stored.seq;
       break;
+    case "BranchReleased":
+      next.releasedBranches = new Set(next.releasedBranches).add(fact.branch);
+      break;
+    case "RunReopened": {
+      next.ended = null;
+      next.output = null;
+      next.paused = null;
+      next.reopenedSeq = stored.seq;
+      next.generation++;
+      // Dead paths are derived again every pass; the failure that cut them may now be retried.
+      const live = [...next.skipped].filter(([, reason]) => reason !== "dead-path");
+      next.skipped = new Map(live);
+      next.skippedSeq = new Map([...next.skippedSeq].filter(([step]) => next.skipped.has(step)));
+      break;
+    }
     case "OutputSet":
       next.output = fact;
       break;
@@ -148,7 +169,8 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       next.workspaces = advanceHead(next, fact);
       break;
     case "StepResolved":
-      updateAttempt(fact.step, fact.attempt, { resolved: fact });
+      // The end batch resolves what it stopped right after its RunEnded.
+      updateAttempt(fact.step, fact.attempt, { resolved: fact, stoppedByEnd: next.ended !== null });
       break;
     case "ChildRunEnded":
       next.children = new Map(next.children).set(fact.childRunId, fact);

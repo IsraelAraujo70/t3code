@@ -144,6 +144,8 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
           return [result(runId, intent, { _tag: "Interrupted" })];
         case "GitOp":
           return [result(runId, intent, { _tag: "GitOpDone", sha: "sha1" })];
+        case "ResolveRef":
+          return [result(runId, intent, { _tag: "RefResolved", sha: "pinned" })];
         case "RemoveWorkspace":
           return [result(runId, intent, { _tag: "WorkspaceRemoved" })];
         case "OpenPullRequest":

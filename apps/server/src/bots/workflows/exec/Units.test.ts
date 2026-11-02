@@ -72,6 +72,8 @@ it.effect("runs a heavy command under the heavy lock without a runtime cap", () 
     expect(command.slice(0, 4)).toEqual(["flock", "heavy.lock", "node", "wfUnit.ts"]);
     expect(command.slice(-3)).toEqual(["--", "cargo", "build"]);
     expect(args).toContain("MemoryMax=6G");
+    expect(args).toEqual(expect.arrayContaining(["-E", "CI=1"]));
+    expect(args.some((arg) => arg.startsWith("TMPDIR="))).toBe(true);
     expect(args.some((arg) => arg.startsWith("RuntimeMaxSec="))).toBe(false);
 
     using light = setup("inactive");
@@ -79,6 +81,7 @@ it.effect("runs a heavy command under the heavy lock without a runtime cap", () 
     const lightArgs = light.spawned()[0]?.[1] ?? [];
     expect(lightArgs).toContain("RuntimeMaxSec=180");
     expect(lightArgs).not.toContain("flock");
+    expect(lightArgs).not.toContain("CI=1");
   }),
 );
 

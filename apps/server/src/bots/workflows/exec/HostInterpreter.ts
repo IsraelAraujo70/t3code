@@ -18,8 +18,9 @@ import * as Stream from "effect/Stream";
 
 import { type ProjectOperationError, ProjectService } from "../../../project/ProjectService.ts";
 import { type Intent, type NewFact, type RunFact, runStream, workflowStream } from "../facts.ts";
-import { WorkflowGit, type WorkflowGitError } from "../git/Workspaces.ts";
+import { WorkflowGit, WorkflowGitError } from "../git/Workspaces.ts";
 import { keyHash, runIdFor } from "../ids.ts";
+import { foldRun } from "../fold.ts";
 import { WorkflowInterpreter } from "../Interpreter.ts";
 import { Journal, type WorkflowJournalError } from "../Journal.ts";
 import type { IntentResult } from "../state.ts";
@@ -103,6 +104,34 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     retryable = false,
   ): ReadonlyArray<NewFact> => [result(runId, intent, { _tag: "IntentFailed", error, retryable })];
 
+  /** A `wf/…` branch an ended run left behind is released to this run; a live run's is not. */
+  const takeOver = Effect.fn("HostInterpreter.takeOver")(function* (
+    error: WorkflowGitError,
+    input: Parameters<WorkflowGit["Service"]["prepare"]>[0],
+  ) {
+    const owner = error.owner;
+    if (owner == null || input.branch === null) return yield* error;
+    const running = new WorkflowGitError({
+      message: `Branch ${input.branch} belongs to run ${owner}, which is still running.`,
+      permanent: true,
+    });
+    const ownerState = foldRun(owner, yield* journal.read(runStream(owner)));
+    if (ownerState.ended === null) return yield* running;
+    // Recorded before the release, and only if the owner did not reopen since its end (checked in
+    // the append's transaction): the release and a reopening exclude each other.
+    const recorded = yield* journal.append([
+      {
+        stream: runStream(owner),
+        key: `released:${input.branch}`,
+        fact: { _tag: "BranchReleased", branch: input.branch, to: input.runId },
+        guard: { absent: ["RunReopened"], after: ownerState.endedSeq },
+      },
+    ]);
+    if (recorded.length === 0) return yield* running;
+    yield* git.release({ repoRoot: input.repoRoot, branch: input.branch, owner });
+    return yield* git.prepare(input);
+  });
+
   const prepare = Effect.fn("HostInterpreter.prepare")(function* (
     runId: string,
     intent: Extract<Intent, { readonly _tag: "PrepareWorkspace" }>,
@@ -113,12 +142,16 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
       return failed(runId, intent, `There is no project "${intent.projectRef}".`);
     const path = workspacePath(runId, intent.name);
     yield* Effect.sync(() => NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true }));
-    const ready = yield* git.prepare({
+    const input = {
       repoRoot: project.workspaceRoot,
       path,
       baseRef: intent.baseRef,
       branch: intent.branch,
-    });
+      runId,
+    };
+    const ready = yield* git
+      .prepare(input)
+      .pipe(Effect.catchTags({ WorkflowGitError: (error) => takeOver(error, input) }));
     return [
       result(runId, intent, {
         _tag: "WorkspaceReady",
@@ -223,6 +256,15 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
             ? yield* git.advance({ repoRoot: path, branch: op.branch, from: op.from, to: op.to })
             : yield* git.mergeLocal({ path, from: op.from, expectHead: op.expectHead });
         return [result(runId, intent, { _tag: "GitOpDone", sha })];
+      }
+      case "ResolveRef": {
+        const snapshot = yield* projects.snapshot;
+        const project = projectByRef(snapshot.projects, intent.projectRef);
+        if (project === undefined) {
+          return failed(runId, intent, `There is no project "${intent.projectRef}".`);
+        }
+        const sha = yield* git.resolveRef({ repoRoot: project.workspaceRoot, ref: intent.ref });
+        return [result(runId, intent, { _tag: "RefResolved", sha })];
       }
       case "RemoveWorkspace": {
         const path = workspacePath(runId, intent.name);

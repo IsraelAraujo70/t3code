@@ -121,6 +121,8 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
         LANG: process.env.LANG ?? "",
+        // The environment heavy.sh gives its unit, so a heavy command behaves as it does there.
+        ...(input.heavy ? { TMPDIR: process.env.TMPDIR ?? "/tmp", CI: "1" } : {}),
         ...input.env,
       }))
         args.push("-E", `${name}=${value}`);

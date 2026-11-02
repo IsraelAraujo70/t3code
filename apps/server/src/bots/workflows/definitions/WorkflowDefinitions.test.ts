@@ -1,7 +1,12 @@
 // @effect-diagnostics schemaSyncInEffect:off - Test fixtures use fixed valid identifiers.
 import { workflowStream } from "../facts.ts";
 import * as Context from "effect/Context";
-import { WorkflowSetEnabledInput, WorkflowId } from "@t3tools/contracts";
+import {
+  WorkflowSetEnabledInput,
+  WorkflowId,
+  WorkflowRunId,
+  type WorkflowRunSummary,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -536,6 +541,49 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
           ],
         }),
       subscribeList: () => Stream.empty,
+    }),
+  ),
+);
+
+it.live("shows each workflow's newest projected run as its last run", () =>
+  withDefinitions((definitions) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const source = yield* fs.readFileString(
+        `${import.meta.dirname}/../library/mcp-token-cut.workflow.yaml`,
+      );
+      const saved = yield* definitions.save({ source, message: "First" }, { kind: "user" });
+      if (saved._tag !== "Saved") throw new Error("fixture");
+      const journal = yield* Journal.Journal;
+      const run = {
+        runId: WorkflowRunId.make("wfr_00000000000000000001"),
+        workflowId: saved.workflowId,
+        title: "Corte",
+        hash: null,
+        commit: null,
+        status: "failed",
+        pausedFor: null,
+        skipReason: null,
+        trigger: { kind: "manual", label: "Manual" },
+        startedAt: "2026-11-02T00:00:00.000Z",
+        endedAt: "2026-11-02T00:10:00.000Z",
+        outputStatus: null,
+        stepsUsed: 1,
+        cost: {
+          billable: 0,
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          usage: "unavailable",
+          usdEstimate: null,
+        },
+        reservedTokens: 0,
+        openGates: 0,
+        pullRequest: null,
+      } satisfies WorkflowRunSummary;
+      yield* journal.putRun({ summary: run, lastSeq: 9, pendingIntents: 0, parentRunId: null });
+      const listed = (yield* definitions.list).find((d) => d.workflowId === saved.workflowId);
+      expect(listed?.lastRun).toEqual(run);
     }),
   ),
 );

@@ -1,10 +1,12 @@
+import { WorkflowId, WorkflowRunId, type WorkflowRunSummary } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 
 import { Journal, layerMemory } from "./Journal.ts";
-import type { NewFact } from "./facts.ts";
+import { type NewFact, runStream } from "./facts.ts";
+import { runStarted } from "./testkit/decideHarness.ts";
 
 it.effect("stores independent sequences, deduplicates, reads, and publishes committed facts", () =>
   Effect.gen(function* () {
@@ -146,4 +148,137 @@ it.effect("publishes only newly inserted facts", () =>
     assert.isFalse(duplicate[0]!.inserted);
     assert.deepEqual(duplicate[0]?.fact, results[0]?.fact);
   }).pipe(Effect.scoped, Effect.provide(layerMemory)),
+);
+
+const summary = (
+  runId: string,
+  startedAt: string,
+  patch: Partial<WorkflowRunSummary> = {},
+): WorkflowRunSummary => ({
+  runId: WorkflowRunId.make(runId),
+  workflowId: WorkflowId.make("example"),
+  title: "Example",
+  hash: null,
+  commit: null,
+  status: "running",
+  pausedFor: null,
+  skipReason: null,
+  trigger: { kind: "manual", label: "Manual" },
+  startedAt,
+  endedAt: null,
+  outputStatus: null,
+  stepsUsed: 0,
+  cost: { billable: 0, input: 0, output: 0, cacheRead: 0, usage: "complete", usdEstimate: null },
+  reservedTokens: 0,
+  openGates: 0,
+  pullRequest: null,
+  ...patch,
+});
+const row = (s: WorkflowRunSummary, lastSeq: number) => ({
+  summary: s,
+  lastSeq,
+  pendingIntents: 0,
+  parentRunId: null,
+});
+
+it.effect(
+  "projects run summaries: upserts forward only, pages newest first, picks the last run",
+  () =>
+    Effect.gen(function* () {
+      const journal = yield* Journal;
+      const older = summary("wfr_00000000000000000001", "2026-11-02T00:00:00.000Z");
+      const newer = summary("wfr_00000000000000000002", "2026-11-02T01:00:00.000Z", {
+        status: "failed",
+      });
+      yield* journal.putRun(row(older, 2));
+      yield* journal.putRun(row({ ...older, title: "Stale" }, 1));
+      yield* journal.putRun(row(newer, 5));
+      assert.deepEqual(
+        yield* journal.runs({ workflowId: "example", status: null, offset: 0, limit: 1 }),
+        { runs: [newer], more: true },
+      );
+      assert.deepEqual(
+        yield* journal.runs({ workflowId: "example", status: null, offset: 1, limit: 1 }),
+        { runs: [older], more: false },
+      );
+      assert.deepEqual(
+        yield* journal.runs({ workflowId: null, status: "running", offset: 0, limit: 10 }),
+        { runs: [older], more: false },
+      );
+      assert.deepEqual(
+        yield* journal.runs({ workflowId: "other", status: null, offset: 0, limit: 10 }),
+        { runs: [], more: false },
+      );
+      assert.deepEqual((yield* journal.lastRuns).get("example"), newer);
+    }).pipe(Effect.provide(layerMemory)),
+);
+
+it.effect("reports runs whose row is missing or behind, and counts a reopened run as live", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const started = (runId: string) => ({
+      stream: runStream(runId),
+      key: "started",
+      fact: runStarted(),
+    });
+    const stale = "wfr_00000000000000000003";
+    const missing = "wfr_00000000000000000004";
+    yield* journal.append([started(stale), started(missing)]);
+    yield* journal.append([
+      {
+        stream: runStream(stale),
+        key: "ended",
+        fact: { _tag: "RunEnded", status: "failed", at: "2026-11-02T00:00:00.000Z" },
+      },
+    ]);
+    yield* journal.putRun(row(summary(stale, "2026-11-02T00:00:00.000Z"), 1));
+    assert.deepEqual(yield* journal.projectionLag, [
+      { runId: stale, projected: 1, stream: 2 },
+      { runId: missing, projected: null, stream: 1 },
+    ]);
+    assert.deepEqual(yield* journal.liveRuns, [missing]);
+    yield* journal.append([
+      {
+        stream: runStream(stale),
+        key: "reopen:control:r1",
+        fact: { _tag: "RunReopened", step: "a", by: "user", at: "2026-11-02T00:00:00.000Z" },
+      },
+    ]);
+    assert.deepEqual(yield* journal.liveRuns, [stale, missing]);
+    yield* journal.append([
+      {
+        stream: runStream(stale),
+        key: "ended:1",
+        fact: { _tag: "RunEnded", status: "succeeded", at: "2026-11-02T00:00:00.000Z" },
+      },
+    ]);
+    assert.deepEqual(yield* journal.liveRuns, [missing]);
+  }).pipe(Effect.provide(layerMemory)),
+);
+
+it.effect("writes a guarded fact only if none of the named kinds landed after its seq", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const stream = runStream("wfr_00000000000000000005");
+    yield* journal.append([{ stream, key: "started", fact: runStarted() }]);
+    yield* journal.append([
+      {
+        stream,
+        key: "reopen:x",
+        fact: { _tag: "RunReopened", step: "a", by: "user", at: "2026-11-02T00:00:00.000Z" },
+      },
+    ]);
+    const released = (after: number): NewFact => ({
+      stream,
+      key: "released:wf/demo",
+      fact: { _tag: "BranchReleased", branch: "wf/demo", to: "wfr_9" },
+      guard: { absent: ["RunReopened"], after },
+    });
+    assert.deepEqual(yield* journal.append([released(1)]), []);
+    const [stored] = yield* journal.append([released(2)]);
+    assert.deepEqual([stored?.inserted, stored?.fact.seq], [true, 3]);
+    // Already stored: returned as usual, whatever its guard says now.
+    const [again] = yield* journal.append([released(1)]);
+    assert.deepEqual([again?.inserted, again?.fact.seq], [false, 3]);
+  }).pipe(Effect.provide(layerMemory)),
 );
