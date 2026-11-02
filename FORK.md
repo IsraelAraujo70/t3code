@@ -39,7 +39,7 @@ bots. See [`apps/server/src/bots/BotsHost.ts`](apps/server/src/bots/BotsHost.ts)
 
 What a user chooses lives in Settings; what holds a secret or describes the machine stays in the
 host's environment. Settings → Bots edits the bots host whatever the settings scope says (it shows no
-scope bar): the bots, About you, Voice, guest bots (only when the host has some), and This host, a
+scope bar): the bots, About you, Voice, and This host, a
 read-only list of the env-only features (dictation, Android push, public webhook URL, Linear sync,
 host MCP servers) with what turns each on. The host reads them once at startup into the bot
 directory's `host` field ([`hostStatus.ts`](apps/server/src/bots/hostStatus.ts)), never a secret, a
@@ -198,105 +198,15 @@ on iOS) and leaves them out of the home list; the wide-screen sidebar keeps ever
 shows its bot's face in place of the project icon.
 
 A side thread has no row in `bots.sqlite`: the id names its bot. `parseBotThreadId` still matches
-only the main conversation, so rotation, compaction, push, voice, history, guests and the mobile
+only the main conversation, so rotation, compaction, push, voice, history and the mobile
 thread screen ignore side threads; code where a thread acts as its bot (instructions, memory and bot tools, the bot
-sender mark, link access, guest model pin, host MCP tools, queue resume) uses `parseBotThreadOwner`.
-A guest's bot gets none.
-
-## Guests
-
-A guest (Bia) talks to a few bots of their own through `apps/bia`, a separate Android app, and a
-separate listener on the bots host: `T3CODE_GUEST_LISTEN=host:port`. That listener has its own
-router holding only the routes in [`packages/contracts/src/guest.ts`](packages/contracts/src/guest.ts).
-Do not serve it with `HttpRouter.serve`: that reuses the main listener's memoized router and
-exposes every T3 route on the guest port. A guest authenticates with a bearer token (only its
-sha256 is stored), and every bot id is checked against the guest's ownership. A send always uses
-the bot's stored model selection. Guests, their bots and their phones live in `bots.sqlite`.
-`apps/server/src/bots/guest/cli.ts` creates guests and their bots, and mints, revokes and prints
-the pairing QR.
-
-A guest's bots run Claude Code in Docker. Their provider instance uses
-[`sandbox/t3-guest-claude`](apps/server/src/bots/guest/sandbox/t3-guest-claude) as its binary and
-names the guest with `T3CODE_GUEST_ID`. The guest API refuses to send to a bot whose instance is
-not exactly that, and such an instance never gets a T3 MCP credential, because the token would
-grant the host's orchestration tools. Each provider session is one `docker run --rm` on an
-`--internal` network. The only way out is the guest's proxy container. Its CONNECT proxy refuses
-every non-public address, and its Anthropic forwarder holds the credential: a Claude subscription OAuth token
-(`claude-oauth.token`, from `claude setup-token`) when present, otherwise an API key. The bot only
-has a placeholder of the same kind, so its Claude Code signs in as a subscriber or as an API
-client, and the forwarder allows only the guest's models (`T3CODE_GUEST_ANTHROPIC_MODELS`)
-and caps effort (`T3CODE_GUEST_ANTHROPIC_MAX_EFFORT`). Whatever the bot does inside its
-sandbox, it cannot use the credential elsewhere or pick another model. Guest text that would act on
-Claude Code (a leading `/`, "ultrathink") reaches the bot defused. Conversations live in the
-guest's volume, so stopping the container loses nothing. `T3CODE_GUEST_IDLE_MS` (default 10 minutes) stops an idle guest bot's container through
-the same release as Restart session. A guest's bot can also be one the owner uses: the owner writes from T3, the guest from the
-app, and both see the whole conversation. Every turn on such a bot's thread runs on the bot's own
-model, whoever sends it (`GuestModelPin`, applied by the Orchestrator to every command), so an owner
-message never moves the conversation out of the sandbox. The guest's messages reach the bot as
-`<guest name>: <text>`, and the guest API marks each user message `guest` or `owner`
-(`T3CODE_OWNER_NAME` names the owner in the app). A reply pushes to every party: the owner's usual
-T3 push, and the guest's visible FCM notification (the bot name and a reply preview). With
-`lurian-bot.token` in the guest's secrets, the proxy forwards `LURIAN_BOT_API_URL`
-(`http://egress:8081/api/bot/v1`) to Lurian's Bot API with the token; no other path gets it.
-The guest's own Google account works the same way: `cli.ts google-login <guest> --client-file …`
-runs the OAuth flow on the host (the guest signs in in a browser there) and writes
-`google/credentials.json` in the guest's secrets folder. The proxy refreshes access tokens from it
-and forwards `GOOGLE_API_URL` (`http://egress:8082`) to the Gmail, Sheets, Calendar and Drive
-APIs only; the image's `/opt/t3-guest/google-apis.md` tells the bot how to call them. Claude replies reach the app per completed text block, as on every T3 surface,
-not per token.
-
-The guest app has voice as well: the composer's wave button, the orb, and a listen button under each
-reply, on client-runtime's voice controller. The guest listener carries the session
-(`POST /guest/v1/bots/:botId/voice` streams the answer and the bot's activity as SSE, then
-`/voice/ready` and `/voice/report`). The thread is always the bot's conversation, and what the guest
-says goes through the guest send rules (as the guest, on the bot's model, sandbox only), so the bot
-gets `<guest name>: 🎙️ …`. Realtime runs on the host with its ChatGPT login, and no credential
-reaches the app or the sandbox. A guest holds one voice session at a time, a revoked token ends it,
-and the voice does not change mid-call. See
-[`GuestVoice.ts`](apps/server/src/bots/guest/GuestVoice.ts);
-[`guestVoiceProbe.ts`](apps/server/src/bots/guest/guestVoiceProbe.ts) runs it against a server's
-real voice.
-
-A guest's bot also has three tools that run in the T3 server process
-([`GuestTools.ts`](apps/server/src/bots/guest/GuestTools.ts)): `generate_image`, `list_images` and
-`html_render`. They reach the sandboxed Claude Code as an in-process Agent SDK MCP server over the
-CLI's own stdin/stdout (the turn's `appTools`, attached only to sandbox instances), so no network
-route or credential enters the sandbox, and each tool is bound to the turn's thread. Images come from
-Codex with the `codex` instance's ChatGPT login: one ephemeral app-server thread per image with every
-MCP server, app, plugin and tool feature off, a read-only sandbox, and a guard that stops on any item
-but the image ([`CodexImages.ts`](apps/server/src/bots/guest/CodexImages.ts)); edits take only images
-of the same conversation. `T3CODE_GUEST_IMAGES_PER_DAY` (default 30) caps them per guest. A page is
-stored as given and never runs on the host; the guest API serves it under T3's sandbox CSP. What the
-tools made is recorded in `bots.sqlite` (`guest_artifacts`): the bot's own tool output passes through
-its sandbox and can be forged, so the guest API serves only recorded artifacts. They appear in the
-guest's history as assistant messages without text, before the reply.
-
-The guest app updates itself like the owner's Android app, through the guest API: `app-update`
-answers the newest published build and `app-update/apk` sends it, both behind the guest's token.
-Each guest has their own folder, `<T3CODE_GUEST_APP_UPDATE_DIR>/<guest id>` (default
-`~/.t3-friend/android/bia` for Bia), holding the APK and `latest.json`; the folder comes from the
-token, so a guest only reaches their own app. The app checks on start and when it returns to the
-foreground, and installs only an APK whose sha256 and size match the manifest. See
-[`GuestAppUpdate.ts`](apps/server/src/bots/guest/GuestAppUpdate.ts) and
-[`appSelfUpdate.ts`](packages/client-runtime/src/appSelfUpdate.ts), shared with the owner's app.
-
-A guest's bot can hand work to helper agents (Claude Code subagents), never to T3's `delegate_task`.
-A subagent runs inside the bot's own Claude process, so it has the same container, network,
-forwarders and credentials and nothing more. The image defines the helpers and their limits as
-Claude Code managed settings in [`sandbox/claude/`](apps/server/src/bots/guest/sandbox/claude/),
-which outrank anything the bot writes in its home: `web-research` (Haiku), `drafting` (Sonnet, low
-effort), `numbers` (Sonnet, medium) and `organize` (Haiku), each with a turn cap, plus the
-read-only built-in Explore. Up to 3 run at once and none can start another. The other built-in agents
-and Workflow are off, and helpers never run in the background, so each one finishes within its
-turn. [`subagent-budget.mjs`](apps/server/src/bots/guest/sandbox/subagent-budget.mjs) allows 4 per
-user message. The forwarder's model and effort limits apply to helpers as to the bot. Changes take
-effect when the image is rebuilt.
+sender mark, link access, host MCP tools, queue resume) uses `parseBotThreadOwner`.
 
 ## The Mac app updates itself
 
 The owner's Mac app (unsigned, arm64) updates from the bots host like the Android app:
 `DESKTOP_UPDATE_PATH` answers the newest published build and `DESKTOP_UPDATE_ZIP_PATH` sends the
-zipped `.app`, both behind the owner's environment auth (the guest listener has no such route). The
+zipped `.app`, both behind the owner's environment auth. The
 server reads `T3CODE_DESKTOP_UPDATE_DIR` (default `~/.t3-friend/desktop`), where
 `~/.t3-friend/build-mac-app.sh` builds on omarchy and `publish-mac-app.sh` replaces `latest.json`
 atomically. See [`AppUpdate.ts`](apps/server/src/bots/appUpdate/AppUpdate.ts).
@@ -343,24 +253,12 @@ See [`apps/server/src/bots/webhookPublicBase.ts`](apps/server/src/bots/webhookPu
 
 ## Host MCP servers for a bot
 
-A bot can get the tools of an MCP server that runs on the host without the bot, or a guest's
-sandbox, holding its token. `~/.t3-friend/bot-host-mcp.json` (or `T3CODE_BOT_HOST_MCP_FILE`) maps a
+A bot can get the tools of an MCP server that runs on the host without the bot holding its token.
+`~/.t3-friend/bot-host-mcp.json` (or `T3CODE_BOT_HOST_MCP_FILE`) maps a
 bot id to Streamable HTTP servers on 127.0.0.1 or [::1] and their token files; T3 lists and calls their tools with
-the Bearer and offers them as in-process MCP servers (beside `t3-guest` for a guest's bot). Only the
+the Bearer and offers them as in-process MCP servers. Only the
 listed bot gets them, only on a Claude instance, and any failure leaves the bot without those tools
 for the turn, never without its turn. Setup and rules: [`docs/friend/bot-host-mcp.md`](docs/friend/bot-host-mcp.md).
-
-## Making a guest's bot the owner's
-
-Settings → Bots → a guest bot's menu → Make it a regular bot (`bots.bot.makeRegular`, the owner's
-session only, no MCP tool) removes the guest assignment and stores the chosen host instance with the
-same model and options in one `bots.sqlite` transaction, then moves the live conversation with
-`thread.model-selection.set`, upstream's provider switch. That order matters: GuestModelPin pins any
-model change back to the sandbox while the guest row exists. It refuses while the bot works and any
-target that names a guest or launches the sandbox; a retry converges. Plain edits (`bot_update`, the
-edit dialog) refuse a host model for a guest's bot, so this is the only way out of the sandbox.
-Afterwards the guest no longer sees the bot, gets no push for it, and its guest tools and artifacts
-are gone from its turns; its role, memories, conversation and listed host MCP servers stay.
 
 ## Linked environments and bots
 
@@ -369,9 +267,7 @@ from the bots host with full access, which the Mac does not fence. The fork's
 [`BotLinkAccess`](apps/server/src/bots/linkAccess.ts) is therefore the only barrier. A bot's
 conversation may use links only when the user turned it on in the bot's editor (Settings → Bots,
 "May work on linked environments"; table `linked_environment_bots` in `bots.sqlite`, empty at
-first) and it belongs to
-no guest; a guest's bot is refused even when its row is there, and the server refuses to add one.
-Only the owner's `bots.bot.linkedEnvironments` RPC (`orchestration:operate`) writes the table: no
+first). Only the owner's `bots.bot.linkedEnvironments` RPC (`orchestration:operate`) writes the table: no
 MCP tool, `bot_update` included, can. Any other thread may when its parent, its root and every
 thread that messaged it may, so work an unlisted bot started, delegated or messaged is refused, and
 so is a scheduled task an agent made. The gate reads the table on every check, so a switch applies
@@ -406,7 +302,7 @@ serve-web listens on a unix socket in a 0700 directory and runs without a connec
 client repeats the token inside the socket protocol, so the token would have to reach the browser.
 Access is the owner's session check with `terminal:operate` (the app's cookie, or a media `wsTicket`
 for the desktop's bearer session, traded once for a cookie scoped to `/vscode` that dies with the
-session). The guest listener has no `/vscode` route. Responses lose `X-Frame-Options`; embedding is
+session). Responses lose `X-Frame-Options`; embedding is
 allowed to the app's own origin and the desktop renderer, plus `T3CODE_VSCODE_FRAME_ANCESTORS`. See
 [`apps/server/src/bots/vscode/`](apps/server/src/bots/vscode/).
 

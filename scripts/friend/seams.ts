@@ -11,8 +11,8 @@ export type Seam =
 export const SEAMS: readonly Seam[] = [
   {
     file: "knip.jsonc",
-    markers: 6,
-    why: "fork scripts that run by path, apps/bia's Babel peer, and the fork's older unused exports",
+    markers: 5,
+    why: "fork scripts that run by path and the fork's older unused exports",
   },
   {
     file: "apps/mobile/src/App.tsx",
@@ -59,7 +59,7 @@ export const SEAMS: readonly Seam[] = [
     markers: 5,
     why: "sidebarBotsLayout client setting; voiceReaderVoice and voiceLanguage server settings",
   },
-  { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots and guest contracts" },
+  { file: "packages/contracts/src/index.ts", markers: 1, why: "export bots contracts" },
   {
     file: "packages/contracts/src/environment.ts",
     markers: 4,
@@ -94,7 +94,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/package.json",
     contains: '"@modelcontextprotocol/sdk"',
-    why: "guest app tools and the host MCP forward use the MCP SDK; upstream dropped it in 0.1.4",
+    why: "the host MCP forward and its Claude AppTools bridge use the MCP SDK; upstream dropped it in 0.1.4",
   },
   {
     file: "packages/client-runtime/package.json",
@@ -124,7 +124,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "packages/client-runtime/package.json",
     contains: '"./app-self-update"',
-    why: "export the Android apps' self-update shared by the friend APK and the guest app",
+    why: "export the self-update shared by the friend APK and the Mac app",
   },
   {
     file: "packages/client-runtime/package.json",
@@ -147,7 +147,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/server/src/orchestration-v2/RunExecutionService.ts",
     markers: 4,
-    why: "resolve bot instructions and guest tools per turn",
+    why: "resolve bot instructions and host MCP tools per turn",
   },
   {
     file: "apps/web/src/components/chat/MessagesTimeline.tsx",
@@ -195,14 +195,9 @@ export const SEAMS: readonly Seam[] = [
     why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles; a renewed bot conversation points to the previous one",
   },
   {
-    file: "apps/server/src/orchestration-v2/Orchestrator.ts",
-    markers: 3,
-    why: "pin a guest bot's thread to its sandboxed model",
-  },
-  {
     file: "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
-    markers: 4,
-    why: "idle-only release for restarting a bot's session; no MCP credential for guest sandboxes",
+    markers: 2,
+    why: "idle-only release for restarting a bot's session",
   },
   {
     file: "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
@@ -211,8 +206,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
-    markers: 7,
-    why: "bot instructions in the system prompt; no host skills for guest sandboxes; bot app tools",
+    markers: 6,
+    why: "bot instructions in the system prompt; bot app tools",
   },
   {
     file: "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
@@ -560,8 +555,6 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
   "packages/contracts/src/kanban.ts",
-  "packages/contracts/src/guest.ts",
-  "apps/bia/",
   "packages/client-runtime/src/state/bots.ts",
   "packages/client-runtime/src/voice.",
   "packages/client-runtime/src/botChat.",
