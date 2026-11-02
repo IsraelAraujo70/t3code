@@ -1,3 +1,4 @@
+import { KanbanTicketId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { emptyRunState } from "../fold.ts";
 import { cardColumnOf, cardIntent } from "./cardIntent.ts";
@@ -22,11 +23,16 @@ describe("card intents", () => {
     ).entries()) {
       const intent = cardIntent(state, card, column)!;
       expect(intent.key).toBe(`card:${index + 1}`);
-      expect(intent.runPath).toBe("/workflows/runs/run");
+      expect(intent).not.toHaveProperty("runPath");
+      expect(intent.ticketId).toBe(index === 0 ? undefined : "ticket");
       intents.set(intent.key, { intent, seq: index + 1, result: null });
       // Nothing new while the last card has no result, whatever the column.
       expect(cardIntent(state, card, "done")).toBeNull();
-      intents.set(intent.key, { intent, seq: index + 1, result: { _tag: "CardUpserted" } });
+      intents.set(intent.key, {
+        intent,
+        seq: index + 1,
+        result: { _tag: "CardUpserted", ticketId: KanbanTicketId.make("ticket") },
+      });
       expect(cardIntent(state, card, column)).toBeNull();
     }
     const first = intents.get("card:1")!;

@@ -13,6 +13,7 @@ export class WorkflowCards extends Context.Service<
   {
     readonly upsert: (input: {
       runId: string;
+      ticketId?: KanbanTicketId;
       projectId: ProjectId;
       column: CardColumn;
       title: string;
@@ -35,6 +36,21 @@ export const layer = Layer.effect(
               message: "the project is linked to Linear",
               retryable: false,
             });
+          }
+          if (input.ticketId !== undefined) {
+            const ticket = yield* store.getTicket(input.ticketId);
+            if (
+              Option.isSome(ticket) &&
+              ticket.value.projectId === input.projectId &&
+              ticket.value.status.kind === "local"
+            ) {
+              if (ticket.value.status.state !== input.column)
+                yield* kanban.moveTicket({
+                  ticketId: input.ticketId,
+                  to: { kind: "local", state: input.column },
+                });
+              return { ticketId: input.ticketId };
+            }
           }
           const marker = `wf-run:${input.runId}`;
           for (const ticket of yield* store.listTickets) {

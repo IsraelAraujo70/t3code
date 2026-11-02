@@ -7,6 +7,7 @@ import * as Redacted from "effect/Redacted";
 import {
   KanbanError,
   ProjectId,
+  KanbanTicketId,
   type KanbanCycle,
   type LinearWorkflowState,
 } from "@t3tools/contracts";
@@ -299,7 +300,14 @@ import { WorkflowCards, layer as cardsLayer } from "./WorkflowCards.ts";
 
 describe("WorkflowCards", () => {
   it.effect("creates once, moves, and never links a thread", () => {
-    const { layer } = setup();
+    let scans = 0;
+    const { layer } = setup({
+      storeOverrides: (store) => ({
+        listTickets: Effect.sync(() => {
+          scans++;
+        }).pipe(Effect.andThen(store.listTickets)),
+      }),
+    });
     return Effect.gen(function* () {
       const cards = yield* WorkflowCards;
       const store = yield* KanbanStore.KanbanStore;
@@ -313,6 +321,21 @@ describe("WorkflowCards", () => {
       const first = yield* cards.upsert(input);
       assert.deepStrictEqual(yield* cards.upsert(input), first);
       assert.deepStrictEqual(yield* cards.upsert({ ...input, column: "in_review" }), first);
+      const before = scans;
+      assert.deepStrictEqual(
+        yield* cards.upsert({ ...input, ticketId: first.ticketId, column: "done" }),
+        first,
+      );
+      assert.equal(scans, before);
+      assert.deepStrictEqual(
+        yield* cards.upsert({
+          ...input,
+          ticketId: KanbanTicketId.make("missing"),
+          column: "in_review",
+        }),
+        first,
+      );
+      assert.equal(scans, before + 1);
       const tickets = yield* store.listTickets;
       assert.equal(tickets.length, 1);
       assert.deepStrictEqual(tickets[0]?.status, { kind: "local", state: "in_review" });

@@ -41,7 +41,6 @@ export const needsYouNotice = (title: string, runId: string, why: NeedsYou): Not
       : why._tag === "fatigue"
         ? `Paused after ${why.streak} failures in a row. Resume it on the run screen.`
         : `Paused: workflows reached today's ${why.cap} token cap. It resumes when the workflow day turns.`,
-  runPath: `/workflows/runs/${runId}`,
 });
 
 /** "Run failed", key `notify:end`: failed, cancelled or out of budget. */
@@ -59,7 +58,6 @@ export const failedNotice = (
     cancelled: "The run was cancelled.",
     budget_exhausted: "The run used its whole budget.",
   }[status],
-  runPath: `/workflows/runs/${runId}`,
 });
 
 /**
@@ -78,7 +76,6 @@ export const finishedNotice = (
     key: "notify:end",
     kind: "finished",
     title,
-    runPath: `/workflows/runs/${runId}`,
     body: output.report
       ? clip(output.report)
       : output.status === "ready_for_review"
@@ -99,7 +96,6 @@ export const suspendedNotice = (title: string, runId: string, failures: number):
   kind: "needs_you",
   title,
   body: `Suspended after ${failures} failed runs in a row. Turn it back on in Workflows.`,
-  runPath: `/workflows/runs/${runId}`,
 });
 
 /** The FCM data of one notice, as `bot_message` so the Android app shows it today. */

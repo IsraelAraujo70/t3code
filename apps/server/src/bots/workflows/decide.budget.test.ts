@@ -1,3 +1,4 @@
+import { KanbanTicketId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { spentTokens, usageReport } from "./budget/budget.ts";
@@ -48,7 +49,11 @@ const pass = (run: TestRun, now = T0 + 1_000) => {
   const out = run.drive(now);
   for (const { intent, result } of run.state().intents.values())
     if (intent._tag === "UpsertCard" && result === null)
-      run.result(intent.key, { _tag: "CardUpserted" }, now);
+      run.result(
+        intent.key,
+        { _tag: "CardUpserted", ticketId: KanbanTicketId.make("ticket") },
+        now,
+      );
   if (run.intent("ws:integ") === undefined || run.state().workspaces.has("integ")) return out;
   run.result("ws:integ", workspaceReady, now);
   return [...out, ...run.drive(now)];
@@ -274,7 +279,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
         "column",
         "key",
         "project",
-        "runPath",
+        ...(card.ticketId === undefined ? [] : ["ticketId"]),
         "title",
       ]);
   });
@@ -293,7 +298,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
       );
     expect(run.state().ended?.status).toBe("succeeded");
     expect(cards()).toEqual([["card:1", "todo"]]);
-    run.result("card:1", { _tag: "CardUpserted" });
+    run.result("card:1", { _tag: "CardUpserted", ticketId: KanbanTicketId.make("ticket") });
     run.drive();
     expect(cards()).toEqual([
       ["card:1", "todo"],

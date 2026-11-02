@@ -38,12 +38,17 @@ export const cardIntent = (
   );
   if (last !== undefined && last.result === null) return null;
   if (last?.intent._tag === "UpsertCard" && last.intent.column === column) return null;
+  const completed = entries.filter((entry) => entry.result?._tag === "CardUpserted");
+  const previous = completed.reduce<(typeof entries)[number] | undefined>(
+    (latest, entry) => (!latest || entry.seq > latest.seq ? entry : latest),
+    undefined,
+  );
   return {
     _tag: "UpsertCard",
     key: `card:${entries.length + 1}`,
     project: card.project,
     title: card.title,
     column,
-    runPath: `/workflows/runs/${card.runId}`,
+    ...(previous?.result?._tag === "CardUpserted" ? { ticketId: previous.result.ticketId } : {}),
   };
 };
