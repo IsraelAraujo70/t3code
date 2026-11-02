@@ -48,6 +48,7 @@ import { forkParked } from "../../serverActivation.ts";
 // wf-engine slices 7-8: ledgers, budget context and block views.
 import { foldLedger, ledgerIdsOf } from "./blocks/ledger.ts";
 import { blockViews } from "./blocks/registry.ts";
+import { chargeOf, workflowDay } from "./budget/budget.ts";
 import { budgetContext, calledWorkflowsOf } from "./budget/context.ts";
 import { WorkflowCatalog } from "./Catalog.ts";
 import { decide, nextDeadline, retryRefusal } from "./decide.ts";
@@ -188,9 +189,57 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   /** Actors start and stop under this gate; `running` holds every run with a live actor. */
   const actorGate = yield* Semaphore.make(1);
   const running = new Set<string>();
-  // wf-engine slice 8: every run's fold for the daily cap, advanced by the facts appended since.
-  const foldedRuns = new Map<string, RunState>();
+  // wf-engine slice 8: the workflow day's spend, shared by every actor. The runs that may still
+  // charge are kept folded; a fact appended to a run stream marks that run to advance (a dropped
+  // run that reopens is folded again from its start), so no refresh rescans every run.
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dayRuns = new Map<string, RunState>();
+  const dirtyRuns = new Set<string>();
+  let dayLoaded = false;
+  let daySnapshot: { readonly at: number; readonly runs: ReadonlyArray<RunState> } | null = null;
+  const dayGate = yield* Semaphore.make(1);
+  const runFacts = yield* journal.subscribe;
+  yield* Effect.forkScoped(
+    Effect.forever(
+      PubSub.take(runFacts).pipe(
+        Effect.map((fact) => {
+          if (fact.stream.startsWith("run:")) dirtyRuns.add(fact.stream.slice("run:".length));
+        }),
+      ),
+    ),
+  );
+  /** Runs that may have charged in the current workflow day, refreshed at most every CONTEXT_TTL_MS. */
+  const dayRunsAt = (now: number) =>
+    dayGate.withPermits(1)(
+      Effect.gen(function* () {
+        if (daySnapshot !== null && now - daySnapshot.at < CONTEXT_TTL_MS) return daySnapshot.runs;
+        const ids = dayLoaded
+          ? [...dirtyRuns]
+          : (yield* journal.createdRuns(null)).map((run) => run.runId);
+        dayLoaded = true;
+        dirtyRuns.clear();
+        for (const id of ids) {
+          const known = dayRuns.get(id) ?? emptyRunState(id);
+          const facts = yield* journal.read(runStream(id), known.lastSeq);
+          dayRuns.set(id, facts.reduce(applyRunFact, known));
+        }
+        const day = workflowDay(now, timeZone, DEFAULT_HOST_LIMITS.dayStartsAtHour);
+        for (const [id, state] of dayRuns) {
+          // An ended run whose charges all settled before today cannot charge today.
+          const settled = [...state.intents.values()].every((e) => chargeOf(state, e) !== null);
+          const latest = Math.max(
+            -Infinity,
+            ...[...state.attempts.values()]
+              .flat()
+              .flatMap((a) => [a.settledAt, a.nudgeSettledAt])
+              .flatMap((at) => (at == null ? [] : [Date.parse(at)])),
+          );
+          if (state.ended !== null && settled && latest < day.start) dayRuns.delete(id);
+        }
+        daySnapshot = { at: now, runs: [...dayRuns.values()] };
+        return daySnapshot.runs;
+      }),
+    );
   /**
    * Under the gate, an actor with nothing left re-reads its stream and exits only if nothing new
    * arrived; `ensureActor` starts one unless one runs. A fact written before `ensureActor` (a
@@ -267,29 +316,20 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         .slice(0, HISTORY_RUNS),
       (run) => journal.read(runStream(run.runId)).pipe(Effect.map((f) => foldRun(run.runId, f))),
     );
-    const childTokens = new Map<string, number>();
-    for (const id of calledWorkflowsOf(version.compiled)) {
-      const current = yield* catalog.current(id);
-      if (current._tag === "Ready")
-        childTokens.set(id, current.version.compiled.definition.budget.tokens);
-    }
+    const calledWorkflows = calledWorkflowsOf(version.compiled);
     const contextAt = Effect.fn("WorkflowEngine.contextAt")(function* (now: number) {
       const ledgers = new Map(
         yield* Effect.forEach(ledgerIds, (id) =>
           journal.read(ledgerStream(id)).pipe(Effect.map((f) => [id, foldLedger(id, f)] as const)),
         ),
       );
-      // Every run, summed by when each charge settled; each run's fold is kept and advanced by the
-      // facts appended since, so a reopening or a late settlement is never missed.
-      const runs: Array<RunState> = [];
-      for (const { runId: id } of yield* journal.createdRuns(null)) {
-        const known = foldedRuns.get(id) ?? emptyRunState(id);
-        const state = (yield* journal.read(runStream(id), known.lastSeq)).reduce(
-          applyRunFact,
-          known,
-        );
-        foldedRuns.set(id, state);
-        runs.push(state);
+      const runs = yield* dayRunsAt(now);
+      // Re-read with the context, so a child whose budget changed is reserved at its new budget.
+      const childTokens = new Map<string, number>();
+      for (const id of calledWorkflows) {
+        const current = yield* catalog.current(id);
+        if (current._tag === "Ready")
+          childTokens.set(id, current.version.compiled.definition.budget.tokens);
       }
       const budget = {
         ...budgetContext({
