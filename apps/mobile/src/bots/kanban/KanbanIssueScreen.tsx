@@ -4,6 +4,7 @@ import {
   kanbanStartProjectTarget,
   THREAD_CARD_STATUS_LABELS,
   threadCardStatus,
+  isKanbanLinkableThread,
 } from "@t3tools/client-runtime/kanban-board";
 import {
   isAtomCommandInterrupted,
@@ -261,7 +262,7 @@ function IssueBody(props: {
       (shell) =>
         shell.projectId === ticket.projectId &&
         !ticket.threadIds.includes(shell.id) &&
-        !shell.id.startsWith("bot:"),
+        isKanbanLinkableThread(shell.id),
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 30);

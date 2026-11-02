@@ -8,6 +8,7 @@ import {
   type KanbanDropAction,
   type KanbanGroup,
   type KanbanViewContext,
+  isKanbanLinkableThread,
 } from "@t3tools/client-runtime/kanban-board";
 import {
   KANBAN_DEFAULT_VIEW_CONFIG,
@@ -741,7 +742,7 @@ function ticketThreadLinks(
   for (const shell of [...threadsById.values()].sort((a, b) =>
     b.updatedAt.localeCompare(a.updatedAt),
   )) {
-    if (shell.id.startsWith("bot:")) continue;
+    if (!isKanbanLinkableThread(shell.id)) continue;
     const options = byProject.get(shell.projectId) ?? [];
     options.push({ id: shell.id, title: shell.title });
     byProject.set(shell.projectId, options);

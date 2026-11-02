@@ -109,6 +109,48 @@ const layerDispatchChokepointTest =
       Layer.provideMerge(layerReceiptsTest),
     );
 
+it.effect.each([true, false])(
+  "listProjectThreads leaves out workflow steps and their subagents (includeSubagents %s)",
+  (includeSubagents) => {
+    const step = ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef");
+    const shell = (
+      id: string,
+      lineage: {
+        parentThreadId: ThreadId | null;
+        relationshipToParent: "fork" | "subagent" | null;
+      },
+    ) => ({
+      id: ThreadId.make(id),
+      updatedAt: DateTime.makeUnsafe("2026-11-02T00:00:00.000Z"),
+      lineage: { ...lineage, rootThreadId: lineage.parentThreadId ?? ThreadId.make(id) },
+    });
+    const threads = [
+      shell("thread:ordinary", { parentThreadId: null, relationshipToParent: null }),
+      shell(step, { parentThreadId: null, relationshipToParent: null }),
+      shell("thread:step-subagent", { parentThreadId: step, relationshipToParent: "subagent" }),
+      shell("thread:step-fork", { parentThreadId: step, relationshipToParent: "fork" }),
+    ];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getShellSnapshot: () => Effect.succeed({ threads } as never),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest({})),
+      Layer.provideMerge(layerReceiptsTest),
+    );
+    return Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const listed = yield* service.listProjectThreads({ includeSubagents });
+      expect(listed.map((thread) => thread.id).toSorted()).toEqual([
+        "thread:ordinary",
+        "thread:step-fork",
+      ]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
 it.effect(
   "the dispatch chokepoint refuses a continuation message.dispatch on a project-disabled instance before reaching the orchestrator",
   () => {

@@ -7,6 +7,7 @@ import {
   type KanbanFilterOption,
   type KanbanGroup,
   type KanbanViewContext,
+  isKanbanLinkableThread,
 } from "@t3tools/client-runtime/kanban-board";
 import {
   EnvironmentId,
@@ -419,7 +420,7 @@ function KanbanBoardView(props: {
         (shell) =>
           shell.projectId === ticket.projectId &&
           !ticket.threadIds.includes(shell.id) &&
-          !shell.id.startsWith("bot:"),
+          isKanbanLinkableThread(shell.id),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, 20)

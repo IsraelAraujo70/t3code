@@ -12,6 +12,7 @@ import {
   type ChatAttachment,
   CommandId,
   isListedThreadLineage,
+  isWorkflowStepLineage, // Fork (friend): workflow lineage also hides descendants.
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -796,7 +797,8 @@ const make = Effect.gen(function* () {
           snapshot.threads
             .filter((thread) =>
               input.includeSubagents
-                ? thread.lineage.sideChat !== true
+                ? // Fork (friend): MCP lists also hide workflow steps and their descendants.
+                  thread.lineage.sideChat !== true && !isWorkflowStepLineage(thread.lineage)
                 : isListedThreadLineage(thread.lineage),
             )
             .toSorted(

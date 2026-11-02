@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { dropTarget, type KanbanColumn } from "./kanbanBoard.ts";
+import { isKanbanLinkableThread, dropTarget, type KanbanColumn } from "./kanbanBoard.ts";
 
 const LINKED = ProjectId.make("linked");
 const LOCAL = ProjectId.make("local");
@@ -172,4 +172,12 @@ describe("dropTarget", () => {
     });
     expect(dropTarget(snapshot, oldLocal, linearColumn("cancel"))).toBeNull();
   });
+});
+
+it.each([
+  ["bot:example", false],
+  ["wf:wfr_0123456789abcdef0123:0123456789abcdef", false],
+  ["ordinary", true],
+])("linkable thread %s is %s", (id, expected) => {
+  expect(isKanbanLinkableThread(id)).toBe(expected);
 });

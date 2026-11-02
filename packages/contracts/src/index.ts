@@ -1,7 +1,8 @@
 export * from "./baseSchemas.ts";
-// Fork (friend): bots and guest API contracts.
+// Fork (friend): bots, guest and workflow step thread contracts.
 export * from "./bots.ts";
 export * from "./guest.ts";
+export * from "./workflowThreads.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
 export * from "./composerContextClipboard.ts";

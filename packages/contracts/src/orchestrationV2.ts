@@ -1,4 +1,6 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+// Fork (friend): workflow step threads live in Workflows, never in thread lists.
+import { isWorkflowStepLineage } from "./workflowThreads.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -160,7 +162,10 @@ export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLin
 
 /** Subagents and side chats live inside their parent's view, never in thread lists. */
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
-  lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+  // Fork (friend): workflow step threads live in Workflows, never in thread lists.
+  lineage.relationshipToParent !== "subagent" &&
+  lineage.sideChat !== true &&
+  !isWorkflowStepLineage(lineage);
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",

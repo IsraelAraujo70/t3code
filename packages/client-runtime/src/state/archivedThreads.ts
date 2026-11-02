@@ -1,4 +1,8 @@
-import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  isWorkflowStepLineage,
+  type OrchestrationV2ArchivedShellSnapshot,
+} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
@@ -54,7 +58,15 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
         const snapshot = AsyncResult.getOrElse(result, () => null);
         if (snapshot !== null) {
-          snapshots.push({ environmentId, snapshot });
+          // Fork (friend): Keep workflow step lineages out of archived thread views.
+          const threads = snapshot.threads.filter(
+            (thread) => !isWorkflowStepLineage(thread.lineage),
+          );
+          snapshots.push({
+            environmentId,
+            snapshot:
+              threads.length === snapshot.threads.length ? snapshot : { ...snapshot, threads },
+          });
         }
 
         if (error === null && result._tag === "Failure") {
