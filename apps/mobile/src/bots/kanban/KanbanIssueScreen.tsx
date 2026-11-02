@@ -268,13 +268,12 @@ function IssueBody(props: {
     .slice(0, 30);
   const timeline = detail === null ? [] : issueTimeline(detail);
 
-  const track = async <A,>(key: string, run: () => Promise<A>): Promise<A> => {
+  // Promise chains, not try/finally: the React Compiler cannot lower a try without a catch.
+  const track = <A,>(key: string, run: () => Promise<A>): Promise<A> => {
     setPending((current) => addPendingWrite(current, key));
-    try {
-      return await run();
-    } finally {
-      setPending((current) => removePendingWrite(current, key));
-    }
+    return new Promise<A>((resolve) => resolve(run())).finally(() =>
+      setPending((current) => removePendingWrite(current, key)),
+    );
   };
   /** Runs one write, reports a failure, and re-reads the issue after it. */
   const write = async (
@@ -340,14 +339,12 @@ function IssueBody(props: {
     const body = draft.trim();
     if (body.length === 0 || commentInFlight.current) return;
     commentInFlight.current = true;
-    try {
-      const sent = await write("comment", "Could not send the comment", () =>
-        comment({ environmentId, input: { ticketId: ticket.id, body } }),
-      );
-      if (sent) setDraft("");
-    } finally {
+    const sent = await write("comment", "Could not send the comment", () =>
+      comment({ environmentId, input: { ticketId: ticket.id, body } }),
+    ).finally(() => {
       commentInFlight.current = false;
-    }
+    });
+    if (sent) setDraft("");
   };
 
   const confirmDeleteComment = (target: KanbanComment) =>

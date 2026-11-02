@@ -4,6 +4,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import {
   PullRequestLinkedThreadsResult,
+  WORKFLOW_STEP_THREAD_PREFIX, // Fork (friend): workflow step threads are never listed under a PR.
   PullRequestOperationError,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
@@ -40,6 +41,7 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
         AND json_extract(link.value, '$.source') != 'stack-dismissed'
         AND t.deleted_at IS NULL
         AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+        AND t.thread_id NOT GLOB ${`${WORKFLOW_STEP_THREAD_PREFIX}*`} -- Fork (friend)
       ORDER BY "updatedAt" DESC, id ASC
     `.pipe(NodeSqliteClient.readOnly);
     const threads = rows
