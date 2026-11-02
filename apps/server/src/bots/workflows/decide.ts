@@ -468,7 +468,11 @@ export const decide = (
 
   const triggerRoot = (): JsonValue => {
     const payload = started.trigger.payload as JsonValue;
-    const base = { kind: started.trigger.kind, label: started.trigger.label };
+    const base = {
+      id: started.trigger.id ?? started.trigger.kind,
+      kind: started.trigger.kind,
+      label: started.trigger.label,
+    };
     return payload !== null && typeof payload === "object" && !Array.isArray(payload)
       ? { ...payload, ...base }
       : { ...base, payload };

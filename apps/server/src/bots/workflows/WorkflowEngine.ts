@@ -23,6 +23,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import {
+  WorkflowsError,
+  type WorkflowRunTriggerInput,
+  type WorkflowRunTriggerPayload,
   type WorkflowGateDecideInput,
   type WorkflowGateView,
   type WorkflowLedgerInput,
@@ -45,7 +48,12 @@ import {
   WorkflowLedgerEntry,
   WorkflowMetricReading,
 } from "@t3tools/contracts";
-import { type CompiledWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
+import {
+  type CompiledWorkflow,
+  decodeRunParams,
+  triggerParams,
+  DEFAULT_HOST_LIMITS,
+} from "@t3tools/shared/workflows";
 
 import { forkParked } from "../../serverActivation.ts";
 // wf-engine slices 7-8: ledgers, budget context and block views.
@@ -64,6 +72,7 @@ import {
   runStream,
   workflowStream,
 } from "./facts.ts";
+import { occurrenceKey } from "./triggers/occurrence.ts";
 import { canonicalParams } from "./params.ts";
 import { applyRunFact, emptyRunState, foldRun, liveTarget } from "./fold.ts";
 import { runIdFor } from "./ids.ts";
@@ -80,6 +89,8 @@ import {
   stepDetail,
   stepViews,
 } from "./view.ts";
+
+const encodeTriggerPayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 
 /** A request to run a workflow once; `occurrence` names it, so asking twice is one run. */
 export interface TriggerRequest {
@@ -143,7 +154,11 @@ export class WorkflowEngine extends Context.Service<
     readonly startRun: (
       input: WorkflowRunStartInput,
       by: string,
-    ) => Effect.Effect<WorkflowRunSummary, WorkflowJournalError>;
+    ) => Effect.Effect<WorkflowRunSummary, WorkflowJournalError | WorkflowsError>;
+    /** Reads the starting trigger payload on demand. */
+    readonly runTrigger: (
+      input: WorkflowRunTriggerInput,
+    ) => Effect.Effect<WorkflowRunTriggerPayload, WorkflowJournalError>;
     readonly runView: (
       input: WorkflowRunGetInput,
     ) => Effect.Effect<WorkflowRunView, WorkflowJournalError>;
@@ -641,8 +656,48 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       input: WorkflowRunStartInput,
       by: string,
     ) {
-      const occurrence = `manual:${input.clientRequestId}`;
-      const params = input.params ?? {};
+      const current = yield* catalog.current(input.workflowId);
+      const invalid = (message: string) => new WorkflowsError({ code: "invalid-request", message });
+      if (current._tag !== "Ready")
+        return yield* invalid("This workflow is not valid; fix it before running it.");
+      const definition = current.version.compiled.definition;
+      const trigger = input.testTrigger
+        ? Object.entries(definition.triggers ?? {}).find(([id]) => id === input.testTrigger)
+        : Object.entries(definition.triggers ?? {}).find(([, value]) => value.kind === "manual");
+      if (input.testTrigger && trigger?.[1].kind !== "webhook")
+        return yield* invalid("Test runs need a webhook trigger.");
+      if (!trigger)
+        return yield* invalid(
+          "This workflow has no manual trigger. Add one in the editor to run it from here.",
+        );
+      const label = `${input.testTrigger ? "Test event" : "Run now"} by ${by}`;
+      let payload: Json = { by };
+      let params;
+      if (input.testTrigger && trigger[1].kind === "webhook") {
+        const sample = yield* journal.triggerSample(input.workflowId, input.testTrigger);
+        if (Option.isNone(sample))
+          return yield* invalid(
+            "This trigger has no captured event yet: listen for a test event first.",
+          );
+        payload = sample.value.payload;
+        const root = {
+          ...(payload !== null && typeof payload === "object" && !Array.isArray(payload)
+            ? Object.fromEntries(Object.entries(payload))
+            : {}),
+          id: trigger[0],
+          kind: "webhook",
+          label,
+        };
+        params = triggerParams(trigger[1].params, root);
+      } else {
+        const decoded = decodeRunParams(definition.params, input.params ?? {});
+        if (!decoded.ok)
+          return yield* invalid(decoded.errors.map((error) => error.message).join("; "));
+        params = decoded.params;
+      }
+      const occurrence = input.testTrigger
+        ? occurrenceKey.test(input.testTrigger, input.clientRequestId)
+        : occurrenceKey.manual(input.clientRequestId);
       const existing = yield* journal.get(workflowStream(input.workflowId), occurrence);
       if (
         existing._tag === "Some" &&
@@ -655,16 +710,34 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       }
       const { runId } = yield* engine.start({
         workflowId: input.workflowId,
-        triggerId: "manual",
-        kind: "manual",
+        triggerId: trigger[0],
+        kind: trigger[1].kind,
         occurrence,
-        label: `Run now by ${by}`,
+        label,
         params,
-        payload: null,
+        payload,
         causalDepth: 0,
         parent: null,
       });
       return yield* summaryOf(runId);
+    }),
+    runTrigger: Effect.fn("WorkflowEngine.runTrigger")(function* (input: WorkflowRunTriggerInput) {
+      const { state } = yield* loadRun(input.runId);
+      let payload = state.started?.trigger.payload;
+      if (payload === undefined) {
+        const owner = yield* journal.workflowOfRun(input.runId);
+        const fired = Option.isSome(owner)
+          ? (yield* journal.read(workflowStream(owner.value))).find(
+              (entry) => entry.fact._tag === "TriggerFired" && entry.fact.runId === input.runId,
+            )?.fact
+          : undefined;
+        if (fired?._tag !== "TriggerFired") return yield* unknownRun(input.runId);
+        payload = fired.payload;
+      }
+      const serialized = yield* encodeTriggerPayload(payload).pipe(Effect.orDie);
+      const truncated =
+        input.maxBytes !== undefined && Buffer.byteLength(serialized) > input.maxBytes;
+      return { payload: truncated ? null : payload, truncated };
     }),
     runView: Effect.fn("WorkflowEngine.runView")(function* (input: WorkflowRunGetInput) {
       const [pin, offset] = input.stepsCursor?.includes(":") ? input.stepsCursor.split(":") : [];

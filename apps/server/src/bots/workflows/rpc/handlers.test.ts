@@ -97,6 +97,10 @@ it.live("starts and reads a run through the engine", () =>
           workflowId: decodeId("demo"),
           clientRequestId: "rpc-start",
         });
+        expect(yield* rpc[M.workflowsRunTrigger]({ runId: summary.runId })).toEqual({
+          payload: { by: "Owner" },
+          truncated: false,
+        });
         expect((yield* rpc[M.workflowsRunGet]({ runId: summary.runId })).summary.runId).toBe(
           summary.runId,
         );
