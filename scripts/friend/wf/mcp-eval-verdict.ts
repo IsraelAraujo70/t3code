@@ -149,7 +149,7 @@ export function mcpEvalVerdict(): McpEvalVerdictOutput {
     all.map((row) => JSON.stringify(row)).join("\n") + (all.length ? "\n" : ""),
   );
   return {
-    complete: count === planned && stopped === null,
+    complete: planned > 0 && count === planned && stopped === null,
     case_regressions: regressed.length,
     regressed,
     usage,

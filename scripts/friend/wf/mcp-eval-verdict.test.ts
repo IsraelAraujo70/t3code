@@ -126,6 +126,14 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
     complete: true,
     cases: { planned: 1, finished: 1 },
   });
+  const nothing = run("nothing", {
+    A: { exit: 1, stdout: "No case matches --case." },
+    B: { exit: 1, stdout: "No case matches --case." },
+  });
+  expect(JSON.parse(nothing.stdout)).toMatchObject({
+    complete: false,
+    cases: { planned: 0, finished: 0 },
+  });
   const failed = run("failed", {
     A: {
       exit: 1,
