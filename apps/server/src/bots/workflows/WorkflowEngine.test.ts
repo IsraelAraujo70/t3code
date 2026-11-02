@@ -831,3 +831,91 @@ it.effect("pins a run view to its cursor snapshot", () =>
     );
   }),
 );
+
+it.effect("owner runs validate params and expose their trigger payload", () =>
+  Effect.gen(function* () {
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    yield* Effect.gen(function* () {
+      const engine = yield* make({ runsDir: "/runs" });
+      const run = yield* engine.startRun(
+        { workflowId: WorkflowId.make("demo"), clientRequestId: "owner" },
+        "Owner",
+      );
+      const state = yield* engine.runState(run.runId);
+      assert.strictEqual(state.started?.trigger.id, "run");
+      assert.deepEqual(yield* engine.runTrigger({ runId: run.runId }), {
+        payload: { by: "Owner" },
+        truncated: false,
+      });
+      assert.deepEqual(yield* engine.runTrigger({ runId: run.runId, maxBytes: 1 }), {
+        payload: null,
+        truncated: true,
+      });
+      const error = yield* engine
+        .startRun(
+          { workflowId: WorkflowId.make("demo"), clientRequestId: "bad", params: { n: "wrong" } },
+          "Owner",
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "WorkflowsError");
+      assert.include(error.message, "n");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+          interpreter,
+          layerCatalog([compile({ params: { n: { type: "number", default: 1 } } })], false),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "owner runs require a manual trigger and test runs require a captured webhook event",
+  () =>
+    Effect.gen(function* () {
+      const { layer: interpreter } = yield* makeFakeInterpreter({});
+      yield* Effect.gen(function* () {
+        const engine = yield* make({ runsDir: "/runs" });
+        const journal = yield* Journal;
+        const input = { workflowId: WorkflowId.make("demo"), clientRequestId: "manual" };
+        const missing = yield* engine.startRun(input, "Owner").pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "WorkflowsError");
+        assert.include(missing.message, "no manual trigger");
+        const test = { ...input, clientRequestId: "test", testTrigger: "hook" };
+        const noSample = yield* engine.startRun(test, "Owner").pipe(Effect.flip);
+        assert.include(noSample.message, "no captured event");
+        yield* journal.captureTestDelivery({
+          workflowId: "demo",
+          triggerId: "hook",
+          deliveryId: "delivery",
+          payload: { body: { n: 7 } },
+        });
+        const run = yield* engine.startRun(test, "Owner");
+        const state = yield* engine.runState(run.runId);
+        assert.deepEqual(state.started?.params, { n: 7 });
+        const facts = yield* journal.read(workflowStream("demo"));
+        assert.isTrue(
+          facts.some(
+            ({ fact }) => fact._tag === "TriggerFired" && fact.occurrence.startsWith("test:"),
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+            interpreter,
+            layerCatalog([
+              compile({
+                triggers: { hook: { kind: "webhook", params: { n: "{{ trigger.body.n }}" } } },
+                params: { n: { type: "number" } },
+              }),
+            ]),
+          ),
+        ),
+      );
+    }),
+);

@@ -14,8 +14,10 @@ const unavailable = new WorkflowsError({
   code: "unavailable",
   message: "Workflows are not available on this server yet.",
 });
-const operationError = (cause: WorkflowJournalError) =>
-  new WorkflowsError({ code: "internal", message: "Workflow run operation failed.", cause });
+const operationError = (cause: WorkflowJournalError | WorkflowsError) =>
+  cause._tag === "WorkflowsError"
+    ? cause
+    : new WorkflowsError({ code: "internal", message: "Workflow run operation failed.", cause });
 
 export const handlers = Effect.gen(function* () {
   const definitions = yield* WorkflowDefinitions;
@@ -24,7 +26,7 @@ export const handlers = Effect.gen(function* () {
   const execute = <A>(
     operation: (
       service: Context.Service.Shape<typeof WorkflowEngine>,
-    ) => Effect.Effect<A, WorkflowJournalError>,
+    ) => Effect.Effect<A, WorkflowJournalError | WorkflowsError>,
   ) =>
     Option.isSome(engine)
       ? operation(engine.value).pipe(Effect.mapError(operationError))
@@ -72,8 +74,9 @@ export const handlers = Effect.gen(function* () {
     [M.workflowsMetrics]: (
       input: Parameters<Context.Service.Shape<typeof WorkflowEngine>["metrics"]>[0],
     ) => execute((engine) => engine.metrics(input)),
-    // Triggers n1 stubs: the trigger payload, samples and test mode land with their services.
-    [M.workflowsRunTrigger]: () => Effect.fail(unavailable),
+    [M.workflowsRunTrigger]: (
+      input: Parameters<Context.Service.Shape<typeof WorkflowEngine>["runTrigger"]>[0],
+    ) => execute((engine) => engine.runTrigger(input)),
     [M.workflowsTriggerSample]: (input: { workflowId: string; triggerId: string }) =>
       Option.isSome(samples)
         ? samples.value
