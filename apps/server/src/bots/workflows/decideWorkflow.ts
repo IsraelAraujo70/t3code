@@ -42,6 +42,27 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
         key,
         fact: { _tag: "TriggerSkipped", occurrence, reason },
       });
+      // A skipped child never starts, so its parent hears the outcome here or waits forever.
+      if (trigger.parent !== null) {
+        output.push({
+          stream: runStream(trigger.parent.runId),
+          key: `child:${trigger.runId}`,
+          fact: {
+            _tag: "ChildRunEnded",
+            childRunId: trigger.runId,
+            status: "skipped",
+            output: { reason },
+            cost: {
+              billable: 0,
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              usage: "unavailable",
+              usdEstimate: null,
+            },
+          },
+        });
+      }
     };
     const current = input.current;
     if (current._tag !== "Ready") {

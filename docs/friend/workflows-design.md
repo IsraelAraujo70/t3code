@@ -52,7 +52,7 @@ if (r._tag === "Conflict") openMerge(mergeDocuments(r.base, edited, r.current));
 const start = Effect.gen(function* () {
   // laço próprio que só começa depois da recuperação do upstream (forkParked)
   yield* forkParked(engine.tick.pipe(Effect.repeat(Schedule.spaced("5 seconds"))));
-  // tick: promove TriggerFired órfãos e, por execução viva, RunActor.start(runId), que dobra o journal,
+  // tick: promove TriggerFired órfãos e, por execução viva, liga o ator da execução, que dobra o journal,
   // reexecuta intents pendentes com as mesmas chaves, liga os sensores (waitForThread, exit.json)
   // e volta ao laço decide → gravar → executar.
 });
@@ -935,7 +935,7 @@ export const nextDeadline = (wf: CompiledWorkflow, s: RunState): Date | null => 
 };
 ```
 
-O ator de cada execução (`RunActor`, uma fibra por execução viva num `FiberMap`) faz: dobrar, reexecutar intents pendentes com as mesmas chaves, ligar sensores e repetir `decide → gravar → executar` até o fim. Cada append publica `(stream, seq)` num `PubSub`. O ator acorda com fato novo no seu stream ou no prazo de `nextDeadline`. Os próprios fatos são a caixa de entrada, e nenhuma fila em memória pode perder mensagem.
+O ator de cada execução (`runActor` em `WorkflowEngine.ts`, uma fibra por execução viva num `FiberMap`) faz: dobrar, reexecutar intents pendentes com as mesmas chaves, ligar sensores e repetir `decide → gravar → executar` até o fim. Cada append publica `(stream, seq)` num `PubSub`. O ator acorda com fato novo no seu stream ou no prazo de `nextDeadline`. Os próprios fatos são a caixa de entrada, e nenhuma fila em memória pode perder mensagem.
 
 **Como a fatia 2 implementou** ([`apps/server/src/bots/workflows/`](../../apps/server/src/bots/workflows/)):
 
@@ -968,7 +968,7 @@ O ator de cada execução (`RunActor`, uma fibra por execução viva num `FiberM
 **Do gatilho à execução.** Todo pedido de execução é primeiro um `TriggerFired` no stream do workflow, com chave = ocorrência. Quem cria a execução é o **decisor do workflow**, outra função pura (`decideWorkflow(workflowState, ctx) -> WorkflowIntent[]`) que o motor roda no tick e logo depois de cada `TriggerFired`. Para cada `TriggerFired` sem `RunCreated` nem `TriggerSkipped`, ele decide entre:
 
 - criar a execução (`RunCreated` + `RunStarted`, uma transação);
-- pular, com `TriggerSkipped{disabled | suspended | invalid}`;
+- pular, com `TriggerSkipped{disabled | suspended | invalid}`; se o gatilho é de um filho (`call`), o mesmo batch grava `ChildRunEnded{skipped}` na execução pai, que senão esperaria para sempre;
 - esperar: `concurrency: queue` com execução viva deixa o fato pendente até ela acabar, e `single` grava `TriggerSkipped{busy}`.
 
 O `runId` é derivado da ocorrência, então `start`, `run.start` e `workflow_run` devolvem o `runId` na hora, com status `accepted`, mesmo que o motor ainda esteja subindo ou a execução esteja na fila. Promover duas vezes bate na mesma chave.
@@ -987,6 +987,7 @@ pending ─(deps resolvidas, join ok)─► guarda falsa ─► skipped (caminho
 dispatched (IntentRecorded StartTurn|StartUnit)
    ▼ fato de resultado
 running (TurnStarted | UnitSpawned) ── RuntimeRequest ──► AnswerRequest (segue) | OpenGate ──► waiting_gate
+   (o portão mostra as perguntas ou o pedido de aprovação; a resposta do Israel vai como `answers` por pergunta, ou `accept`)
    ▼ observação (TurnSettled | UnitExited)
 StepResolved: succeeded | failed | lost | timed_out | cancelled | ambiguous
    ├─ retry casa e há tentativas ─► dispatched (tentativa + 1, chaves novas)
@@ -1019,13 +1020,13 @@ Saída de agente: o motor lê `subagentResultForRun` (`packages/provider-core/sr
 | `RunEnded` gravado com obrigações                                   | mesmo batch que `RunOutcome`, `TriggerFired` dos assinantes e intents de fim | partida carrega terminadas com `pending_intents > 0`                                                                                                                                                               | o fim é atômico                                                                                                                                                                                                      |
 | save de definição interrompido                                      | arquivo escrito, commit ou versão faltando                                   | a varredura de partida trata como edição à mão (§7.3) e completa commit, versão e tasks de webhook                                                                                                                 | cada passo do save é idempotente                                                                                                                                                                                     |
 
-A ordem da partida é: o motor registra no `Scheduler` compartilhado, que só ativa depois da recuperação do upstream (`apps/server/src/scheduling/Scheduler.ts:51-57`), e só no host de bots (`bots/layer.ts:255-273`). Enquanto o motor não está pronto, `run.start`, `workflow_run` e o gancho do webhook gravam o `TriggerFired` no journal e respondem "aceito". A execução nasce quando o motor fica pronto. Nada cai num lançamento comum de thread.
+A ordem da partida é: o motor roda o próprio tick com `forkParked` (`apps/server/src/serverActivation.ts`), que só começa depois da recuperação do upstream, e só no host de bots (`bots/layer.ts`). O `Scheduler` compartilhado não é exportado para o layer de bots. Enquanto o motor não está pronto, `run.start`, `workflow_run` e o gancho do webhook gravam o `TriggerFired` no journal e respondem "aceito". A execução nasce quando o motor fica pronto. Nada cai num lançamento comum de thread.
 
 ### 3.5 Mapa de módulos
 
 Todos os caminhos são novos e do fork.
 
-```
+````
 packages/contracts/src/workflows.ts           §1: schemas, RPCs, WORKFLOWS_WS_METHODS, escopos
 packages/shared/src/workflows/                compileWorkflow, parseExpr, evalExpr, renderTemplate, classifyCommand, modelFamily (export ./workflows)
 packages/contracts/src/bots.ts (do fork)      + export * from "./workflows.ts"; ...WORKFLOWS_RPCS em BOTS_RPCS; escopos
@@ -1034,14 +1035,17 @@ apps/server/src/bots/workflows/
   facts.ts  fold.ts  decide.ts  view.ts       fatos como Schema, dobra, decisão pura, visões
   blocks/{hillclimb,arena,graph,interrogate}.ts   um BlockDecider cada
   Journal.ts            append(batch) em BEGIN IMMEDIATE, read, liveRuns, changes (PubSub), rebuildProjections
-  Interpreter.ts        execute(runId, intent) → fatos de resultado
-  RunActor.ts           laço por execução; supervisor FiberMap
-  WorkflowEngine.ts     serviço público: start, control, decideGate, runView, subscribeRun, listRuns, metrics, ledger, isStepThread
-  sensors/turns.ts      waitForThread por turno vivo; pedidos de runtime; saída e custo
-  sensors/units.ts      exit.json no tick do Scheduler
-  exec/CommandRunner.ts uma unit systemd-run por comando; com heavy, o flock do heavy.lock e os limites do heavy.sh na mesma unit
+  Interpreter.ts        execute, abandon e observe de cada intent → fatos de resultado e observações
+  WorkflowEngine.ts     serviço público (start, control, decideGate, runView, subscribeRun, listRuns, metrics, ledger, isStepThread)
+                        e o ator de cada execução (FiberMap), com o próprio tick
+  exec/HostInterpreter.ts  o Interpreter no host: manda cada intent ao executor; caminhos e nomes de unit derivados da chave
+  exec/Turns.ts         launch, sendToThread, observação por waitForThread em blocos de 15 s com os pedidos de runtime, interrupt, resposta
+  exec/turnResult.ts    último bloco ```json e custo da execução e das continuações de restart
+  exec/Units.ts         uma unit systemd-run por comando; com heavy, o flock do heavy.lock e os limites do heavy.sh na mesma unit;
+                        o observador lê exit.json
   exec/wfUnit.ts        roda na unit: started.json (fsync) → argv → exit.json (rename atômico)
-  git/engineGit.ts      git do motor no host: worktrees, update-ref com CAS, merge local, push sem força para wf/…; sem hooks
+  git/Workspaces.ts     git do motor no host: worktrees, update-ref com CAS, merge local; sem hooks (o push para wf/… é da fatia 8)
+  layer.ts              o bloco do motor: journal, catálogo, interpretador e executores; o SqlClient do bots.sqlite fica privado
   definitions/WorkflowRepo.ts          git do repositório de workflows (ler HEAD, commit, log, restaurar)
   definitions/yamlCodec.ts             YAML ⇄ definição, ordem canônica
   definitions/WorkflowDefinitions.ts   serviço público: list, document, subscribe*, save, validate, setEnabled, delete, restore, history
@@ -1052,7 +1056,7 @@ apps/server/src/bots/workflows/
   mcp/tools.ts  mcp/handlers.ts        WorkflowToolkit
   rpc.ts                               handlers juntados ao grupo de bots/rpcHandlers.ts
 apps/server/src/bots/migrations/014_Workflows.ts
-apps/server/src/bots/layer.ts (do fork)   + WorkflowTriggerHook no layerCore; WorkflowEngine no layerService
+apps/server/src/bots/layer.ts (do fork)   + WorkflowTriggerHook no layerCore; o bloco de workflows/layer.ts no layerService
 
 packages/client-runtime/src/workflows.ts      toCanvasModel, fromCanvasModel, mergeDocuments, autoLayout, mergeRunDelta, statusTone
 packages/client-runtime/src/state/bots.ts     + átomos de workflows (comandos e assinaturas)
@@ -1061,7 +1065,7 @@ apps/web/src/bots/workflows/                  WorkflowsPage, WorkflowEditor (Can
 apps/web/src/routes/_chat.workflows*.tsx      lista, editor, execução (declarados do fork)
 apps/mobile/src/bots/workflows/               WorkflowsScreen, WorkflowScreen, RunScreen (grafo em react-native-svg), GateSheet, LightEditScreen
 scripts/friend/wf/                            CLIs JSON das rotinas (§11)
-```
+````
 
 Superfície pública do servidor: **dois serviços**, `WorkflowDefinitions` e `WorkflowEngine`. RPC, MCP, gatilhos e telas chamam só esses dois.
 
@@ -1328,11 +1332,11 @@ A lógica comum (status para cor, agrupamento de passos, merge de deltas e layou
 
 ### 9.3 Um passo pesado por vez
 
-- Comandos nunca rodam na árvore de processos do servidor. `CommandRunner.start` cria **uma** unit no gerenciador de usuário do Israel: `systemd-run --user --unit=wf-<k> --collect`. A unit roda o `wfUnit`, que grava `started.json` com fsync, roda o argv e grava `exit.json` com o código de saída que ele mesmo observou, por rename atômico. `queuedMs = started − spawned`, e espera de lock não conta como execução.
-- Com `heavy: true`, a unit leva os limites do `heavy.sh` (`CPUWeight=20`, `IOWeight=20`, `MemoryMax=6G`, `Nice=19`) e roda `flock /home/israel/.cache/t3-testdata/heavy.lock wfUnit …`: o mesmo lock do `heavy.sh`, pego dentro da mesma unit. O motor não chama o `heavy.sh`, porque ele abre uma segunda unit (`systemd-run --wait`) que sobrevive à primeira: se a de fora morre, o flock é solto enquanto a de dentro continua, e duas cópias rodam. Com o lock na unit, parar a unit mata o lock e o trabalho juntos.
+- Comandos nunca rodam na árvore de processos do servidor. `WorkflowUnits.start` (`exec/Units.ts`) cria **uma** unit no gerenciador de usuário do Israel: `systemd-run --user --unit=wf-<k> --collect`. A unit roda o `wfUnit`, que grava `started.json` com fsync, roda o argv no próprio grupo de processos (timeout e parada matam o grupo; descendentes que seguram a saída depois do fim morrem após 2 s) e grava `exit.json` com o código de saída que ele mesmo observou, por rename atômico. `queuedMs = started − spawned`, e espera de lock não conta como execução.
+- Com `heavy: true`, a unit leva os limites do `heavy.sh` (`CPUWeight=20`, `IOWeight=20`, `MemoryMax=6G`, `Nice=19`) e roda `flock /home/israel/.cache/t3-testdata/heavy.lock wfUnit …`: o mesmo lock do `heavy.sh` (`T3CODE_WORKFLOW_HEAVY_LOCK` troca o caminho em teste), pego dentro da mesma unit. O motor não chama o `heavy.sh`, porque ele abre uma segunda unit (`systemd-run --wait`) que sobrevive à primeira: se a de fora morre, o flock é solto enquanto a de dentro continua, e duas cópias rodam. Com o lock na unit, parar a unit mata o lock e o trabalho juntos.
 - O lock nunca é aninhado. O compilador recusa `heavy` junto com `selfSerializing` ou com argv que cita `heavy.sh`.
 - **Agentes e comandos que chamam `heavy.sh`** (o agente rodando typecheck, o `run.py` do bench por episódio) usam o `heavy.sh` do host, com o mesmo lock.
-- **Computer use.** Vale a trava flock por display que o computer use já usa: dois passos que pedem a tela `:99` esperam um pelo outro.
+- **Computer use.** Vale a trava por display do servidor de computer use (`$XDG_RUNTIME_DIR/computer-use-linux/input-<display>.lock`). Ela serializa cada ação de entrada (clique, digitação, tecla) entre servidores, não o passo inteiro: dois passos na tela `:99` intercalam suas ações em vez de esperar um pelo outro. Uma rotina que precisa da tela por um episódio inteiro, como o bench do argo35, se serializa sozinha (fatia 12).
 - **Limite.** Um agente que rode `cargo build` sem passar pelo `heavy.sh` não é serializado. O prompt base de passo manda usar `heavy.sh`.
 - Cancelamento: `systemctl --user stop wf-<k>`. Nunca por padrão de nome.
 
