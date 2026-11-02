@@ -43,7 +43,12 @@ export function forkChecks(cwd: string, noHeavy = false): ForkChecksOutput {
     ["tests", noHeavy ? "vp" : HEAVY_SH, noHeavy ? tests : ["vp", ...tests]],
   ];
   for (const [check, command, args] of checks) {
-    const result = NodeChildProcess.spawnSync(command, args, { cwd, encoding: "utf8" });
+    // The fork test suite prints far more than spawnSync's 1 MB default buffer.
+    const result = NodeChildProcess.spawnSync(command, args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 512 * 1024 * 1024,
+    });
     if (result.error) throw result.error;
     if (result.status === null) throw new Error(`${check} terminated by ${result.signal}`);
     output[check] = result.status === 0;

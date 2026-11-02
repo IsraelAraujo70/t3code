@@ -23,7 +23,7 @@ it("reports every verdict and selects the heavy wrapper", () => {
   const marker = NodePath.join(dir.path, "marker");
   NodeFS.writeFileSync(
     vp,
-    '#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGS"\necho tests output\nexit "${TEST_CODE:-0}"\n',
+    '#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGS"\nhead -c 2000000 /dev/zero | tr "\\0" x\necho tests output\nexit "${TEST_CODE:-0}"\n',
     { mode: 0o755 },
   );
   NodeFS.writeFileSync(heavy, '#!/bin/sh\ntouch "$MARKER"\nexec "$@"\n', { mode: 0o755 });
@@ -56,7 +56,7 @@ it("reports every verdict and selects the heavy wrapper", () => {
     tests: false,
     failures: [
       { check: "seams", exitCode: 2, output: "seams output\n" },
-      { check: "tests", exitCode: 3, output: "tests output\n" },
+      { check: "tests", exitCode: 3, output: `${"x".repeat(4000 - 13)}tests output\n` },
     ],
   });
   expect(NodeFS.existsSync(marker)).toBe(false);
