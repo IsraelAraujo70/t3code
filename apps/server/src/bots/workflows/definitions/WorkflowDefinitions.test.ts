@@ -660,3 +660,98 @@ it.live("shows each workflow's newest projected run as its last run", () =>
     }),
   ),
 );
+
+it.live("switches individual triggers and exposes bot entries", () =>
+  withDefinitions((definitions) =>
+    Effect.gen(function* () {
+      const id = decodeId("trigger-switches");
+      yield* definitions.fromTemplate(
+        { templateId: decodeId("mcp-token-cut"), workflowId: id },
+        { kind: "user" },
+      );
+      const d = yield* definitions.document(id);
+      if (!d.definition) throw new Error("Expected definition");
+      expect(
+        (yield* definitions.save(
+          {
+            workflowId: id,
+            baseRevision: d.revision,
+            message: "Triggers",
+            definition: {
+              ...d.definition,
+              triggers: {
+                first: { kind: "bot", description: "First" },
+                other: { kind: "webhook" },
+                manual: { kind: "manual" },
+              },
+            },
+          },
+          { kind: "user" },
+        ))._tag,
+      ).toBe("Saved");
+      const input = decodeToggle({
+        workflowId: id,
+        triggerId: "first",
+        enabled: false,
+        clientRequestId: "off",
+      });
+      yield* definitions.setEnabled(input, { kind: "user" });
+      const journal = yield* Journal.Journal;
+      yield* journal.append([
+        {
+          stream: workflowStream(id),
+          key: "fired:test",
+          fact: {
+            _tag: "TriggerFired",
+            runId: "test",
+            triggerId: "first",
+            kind: "bot",
+            occurrence: "test",
+            label: "test",
+            params: {},
+            payload: null,
+            causalDepth: 0,
+            parent: null,
+            at: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      ]);
+      expect(
+        (yield* definitions.document(id)).triggers.find((t) => t.id === "first")?.lastFiredAt,
+      ).toBe("2026-01-01T00:00:00.000Z");
+      expect(
+        (yield* definitions.list)[0]?.triggers.find((t) => t.id === "first")?.lastFiredAt,
+      ).toBe("2026-01-01T00:00:00.000Z");
+      const count = (yield* journal.read(workflowStream(id))).length;
+      yield* definitions.setEnabled(input, { kind: "user" });
+      expect((yield* journal.read(workflowStream(id))).length).toBe(count);
+      for (const triggers of [
+        (yield* definitions.document(id)).triggers,
+        (yield* definitions.list)[0]!.triggers,
+      ]) {
+        expect(triggers.find((t) => t.id === "first")?.enabled).toBe(false);
+        expect(triggers.find((t) => t.id === "other")?.enabled).toBe(true);
+      }
+      expect(yield* definitions.botEntries("mine")).toMatchObject([
+        { triggerId: "first", on: false },
+      ]);
+      for (const [triggerId, code] of [
+        ["missing", "not-found"],
+        ["manual", "invalid-request"],
+      ] as const) {
+        expect(
+          yield* definitions
+            .setEnabled(decodeToggle({ ...input, triggerId }), { kind: "user" })
+            .pipe(Effect.flip),
+        ).toMatchObject({ code });
+      }
+      yield* definitions.setEnabled(
+        decodeToggle({ ...input, enabled: true, clientRequestId: "on" }),
+        { kind: "user" },
+      );
+      expect(
+        (yield* definitions.document(id)).triggers.find((t) => t.id === "first")?.enabled,
+      ).toBe(true);
+    }),
+  ),
+);
