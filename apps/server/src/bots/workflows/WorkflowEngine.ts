@@ -56,7 +56,14 @@ import { budgetContext, calledWorkflowsOf } from "./budget/context.ts";
 import { WorkflowCatalog } from "./Catalog.ts";
 import { decide, nextDeadline, retryRefusal } from "./decide.ts";
 import { decideWorkflow } from "./decideWorkflow.ts";
-import { type Intent, ledgerStream, type NewFact, runStream, workflowStream } from "./facts.ts";
+import {
+  type StoredFact,
+  type Intent,
+  ledgerStream,
+  type NewFact,
+  runStream,
+  workflowStream,
+} from "./facts.ts";
 import { canonicalParams } from "./params.ts";
 import { applyRunFact, emptyRunState, foldRun, liveTarget } from "./fold.ts";
 import { runIdFor } from "./ids.ts";
@@ -550,8 +557,12 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     new WorkflowJournalError({ message: `There is no workflow run ${runId}.` });
 
   /** A run's folded state and pinned version, or none while it waits in its workflow's stream. */
-  const loadRun = Effect.fn("WorkflowEngine.loadRun")(function* (runId: string) {
-    const state = foldRun(runId, yield* journal.read(runStream(runId)));
+  const loadRun = Effect.fn("WorkflowEngine.loadRun")(function* (runId: string, upTo?: number) {
+    const facts = yield* journal.read(runStream(runId));
+    const state = foldRun(
+      runId,
+      upTo === undefined ? facts : facts.filter((fact) => fact.seq <= upTo),
+    );
     if (state.started === null) return { state, compiled: null };
     const version = yield* catalog.pinned(state.started.workflowId, state.started.commit);
     return { state, compiled: version.compiled };
@@ -648,18 +659,13 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       return yield* summaryOf(runId);
     }),
     runView: Effect.fn("WorkflowEngine.runView")(function* (input: WorkflowRunGetInput) {
-      const loaded = yield* loadRun(input.runId);
       const [pin, offset] = input.stepsCursor?.includes(":") ? input.stepsCursor.split(":") : [];
-      const state =
-        pin === undefined
-          ? loaded.state
-          : foldRun(
-              input.runId,
-              (yield* journal.read(runStream(input.runId))).filter(
-                (fact) => fact.seq <= Number(pin),
-              ),
-            );
-      const compiled = loaded.compiled;
+      const parsedPin = Number(pin);
+      const upTo =
+        pin !== undefined && Number.isSafeInteger(parsedPin) && parsedPin >= 0
+          ? parsedPin
+          : undefined;
+      const { state, compiled } = yield* loadRun(input.runId, upTo);
       if (compiled === null) {
         return {
           summary: yield* summaryOf(input.runId),
@@ -729,7 +735,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
             Stream.mapEffect((published) =>
               Effect.gen(function* () {
                 if (published.stream !== stream && Option.isSome(owner) && trigger !== undefined) {
-                  const found = [];
+                  const found: StoredFact[] = [];
                   for (const key of [`created:${occurrence}`, `skipped:${occurrence}`]) {
                     const entry = yield* journal.get(workflowStream(owner.value), key);
                     if (Option.isSome(entry)) found.push(entry.value);
@@ -779,7 +785,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
                   {
                     runId: input.runId,
                     seq: state.lastSeq,
-                    summary: queued ?? (yield* unknownRun(input.runId)),
+                    summary: queued ?? (yield* summaryOf(input.runId)),
                     steps: [],
                     gates: [],
                     blocks: [],

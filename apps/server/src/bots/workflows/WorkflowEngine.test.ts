@@ -6,6 +6,7 @@ import {
   WorkflowId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -705,6 +706,120 @@ it.effect("delivers a queued occurrence skipped on its workflow stream", () =>
         Effect.repeat({ until: (delta) => delta.summary.status === "skipped" }),
       );
       assert.equal(chunk.summary.status, "skipped");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+          interpreter,
+          layerCatalog([twoSteps]),
+        ),
+      ),
+    );
+  }),
+);
+it.effect("ignores unrelated workflow facts for a queued subscriber", () =>
+  Effect.gen(function* () {
+    const reads: FactReads = { facts: 0, createdRows: 0 };
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    yield* Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/runs" });
+      const occurrence = "manual:queued";
+      const runId = runIdFor("demo", occurrence);
+      yield* journal.append([
+        {
+          stream: workflowStream("demo"),
+          key: occurrence,
+          fact: {
+            _tag: "TriggerFired",
+            runId,
+            ...request(occurrence),
+            at: "2026-11-02T00:00:00.000Z",
+          },
+        },
+      ]);
+      const deltas = yield* Queue.unbounded<WorkflowRunDelta>();
+      const subscriber = yield* engine.subscribeRun({ runId, afterSeq: 0 }).pipe(
+        Stream.runForEach((delta) => Queue.offer(deltas, delta)),
+        Effect.forkScoped,
+      );
+      yield* Queue.take(deltas);
+      reads.facts = 0;
+      for (let i = 0; i < 50; i++) {
+        const other = `manual:other-${i}`;
+        yield* journal.append([
+          {
+            stream: workflowStream("demo"),
+            key: other,
+            fact: {
+              _tag: "TriggerFired",
+              runId: runIdFor("demo", other),
+              ...request(other),
+              at: "2026-11-02T00:00:00.000Z",
+            },
+          },
+        ]);
+      }
+      yield* journal.append([
+        {
+          stream: workflowStream("demo"),
+          key: `skipped:${occurrence}`,
+          fact: {
+            _tag: "TriggerSkipped",
+            occurrence,
+            reason: "busy",
+          },
+        },
+      ]);
+      const chunk = yield* Queue.take(deltas).pipe(
+        Effect.repeat({ until: (delta) => delta.summary.status === "skipped" }),
+      );
+      yield* Fiber.join(subscriber);
+      assert.equal(chunk.summary.status, "skipped");
+      assert.equal(reads.facts, 1);
+      assert.equal(yield* Queue.size(deltas), 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerCountingJournal(reads).pipe(
+            Layer.provide(layerFromDb),
+            Layer.provide(BotsDb.layerMemory),
+          ),
+          interpreter,
+          layerCatalog([twoSteps]),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("pins a run view to its cursor snapshot", () =>
+  Effect.gen(function* () {
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    yield* Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/runs" });
+      const runId = runIdFor("demo", "pin");
+      yield* journal.append([
+        {
+          stream: runStream(runId),
+          key: "started",
+          fact: runStarted({ hash: `sha256:${"0".repeat(64)}` }),
+        },
+      ]);
+      const before = yield* engine.runView({ runId });
+      yield* journal.append([
+        {
+          stream: runStream(runId),
+          key: "ended",
+          fact: { _tag: "RunEnded", status: "succeeded", at: "2026-11-02T00:00:00.000Z" },
+        },
+      ]);
+      const pinned = yield* engine.runView({ runId, stepsCursor: `${before.seq}:0` });
+      assert.equal(pinned.seq, before.seq);
+      assert.equal(pinned.summary.status, before.summary.status);
     }).pipe(
       Effect.scoped,
       Effect.provide(
