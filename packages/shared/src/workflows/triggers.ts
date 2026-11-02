@@ -1,3 +1,4 @@
+/** Triggers (friend fork): the helpers the server, the canvas and Android share. Design §5. */
 import {
   WORKFLOW_ON_DEMAND_TRIGGER_KINDS,
   type WorkflowTrigger,

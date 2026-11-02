@@ -1,4 +1,3 @@
-import { isOnDemandTrigger } from "./triggers.ts";
 /** The workflow compiler: decode, every static check of the design (§1.3), then the semantic hash. */
 import * as Cron from "effect/Cron";
 import * as Result from "effect/Result";
@@ -25,6 +24,7 @@ import { ancestors, buildGraph, formatEdge, parseEdge } from "./graph.ts";
 import { isModelAlias, modelFamily, resolveModelUse } from "./models.ts";
 import { matchesWhole } from "./output.ts";
 import { parseTemplate } from "./template.ts";
+import { isOnDemandTrigger } from "./triggers.ts";
 import type {
   CompiledGraph,
   CompiledWorkflow,
