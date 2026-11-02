@@ -4,6 +4,10 @@ import { reactFlowAdapter } from "./reactFlowAdapter";
 
 it("preserves nested nodes, written ports, status and annotations", () => {
   const model: CanvasModel = {
+    triggers: [
+      { id: "manual", kind: "manual", label: "Manual", subtitle: "", x: -200, y: 0, w: 180, h: 56 },
+    ],
+    entries: [{ id: "manual=>map", from: "manual", to: "map" }],
     nodes: [
       {
         id: "map",

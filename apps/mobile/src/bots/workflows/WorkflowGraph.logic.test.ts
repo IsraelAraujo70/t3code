@@ -5,6 +5,8 @@ describe("mobile graph geometry", () => {
   it("resolves body coordinates before fitting the graph", () => {
     const result = graphGeometry(
       {
+        triggers: [],
+        entries: [],
         nodes: [
           {
             id: "parent",

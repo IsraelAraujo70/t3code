@@ -3,18 +3,27 @@
  * Android graph. A new node type is one row in `CANVAS_NODE_STYLES`: renderers switch on `shape`
  * and look icons up by `icon`, never by type.
  */
-import type { WorkflowNodeKind, WorkflowStepStatus } from "@t3tools/contracts";
+import type { WorkflowNodeKind, WorkflowTriggerKind, WorkflowStepStatus } from "@t3tools/contracts";
 
 import type { WorkflowTone } from "./workflows.run.ts";
 
 /** Every type the canvas draws: the workflow node kinds plus free notes. */
-type CanvasNodeType = WorkflowNodeKind | "note";
+type CanvasNodeType = WorkflowNodeKind | "note" | `trigger:${WorkflowTriggerKind}`;
 /** `entry` has no input handle (a workflow's starting point); `pill` is a terminal output. */
 type CanvasShape = "box" | "octagon" | "hexagon" | "pill" | "frame" | "note" | "entry";
 /** roughjs `fillStyle`; `none` draws the outline only. */
 type CanvasFillStyle = "hachure" | "cross-hatch" | "zigzag" | "dots" | "solid" | "none";
 /** Semantic icon keys; each client maps every key to its own icon set. */
 export type CanvasIcon =
+  | "manual"
+  | "botTrigger"
+  | "called"
+  | "webhook"
+  | "cron"
+  | "tag"
+  | "merged"
+  | "settled"
+  | "alarm"
   | "agent"
   | "command"
   | "gate"
@@ -101,6 +110,45 @@ interface CanvasNodeStyle {
 
 // Red stays out of the node hues: it belongs to the failed status.
 export const CANVAS_NODE_STYLES = {
+  "trigger:manual": { label: "manual", hue: "gray", shape: "entry", fill: "dots", icon: "manual" },
+  "trigger:bot": { label: "bot", hue: "violet", shape: "entry", fill: "dots", icon: "botTrigger" },
+  "trigger:call": { label: "called", hue: "cyan", shape: "entry", fill: "dots", icon: "called" },
+  "trigger:webhook": {
+    label: "webhook",
+    hue: "orange",
+    shape: "entry",
+    fill: "dots",
+    icon: "webhook",
+  },
+  "trigger:cron": { label: "schedule", hue: "blue", shape: "entry", fill: "dots", icon: "cron" },
+  "trigger:upstreamTag": {
+    label: "new tag",
+    hue: "yellow",
+    shape: "entry",
+    fill: "dots",
+    icon: "tag",
+  },
+  "trigger:prMerged": {
+    label: "PR merged",
+    hue: "green",
+    shape: "entry",
+    fill: "dots",
+    icon: "merged",
+  },
+  "trigger:threadSettled": {
+    label: "thread settled",
+    hue: "teal",
+    shape: "entry",
+    fill: "dots",
+    icon: "settled",
+  },
+  "trigger:workflowFailed": {
+    label: "workflow failed",
+    hue: "pink",
+    shape: "entry",
+    fill: "dots",
+    icon: "alarm",
+  },
   agent: { label: "agent", hue: "violet", shape: "box", fill: "hachure", icon: "agent" },
   command: { label: "command", hue: "gray", shape: "box", fill: "hachure", icon: "command" },
   gate: { label: "gate", hue: "orange", shape: "octagon", fill: "cross-hatch", icon: "gate" },
@@ -200,3 +248,7 @@ export const canvasShapePath = (shape: CanvasShape, w: number, h: number): strin
     }
   }
 };
+
+/** The style registry key of a trigger. */
+export const canvasTriggerType = (kind: WorkflowTriggerKind): `trigger:${WorkflowTriggerKind}` =>
+  `trigger:${kind}`;
