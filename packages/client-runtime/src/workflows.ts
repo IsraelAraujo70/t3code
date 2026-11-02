@@ -5,3 +5,4 @@
 export * from "./workflows.canvas.ts";
 export * from "./workflows.merge.ts";
 export * from "./workflows.run.ts";
+export * from "./workflows.atoms.ts";

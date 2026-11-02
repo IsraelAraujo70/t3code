@@ -523,7 +523,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/sidebar/mainAppLocation.ts",
     markers: 1,
-    why: "the kanban page is a utility page, like pull requests",
+    why: "the kanban and workflows pages are utility pages, like pull requests",
   },
   {
     file: "apps/web/src/routeTree.gen.ts",
@@ -544,6 +544,31 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/web/src/routeTree.gen.ts",
     contains: "from './routes/_chat.kanban'",
     why: "generated route for the kanban page",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId'",
+    why: "generated layout route of the Workflows pages",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.index'",
+    why: "generated route for the Workflows list",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.$workflowId'",
+    why: "generated route for the workflow editor",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.runs.$runId'",
+    why: "generated route for a workflow run",
+  },
+  {
+    file: "apps/web/src/routeTree.gen.ts",
+    contains: "from './routes/_chat.workflows.$environmentId.ledger'",
+    why: "generated route for the workflows ledger",
   },
   {
     file: "apps/web/src/components/settings/settingsSearch.test.ts",
