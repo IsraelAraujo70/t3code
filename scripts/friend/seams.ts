@@ -10,6 +10,11 @@ export type Seam =
 
 export const SEAMS: readonly Seam[] = [
   {
+    file: "knip.jsonc",
+    markers: 6,
+    why: "fork scripts that run by path, apps/bia's Babel peer, and the fork's older unused exports",
+  },
+  {
     file: "apps/mobile/src/App.tsx",
     markers: 3,
     why: "mount direct bot push registration and the self-update notice",
@@ -460,8 +465,13 @@ export const SEAMS: readonly Seam[] = [
     why: "bot conversations open from the Bots tab",
   },
   {
+    file: "apps/mobile/src/features/workspace/workspace-tabs-state.test.ts",
+    markers: 1,
+    why: "the Android root screen test stubs the Bots and Kanban tab screens",
+  },
+  {
     file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.android.tsx",
-    markers: 5,
+    markers: 3,
     why: "Bots and Kanban tab panes on Android",
   },
   {

@@ -34,6 +34,8 @@
         "sign-macos.ts",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
+        // Fork (friend): run by path, per FORK.md.
+        "friend/merge-upstream.ts",
       ],
       "ignoreDependencies": ["agent-device", "esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
@@ -54,9 +56,18 @@
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
+        // Fork (friend): the guest CLI, the sandbox proxy and the voice probes run by path.
+        "src/bots/guest/cli.ts",
+        "src/bots/guest/guestVoiceProbe.ts",
+        "src/bots/guest/sandbox/proxy-main.mjs",
+        "src/bots/voice/voiceBench.ts",
       ],
       // The generated operations export every selection's class.
-      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
+      // Fork (friend): the fork's own unused exports predate this check; prune them separately.
+      "ignoreIssues": {
+        "**/*.graphql.ts": ["exports", "types", "namespaceMembers"],
+        "src/bots/**": ["exports", "namespaceMembers"],
+      },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
       // Native and disk-loaded provider packages stay external to the bundle; the
@@ -91,12 +102,18 @@
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      // Fork (friend): the fork's own unused exports predate this check; prune them separately.
+      "ignoreIssues": {
+        "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        "src/bots/**": ["exports"],
+      },
     },
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
       "ignoreDependencies": ["@astrojs/check"],
     },
+    // Fork (friend): Expo's Babel preset needs @babel/core, which nothing imports.
+    "apps/bia": { "ignoreDependencies": ["@babel/core"] },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
       "entry": [
@@ -139,6 +156,11 @@
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
+    },
+    // Fork (friend): the fork's own unused exports predate this check; prune them separately.
+    "packages/contracts": {
+      "includeEntryExports": true,
+      "ignoreIssues": { "src/{bots,kanban,guest}.ts": ["exports"] },
     },
     "packages/effect-acp": {
       "includeEntryExports": true,
