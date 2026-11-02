@@ -8,7 +8,12 @@ import * as DateTime from "effect/DateTime";
 import type * as Result from "effect/Result";
 import type { Json } from "effect/Schema";
 
-import type { WorkflowModelRef, WorkflowModelUse, WorkflowOutputShape } from "@t3tools/contracts";
+import type {
+  WorkflowFieldSpec,
+  WorkflowModelRef,
+  WorkflowModelUse,
+  WorkflowOutputShape,
+} from "@t3tools/contracts";
 import type { JsonValue } from "@t3tools/shared/workflows";
 
 import { liveTarget } from "../fold.ts";
@@ -74,10 +79,24 @@ export interface BlockHost {
   readonly namedWorkspace: (name: string) => BlockWorkspace | null;
 }
 
-export const outputInstruction = (shape: WorkflowOutputShape | undefined): string =>
-  shape === undefined
-    ? ""
-    : `\n\nEnd your reply with a \`\`\`json block holding an object with these fields: ${JSON.stringify(shape)}.`;
+const FIELD_TYPES: Record<WorkflowFieldSpec["type"], string> = {
+  string: "a string",
+  number: "a number",
+  boolean: "true or false",
+  "string[]": "an array of strings",
+  "number[]": "an array of numbers",
+  json: "any JSON value except null",
+};
+
+/** Words the shape as keys and value types: shown the raw schema, cheap models echo it back. */
+export const outputInstruction = (shape: WorkflowOutputShape | undefined): string => {
+  if (shape === undefined) return "";
+  const keys = Object.entries(shape).map(
+    ([name, field]) =>
+      `"${name}" (${FIELD_TYPES[field.type]}${field.pattern === undefined ? "" : ` matching ${field.pattern}`}${field.optional ? ", optional" : ""})`,
+  );
+  return `\n\nEnd your reply with a \`\`\`json block holding one object whose keys are ${keys.join(", ")}.`;
+};
 
 /** True once the block's first pass recorded its `started` event. */
 export const blockBegun = (state: RunState, step: string, attempt: number): boolean =>

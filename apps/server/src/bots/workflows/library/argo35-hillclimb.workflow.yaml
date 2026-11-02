@@ -1,6 +1,9 @@
 schema: t3.workflow/v1
 id: argo35-hillclimb
 title: Hillclimb de throughput no argo35
+description: >-
+  Não suportado sem supervisão: as CLIs do bench (argo35_metric.py, sol_suites.py) ainda não estão
+  no checkout do computer-use-linux que o host usa. Não ative até elas entrarem.
 home: { project: computer-use-linux }
 params:
   {
@@ -72,10 +75,12 @@ nodes:
     objective: { expr: "m.bench.candidate.throughput", direction: max }
     keep: >-
       m.bench.complete && m.bench.errors == 0 && len(m.bench.regressed_tasks) == 0
-      && m.bench.candidate.success_rate >= m.bench.baseline.success_rate && m.bench.throughput_ratio >= 1.05
+      && m.bench.candidate.success_rate >= m.bench.baseline.success_rate
+      && m.bench.throughput_ratio != null && m.bench.throughput_ratio >= 1.05
     confirmWhen: "m.bench.candidate.throughput / origin.bench.candidate.throughput >= 1.5"
     target: >-
-      m.bench.complete && m.bench.throughput_ratio >= 1.5 && len(m.bench.regressed_tasks) == 0
+      m.bench.complete && m.bench.throughput_ratio != null && m.bench.throughput_ratio >= 1.5
+      && len(m.bench.regressed_tasks) == 0
       && m.bench.candidate.success_rate >= m.bench.baseline.success_rate
     plateau: { rounds: 4 }
     budget: { iterations: 12, wall: 6h, tokens: 12000000 }
@@ -99,7 +104,7 @@ nodes:
       ]
     selfSerializing: true
     parse: json
-    check: "out.complete && out.throughput_ratio >= 1.5 && len(out.regressed_tasks) == 0 && out.candidate.success_rate >= out.baseline.success_rate"
+    check: "out.complete && out.throughput_ratio != null && out.throughput_ratio >= 1.5 && len(out.regressed_tasks) == 0 && out.candidate.success_rate >= out.baseline.success_rate"
   sol:
     kind: command
     cwd: { project: computer-use-linux, readOnly: true }

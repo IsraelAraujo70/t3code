@@ -18,6 +18,8 @@ nodes:
         Encurte descrições e schemas de ferramentas MCP (apps/server/src/mcp/toolkits/*/tools.ts,
         apps/server/src/bots/**/tools.ts) sem perder orientação de roteamento ou segurança. Uma mudança
         coerente por tentativa. Já tentado: {{ledgerDigest('mcp-token-cut')}}
+    # Attempt worktrees start without node_modules, and both measures import effect.
+    build: { argv: [vp, i], cwd: attempt, heavy: true, replay: safe }
     measure:
       tokens:
         {
@@ -35,7 +37,7 @@ nodes:
               --model,
               claude-opus-5-5,
               --baseline,
-              "{{origin.evals.resultsPath}}",
+              "{{coalesce(origin.evals.resultsPath, '')}}",
               --out,
               "{{step.dir}}",
             ],
@@ -51,6 +53,8 @@ nodes:
     target: "m.evals.complete && m.evals.case_regressions == 0 && m.tokens.total <= origin.tokens.total * 0.7"
     plateau: { rounds: 3 }
     budget: { iterations: 10, wall: 9h, tokens: 7000000 }
+  # cut.best is a fresh worktree: the review's check:changed needs node_modules there.
+  deps: { kind: command, cwd: cut.best, heavy: true, replay: safe, argv: [vp, i] }
   review:
     kind: interrogate
     target: { workspace: cut.best, baseRef: friend/main }
@@ -58,7 +62,7 @@ nodes:
     mode: panel
     reviewers: [{ provider: codex, model: gpt-6.1-sol, effort: high }, $lead]
     lead: $lead
-    checks: [{ argv: [vp, run, check:changed], cwd: cut.best, heavy: true }]
+    checks: [{ argv: [vp, run, check:changed, friend/main], cwd: cut.best, heavy: true }]
     rounds: 3
   done:
     {
@@ -79,7 +83,8 @@ nodes:
   stuck: { kind: output, status: blocked, notify: true, value: {} }
 edges:
   [
-    "cut:target -> review",
+    "cut:target -> deps",
+    "deps -> review",
     "cut:no_gain -> no_gain",
     "cut:budget -> no_gain",
     "review:approve -> done",

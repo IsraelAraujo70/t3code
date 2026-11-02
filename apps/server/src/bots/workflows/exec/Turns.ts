@@ -47,12 +47,13 @@ export class WorkflowTurnError extends Data.TaggedError("WorkflowTurnError")<{
 }> {}
 
 /** Prefixed to every step prompt: the bots' rules, which the engine's gates do not enforce. */
-const STEP_RULES = [
-  "You are one step of a T3 workflow running unattended on the bots host.",
-  "Never deploy, restart services, merge into friend/main, force push, or edit ~/.t3/userdata/settings.json;",
-  "if the task needs one of these, stop and say so in your reply.",
-  "Run heavy commands (typecheck, tests, builds, installs) through /home/israel/.cache/t3-testdata/heavy.sh, one at a time.",
-].join(" ");
+const stepRules = (heavyScript: string) =>
+  [
+    "You are one step of a T3 workflow running unattended on the bots host.",
+    "Never deploy, restart services, merge into friend/main, force push, or edit ~/.t3/userdata/settings.json;",
+    "if the task needs one of these, stop and say so in your reply.",
+    `Run heavy commands (typecheck, tests, builds, installs) through ${heavyScript}, one at a time.`,
+  ].join(" ");
 
 const TERMINAL: ReadonlySet<string> = new Set([
   "completed",
@@ -67,6 +68,8 @@ const WAIT_CHUNK_MS = 15_000;
 const FIND_RUN_TRIES = 30;
 
 export interface WorkflowTurnsOptions {
+  /** The heavy.sh the step prompt tells agents to use; it shares the lock heavy units take. */
+  readonly heavyScript: string;
   /** The instance each workflow provider runs on; default: the first enabled instance of its driver. */
   readonly instances?: {
     readonly claude?: string | undefined;
@@ -318,7 +321,7 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
 
   return WorkflowTurns.of({
     start: Effect.fn("WorkflowTurns.start")(function* (runId: string, intent: StartTurn) {
-      const text = `${STEP_RULES}\n\n${intent.prompt}`;
+      const text = `${stepRules(options.heavyScript)}\n\n${intent.prompt}`;
       const commandId = commandIdFor(runId, intent.key);
       const messageId = messageIdFor(runId, intent.key);
       if (intent.mode === "continue") {

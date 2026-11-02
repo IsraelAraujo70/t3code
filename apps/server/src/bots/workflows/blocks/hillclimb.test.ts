@@ -363,6 +363,20 @@ const cases: ReadonlyArray<Case> = [
     },
   },
   {
+    name: "a build without an artifact prepares the worktree in place and copies nothing",
+    patch: {
+      build: { argv: ["vp", "i"], cwd: "attempt", heavy: true, replay: "safe" },
+      measure: { bench: { argv: ["bench"], cwd: "attempt" } },
+      plateau: { rounds: 1 },
+    },
+    check: (run) => {
+      expect(argvOf(run, "origin/build")).toEqual(["vp", "i"]);
+      expect(argvOf(run, "r1/build")).toEqual(["vp", "i"]);
+      expect(run.intent("unit:climb/origin/artifact@1")).toBeUndefined();
+      expect(resolution(run)?.output).toMatchObject({ origin: { sha: "o0", artifact: null } });
+    },
+  },
+  {
     name: "an origin that does not build ends blocked",
     world: { unit: (c) => (c === "origin/build" ? { exit: 2 } : defaultUnit(c)) },
     check: (run) => {

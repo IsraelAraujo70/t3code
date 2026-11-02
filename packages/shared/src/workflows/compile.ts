@@ -715,7 +715,8 @@ export const compileWorkflow = (
         checkAgent(node.generator, `${path}.generator`, specCtx);
         if (node.build !== undefined) {
           checkCommand(node.build, `${path}.build`, specCtx, []);
-          checkTemplate(node.build.artifact, `${path}.build.artifact`, scope, "argv");
+          if (node.build.artifact !== undefined)
+            checkTemplate(node.build.artifact, `${path}.build.artifact`, scope, "argv");
         }
         for (const [name, spec] of Object.entries(node.measure)) {
           checkCommand(spec, `${path}.measure.${name}`, specCtx, HILLCLIMB_ROOTS);

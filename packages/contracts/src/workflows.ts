@@ -328,8 +328,13 @@ export const WorkflowHillclimbNode = Schema.Struct({
   ledger: WorkflowLedgerKey,
   /** Turn 1 proposes `{ key, mechanism, rationale }`; turn 2 implements and commits. */
   generator: WorkflowAgentSpec,
+  /** Without `artifact` the build only prepares the worktree (`vp i`) and nothing is copied. */
   build: Schema.optional(
-    Schema.Struct({ ...StepFields, ...CommandFields, artifact: WorkflowTemplate }),
+    Schema.Struct({
+      ...StepFields,
+      ...CommandFields,
+      artifact: Schema.optional(WorkflowTemplate),
+    }),
   ),
   /** Each prints JSON with numbers; read as `m.<name>`. */
   measure: Schema.Record(Schema.String, WorkflowCommandSpec),

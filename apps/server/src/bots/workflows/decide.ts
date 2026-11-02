@@ -45,7 +45,7 @@ import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import { liveTarget } from "./fold.ts";
 // wf-engine slices 7-8.
 import { emptyLedger, ledgerBest, ledgerDigest, type LedgerState } from "./blocks/ledger.ts";
-import { blockBegun, type BlockHost } from "./blocks/run.ts";
+import { blockBegun, type BlockHost, outputInstruction } from "./blocks/run.ts";
 import { runBlockNode } from "./blocks/registry.ts";
 import type { BlockNode } from "./blocks/types.ts";
 import {
@@ -755,11 +755,6 @@ export const decide = (
 
   // ── Dispatch and progress per kind ──────────────────────────────────────────────────────────
 
-  const outputInstruction = (node: WorkflowAgentNode) =>
-    node.output === undefined
-      ? ""
-      : `\n\nEnd your reply with a \`\`\`json block holding an object with these fields: ${JSON.stringify(node.output)}.`;
-
   const startTurn = (
     node: WorkflowAgentNode,
     step: string,
@@ -791,7 +786,7 @@ export const decide = (
         attempt,
         threadId: prevAttempt.threadId,
         mode: "continue",
-        prompt: prompt.success + outputInstruction(node),
+        prompt: prompt.success + outputInstruction(node.output),
         // The compiler keeps a thread on one model; the reservation is this step's own.
         // wf-engine slice 8: estimated like a new turn when the node names none.
         reservation: node.tokenReservation ?? turnEstimate(step),
@@ -819,7 +814,7 @@ export const decide = (
       projectRef: workspace.success.project,
       title: `${definition.title} · ${step}`,
       workspace: { name: workspace.success.name, path: workspace.success.path },
-      prompt: prompt.success + outputInstruction(node),
+      prompt: prompt.success + outputInstruction(node.output),
       model: model.success,
       access,
       // wf-engine slice 8: the node's own reservation, else its history, else the host default.
@@ -921,7 +916,7 @@ export const decide = (
             key: nudgeKey,
             threadId: a.threadId,
             mode: "continue",
-            prompt: `Your reply's JSON block was not valid: ${first.failure}.${outputInstruction(node)}`,
+            prompt: `Your reply's JSON block was not valid: ${first.failure}.${outputInstruction(node.output)}`,
           });
           return;
         }

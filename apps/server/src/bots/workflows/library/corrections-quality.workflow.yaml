@@ -1,6 +1,9 @@
 schema: t3.workflow/v1
 id: corrections-quality
 title: Correções viram enforcement estrutural
+description: >-
+  Pendente: a tarefa do host scripts/friend/wf/extract-corrections.ts ainda não existe, então o
+  primeiro passo falha. Não ative até ela entrar.
 home: { project: t3code }
 triggers:
   [
@@ -83,7 +86,14 @@ nodes:
             lead: $lead,
             leaf: $sol,
             workspace: { project: t3code, base: friend/main },
-            finalChecks: [{ argv: [vp, run, check:changed], cwd: build.integration, heavy: true }],
+            finalChecks:
+              [
+                {
+                  argv: [vp, run, check:changed, friend/main],
+                  cwd: build.integration,
+                  heavy: true,
+                },
+              ],
             reworkCap: 2,
             maxLeaves: 6,
             maxParallel: 2,

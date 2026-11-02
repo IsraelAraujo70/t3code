@@ -26,6 +26,9 @@ export const layer = Layer.unwrap(
     const env = process.env;
     const executors = Layer.mergeAll(
       Turns.layer({
+        heavyScript:
+          env.T3CODE_WORKFLOW_HEAVY_SH ??
+          NodePath.join(env.HOME ?? "", ".cache", "t3-testdata", "heavy.sh"),
         instances: {
           claude: env.T3CODE_WORKFLOW_CLAUDE_INSTANCE,
           codex: env.T3CODE_WORKFLOW_CODEX_INSTANCE,

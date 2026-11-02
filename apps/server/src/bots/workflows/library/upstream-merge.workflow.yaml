@@ -2,7 +2,15 @@ schema: t3.workflow/v1
 id: upstream-merge
 title: Merge do upstream
 home: { project: t3code }
-params: { base: { type: string, default: friend/main, pattern: "^[A-Za-z0-9._/-]+$" } }
+params:
+  base: { type: string, default: friend/main, pattern: "^[A-Za-z0-9._/-]+$" }
+  # A local bare repository works too: the end-to-end test points this at one.
+  upstream:
+    {
+      type: string,
+      default: "https://github.com/pingdotgg/t3code",
+      pattern: "^(https://[A-Za-z0-9.-]+|)/[A-Za-z0-9._/-]+$",
+    }
 triggers:
   - { id: weekly, kind: cron, expr: "0 7 * * 1", tz: America/Sao_Paulo }
   - {
@@ -38,7 +46,7 @@ nodes:
           node,
           scripts/friend/wf/select-upstream-tag.ts,
           --remote,
-          "https://github.com/pingdotgg/t3code",
+          "{{params.upstream}}",
           --base,
           "{{params.base}}",
         ],
@@ -66,6 +74,10 @@ nodes:
           ".",
           --tag,
           "{{nodes.select.output.tag}}",
+          --remote,
+          "{{params.upstream}}",
+          --base,
+          "{{params.base}}",
         ],
       output:
         {
@@ -96,7 +108,7 @@ nodes:
       heavy: true,
       replay: safe,
       parse: json,
-      argv: [node, scripts/friend/wf/fork-checks.ts, --json],
+      argv: [node, scripts/friend/wf/fork-checks.ts, --json, --no-heavy],
       check: "out.seams && out.theme && out.tests",
     }
   fix:
@@ -115,7 +127,7 @@ nodes:
       heavy: true,
       replay: safe,
       parse: json,
-      argv: [node, scripts/friend/wf/fork-checks.ts, --json],
+      argv: [node, scripts/friend/wf/fork-checks.ts, --json, --no-heavy],
       check: "out.seams && out.theme && out.tests",
     }
   review:

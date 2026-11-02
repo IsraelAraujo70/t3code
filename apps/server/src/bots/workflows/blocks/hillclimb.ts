@@ -343,6 +343,7 @@ const buildArtifact = (
   if (built._tag === "Failed") return { failed: built.error };
   if (built._tag !== "Exited") return "wait";
   if (!built.ok) return { failed: `build exited ${built.exit ?? built.signal}` };
+  if (build.artifact === undefined) return { artifact: null };
   const relative = rendered(io, build.artifact);
   if (relative === "finished") return relative;
   const artifact = `${io.runDir}/artifacts/${sha}/${relative.split("/").pop() ?? relative}`;
