@@ -21,6 +21,7 @@ import {
   toCanvasModel,
   withNodeStatuses,
   nodeStatuses,
+  withTriggerStates,
 } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -42,6 +43,8 @@ import {
   TableHead,
   TableCell,
 } from "../../../components/ui/table";
+import { TriggerSheet } from "./TriggerSheet";
+import { TriggerIcon } from "./TriggerIcon";
 import { GateSheet } from "./GateSheet";
 import { StepDetailSheet } from "./StepDetailSheet";
 import { WorkflowMetricsPanel } from "../metrics/WorkflowMetricsPanel";
@@ -93,11 +96,15 @@ function RunContent({
   const model = useMemo(
     () =>
       view.definition
-        ? withNodeStatuses(toCanvasModel(view.definition), nodeStatuses(view.steps))
+        ? withTriggerStates(
+            withNodeStatuses(toCanvasModel(view.definition), nodeStatuses(view.steps)),
+            { fired: view.trigger.id },
+          )
         : null,
-    [view.definition, view.steps],
+    [view.definition, view.steps, view.trigger.id],
   );
   const control = useAtomCommand(workflowsEnvironment.runControl, { label: "run control" });
+  const [triggerOpen, setTriggerOpen] = useState(false);
   const [showMetrics, setShowMetrics] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,7 +189,13 @@ function RunContent({
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-4 lg:grid-cols-8">
             <div className="col-span-2">
               <dt className="text-xs text-muted-foreground">Trigger</dt>
-              <dd className="mt-1">{summary.trigger.label}</dd>
+              <dd className="mt-1">
+                <Button variant="ghost-muted" size="xs" onClick={() => setTriggerOpen(true)}>
+                  <TriggerIcon kind={view.trigger.kind} />
+                  {summary.trigger.label}
+                  {view.trigger.test ? " · test event" : null}
+                </Button>
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Started</dt>
@@ -297,6 +310,7 @@ function RunContent({
               mode="run"
               model={model}
               onSelectNode={(id) => {
+                if (id === view.trigger.id) setTriggerOpen(true);
                 setSelected(id);
                 if (id)
                   document
@@ -420,6 +434,14 @@ function RunContent({
         </Button>
         {showMetrics ? (
           <WorkflowMetricsPanel environmentId={environmentId} workflowId={summary.workflowId} />
+        ) : null}
+        {triggerOpen ? (
+          <TriggerSheet
+            environmentId={environmentId}
+            runId={summary.runId}
+            trigger={view.trigger}
+            onClose={() => setTriggerOpen(false)}
+          />
         ) : null}
         {detail ? (
           <StepDetailSheet
