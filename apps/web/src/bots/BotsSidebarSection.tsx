@@ -24,11 +24,10 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Schema } from "effect";
-import { ChevronRightIcon, PlusIcon, WorkflowIcon } from "lucide-react";
+import { ChevronRightIcon, PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { CollapsibleSectionHeader } from "../components/ui/collapsible-section-header";
-import { useSidebar } from "../components/ui/sidebar";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -727,30 +726,7 @@ export function BotsSidebarSection(props: {
           ) : null}
         </DndContext>
       )}
-      {expanded && environmentId !== null ? <WorkflowsRow environmentId={environmentId} /> : null}
     </section>
-  );
-}
-
-/** Opens the bots host's Workflows, where the workflow step threads live. */
-function WorkflowsRow(props: { environmentId: EnvironmentId }) {
-  const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        if (isMobile) setOpenMobile(false);
-        void navigate({
-          to: "/workflows/$environmentId",
-          params: { environmentId: props.environmentId },
-        });
-      }}
-      className="flex cursor-pointer items-center gap-1.5 px-2 py-1 text-2xs text-sidebar-muted-foreground hover:text-sidebar-foreground"
-    >
-      <WorkflowIcon className="size-3" />
-      Workflows
-    </button>
   );
 }
 

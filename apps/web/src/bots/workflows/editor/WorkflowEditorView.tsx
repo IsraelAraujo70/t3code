@@ -43,6 +43,7 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
   }
   const [tab, setTab] = useState<Tab>("Canvas");
   const [selected, setSelected] = useState<string | null>(null);
+  const [inspectorFocused, setInspectorFocused] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(`Edit ${props.document.workflowId}`);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +131,9 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
           />
           <Button
             size="sm"
-            disabled={state.draft === null || saving}
+            // A focused inspector field commits on blur, which pressing Save causes; keep the
+            // button live so that same press saves the committed draft.
+            disabled={(state.draft === null && !inspectorFocused) || saving}
             onClick={() => {
               if (state.draft === null) return;
               void save({
@@ -234,7 +237,11 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
                 />
               </div>
             </div>
-            <aside className="w-full shrink-0 border-border lg:w-72 lg:overflow-y-auto lg:border-l lg:pl-3">
+            <aside
+              className="w-full shrink-0 border-border lg:w-72 lg:overflow-y-auto lg:border-l lg:pl-3"
+              onFocus={() => setInspectorFocused(true)}
+              onBlur={() => setInspectorFocused(false)}
+            >
               <fieldset disabled={saving}>
                 <Inspector
                   definition={current}

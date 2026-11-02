@@ -37,9 +37,10 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
-// Fork (friend): the fork Mac app's self-update notice and the kanban button.
+// Fork (friend): the fork Mac app's self-update notice and the kanban and workflows buttons.
 import { DesktopSelfUpdateNotice } from "../../bots/DesktopSelfUpdateNotice";
 import { KanbanSidebarItem } from "../../bots/kanban/KanbanSidebarItem";
+import { WorkflowsSidebarItem } from "../../bots/workflows/WorkflowsSidebarItem";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
@@ -281,8 +282,9 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          {/* Fork (friend): the bots host's kanban, next to pull requests. */}
+          {/* Fork (friend): the bots host's kanban and workflows, next to pull requests. */}
           <KanbanSidebarItem Item={SidebarUtilityItem} />
+          <WorkflowsSidebarItem Item={SidebarUtilityItem} />
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
