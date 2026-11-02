@@ -407,6 +407,22 @@ export function BotsList(props: {
             onPress={() => navigation.navigate("BotsKanban", { environmentId })}
           />
         )}
+        <BotsListRow
+          accessibilityLabel="Workflows"
+          accessibilityHint="Opens workflows and recent runs"
+          title="Workflows"
+          subtitle={null}
+          trailing={null}
+          leading={
+            <SymbolView
+              name={KANBAN_SYMBOL}
+              size={18}
+              tintColorClassName="accent-foreground-muted"
+              type="monochrome"
+            />
+          }
+          onPress={() => navigation.navigate("BotsWorkflows", { environmentId })}
+        />
       </View>
     </View>
   );

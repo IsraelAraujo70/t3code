@@ -365,7 +365,8 @@ object AgentNotifications {
     path: String?,
     id: Int
   ): PendingIntent? {
-    val threadPath = path?.takeIf { it.startsWith("/threads/") }
+    // Fork (friend): workflow alerts open their run route through the same guarded intent.
+    val threadPath = path?.takeIf { it.startsWith("/threads/") || it.startsWith("/bots/workflows/") }
     val route = threadPath?.takeUnless { it.contains('?') || it.contains('#') } ?: "/"
     val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
       ?: return null

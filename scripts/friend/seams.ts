@@ -41,7 +41,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/modules/t3-agent-notifications/android/src/main/java/expo/modules/t3agentnotifications/AgentNotifications.kt",
-    markers: 2,
+    markers: 3,
     why: "direct bot notification delivery",
   },
   {
@@ -421,7 +421,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/Stack.tsx",
     markers: 2,
-    why: "Computer and Kanban screen routes on mobile",
+    why: "Computer, Kanban and Workflows screen routes on mobile",
   },
   {
     file: "apps/mobile/src/features/home/HomeRouteScreen.tsx",
