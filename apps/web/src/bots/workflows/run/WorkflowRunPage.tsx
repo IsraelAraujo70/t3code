@@ -25,6 +25,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useNowMinute } from "../../../hooks/useNowMinute";
+import { formatRelativeTimeLabel } from "../../../timestampFormat";
 import { randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { commandFailureMessage } from "../../botsSettingsShared";
@@ -46,6 +47,12 @@ import { StepDetailSheet } from "./StepDetailSheet";
 import { WorkflowMetricsPanel } from "../metrics/WorkflowMetricsPanel";
 import { BlockViews } from "./BlockViews";
 /** Subscribed run screen, using the pinned definition and folded deltas. */
+// The page ticks once a minute, so a live duration shows whole minutes; seconds would sit frozen.
+const liveDuration = (fromIso: string, now: number): string => {
+  const minutes = Math.floor(Math.max(0, now - Date.parse(fromIso)) / 60_000);
+  return minutes === 0 ? "<1m" : formatDuration(minutes * 60_000);
+};
+
 export function WorkflowRunPage(props: { environmentId: EnvironmentId; runId: WorkflowRunId }) {
   const run = useWorkflowRun(props.environmentId, props.runId);
   return run.data ? (
@@ -179,20 +186,16 @@ function RunContent({
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Started</dt>
-              <dd className="mt-1">
-                {formatDuration(Math.max(0, now - Date.parse(summary.startedAt)))} ago
-              </dd>
+              <dd className="mt-1">{formatRelativeTimeLabel(summary.startedAt, now)}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Elapsed</dt>
               <dd className="mt-1">
-                {formatDuration(
-                  Math.max(
-                    0,
-                    (summary.endedAt ? Date.parse(summary.endedAt) : now) -
-                      Date.parse(summary.startedAt),
-                  ),
-                )}
+                {summary.endedAt
+                  ? formatDuration(
+                      Math.max(0, Date.parse(summary.endedAt) - Date.parse(summary.startedAt)),
+                    )
+                  : liveDuration(summary.startedAt, now)}
               </dd>
             </div>
             <div>
@@ -277,7 +280,7 @@ function RunContent({
                     {g.ask}: <span className="text-foreground">{g.decision.option}</span>
                     {" · "}
                     <time dateTime={g.decision.at}>
-                      {formatDuration(Math.max(0, now - Date.parse(g.decision.at)))} ago
+                      {formatRelativeTimeLabel(g.decision.at, now)}
                     </time>
                   </p>
                   {g.decision.note ? (
@@ -339,9 +342,11 @@ function RunContent({
                   </TableCell>
                   <TableCell>{row.attempts.length}</TableCell>
                   <TableCell>
-                    {row.latest.startedAt
-                      ? formatDuration(stepDurationMs(row.latest, now) ?? 0)
-                      : "Not started"}
+                    {row.latest.startedAt === null
+                      ? "Not started"
+                      : row.latest.endedAt === null
+                        ? liveDuration(row.latest.startedAt, now)
+                        : formatDuration(stepDurationMs(row.latest, now) ?? 0)}
                     {row.latest.queuedMs !== null ? (
                       <p className="mt-1 text-muted-foreground">
                         queued {formatDuration(row.latest.queuedMs)}
