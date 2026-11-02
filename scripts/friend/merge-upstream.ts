@@ -10,8 +10,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
-const UPSTREAM_URL = "https://github.com/pingdotgg/t3code";
-const STABLE_TAG = /^v\d+\.\d+\.\d+$/;
+import { UPSTREAM_URL, STABLE_TAG, runCli, type MergeUpstreamOutput } from "./wf/cli.ts";
+import { highestStableTag } from "./wf/select-upstream-tag.ts";
 const repoRoot = NodePath.join(import.meta.dirname, "..", "..");
 
 function flag(name: string): string | undefined {
@@ -35,8 +35,69 @@ function latestStableTag(): string {
   return stable;
 }
 
+if (NodeProcess.argv.includes("--help")) {
+  NodeProcess.stdout.write(
+    "Usage: merge-upstream [--remote <url>] [--base <ref>] [--tag <tag>] [--dir <path>]\n       merge-upstream --json --into <worktree> [--remote <url>] [--base <ref>] [--tag <tag>]\nLegacy: exit 0 success, 2 conflicts, 1 failure. JSON: exit 0 verdict (merged/conflicts), 1 no verdict.\n",
+  );
+  NodeProcess.exit(0);
+}
+
+if (NodeProcess.argv.includes("--json")) {
+  await runCli((): MergeUpstreamOutput => {
+    const into = flag("--into");
+    if (!into) throw new Error("--into is required.");
+    const cwd = NodePath.resolve(into);
+    const base = flag("--base") ?? "friend/main";
+    const branch = git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd);
+    if (branch === base || branch === `heads/${base}` || branch === "main")
+      throw new Error("Refusing to merge into the base branch.");
+    const remote = flag("--remote") ?? UPSTREAM_URL;
+    let tag = flag("--tag");
+    if (tag !== undefined && !STABLE_TAG.test(tag)) throw new Error("Not a stable release tag.");
+    if (tag === undefined) {
+      tag = highestStableTag(git(["ls-remote", "--tags", "--refs", remote], cwd));
+      if (!tag) throw new Error("No stable upstream tag found.");
+    }
+    git(["fetch", "--quiet", "--no-tags", remote, `+refs/tags/${tag}:refs/tags/${tag}`], cwd);
+    const target = git(["rev-parse", `${tag}^{commit}`], cwd);
+    const conflicts = () =>
+      git(["diff", "--name-only", "--diff-filter=U"], cwd).split("\n").filter(Boolean).sort();
+    const output = (status: MergeUpstreamOutput["status"]): MergeUpstreamOutput => ({
+      status,
+      conflicts: status === "conflicts" ? conflicts() : [],
+      tag,
+      head: git(["rev-parse", "HEAD"], cwd),
+    });
+    const pending = NodeChildProcess.spawnSync("git", ["rev-parse", "--verify", "MERGE_HEAD"], {
+      cwd,
+      encoding: "utf8",
+    });
+    if (pending.status === 0) {
+      if (pending.stdout.trim() !== target) throw new Error("Another merge is in progress.");
+      return output("conflicts");
+    }
+    if (
+      NodeChildProcess.spawnSync("git", ["merge-base", "--is-ancestor", target, "HEAD"], {
+        cwd,
+        stdio: "ignore",
+      }).status === 0
+    )
+      return output("merged");
+    if (git(["status", "--porcelain"], cwd)) throw new Error("Worktree must be clean.");
+    const merged = NodeChildProcess.spawnSync(
+      "git",
+      ["merge", "--no-ff", "--no-edit", "-m", `Merge upstream ${tag} into ${base}`, tag],
+      { cwd, stdio: ["ignore", "ignore", "inherit"] },
+    );
+    if (merged.status === 0) return output("merged");
+    if (conflicts().length > 0) return output("conflicts");
+    throw new Error("Git merge failed without conflicts.");
+  });
+  NodeProcess.exit(process.exitCode ?? 0);
+}
+
 const base = flag("--base") ?? "friend/main";
-git(["fetch", "--quiet", "--tags", UPSTREAM_URL]);
+git(["fetch", "--quiet", "--tags", flag("--remote") ?? UPSTREAM_URL]);
 const tag = flag("--tag") ?? latestStableTag();
 if (!STABLE_TAG.test(tag)) throw new Error(`${tag} is not a stable release tag.`);
 
