@@ -1,3 +1,4 @@
+import { KanbanTicketId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { spentTokens, usageReport } from "./budget/budget.ts";
@@ -48,7 +49,11 @@ const pass = (run: TestRun, now = T0 + 1_000) => {
   const out = run.drive(now);
   for (const { intent, result } of run.state().intents.values())
     if (intent._tag === "UpsertCard" && result === null)
-      run.result(intent.key, { _tag: "CardUpserted" }, now);
+      run.result(
+        intent.key,
+        { _tag: "CardUpserted", ticketId: KanbanTicketId.make("ticket") },
+        now,
+      );
   if (run.intent("ws:integ") === undefined || run.state().workspaces.has("integ")) return out;
   run.result("ws:integ", workspaceReady, now);
   return [...out, ...run.drive(now)];
@@ -274,7 +279,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
         "column",
         "key",
         "project",
-        "runPath",
+        ...(card.ticketId === undefined ? [] : ["ticketId"]),
         "title",
       ]);
   });
@@ -293,7 +298,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
       );
     expect(run.state().ended?.status).toBe("succeeded");
     expect(cards()).toEqual([["card:1", "todo"]]);
-    run.result("card:1", { _tag: "CardUpserted" });
+    run.result("card:1", { _tag: "CardUpserted", ticketId: KanbanTicketId.make("ticket") });
     run.drive();
     expect(cards()).toEqual([
       ["card:1", "todo"],
@@ -303,6 +308,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
 
   it.each([
     ["wf/demo", "OpenPullRequest"],
+    ["wf/failure", "IntentFailed"],
     ["release/1", null],
   ] as const)("publishes an output's pull request from branch %s", (branch, published) => {
     const run = begin({
@@ -323,17 +329,49 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
     run.result("turn:work@1", { _tag: "TurnStarted", threadId: "tw" });
     run.add("settled:work@1", settledWith("work", "complete", 10, "def"));
     pass(run);
-    const pr = run.intent("pr:done");
+    const pr = run.intent("pr:done@1");
     if (published === null) {
       expect(pr).toBeUndefined();
       expect(run.state().attempts.get("done")?.[0]?.resolved?.status).toBe("failed");
-    } else
+    } else {
+      expect(run.state().output).toBeNull();
       expect(pr).toMatchObject({
-        _tag: published,
-        branch: "wf/demo",
+        _tag: "OpenPullRequest",
+        branch,
         sha: "def",
         base: "friend/main",
       });
+      if (published === "IntentFailed") {
+        run.result("pr:done@1", {
+          _tag: "IntentFailed",
+          error: "publication denied",
+          retryable: false,
+        });
+        pass(run);
+        expect(run.state().attempts.get("done")?.[0]?.resolved).toMatchObject({ status: "failed" });
+        expect(run.state().ended?.status).toBe("failed");
+        // A retry of the output publishes again under its own attempt's key.
+        run.add("control:r1", {
+          _tag: "ControlRequested",
+          control: "retry",
+          step: "done",
+          by: "user",
+          at: iso(T0),
+        });
+        pass(run);
+        pass(run);
+        expect(run.intent("pr:done@2")).toMatchObject({ _tag: "OpenPullRequest", sha: "def" });
+        return;
+      }
+      run.result("pr:done@1", {
+        _tag: "PullRequestOpened",
+        url: "https://example.com/pr/1",
+        branch,
+      });
+      pass(run);
+      expect(run.state().output).not.toBeNull();
+      expect(run.state().ended?.status).toBe("succeeded");
+    }
   });
 
   it.each([
@@ -457,7 +495,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
     run.result("turn:fix@1", { _tag: "TurnStarted", threadId: "tf" });
     run.add("settled:fix@1", settledWith("fix", "complete", 10, "f2"));
     pass(run);
-    expect(run.intent("pr:done")).toMatchObject({ branch: "wf/r/climb/best", sha: "f2" });
+    expect(run.intent("pr:done@1")).toMatchObject({ branch: "wf/r/climb/best", sha: "f2" });
   });
 
   it("reserves each child run's whole budget, so concurrent calls never share a balance", () => {
@@ -542,7 +580,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
       at: iso(T0),
     });
     pass(run);
-    expect(run.intent("pr:done")).toMatchObject({ sha: "merged" });
+    expect(run.intent("pr:done@1")).toMatchObject({ sha: "merged" });
   });
 
   it("refuses a child whose budget is larger than what is left, never clipping it", () => {

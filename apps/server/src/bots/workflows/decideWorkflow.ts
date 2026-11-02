@@ -12,7 +12,10 @@ import type { NewFact, StoredFact } from "./facts.ts";
 
 export interface DecideWorkflowInput {
   readonly workflowId: string;
-  /** The workflow's stream. */
+  /**
+   * The workflow's stream, or the part that decides: its pending TriggerFired facts and its last
+   * `fatigue.consecutiveFailures` RunOutcomes since the last Suspended or Unsuspended.
+   */
   readonly facts: ReadonlyArray<StoredFact>;
   readonly current: CurrentVersion;
   /** Runs of this workflow that started and did not end. */

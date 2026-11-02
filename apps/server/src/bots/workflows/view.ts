@@ -1,3 +1,4 @@
+import { activeMs } from "./budget/budget.ts";
 /**
  * What clients read about a run, derived from the folded journal and never stored (§1.4). Pure:
  * the engine reads the facts, folds them and calls these.
@@ -50,7 +51,10 @@ const sumCosts = (
 };
 
 /** The summary of a run that started (its stream has RunStarted). */
-export const runSummary = (state: RunState): WorkflowRunSummary => {
+export const runSummary = (
+  state: RunState,
+  now = Date.parse(state.ended?.at ?? state.started!.at),
+): WorkflowRunSummary => {
   const started = state.started;
   if (!started) throw new Error("RunStarted required");
   const total = sumCosts(
@@ -94,7 +98,13 @@ export const runSummary = (state: RunState): WorkflowRunSummary => {
       state.ended === null
         ? [...state.gates.values()].filter((g) => g.decision === null).length
         : 0,
-    pullRequest: null,
+    pullRequest:
+      [...state.intents.values()]
+        .reverse()
+        .flatMap((entry) =>
+          entry.result?._tag === "PullRequestOpened" ? [entry.result.url] : [],
+        )[0] ?? null,
+    activeMs: activeMs(state, state.ended ? Date.parse(state.ended.at) : now),
   };
 };
 
@@ -141,6 +151,7 @@ export const pendingSummary = (
       reservedTokens: 0,
       openGates: 0,
       pullRequest: null,
+      activeMs: null,
     };
   }
   return null;
@@ -275,11 +286,12 @@ export const runDelta = (
   compiled: CompiledWorkflow,
   state: RunState,
   afterSeq: number,
+  now = Date.parse(state.ended?.at ?? state.started!.at),
 ): WorkflowRunDelta => {
   return {
     runId: WorkflowRunId.make(state.runId),
     seq: state.lastSeq,
-    summary: runSummary(state),
+    summary: runSummary(state, now),
     steps: stepViews(compiled, state).filter((v) => changedAfter(state, v, afterSeq)),
     gates: gateViews(state).filter((g) => (state.gates.get(g.key)?.lastSeq ?? 0) > afterSeq),
     // wf-engine slice 7.

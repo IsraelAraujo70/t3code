@@ -33,10 +33,12 @@ export class WorkflowCatalog extends Context.Service<
       commit: string,
     ) => Effect.Effect<PinnedVersion, WorkflowJournalError>;
     /** Workflows with a `workflowFailed` trigger on `workflowId` (or on any workflow). */
-    readonly failureSubscribers: (
-      workflowId: string,
-    ) => Effect.Effect<
-      ReadonlyArray<{ readonly workflowId: string; readonly triggerId: string }>,
+    readonly failureSubscribers: (workflowId: string) => Effect.Effect<
+      ReadonlyArray<{
+        readonly workflowId: string;
+        readonly triggerId: string;
+        readonly params?: Readonly<Record<string, string>>;
+      }>,
       WorkflowJournalError
     >;
   }

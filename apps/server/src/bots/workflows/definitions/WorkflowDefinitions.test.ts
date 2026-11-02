@@ -151,6 +151,7 @@ it.live("checks toggle permission and paginates committed history", () =>
           definition: {
             ...active.definition,
             title: "Bot edit",
+            triggers: [],
           },
           workflowId: id,
           baseRevision: active.revision,
@@ -159,6 +160,24 @@ it.live("checks toggle permission and paginates committed history", () =>
         { kind: "bot", name: "Bot", canManageBots: false },
       );
       expect(botSaved).toMatchObject({ _tag: "Saved", enabled: false });
+      // Turned back on, the same content saved again by the bot (same commit) turns it off again.
+      yield* definitions.setEnabled(
+        decodeToggle({ workflowId: id, enabled: true, clientRequestId: "toggle-again" }),
+        { kind: "user" },
+      );
+      const unchanged = yield* definitions.document(id);
+      if (!unchanged.definition) throw new Error("Expected definition");
+      expect(
+        yield* definitions.save(
+          {
+            definition: unchanged.definition,
+            workflowId: id,
+            baseRevision: unchanged.revision,
+            message: "Bot edit again",
+          },
+          { kind: "bot", name: "Bot", canManageBots: false },
+        ),
+      ).toMatchObject({ _tag: "Saved", enabled: false });
       for (const title of ["Second", "Third"]) {
         const doc = yield* definitions.document(id);
         if (!doc.definition) throw new Error("Expected definition");
@@ -580,6 +599,7 @@ it.live("shows each workflow's newest projected run as its last run", () =>
         reservedTokens: 0,
         openGates: 0,
         pullRequest: null,
+        activeMs: null,
       } satisfies WorkflowRunSummary;
       yield* journal.putRun({ summary: run, lastSeq: 9, pendingIntents: 0, parentRunId: null });
       const listed = (yield* definitions.list).find((d) => d.workflowId === saved.workflowId);

@@ -1,3 +1,4 @@
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { expect, it } from "@effect/vitest";
 import {
   BotId,
@@ -49,8 +50,8 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
     issuedAt: 0,
   };
   const dependencies = Layer.mergeAll(
+    Layer.mock(ServerEnvironment)({ getEnvironmentId: Effect.succeed(EnvironmentId.make("test")) }),
     Layer.mock(WorkflowEngine)({
-      isStepThread: (id) => id.startsWith("wf:"),
       start: (request) =>
         record(request).pipe(Effect.as({ runId: WorkflowRunId.make("wfr_0123456789abcdef0123") })),
       runView: () =>
@@ -73,6 +74,7 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
               reservedTokens: 0,
               openGates: 0,
               pullRequest: null,
+              activeMs: null,
               cost: {
                 billable: 0,
                 input: 0,
@@ -226,7 +228,10 @@ it.effect("preserves author permissions and returns conflicts", () =>
 it.effect("starts bot runs with their occurrence and refuses unprivileged mutations", () =>
   Effect.gen(function* () {
     const allowed = yield* setup("bot:test:1", true, true);
-    expect(yield* allowed.run()).toMatchObject({ status: "queued" });
+    expect(yield* allowed.run()).toMatchObject({
+      status: "queued",
+      link: "/workflows/test/runs/wfr_0123456789abcdef0123",
+    });
     expect(yield* Ref.get(allowed.calls)).toEqual([
       "botForThread",
       {

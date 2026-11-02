@@ -1348,3 +1348,22 @@ describe("retry, reopening and cleanup", () => {
     expect(ended("never", 1)).toEqual(["rm:r@1", "rm:integ"]);
   });
 });
+
+it("maps failure subscriber params and omits invalid templates", () => {
+  const graph = compile({ nodes: { c: commandNode } });
+  const run = prepare(TestRun.start(graph));
+  run.add("exited:c@1", unitExited("c", 1, 1));
+  const out = decide(graph, run.state(), {
+    now: T0,
+    runDir: "/runs/test",
+    failureSubscribers: [
+      {
+        workflowId: "subscriber",
+        triggerId: "failed",
+        params: { source: "{{ trigger.workflowId }}", invalid: "{{ missing.value }}" },
+      },
+    ],
+  });
+  const fired = out.find((entry) => entry.fact._tag === "TriggerFired")?.fact;
+  expect(fired).toMatchObject({ _tag: "TriggerFired", params: { source: "demo" } });
+});

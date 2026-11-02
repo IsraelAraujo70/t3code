@@ -1,4 +1,10 @@
-import { OrchestratorMcpFailure, type WorkflowsError } from "@t3tools/contracts";
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
+import { workflowRunWebPath } from "../notices/notices.ts";
+import {
+  isWorkflowStepThreadId,
+  OrchestratorMcpFailure,
+  type WorkflowsError,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
@@ -21,8 +27,6 @@ const failure = (error: WorkflowsError) =>
           : "orchestration_error",
     message: error.message,
   });
-// Replaced by isWorkflowStepThreadId from @t3tools/contracts when the hide work lands.
-const isWorkflowStepThread = (threadId: string) => threadId.startsWith("wf:");
 const callerBot = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const denied = new OrchestratorMcpFailure({
@@ -30,7 +34,7 @@ const callerBot = Effect.gen(function* () {
     message: "Workflow tools are only available in a bot's conversation.",
   });
   if (!scope.thread) return yield* denied;
-  if (isWorkflowStepThread(scope.thread.threadId))
+  if (isWorkflowStepThreadId(scope.thread.threadId))
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message:
@@ -199,7 +203,11 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         })
         .pipe(Effect.mapError(runFailure));
       const { summary } = yield* engine.runView({ runId }).pipe(Effect.mapError(runFailure));
-      return { runId, status: summary.status, link: `t3-workflow-run://v1/${runId}` };
+      return {
+        runId,
+        status: summary.status,
+        link: workflowRunWebPath(yield* (yield* ServerEnvironment).getEnvironmentId, runId),
+      };
     }),
   ),
   workflow_runs: McpToolAccess.readsAsCaller((input) =>

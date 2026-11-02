@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 // @effect-diagnostics globalDate:off - Fixed Date fixtures exercise the public trigger contract.
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -84,11 +85,41 @@ describe("occurrences", () => {
     expect(latestTag(remote, "(")).toBeNull();
     expect(occurrenceKey.tag("r", "v", "a")).not.toBe(occurrenceKey.tag("r", "v", "b"));
   });
+  it.each([
+    { relationshipToParent: "subagent", sideChat: false },
+    { relationshipToParent: null, sideChat: true },
+    { relationshipToParent: null, sideChat: false },
+  ] as const)("excludes workflow descendants %j", (lineage) => {
+    expect(
+      settledMatches(
+        {},
+        {
+          threadId: "child",
+          projectId: "p",
+          title: "Done",
+          lineage: {
+            ...lineage,
+            parentThreadId: ThreadId.make("wf:run:step"),
+            rootThreadId: ThreadId.make("wf:run:step"),
+          },
+        },
+      ),
+    ).toBe(false);
+  });
   it.each(["bot:b:1", "bot:b:t-abc", "wf:b:1", "bot:bb:1"])("settled %s", (threadId) => {
     expect(
       settledMatches(
         { botId: "b", projectId: "p", titlePrefix: "Hi" },
-        { threadId, projectId: "p", title: "Hi there" },
+        {
+          threadId,
+          projectId: "p",
+          title: "Hi there",
+          lineage: {
+            parentThreadId: null,
+            rootThreadId: ThreadId.make(threadId),
+            relationshipToParent: null,
+          },
+        },
       ),
     ).toBe(threadId.startsWith("bot:b:"));
   });

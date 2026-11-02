@@ -48,7 +48,6 @@ import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskServ
 import { workflowHookTaskId } from "../triggers/hook.ts";
 import { Journal } from "../Journal.ts";
 import { workflowStream } from "../facts.ts";
-import { workflowStatus } from "../workflowStatus.ts";
 import * as Store from "./definitionsStore.ts";
 import { WorkflowRepo, layer as repoLayer } from "./WorkflowRepo.ts";
 import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
@@ -172,7 +171,7 @@ const make = Effect.gen(function* () {
   const bus = yield* PubSub.unbounded<string>();
   const lock = yield* Semaphore.make(1);
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const status = (id: string) => journal.read(workflowStream(id)).pipe(Effect.map(workflowStatus));
+  const status = journal.workflowStatus;
   const callGraph = new Map<string, ReadonlyArray<string>>();
   const calls = (nodes: Readonly<Record<string, WorkflowNode>>): string[] =>
     Object.values(nodes).flatMap((node) =>
@@ -421,13 +420,13 @@ const make = Effect.gen(function* () {
                   by,
                   `toggled:created:${commit}`,
                 );
-              else if (
-                author.kind === "bot" &&
-                !author.canManageBots &&
-                (result.success.definition.triggers?.length ?? 0) > 0 &&
-                (yield* status(id)).enabled
-              )
-                yield* toggle(id, false, by, `toggled:bot-save:${commit}`);
+              else if (author.kind === "bot" && !author.canManageBots) {
+                // Keyed to the activation it turns off: the same commit saved again after the owner
+                // turned the workflow back on disables it again.
+                const current = yield* status(id);
+                if (current.enabled)
+                  yield* toggle(id, false, by, `toggled:bot-save:${commit}:${current.toggledSeq}`);
+              }
               yield* PubSub.publish(bus, id);
               return {
                 _tag: "Saved" as const,

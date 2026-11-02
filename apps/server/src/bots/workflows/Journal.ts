@@ -17,7 +17,8 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 
-import { Fact, type NewFact, type StoredFact } from "./facts.ts";
+import { Fact, type NewFact, type StoredFact, workflowStream } from "./facts.ts";
+import { type WorkflowStatus, workflowStatus } from "./workflowStatus.ts";
 
 export class WorkflowJournalError extends Data.TaggedError("WorkflowJournalError")<{
   readonly message: string;
@@ -75,9 +76,31 @@ export class Journal extends Context.Service<
       key: string,
     ) => Effect.Effect<Option.Option<StoredFact>, WorkflowJournalError>;
     /** Run ids that started and did not end, plus ended runs with an intent still waiting for its result. */
+    readonly ledgerIds: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     readonly liveRuns: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     /** Workflow ids with a TriggerFired that has neither RunCreated nor TriggerSkipped. */
     readonly pendingTriggers: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
+    /** The live runs, as `liveRuns` counts them, whose RunStarted names this workflow. */
+    readonly liveRunsOf: (
+      workflowId: string,
+    ) => Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
+    /** Runs with a fact stored at or after `at` (ISO), by id. */
+    readonly runsTouchedSince: (
+      at: string,
+    ) => Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
+    /** The workflow's switch, read from its last Toggled and its last Suspended or Unsuspended. */
+    readonly workflowStatus: (
+      workflowId: string,
+    ) => Effect.Effect<WorkflowStatus, WorkflowJournalError>;
+    /**
+     * What the workflow decider reads, in seq order: the TriggerFired facts with neither
+     * RunCreated nor TriggerSkipped, and the last `outcomes` RunOutcomes since the last Suspended
+     * or Unsuspended.
+     */
+    readonly workflowBacklog: (
+      workflowId: string,
+      outcomes: number,
+    ) => Effect.Effect<ReadonlyArray<StoredFact>, WorkflowJournalError>;
     /** The workflow a run id belongs to, from its TriggerFired; none when no trigger names it. */
     readonly workflowOfRun: (
       runId: string,
@@ -121,6 +144,12 @@ const decode = Effect.fn("Journal.decode")(function* (row: Row) {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const pubsub = yield* PubSub.unbounded<StoredFact>();
+  const liveRuns = sql<{
+    readonly id: string;
+  }>`SELECT substr(stream, 5) AS id FROM workflow_facts f WHERE stream LIKE 'run:%' AND
+      ((kind = 'RunStarted' AND (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunEnded') <= (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunReopened'))
+      OR (kind = 'IntentRecorded' AND NOT EXISTS (SELECT 1 FROM workflow_facts r WHERE r.stream = f.stream AND r.key = 'result:' || f.key)))
+      GROUP BY stream ORDER BY id`.pipe(Effect.map((rows) => rows.map((row) => row.id)));
   const get = Effect.fn("Journal.get")(function* (stream: string, key: string) {
     const rows =
       yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND key = ${key}`;
@@ -246,15 +275,55 @@ const make = Effect.gen(function* () {
         yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND seq > ${afterSeq} ORDER BY seq`;
       return yield* Effect.forEach(rows, decode);
     }, Effect.mapError(fail)),
-    liveRuns: sql<{
+    ledgerIds: sql<{
       readonly id: string;
-    }>`SELECT substr(stream, 5) AS id FROM workflow_facts f WHERE stream LIKE 'run:%' AND
-      ((kind = 'RunStarted' AND (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunEnded') <= (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunReopened'))
-      OR (kind = 'IntentRecorded' AND NOT EXISTS (SELECT 1 FROM workflow_facts r WHERE r.stream = f.stream AND r.key = 'result:' || f.key)))
-      GROUP BY stream ORDER BY id`.pipe(
+    }>`SELECT DISTINCT substr(stream, 8) AS id FROM workflow_facts WHERE stream LIKE 'ledger:%' ORDER BY id`.pipe(
       Effect.map((rows) => rows.map((row) => row.id)),
       Effect.mapError(fail),
     ),
+    liveRuns: liveRuns.pipe(Effect.mapError(fail)),
+    liveRunsOf: Effect.fn("Journal.liveRunsOf")(function* (workflowId: string) {
+      const live = yield* liveRuns;
+      if (live.length === 0) return [];
+      const rows = yield* sql<{ readonly id: string }>`
+        SELECT substr(stream, 5) AS id FROM workflow_facts
+        WHERE kind = 'RunStarted' AND stream IN (SELECT 'run:' || value FROM json_each(${JSON.stringify(live)}))
+        AND json_extract(payload_json, '$.workflowId') = ${workflowId} ORDER BY id`;
+      return rows.map((row) => row.id);
+    }, Effect.mapError(fail)),
+    runsTouchedSince: Effect.fn("Journal.runsTouchedSince")(function* (at: string) {
+      const rows = yield* sql<{ readonly id: string }>`
+        SELECT DISTINCT substr(stream, 5) AS id FROM workflow_facts
+        WHERE stream LIKE 'run:%' AND at >= ${at} ORDER BY id`;
+      return rows.map((row) => row.id);
+    }, Effect.mapError(fail)),
+    workflowStatus: Effect.fn("Journal.workflowStatus")(function* (workflowId: string) {
+      const stream = workflowStream(workflowId);
+      // Without table stats SQLite takes the primary key and walks the whole stream for MAX(seq).
+      const rows =
+        yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND seq IN (
+        (SELECT MAX(seq) FROM workflow_facts INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind = 'Toggled'),
+        (SELECT MAX(seq) FROM workflow_facts INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind IN ('Suspended', 'Unsuspended')))
+        ORDER BY seq`;
+      return workflowStatus(yield* Effect.forEach(rows, decode));
+    }, Effect.mapError(fail)),
+    workflowBacklog: Effect.fn("Journal.workflowBacklog")(function* (
+      workflowId: string,
+      outcomes: number,
+    ) {
+      const stream = workflowStream(workflowId);
+      const pending = yield* sql<Row>`SELECT * FROM workflow_facts f
+        WHERE kind = 'TriggerFired' AND stream = ${stream} AND NOT EXISTS (SELECT 1 FROM workflow_facts r
+        WHERE r.stream = f.stream AND (r.key = 'created:' || f.key OR r.key = 'skipped:' || f.key))`;
+      const recent = yield* sql<Row>`SELECT * FROM workflow_facts
+        WHERE kind = 'RunOutcome' AND stream = ${stream} AND seq > COALESCE((SELECT MAX(seq) FROM workflow_facts
+        INDEXED BY workflow_facts_kind WHERE stream = ${stream} AND kind IN ('Suspended', 'Unsuspended')), 0)
+        ORDER BY seq DESC LIMIT ${outcomes}`;
+      return yield* Effect.forEach(
+        [...pending, ...recent].sort((a, b) => a.seq - b.seq),
+        decode,
+      );
+    }, Effect.mapError(fail)),
     pendingTriggers: sql<{
       readonly id: string;
     }>`SELECT DISTINCT substr(stream, 10) AS id FROM workflow_facts f

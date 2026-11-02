@@ -61,16 +61,6 @@ export function WorkflowMetricsScreen({
               tokens
             </Text>
           ))}
-          {query.data?.series.map((series) => (
-            <View key={series.name} className="gap-1">
-              <Text>{series.name}</Text>
-              {series.points.map((point) => (
-                <Text key={`${point.runId}/${point.at}`}>
-                  {point.at} · {point.value} · {point.verdict ?? "Pending"}
-                </Text>
-              ))}
-            </View>
-          ))}
         </View>
       </ListSection>
       <ListSection title="Ledger">

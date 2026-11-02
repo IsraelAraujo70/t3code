@@ -17,7 +17,7 @@ import {
   type WorkflowRunView,
   type WorkflowRunDelta,
 } from "@t3tools/contracts";
-import { foldRunDelta } from "./workflows.run.ts";
+import { foldRunDelta, joinRunPages } from "./workflows.run.ts";
 import { WorkflowStepKey, WorkflowNodeId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -124,6 +124,7 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     reservedTokens: 0,
     openGates: 0,
     pullRequest: null,
+    activeMs: null,
   });
   const view: WorkflowRunView = {
     summary,
@@ -143,6 +144,16 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     gates: [],
   };
   expect(foldRunDelta(view, { ...delta, seq: 1 })).toBe(view);
+  // A queued run that is skipped never gets a run stream: its delta keeps seq 0.
+  const queued = { ...view, seq: 0, steps: [], summary: { ...summary, status: "queued" as const } };
+  const skipped = { ...summary, status: "skipped" as const, skipReason: "busy" as const };
+  expect(
+    foldRunDelta(queued, { ...delta, seq: 0, steps: [], summary: skipped }).summary.status,
+  ).toBe("skipped");
+  expect(foldRunDelta({ ...queued, summary: skipped }, { ...delta, seq: 0, steps: [] })).toEqual({
+    ...queued,
+    summary: skipped,
+  });
   expect(foldRunDelta(view, delta).steps.map((s) => [s.attempt, s.status])).toEqual([
     [1, "failed"],
     [2, "running"],
@@ -174,6 +185,22 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
   expect(
     foldRunDelta({ ...view, gates: [gate] }, { ...delta, gates: [{ ...gate, decision }] }).gates,
   ).toEqual([{ ...gate, decision }]);
+  // A shifted offset repeats `b` on the second page; the join keeps each attempt once and the
+  // deltas after the read's `seq` fold over the whole set.
+  const paged = joinRunPages([
+    { ...view, steps: [first, step("b", 1, "succeeded")], nextStepsCursor: "2" },
+    { ...view, steps: [step("b", 1, "succeeded"), step("c", 1, "pending")] },
+  ]);
+  expect(paged?.nextStepsCursor).toBeNull();
+  expect(
+    paged && foldRunDelta(paged, delta).steps.map((s) => [s.key, s.attempt, s.status]),
+  ).toEqual([
+    ["a", 1, "failed"],
+    ["b", 1, "succeeded"],
+    ["c", 1, "pending"],
+    ["a", 2, "running"],
+  ]);
+  expect(joinRunPages([view, { ...view, seq: 2 }])).toBeNull();
 });
 
 it("presents statuses and run controls consistently", () => {

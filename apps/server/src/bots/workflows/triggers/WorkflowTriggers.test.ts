@@ -1,10 +1,11 @@
 // @effect-diagnostics globalDateInEffect:off preferSchemaOverJson:off - Fixtures supply explicit times and stored definition JSON.
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import { WorkflowRunId, type WorkflowTrigger } from "@t3tools/contracts";
 import * as BotsDb from "../../BotsDb.ts";
 import { Journal, layerFromDb, WorkflowJournalError } from "../Journal.ts";
@@ -15,6 +16,8 @@ import * as Stream from "effect/Stream";
 import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
 import * as OrchestrationEventStore from "../../../persistence/OrchestrationEventStore.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import { layerCountingJournal, type FactReads } from "../testkit/countingJournal.ts";
+import { makeTriggerTargets } from "./targets.ts";
 import { make } from "./WorkflowTriggers.ts";
 import { getCursor } from "./cursors.ts";
 
@@ -110,6 +113,99 @@ it.effect(
       yield* service.poll(new Date("2026-01-03T03:00:30Z"));
       expect(requests).toHaveLength(2);
     }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
+);
+
+it.effect("reads each head commit's triggers once and the switch on every listing", () =>
+  Effect.gen(function* () {
+    const reads: FactReads = { facts: 0, createdRows: 0 };
+    yield* Effect.gen(function* () {
+      const clock = { id: "clock", kind: "cron", expr: "0 3 * * *", tz: "UTC" } as const;
+      yield* seed(clock);
+      yield* toggle(true, "on");
+      const journal = yield* Journal;
+      yield* journal.append(
+        Array.from({ length: 200 }, (_, i) => [
+          {
+            stream: workflowStream("daily"),
+            key: `cron:${i}`,
+            fact: {
+              _tag: "TriggerFired" as const,
+              runId: `run-${i}`,
+              triggerId: "clock",
+              kind: "cron",
+              occurrence: `cron:${i}`,
+              label: "cron",
+              params: {},
+              payload: null,
+              causalDepth: 0,
+              parent: null,
+              at: "now",
+            },
+          },
+          {
+            stream: workflowStream("daily"),
+            key: `created:cron:${i}`,
+            fact: { _tag: "RunCreated" as const, runId: `run-${i}`, occurrence: `cron:${i}` },
+          },
+        ]).flat(),
+      );
+      const list = yield* makeTriggerTargets;
+      const ids = Effect.map(list, (targets) =>
+        targets.map((t) => [t.trigger.id, t.enabled] as const),
+      );
+      assert.deepEqual(yield* ids, [["clock", true]]);
+      reads.facts = 0;
+      assert.deepEqual(yield* ids, [["clock", true]]);
+      assert.isAtMost(reads.facts, 2);
+
+      // A stored version never changes under its commit, so the listing keeps what it decoded.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE workflow_versions SET definition_json = '{}' WHERE commit_sha = 'head'`;
+      yield* toggle(false, "off");
+      assert.deepEqual(yield* ids, [["clock", false]]);
+
+      yield* insertVersion({
+        workflow_id: "daily",
+        commit_sha: "next",
+        revision: "rev2",
+        semantic_hash: "hash2",
+        source: "",
+        author: "test",
+        created_at: "now",
+        definition_json: JSON.stringify({
+          schema: "t3.workflow/v1",
+          id: "daily",
+          title: "Daily",
+          home: { project: "project" },
+          triggers: [{ ...clock, id: "later" }],
+          budget: { steps: 10, wall: "1h", tokens: 100 },
+          fatigue: { consecutiveFailures: 3 },
+          nodes: {},
+          edges: [],
+        }),
+      });
+      yield* upsertIndex({
+        workflow_id: "daily",
+        path: "daily.yaml",
+        head_commit: "next",
+        revision: "rev2",
+        title: "Daily",
+        valid: 1,
+        dirty: 0,
+        diagnostics_json: "[]",
+        triggers_json: "[]",
+        scanned_at: "now",
+      });
+      assert.deepEqual(yield* ids, [["later", false]]);
+    }).pipe(
+      Effect.provide(
+        layerCountingJournal(reads).pipe(
+          Layer.provide(layerFromDb),
+          Layer.provideMerge(BotsDb.layerMemory),
+        ),
+      ),
+    );
+  }),
 );
 
 it.effect("baselines tags, respects pollMinutes and fires only new tags", () =>
@@ -217,7 +313,15 @@ const orchestratorWith = (events: Array<{ sequence: number; event: unknown }>) =
 
 const settled = (sequence: number, id: string, title: string) => ({
   sequence,
-  event: { type: "thread.settled", payload: { id, projectId: "project-app", title } },
+  event: {
+    type: "thread.settled",
+    payload: {
+      id,
+      projectId: "project-app",
+      title,
+      lineage: { parentThreadId: null, rootThreadId: id, relationshipToParent: null },
+    },
+  },
 });
 
 it.effect("fires on threads that settle after it is on, never on step threads, and retries", () =>

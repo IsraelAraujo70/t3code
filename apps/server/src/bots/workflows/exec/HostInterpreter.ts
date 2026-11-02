@@ -316,12 +316,15 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           .upsert({
             runId,
             projectId: project.id,
+            ...(intent.ticketId === undefined ? {} : { ticketId: intent.ticketId }),
             column: intent.column,
             title: intent.title,
             link,
           })
           .pipe(
-            Effect.map(() => [result(runId, intent, { _tag: "CardUpserted" })]),
+            Effect.map(({ ticketId }) => [
+              result(runId, intent, { _tag: "CardUpserted", ticketId }),
+            ]),
             Effect.catch((error) =>
               Effect.succeed(failed(runId, intent, error.message, error.retryable)),
             ),

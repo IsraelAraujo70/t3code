@@ -40,8 +40,8 @@ it.live("rejects invalid disk state while preserving pinned versions", () =>
           ).toBe("Saved");
         }
         expect(yield* catalog.failureSubscribers("c")).toEqual([
-          { workflowId: "a", triggerId: "failed" },
-          { workflowId: "b", triggerId: "failed" },
+          { workflowId: "a", triggerId: "failed", params: {} },
+          { workflowId: "b", triggerId: "failed", params: {} },
         ]);
         expect(yield* catalog.failureSubscribers("a")).toEqual([]);
         const saved = yield* definitions.save({ source, message: "First" }, { kind: "user" });

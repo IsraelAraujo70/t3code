@@ -5,7 +5,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { WorkflowModelRef, WorkflowStepCost } from "@t3tools/contracts";
+import { KanbanTicketId, WorkflowModelRef, WorkflowStepCost } from "@t3tools/contracts";
 
 const Json = Schema.Json;
 const Text = Schema.String;
@@ -102,16 +102,15 @@ export const Intent = Schema.TaggedUnion({
     kind: Schema.Literals(["needs_you", "failed", "finished"]),
     title: Text,
     body: Text,
-    runPath: Text,
   },
   /** The run's kanban card; it points at the run and never links a step thread. */
   UpsertCard: {
     key: Text,
+    ticketId: Schema.optionalKey(KanbanTicketId),
     // wf-engine slice 8: the kanban project of `card.project`.
     project: Text,
     column: Schema.Literals(["todo", "in_progress", "in_review", "done"]),
     title: Text,
-    runPath: Text,
   },
   /** Push the journal's sha, never the worktree's HEAD, to a `wf/…` branch without force. */
   OpenPullRequest: {
@@ -221,7 +220,8 @@ export const RunFact = Schema.TaggedUnion({
   Answered: {},
   GateOpened: { gateKey: Text, at: Text },
   Notified: {},
-  CardUpserted: {},
+  // A result recorded before cards kept their ticket has none; the next card scans for it.
+  CardUpserted: { ticketId: Schema.optionalKey(KanbanTicketId) },
   PullRequestOpened: { url: Text, branch: Text },
   ChildRunStarted: { childRunId: Text },
   /** The intent cannot be done; `retryable` lets the actor try the same key again later. */

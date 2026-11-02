@@ -12,7 +12,7 @@ import { Link } from "@tanstack/react-router";
 import { useEnvironmentQuery } from "../../../state/query";
 import { workflowsEnvironment } from "../state";
 import { RunStatusBadge } from "../WorkflowStatusBadge";
-/** Run costs, node failures and emitted metric history. */
+/** Run costs and node failures. */
 export function WorkflowMetricsPanel(props: {
   environmentId: EnvironmentId;
   workflowId: WorkflowId;
@@ -106,35 +106,6 @@ export function WorkflowMetricsPanel(props: {
       {data.nodes.length === 0 ? (
         <p className="text-sm text-muted-foreground">No node metrics yet.</p>
       ) : null}
-      {data.series.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No emitted metrics yet.</p>
-      ) : null}
-      {data.series.map((series) => (
-        <section key={series.name} className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground">{series.name}</h3>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>At</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead>Verdict</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {series.points.map((point) => (
-                <TableRow key={`${point.runId}-${point.at}`}>
-                  <TableCell>{point.at}</TableCell>
-                  <TableCell>{point.value}</TableCell>
-                  <TableCell>{point.verdict ?? "Pending"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {series.points.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No readings yet.</p>
-          ) : null}
-        </section>
-      ))}
     </div>
   );
 }

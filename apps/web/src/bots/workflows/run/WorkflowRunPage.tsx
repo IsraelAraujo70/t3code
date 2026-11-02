@@ -1,4 +1,3 @@
-import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -81,10 +80,6 @@ function RunContent({
   const canOperate = useAtomValue(workflowsEnvironment.runControl.permissionAtom(environmentId));
   const now = Date.parse(useNowMinute());
   const summary = view.summary;
-  const metrics = useEnvironmentQuery(
-    workflowsEnvironment.metrics({ environmentId, input: { workflowId: summary.workflowId } }),
-  );
-  const activeMs = metrics.data?.runs.find((run) => run.runId === summary.runId)?.activeMs;
   // oxlint-disable-next-line t3code/no-manual-memo -- Keep canvas identity stable across clock ticks as required by the run view.
   const model = useMemo(
     () =>
@@ -200,7 +195,9 @@ function RunContent({
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Active time</dt>
-              <dd className="mt-1">{activeMs == null ? "unknown" : formatDuration(activeMs)}</dd>
+              <dd className="mt-1">
+                {summary.activeMs === null ? "unknown" : formatDuration(summary.activeMs)}
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Steps used</dt>
@@ -412,7 +409,6 @@ function RunContent({
             <p className="text-sm text-muted-foreground">No steps yet.</p>
           ) : null}
         </section>
-        {view.nextStepsCursor ? <p>Additional steps are available on the host.</p> : null}
         <BlockViews blocks={view.blocks} />
         <Button size="xs" variant="outline" onClick={() => setShowMetrics((value) => !value)}>
           {showMetrics ? "Hide metrics" : "Show workflow metrics"}
