@@ -44,17 +44,13 @@ export const cronDecision = (input: {
     if (Result.isFailure(parsed)) return { _tag: "Invalid", message: parsed.failure.message };
     let at = Cron.next(parsed.success, input.watermark);
     if (at > input.now) return { _tag: "Idle" };
-    let caughtUp = false;
-    for (let step = 0; step < MAX_CATCH_UP_STEPS; step++) {
-      const following = Cron.next(parsed.success, at);
-      if (following > input.now) {
-        caughtUp = true;
-        break;
-      }
+    let following = Cron.next(parsed.success, at);
+    for (let step = 0; following <= input.now && step < MAX_CATCH_UP_STEPS; step++) {
       at = following;
+      following = Cron.next(parsed.success, at);
     }
     // Still behind after a full walk: `at` is not the latest due occurrence, so advance only.
-    if (!caughtUp) return { _tag: "Skip", at, watermark: at };
+    if (following <= input.now) return { _tag: "Skip", at, watermark: at };
     const grace = input.misfire.mode === "latest" ? input.misfire.graceMs : input.toleranceMs;
     return input.now.getTime() - at.getTime() <= grace
       ? { _tag: "Fire", occurrence: occurrenceKey.cron(input.triggerId, at), at, watermark: at }

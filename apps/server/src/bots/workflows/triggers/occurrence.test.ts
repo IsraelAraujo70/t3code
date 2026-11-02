@@ -142,14 +142,19 @@ it.each([
   ).toBe("Invalid");
 });
 
-it("a catch-up longer than one walk fires only the latest occurrence, once", () => {
+it.each([
+  // One past the walk's step cap: the walk ends on an intermediate occurrence.
+  ["2026-01-07T23:00:00Z"],
+  // 10,001 due occurrences: the walk ends exactly on the latest one.
+  ["2026-01-07T22:41:00Z"],
+])("a long catch-up to %s fires only the latest occurrence, once", (nowIso) => {
   const input = {
     triggerId: "t",
     expr: "* * * * *",
     tz: "UTC",
     misfire: { mode: "latest" as const, graceMs: 3_600_000 },
     toleranceMs: 60_000,
-    now: new Date("2026-01-07T23:00:00Z"),
+    now: new Date(nowIso),
   };
   let watermark = new Date("2026-01-01T00:00:00Z");
   const fired: Array<string> = [];
@@ -158,5 +163,5 @@ it("a catch-up longer than one walk fires only the latest occurrence, once", () 
     if (result._tag === "Fire") fired.push(result.at.toISOString());
     if (result._tag === "Fire" || result._tag === "Skip") watermark = result.watermark;
   }
-  expect(fired).toEqual(["2026-01-07T23:00:00.000Z"]);
+  expect(fired).toEqual([new Date(nowIso).toISOString()]);
 });
