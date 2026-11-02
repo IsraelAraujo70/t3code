@@ -55,7 +55,13 @@ import {
 import { type PendingApproval, type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
-import { ArrowRightIcon, BotIcon, CircleAlertIcon, Minimize2Icon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  BotIcon,
+  CircleAlertIcon,
+  MessagesSquareIcon,
+  Minimize2Icon,
+} from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Skeleton } from "../ui/skeleton";
@@ -65,7 +71,6 @@ import {
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
-  timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -257,9 +262,14 @@ interface MessagesTimelineProps {
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
-  /** The thread this one is a subagent of; `open` is absent when it cannot be opened from here. */
+  /**
+   * The thread this one is a subagent or side chat of; `open` is absent when it cannot be
+   * opened from here.
+   */
   parentThreadLink?: {
     readonly title: string;
+    /** A side chat's inherited rows collapse into this link. */
+    readonly sideChat?: boolean;
     /** Where it runs, when that is another environment. */
     readonly environmentLabel?: string;
     readonly open?: () => void;
@@ -294,8 +304,6 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
   /** Disable while reading history to prevent LegendList re-pinning near the bottom. */
   liveFollowEnabled: boolean;
-  onContentOverflowChange?: (overflows: boolean) => void;
-  onToolOutputCollapsedAtEnd?: () => void;
   /** Receives the list's viewport when it mounts; the returned cleanup runs when it goes away. */
   onViewportAttach?: (viewport: TimelineViewport) => () => void;
   /** The footer's content grew, such as a new queued turn or status line. */
@@ -393,9 +401,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
   onIsAtEndChange,
-  onContentOverflowChange,
   liveFollowEnabled,
-  onToolOutputCollapsedAtEnd,
   onViewportAttach,
   onFooterGrow,
   hideEmptyPlaceholder = false,
@@ -470,7 +476,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const findActive = findExpanded;
 
   const disclosurePinsEndRef = useRef(false);
-  const disclosureCollapsedRef = useRef(false);
   const pinDisclosureToEnd = () => {
     if (!disclosurePinsEndRef.current) return;
     const element = listRef.current?.getScrollableNode();
@@ -493,19 +498,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
-        if (
-          disclosureCollapsedRef.current &&
-          resolveTimelineIsAtEnd(listRef.current?.getState()) === true
-        ) {
-          onToolOutputCollapsedAtEnd?.();
-        }
       });
     });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, collapsed = false) => {
+  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
     disclosureAnchorKeyRef.current = anchorKey;
-    disclosureCollapsedRef.current = collapsed;
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
@@ -530,7 +528,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
+    suspendEndScrollMaintenanceForDisclosure(anchorKey);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -677,12 +675,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ? new Set(paintedExpandedAttemptIds).add(activeFindAttemptId)
       : paintedExpandedAttemptIds;
 
-  const pendingApprovalsByRequestId = new Map(
-    pendingApprovals
-      .filter((approval) => !heldApprovalRequestIds?.has(approval.requestId))
-      .map((approval) => [approval.requestId, approval]),
+  const isVisiblePendingApproval = (approval: PendingApproval) =>
+    !heldApprovalRequestIds?.has(approval.requestId);
+  const pendingApprovalRequestIds = new Set(
+    pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
-  const pendingApprovalRequestIds = new Set(pendingApprovalsByRequestId.keys());
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
     pendingApprovalRequestIds,
@@ -705,17 +702,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Fork (friend): Resolve the current bot generation for the empty state.
   const botGeneration = useBotGenerationView(citationThreadRef?.threadId);
   const botBubbles = botBubbleLayout(citationThreadRef?.threadId, rows);
-  const unmatchedPendingApprovals = new Map(pendingApprovalsByRequestId);
-  if (unmatchedPendingApprovals.size > 0) {
-    for (const row of rows) {
-      const entries =
-        row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : [];
-      for (const entry of entries) {
-        const item = entry.projectedItem?.item;
-        if (item?.type === "approval_request") unmatchedPendingApprovals.delete(item.requestId);
-      }
+  const matchedApprovalRequestIds = new Set<string>();
+  for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
+    const entries =
+      row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : [];
+    for (const entry of entries) {
+      const item = entry.projectedItem?.item;
+      if (item?.type === "approval_request") matchedApprovalRequestIds.add(item.requestId);
     }
   }
+  const unmatchedPendingApprovals = pendingApprovals.filter(
+    (approval) =>
+      isVisiblePendingApproval(approval) && !matchedApprovalRequestIds.has(approval.requestId),
+  );
   // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
@@ -728,7 +727,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
   const showsEmptyState =
     rows.length === 0 &&
-    unmatchedPendingApprovals.size === 0 &&
+    unmatchedPendingApprovals.length === 0 &&
     !isWorking &&
     parentThreadLink === null &&
     historyControls === undefined &&
@@ -856,26 +855,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     size: true,
     shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
-  const measureContentOverflow = () =>
-    timelineContentOverflowsViewport(listRef.current?.getState?.(), {
-      composerInset: contentInsetEndAdjustment,
-      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-    });
-  // Read next frame, after LegendList's layout effects settle row positions.
-  const contentOverflowFrameRef = useRef<number | null>(null);
-  const cancelContentOverflowFrame = () => {
-    if (contentOverflowFrameRef.current !== null) {
-      cancelAnimationFrame(contentOverflowFrameRef.current);
-      contentOverflowFrameRef.current = null;
-    }
-  };
-  const reportContentOverflow = () => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
-    contentOverflowFrameRef.current = requestAnimationFrame(() => {
-      contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
-    });
-  };
 
   const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
@@ -981,7 +960,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
-    reportContentOverflow();
     scheduleMinimapRefresh();
   };
 
@@ -990,7 +968,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       queueMicrotask(pinDisclosureToEnd);
       scheduleDisclosureSettle();
     }
-    reportContentOverflow();
     scheduleMinimapRefresh();
   };
 
@@ -1044,6 +1021,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   };
 
+  // Built from props after the last hook so the compiler can memoize the row context; a map
+  // made before a hook would rebuild it, and re-render every row, on each streamed update.
+  const pendingApprovalsByRequestId = new Map(
+    pendingApprovals
+      .filter(isVisiblePendingApproval)
+      .map((approval) => [approval.requestId, approval]),
+  );
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1134,13 +1118,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
-            label="Subagent of"
+            label={parentThreadLink.sideChat ? "Context from" : "Subagent of"}
             detail={
               parentThreadLink.environmentLabel === undefined
                 ? parentThreadLink.title
                 : `${parentThreadLink.title} on ${parentThreadLink.environmentLabel}`
             }
-            icon={BotIcon}
+            icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}
               : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
@@ -1158,8 +1142,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
-  // Stable so the list attaches once per mount. A re-attach reports no overflow for a frame,
-  // which flips the resting composer, resizes it, and re-renders this list again.
+  // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
@@ -1191,14 +1174,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return () => {
       stopListeningToContentSize?.();
       stopRememberingRelease?.();
-      onContentOverflowChange?.(false);
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
       detachViewport?.();
       viewport?.dispose();
       if (viewportRef.current === viewport) viewportRef.current = null;
       // Refresh frames only read the list; disclosure frames still run so the
       // settle flag clears.
-      cancelContentOverflowFrame();
       if (minimapRefreshFrameRef.current !== null) {
         cancelAnimationFrame(minimapRefreshFrameRef.current);
         minimapRefreshFrameRef.current = null;
@@ -1268,7 +1249,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       >
         <div
           ref={observeLaneWidth}
-          className="@container/chat-lane chat-content-lane overflow-x-clip"
+          className="chat-content-lane overflow-x-clip"
           data-timeline-root="true"
         >
           {/* Fork (friend): a new message regroups its neighbour, so the layout key is extraData too. */}
@@ -1293,15 +1274,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onGrow={onFooterGrow}
     >
       {footer}
-      {unmatchedPendingApprovals.size > 0 ? (
+      {unmatchedPendingApprovals.length > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
-            <div
-              className="@container/chat-lane chat-content-lane overflow-x-clip"
-              data-timeline-root="true"
-            >
+            <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
               <WorkLogBlock>
-                {[...unmatchedPendingApprovals.values()].map((approval) => (
+                {unmatchedPendingApprovals.map((approval) => (
                   <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />
                 ))}
               </WorkLogBlock>
@@ -1402,8 +1380,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
               onItemSizeChanged={handleItemSizeChanged}
-              // A viewport resize changes how much of the content fits.
-              onLayout={reportContentOverflow}
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",
@@ -1502,16 +1478,18 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           ? undefined
           : row.kind === "turn-fold" || row.kind === "working"
             ? "pb-1.5"
-            : (row.kind === "message" &&
-                  row.message.role === "assistant" &&
-                  !row.showAssistantMeta) ||
-                row.kind === "worktree-setup" ||
-                row.kind === "event" ||
-                row.kind === "attempt-fold" ||
-                row.kind === "html-render" ||
-                row.kind === "mcp-app"
-              ? "pb-2"
-              : "pb-4",
+            : row.kind === "message" && row.groupedWithNext
+              ? "pb-1"
+              : (row.kind === "message" &&
+                    row.message.role === "assistant" &&
+                    !row.showAssistantMeta) ||
+                  row.kind === "worktree-setup" ||
+                  row.kind === "event" ||
+                  row.kind === "attempt-fold" ||
+                  row.kind === "html-render" ||
+                  row.kind === "mcp-app"
+                ? "pb-2"
+                : "pb-4",
         bubble && botBubbleRowSpacingClass(bubble),
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"

@@ -461,7 +461,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/workspace/WorkspaceRootScreen.android.tsx",
-    markers: 5,
+    markers: 3,
     why: "Bots and Kanban tab panes on Android",
   },
   {

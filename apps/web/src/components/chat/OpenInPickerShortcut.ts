@@ -1,8 +1,9 @@
-import type {
-  EditorId,
-  EnvironmentId,
-  ResolvedKeybindingsConfig,
-  ThreadId,
+import {
+  buildRemoteOpenUrl,
+  type EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { useEffect } from "react";
 
@@ -16,7 +17,7 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { announce } from "../../lib/announce";
-import { useRemoteOpenState } from "../../remoteOpen";
+import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -63,16 +64,25 @@ export function useOpenFavoriteEditorShortcut({
   surfaceThreadId?: ThreadId | null;
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
-  const [preferredEditor] = usePreferredEditor(availableEditors);
   const remote = useRemoteOpenState(environmentId);
   const surface = useVsCodeSurfaceEditor(environmentId, surfaceThreadId); // Fork (friend)
   const openSurface = surface.preferred ? surface.open : null;
+  const remoteCapableEditors = useRemoteCapableEditors();
+  // Matches the picker: remote editors run on the viewing machine.
+  const [preferredEditor] = usePreferredEditor(
+    remote.mode === "local-exec" ? availableEditors : remoteCapableEditors,
+  );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled locally
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
   useEffect(() => {
-    if (!enabled || (remote.mode !== "local-exec" && openSurface === null)) return;
+    if (!enabled || (remote.mode === "remote-unavailable" && openSurface === null)) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || !isOpenFavoriteEditorShortcut(event, keybindings)) return;
+      if (
+        event.repeat ||
+        event.defaultPrevented ||
+        !isOpenFavoriteEditorShortcut(event, keybindings)
+      )
+        return;
       // Fork (friend): VS Code in T3 instead of the external editor.
       if (openSurface !== null) {
         event.preventDefault();
@@ -83,6 +93,18 @@ export function useOpenFavoriteEditorShortcut({
 
       event.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+      if (remote.mode === "remote-links") {
+        const url = buildRemoteOpenUrl({
+          editor: preferredEditor,
+          ...remote.host,
+          absolutePath: openInCwd,
+        });
+        if (url === undefined) return;
+        void openRemoteEditorUrl(url).then((opened) => {
+          if (opened) announce(`Opened in ${label}`);
+        });
+        return;
+      }
       void openInEditorMutation({
         environmentId,
         input: {
@@ -103,6 +125,6 @@ export function useOpenFavoriteEditorShortcut({
     openInEditorMutation,
     openSurface,
     preferredEditor,
-    remote.mode,
+    remote,
   ]);
 }
