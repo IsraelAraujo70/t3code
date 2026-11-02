@@ -11,7 +11,7 @@ import { canvasIcons } from "../canvas/canvasIcons";
 import { Button } from "../../../components/ui/button";
 
 const kinds = Object.keys(CANVAS_NODE_STYLES).filter(
-  (kind): kind is WorkflowNode["kind"] => kind !== "note",
+  (kind): kind is WorkflowNode["kind"] => kind !== "note" && !kind.startsWith("trigger:"),
 );
 
 /** Adds typed top-level nodes to the right of the existing graph. */
