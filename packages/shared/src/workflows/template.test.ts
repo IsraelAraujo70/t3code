@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Result from "effect/Result";
-import { parseTemplate, evalTemplateValue } from "./template.ts";
+import { parseTemplate, evalTemplateValue, triggerParams } from "./template.ts";
 describe("templates", () => {
   it.each([
     ["{{ x }}", { a: 1 }],
@@ -33,4 +33,21 @@ it.each([
   const parsed = parseTemplate(source);
   expect(Result.isFailure(parsed)).toBe(true);
   if (Result.isFailure(parsed)) expect(parsed.failure.offset).toBe(offset);
+});
+
+it("evaluates trigger params and omits invalid templates", () => {
+  expect(
+    triggerParams(
+      {
+        number: "{{trigger.n}}",
+        boolean: "{{trigger.b}}",
+        string: "{{trigger.s}}",
+        mixed: "value {{trigger.n}}",
+        invalid: "{{",
+        missing: "{{1 / 0}}",
+      },
+      { n: 42, b: false, s: "hello" },
+    ),
+  ).toEqual({ number: 42, boolean: false, string: "hello", mixed: "value 42" });
+  expect(triggerParams(undefined, {})).toEqual({});
 });

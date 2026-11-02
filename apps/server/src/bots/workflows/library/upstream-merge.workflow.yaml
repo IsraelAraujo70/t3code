@@ -19,6 +19,7 @@ triggers:
       remote: "https://github.com/pingdotgg/t3code",
       pattern: '^v\d+\.\d+\.\d+$',
       pollMinutes: 120,
+      params: { upstream: "{{trigger.remote}}" },
     }
 concurrency: single
 budget: { steps: 60, wall: 8h, tokens: 4000000 }

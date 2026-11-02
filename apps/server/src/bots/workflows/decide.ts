@@ -23,6 +23,7 @@ import {
   parseExpr,
   parseTemplate,
   renderTemplate,
+  triggerParams,
   resolveModelUse,
   type CompiledGraph,
   type CompiledNode,
@@ -1883,19 +1884,13 @@ export const decide = (
     for (const subscriber of ctx.failureSubscribers) {
       if (subscriber.workflowId === started.workflowId) continue;
       const occurrence = once(`run-failed:${runId}`);
-      const params: Record<string, Json> = {};
       const trigger = {
         kind: "workflowFailed",
         label: `${definition.title} failed`,
         runId,
         workflowId: started.workflowId,
       };
-      for (const [name, template] of Object.entries(subscriber.params ?? {})) {
-        const parsed = parseTemplate(template);
-        if (Result.isFailure(parsed)) continue;
-        const value = evalTemplateValue(parsed.success, { roots: { trigger } });
-        if (Result.isSuccess(value)) params[name] = value.success;
-      }
+      const params = triggerParams(subscriber.params, trigger);
       emit(
         occurrence,
         {

@@ -80,3 +80,18 @@ export const evalTemplateValue = (
     ? evalExpr(part.expr, env)
     : renderTemplate(template, env);
 };
+
+/** Evaluates trigger params, omitting failures so the run uses the param default. */
+export const triggerParams = (
+  templates: Readonly<Record<string, string>> | undefined,
+  trigger: Readonly<Record<string, JsonValue>>,
+): Record<string, JsonValue> => {
+  const params: Record<string, JsonValue> = {};
+  for (const [name, template] of Object.entries(templates ?? {})) {
+    const parsed = parseTemplate(template);
+    if (Result.isFailure(parsed)) continue;
+    const value = evalTemplateValue(parsed.success, { roots: { trigger } });
+    if (Result.isSuccess(value)) params[name] = value.success;
+  }
+  return params;
+};

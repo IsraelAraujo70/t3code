@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
+import { compileWorkflow, DEFAULT_HOST_LIMITS, triggerParams } from "@t3tools/shared/workflows";
 
 import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
 
@@ -36,6 +36,22 @@ describe("library templates", () => {
   it.each(TEMPLATES)("%s compiles and keeps its hash through canonical YAML", (name) => {
     const compiled = compileSource(NodeFS.readFileSync(NodePath.join(LIBRARY, name), "utf8"));
     expect(`${compiled.definition.id}.workflow.yaml`).toBe(name);
+
+    if (name === "upstream-merge.workflow.yaml") {
+      const trigger = compiled.definition.triggers?.find((entry) => entry.id === "newtag");
+      expect(
+        triggerParams(trigger?.params, {
+          remote: "https://example.com/acme/app",
+          kind: "upstreamTag",
+          label: "x",
+        }),
+      ).toEqual({ upstream: "https://example.com/acme/app" });
+      const upstream = compiled.definition.params?.upstream;
+      expect(upstream?.type).toBe("string");
+      if (upstream?.type === "string" && upstream.pattern) {
+        expect(new RegExp(upstream.pattern).test(String(upstream.default))).toBe(true);
+      }
+    }
 
     const canonical = toCanonicalYaml(compiled.definition);
     const again = compileSource(canonical);
