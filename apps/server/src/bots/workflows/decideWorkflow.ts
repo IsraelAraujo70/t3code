@@ -3,6 +3,7 @@
  * Pure, like `decide`; the engine appends what it returns in one transaction.
  */
 import * as DateTime from "effect/DateTime";
+import { matchesWhole } from "@t3tools/shared/workflows";
 import { runStream, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
 import type { CurrentVersion } from "./Catalog.ts";
@@ -91,11 +92,7 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
         continue;
       }
       if (typeof value === "string" && spec.pattern !== undefined) {
-        try {
-          if (!new RegExp(spec.pattern).test(value)) valid = false;
-        } catch {
-          valid = false;
-        }
+        if (!matchesWhole(spec.pattern, value)) valid = false;
       }
       params[name] = value;
     }

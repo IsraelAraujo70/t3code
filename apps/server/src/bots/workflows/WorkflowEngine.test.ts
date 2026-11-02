@@ -1,14 +1,17 @@
 import { assert, it } from "@effect/vitest";
+import type { WorkflowRunDelta } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as BotsDb from "../BotsDb.ts";
-import { runStream, workflowStream } from "./facts.ts";
+import { type Intent, runStream, type StoredFact, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
-import { Journal, layerFromDb } from "./Journal.ts";
-import { compile } from "./testkit/decideHarness.ts";
+import { Journal, layerFromDb, WorkflowJournalError } from "./Journal.ts";
+import { compile, runStarted } from "./testkit/decideHarness.ts";
 import { layerCatalog, makeFakeInterpreter } from "./testkit/fakeEngine.ts";
 import { make } from "./WorkflowEngine.ts";
 
@@ -289,6 +292,175 @@ it.effect("requires approval for a protected command and preserves the first dec
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(layerFromDb, layer, layerCatalog([protectedWorkflow]))),
+    );
+  }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+it.effect(
+  "folds every committed fact for a subscriber even when publishes arrive out of order",
+  () =>
+    Effect.gen(function* () {
+      const { layer: interpreter } = yield* makeFakeInterpreter({});
+      // Publishes the test controls: two appends can publish in either order after they commit.
+      const published = yield* PubSub.unbounded<StoredFact>();
+      const journalLayer = Layer.effect(
+        Journal,
+        Effect.gen(function* () {
+          const real = yield* Journal;
+          return Journal.of({ ...real, subscribe: PubSub.subscribe(published) });
+        }),
+      ).pipe(Layer.provide(layerFromDb), Layer.provide(BotsDb.layerMemory));
+      yield* Effect.gen(function* () {
+        const journal = yield* Journal;
+        const engine = yield* make({ runsDir: "/runs" });
+        const runId = runIdFor("demo", "manual:1");
+        yield* journal.append([
+          {
+            stream: runStream(runId),
+            key: "started",
+            fact: runStarted({ hash: `sha256:${"0".repeat(64)}` }),
+          },
+        ]);
+        const deltas = yield* Queue.unbounded<WorkflowRunDelta>();
+        yield* engine.subscribeRun({ runId, afterSeq: 0 }).pipe(
+          Stream.runForEach((delta) => Queue.offer(deltas, delta)),
+          Effect.forkScoped,
+        );
+        // The first delta proves the subscription exists before anything is published.
+        assert.deepEqual((yield* Queue.take(deltas)).seq, 1);
+        const intent: Intent = {
+          _tag: "StartUnit",
+          key: "unit:test@1",
+          step: "test",
+          attempt: 1,
+          argv: ["node", "check.ts"],
+          cwd: { name: "integ", path: "/runs/integ" },
+          heavy: false,
+          replay: "safe",
+          timeoutMs: 60_000,
+          env: {},
+        };
+        const stored = yield* journal.append([
+          { stream: runStream(runId), key: intent.key, fact: { _tag: "IntentRecorded", intent } },
+          {
+            stream: runStream(runId),
+            key: `result:${intent.key}`,
+            fact: { _tag: "UnitSpawned", unit: "wf-x", at: "2026-11-02T10:00:00.000Z" },
+          },
+        ]);
+        // Only the later fact is published: the intent's publish has not happened yet.
+        yield* PubSub.publish(published, stored[1]!.fact);
+        const last = yield* Queue.take(deltas);
+        assert.deepEqual(last.seq, 3);
+        assert.deepEqual(
+          last.steps.map((step) => [step.key, step.status]),
+          [["test", "running"]],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(journalLayer, interpreter, layerCatalog([twoSteps]))),
+      );
+    }),
+);
+
+it.effect("retries an append that keeps failing only after the retry pause", () =>
+  Effect.gen(function* () {
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    let failures = 0;
+    const journalLayer = Layer.effect(
+      Journal,
+      Effect.gen(function* () {
+        const real = yield* Journal;
+        return Journal.of({
+          ...real,
+          append: (facts) => {
+            if (!facts.some((fact) => fact.key === "result:turn:plan@1")) return real.append(facts);
+            failures += 1;
+            return Effect.fail(new WorkflowJournalError({ message: "disk full" }));
+          },
+        });
+      }),
+    ).pipe(Layer.provide(layerFromDb), Layer.provide(BotsDb.layerMemory));
+    yield* Effect.gen(function* () {
+      const engine = yield* make({ runsDir: "/runs", retryEvery: "1 minute" });
+      yield* engine.start(request("manual:1"));
+      for (let i = 0; i < 200; i++) yield* Effect.yieldNow;
+      assert.deepEqual(failures, 1);
+      yield* TestClock.adjust("1 minute");
+      for (let i = 0; i < 200; i++) yield* Effect.yieldNow;
+      assert.deepEqual(failures, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(journalLayer, interpreter, layerCatalog([twoSteps]))),
+    );
+  }),
+);
+
+it.effect("lists the runs that load and refuses controls for a run that does not exist", () =>
+  Effect.gen(function* () {
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    const journalLayer = layerFromDb.pipe(Layer.provide(BotsDb.layerMemory));
+    yield* Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/runs" });
+      // A run whose workflow the catalog no longer has: its pinned version cannot load.
+      const broken = runIdFor("gone", "manual:1");
+      yield* journal.append([
+        {
+          stream: workflowStream("gone"),
+          key: "created:manual:1",
+          fact: { _tag: "RunCreated", runId: broken, occurrence: "manual:1" },
+        },
+        {
+          stream: runStream(broken),
+          key: "started",
+          fact: runStarted({ workflowId: "gone", hash: `sha256:${"0".repeat(64)}` }),
+        },
+      ]);
+      const { runId } = yield* engine.start(request("manual:1"));
+      const page = yield* engine.listRuns({});
+      assert.deepEqual(
+        page.runs.map((run) => run.runId),
+        [runId],
+      );
+      const missing = runIdFor("demo", "manual:never");
+      const refused = yield* engine
+        .controlRun(
+          {
+            runId: missing,
+            control: { _tag: "cancel" },
+            clientRequestId: "c1",
+          },
+          "user",
+        )
+        .pipe(Effect.flip);
+      assert.deepEqual(refused._tag, "WorkflowJournalError");
+      assert.deepEqual((yield* journal.read(runStream(missing))).length, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(journalLayer, interpreter, layerCatalog([twoSteps]))),
+    );
+  }),
+);
+
+it.effect("stores a retryable failure as final after the last try", () =>
+  Effect.gen(function* () {
+    const { fake, layer } = yield* makeFakeInterpreter({});
+    fake.failRetryable.add("unit:test@1");
+    yield* Effect.gen(function* () {
+      const engine = yield* make({ runsDir: "/runs", retryEvery: "1 minute" });
+      const { runId } = yield* engine.start(request("manual:give-up"));
+      for (let minute = 0; minute < 12; minute++) {
+        for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 minute");
+      }
+      for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+      assert.equal(fake.executions.get("unit:test@1"), 10);
+      const resolved = (yield* engine.runState(runId)).attempts.get("test")?.[0]?.resolved;
+      assert.deepEqual([resolved?.status, resolved?.error], ["failed", "try again"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layerFromDb, layer, layerCatalog([twoSteps]))),
     );
   }).pipe(Effect.provide(BotsDb.layerMemory)),
 );

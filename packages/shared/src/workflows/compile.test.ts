@@ -321,6 +321,39 @@ const FAILING: ReadonlyArray<FailingCase> = [
     change: (d) => (d.card = { project: "t3code" }),
   },
   {
+    name: "a pattern on a json output field, which checkOutput would not enforce",
+    code: "schema",
+    path: "nodes.plan.output.data.pattern",
+    change: (d) => {
+      d.nodes.plan.output.data = { type: "json", pattern: "^v[0-9]+$" };
+    },
+  },
+  {
+    name: "a node named judge, which step keys reserve for acceptance",
+    code: "schema",
+    path: "nodes.judge",
+    change: (d) => {
+      d.nodes.judge = { kind: "output", status: "blocked", value: {} };
+      d.edges.push("test:fail -> judge");
+    },
+  },
+  {
+    name: "a continuation that switches model",
+    code: "thread-continue",
+    path: "nodes.fixup.thread",
+    change: (d) => {
+      d.nodes.fixup = {
+        kind: "agent",
+        model: "$sol",
+        prompt: "Fix it",
+        workspace: "integ",
+        access: "write",
+        thread: "continue:plan",
+      };
+      d.edges.push("test:fail -> fixup");
+    },
+  },
+  {
     name: "a continuation that switches access",
     code: "thread-continue",
     path: "nodes.fixup.thread",

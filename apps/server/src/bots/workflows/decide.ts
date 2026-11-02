@@ -15,6 +15,7 @@ import type {
   WorkflowWorkspaceUse,
 } from "@t3tools/contracts";
 import {
+  checkOutput,
   classifyCommand,
   evalExpr,
   evalTemplateValue,
@@ -39,6 +40,7 @@ import {
   workflowStream,
 } from "./facts.ts";
 import { runIdFor, stepThreadId } from "./ids.ts";
+import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import { liveTarget } from "./fold.ts";
 import type { GateDecided, RunState, StepAttempt } from "./state.ts";
 
@@ -54,7 +56,7 @@ export interface DecideContext {
   }>;
 }
 
-/** A lost command that may run again (`replay: safe`, or it never started) is retried this often. */
+/** A lost turn, or a lost command that may run again, is replayed this often (crash recovery). */
 const MAX_LOST_REPLAYS = 2;
 const AMBIGUOUS_OPTIONS = ["rerun", "fail", "cancel"] as const;
 const DURATION_UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000 } as const;
@@ -63,6 +65,33 @@ const durationMs = (text: string): number =>
 
 type Resolution = Extract<RunFact, { readonly _tag: "StepResolved" }>;
 type ResolvedStatus = Resolution["status"];
+
+/**
+ * When a resolved attempt runs again, or null: the one rule dispatch and deadlines share. A matching
+ * retry policy waits its backoff; a lost attempt is the engine's crash recovery and replays at once,
+ * a bounded number of times; an ambiguous one is Israel's rerun. `markedFailed`: Israel answered an
+ * ambiguous gate with "fail"; the original may still run, so nothing retries it.
+ */
+const retryReadyAt = (
+  node: WorkflowNode,
+  attempt: number,
+  status: ResolvedStatus,
+  resolvedAt: string,
+  markedFailed: boolean,
+): number | null => {
+  const at = Date.parse(resolvedAt);
+  if (markedFailed) return null;
+  if (status === "ambiguous") return at;
+  if (status === "succeeded" || status === "cancelled") return null;
+  const policy = node.retry;
+  if (policy !== undefined && policy.on.includes(status) && attempt <= policy.max) {
+    return at + (policy.backoff === undefined ? 0 : durationMs(policy.backoff));
+  }
+  if (status === "lost" && (node.kind === "command" || node.kind === "agent")) {
+    return attempt <= MAX_LOST_REPLAYS ? at : null;
+  }
+  return null;
+};
 
 /** A step's settled outcome as the graph sees it, after retries. */
 interface Final {
@@ -211,15 +240,10 @@ export const decide = (
     emit(`skip:${step}`, { _tag: "StepSkipped", step, reason });
   };
 
-  const willRetry = (node: WorkflowNode, a: StepAttempt, r: Resolution): boolean => {
-    // An attempt is resolved "ambiguous" only when Israel asked to run it again.
-    if (r.status === "ambiguous") return true;
-    if (r.status === "succeeded" || r.status === "cancelled") return false;
-    if (r.status === "lost" && node.kind === "command" && a.attempt <= MAX_LOST_REPLAYS)
-      return true;
-    const policy = node.retry;
-    return policy !== undefined && policy.on.includes(r.status) && a.attempt <= policy.max;
-  };
+  const markedFailed = (step: string, attempt: number) =>
+    decisionOf(`ambiguous:${stepKey(step, attempt)}`)?.option === "fail";
+  const willRetry = (node: WorkflowNode, a: StepAttempt, r: Resolution): boolean =>
+    retryReadyAt(node, a.attempt, r.status, r.at, markedFailed(a.step, a.attempt)) !== null;
 
   const finalOf = (node: WorkflowNode, step: string): Final | null => {
     if (isSkipped(step)) return { status: "skipped", port: null, output: null };
@@ -242,21 +266,9 @@ export const decide = (
     return a.threadId !== null || a.unit !== null ? "running" : "dispatched";
   };
 
-  const workspaceHead = (name: string): string | null => {
-    let head = state.workspaces.get(name)?.headSha ?? null;
-    for (const attempts of state.attempts.values()) {
-      for (const a of attempts) {
-        const intent = state.intents.get(`turn:${stepKey(a.step, a.attempt)}`)?.intent;
-        const unit = state.intents.get(`unit:${stepKey(a.step, a.attempt)}`)?.intent;
-        const used =
-          (intent?._tag === "StartTurn" && intent.workspace.name === name) ||
-          (unit?._tag === "StartUnit" && unit.cwd.name === name);
-        const seen = a.exited?.headSha ?? a.nudge?.headSha ?? a.settled?.headSha ?? null;
-        if (used && seen !== null) head = seen;
-      }
-    }
-    return head;
-  };
+  /** The fold keeps each workspace's head at the last observation that reported one. */
+  const workspaceHead = (name: string): string | null =>
+    state.workspaces.get(name)?.headSha ?? null;
 
   // ── Expressions ─────────────────────────────────────────────────────────────────────────────
 
@@ -480,6 +492,8 @@ export const decide = (
         threadId: prevAttempt.threadId,
         mode: "continue",
         prompt: prompt.success + outputInstruction(node),
+        // The compiler keeps a thread on one model; the reservation is this step's own.
+        reservation: node.tokenReservation ?? 0,
       });
       return;
     }
@@ -522,6 +536,7 @@ export const decide = (
       return { refused: verdict.reason };
     }
     if (verdict.kind !== "protected") return "go";
+    const ask = `${step} wants to run \`${argv.join(" ")}\` (${verdict.action}: ${verdict.reason}). Approve?`;
     const decision = decisionOf(gateKey);
     if (decision === null) {
       record({
@@ -530,16 +545,39 @@ export const decide = (
         step,
         gateKey,
         reason: "protected",
-        ask: `${step} wants to run \`${argv.join(" ")}\` (${verdict.action}: ${verdict.reason}). Approve?`,
+        ask,
         options: ["approve", "reject"],
         expiresAt: null,
       });
       return "wait";
     }
-    return decision.option === "approve"
+    if (decision.option !== "approve")
+      return { refused: `Israel did not approve ${verdict.action}` };
+    // The approval is for the argv the gate showed; one that renders differently now is not it.
+    const shown = state.gates.get(gateKey)?.intent.ask;
+    return shown === undefined || shown === ask
       ? "go"
-      : { refused: `Israel did not approve ${verdict.action}` };
+      : { refused: "the command changed after Israel approved it; start a new run to ask again" };
   };
+
+  /**
+   * How a turn that did not complete ends its step. Only a turn upstream cancelled (a restart it
+   * could not resume) is lost and replayed; a stop the engine did not send, such as Israel's in
+   * the step thread, fails the step; the engine's own interrupt is a timeout.
+   */
+  const turnEnd = (
+    status: "failed" | "cancelled" | "interrupted",
+    interrupts: ReadonlyArray<string>,
+  ): ResolvedStatus =>
+    status === "failed"
+      ? "failed"
+      : cancelling
+        ? "cancelled"
+        : interrupts.some(has)
+          ? "timed_out"
+          : status === "interrupted"
+            ? "failed"
+            : "lost";
 
   const progressAgent = (node: WorkflowAgentNode, step: string, a: StepAttempt, level: Level) => {
     const key = `turn:${stepKey(step, a.attempt)}`;
@@ -550,51 +588,57 @@ export const decide = (
     }
     const settled = a.settled;
     if (settled === null) return;
-    const interrupted =
-      has(`interrupt:turn:${stepKey(step, a.attempt)}`) ||
-      has(`interrupt:nudge:${stepKey(step, a.attempt)}`);
+    const ownInterrupts = [
+      `interrupt:turn:${stepKey(step, a.attempt)}`,
+      `interrupt:nudge:${stepKey(step, a.attempt)}`,
+    ];
+    // An outcome the engine could not observe may still be running: Israel decides, no retry does.
+    if (settled.unobserved === true) return ambiguous(step, a.attempt, settled.text);
     if (settled.status !== "completed") {
-      const status: ResolvedStatus =
-        settled.status === "failed"
-          ? "failed"
-          : cancelling
-            ? "cancelled"
-            : interrupted
-              ? "timed_out"
-              : "lost";
+      const status = turnEnd(settled.status, ownInterrupts);
       return resolve(step, a.attempt, status, "fail", null, settled.text);
     }
-    let output: Json = node.output === undefined ? { text: settled.text } : settled.output;
-    if (node.output !== undefined && settled.outputError !== null) {
-      const nudgeKey = `nudge:${stepKey(step, a.attempt)}`;
-      if (!has(nudgeKey)) {
-        const turn = state.intents.get(key)?.intent;
-        if (turn?._tag !== "StartTurn" || a.threadId === null) return;
-        record({
-          ...turn,
-          key: nudgeKey,
-          threadId: a.threadId,
-          mode: "continue",
-          prompt: `Your reply had no valid JSON block (${settled.outputError}).${outputInstruction(node)}`,
-        });
-        return;
+    let output: Json = { text: settled.text };
+    if (node.output !== undefined) {
+      // The compiler trusts declared fields in argv, env and refs: only a checked output goes on.
+      const shape = node.output;
+      const checked = (turn: { readonly output: Json; readonly outputError: string | null }) =>
+        turn.outputError !== null
+          ? Result.fail(turn.outputError)
+          : checkOutput(shape, turn.output as JsonValue);
+      const first = checked(settled);
+      if (Result.isSuccess(first)) {
+        output = first.success;
+      } else {
+        const nudgeKey = `nudge:${stepKey(step, a.attempt)}`;
+        if (!has(nudgeKey)) {
+          const turn = state.intents.get(key)?.intent;
+          if (turn?._tag !== "StartTurn" || a.threadId === null) return;
+          record({
+            ...turn,
+            key: nudgeKey,
+            threadId: a.threadId,
+            mode: "continue",
+            prompt: `Your reply's JSON block was not valid: ${first.failure}.${outputInstruction(node)}`,
+          });
+          return;
+        }
+        const nudgeStart = resultOf(nudgeKey);
+        if (nudgeStart?._tag === "IntentFailed") {
+          return resolve(step, a.attempt, "failed", "fail", null, nudgeStart.error);
+        }
+        if (a.nudge === null) return;
+        if (a.nudge.unobserved === true) return ambiguous(step, a.attempt, a.nudge.text);
+        if (a.nudge.status !== "completed") {
+          const status = turnEnd(a.nudge.status, ownInterrupts);
+          return resolve(step, a.attempt, status, "fail", null, a.nudge.text);
+        }
+        const second = checked(a.nudge);
+        if (Result.isFailure(second)) {
+          return resolve(step, a.attempt, "failed", "fail", null, second.failure);
+        }
+        output = second.success;
       }
-      const nudgeStart = resultOf(nudgeKey);
-      if (nudgeStart?._tag === "IntentFailed") {
-        return resolve(step, a.attempt, "failed", "fail", null, nudgeStart.error);
-      }
-      if (a.nudge === null) return;
-      if (a.nudge.status !== "completed" || a.nudge.outputError !== null) {
-        return resolve(
-          step,
-          a.attempt,
-          "failed",
-          "fail",
-          null,
-          a.nudge.outputError ?? a.nudge.text,
-        );
-      }
-      output = a.nudge.output;
     }
     const accept = node.accept;
     if (accept === undefined) return resolve(step, a.attempt, "succeeded", "ok", output);
@@ -630,6 +674,17 @@ export const decide = (
         return;
       }
       if (exited === null) return;
+      // An accept command whose outcome is unknown is no verdict: no check may read it.
+      if (exited.signal === "TIMEOUT") {
+        return resolve(step, a.attempt, "timed_out", "fail", output, exited.tail);
+      }
+      if (exited.signal === "UNOBSERVED") {
+        return ambiguous(step, a.attempt, `the acceptance check: ${exited.tail}`);
+      }
+      if (exited.lost) {
+        const why = "its unit vanished without an exit receipt";
+        return resolve(step, a.attempt, "failed", "fail", output, `the acceptance check: ${why}`);
+      }
       const check = evaluate(
         accept.check,
         envFor(level, { exit: exited.exit, out: exited.out as JsonValue }),
@@ -668,6 +723,12 @@ export const decide = (
     if (judgeStart?._tag === "IntentFailed") {
       return resolve(step, a.attempt, "failed", "fail", output, judgeStart.error);
     }
+    const judged = attemptsOf(`${step}/judge`).find((x) => x.attempt === a.attempt)?.settled;
+    if (judged?.unobserved === true) return ambiguous(step, a.attempt, `the judge: ${judged.text}`);
+    if (judged != null && judged.status !== "completed") {
+      const status = turnEnd(judged.status, [`interrupt:${judgeKey}`]);
+      return resolve(step, a.attempt, status, "fail", output, judged.text);
+    }
     const verdict = judgeVerdict(judgeKey);
     if (verdict === undefined) return;
     if (verdict === null)
@@ -686,6 +747,8 @@ export const decide = (
     if (intent?._tag !== "StartTurn") return undefined;
     const settled = attemptsOf(intent.step).find((x) => x.attempt === intent.attempt)?.settled;
     if (settled == null) return undefined;
+    // A verdict counts only from a judge turn that completed with valid JSON.
+    if (settled.status !== "completed" || settled.outputError !== null) return null;
     const output = settled.output;
     if (output === null || typeof output !== "object" || Array.isArray(output)) return null;
     const pass = (output as { readonly [k: string]: Json })["pass"];
@@ -772,6 +835,8 @@ export const decide = (
     }
     if (exited.signal === "TIMEOUT")
       return resolve(step, a.attempt, "timed_out", "fail", null, exited.tail);
+    // The engine could not observe the unit: it may still run, so Israel decides, no retry or check.
+    if (exited.signal === "UNOBSERVED") return ambiguous(step, a.attempt, exited.tail);
     if ((node.parse ?? "none") !== "none" && (exited.parseError ?? null) !== null) {
       return resolve(step, a.attempt, "failed", "fail", null, exited.parseError ?? null);
     }
@@ -815,7 +880,14 @@ export const decide = (
       }
       return;
     }
-    if (state.paused?.reason === "ambiguous") {
+    // The run stays paused while any other ambiguous gate still waits for Israel.
+    const othersOpen = [...state.gates.values()].some(
+      (g) =>
+        g.intent.reason === "ambiguous" &&
+        g.intent.gateKey !== gateKey &&
+        decisionOf(g.intent.gateKey) === null,
+    );
+    if (state.paused?.reason === "ambiguous" && !othersOpen) {
       emit(`resume:${state.resumeCount + 1}`, { _tag: "RunResumed", at: nowIso });
     }
     if (decision.option === "fail") return resolve(step, attempt, "failed", "fail", null, why);
@@ -843,8 +915,11 @@ export const decide = (
   const overWall = ctx.now >= Date.parse(started.at) + started.budget.wallMs;
   /** A ready step was refused because the run used every step of its budget. */
   let refused = false;
+  /** Whether the run takes new work: not paused, cancelling or past its wall. */
+  const open = () => !pausedNow && !cancelling && !overWall;
+  /** Whether a start fits the step budget; only starts spend it, so outputs and branches still run. */
   const admits = () => {
-    if (pausedNow || cancelling || overWall) return false;
+    if (!open()) return false;
     if (dispatched + startsNow < started.budget.steps) return true;
     refused = true;
     return false;
@@ -852,7 +927,7 @@ export const decide = (
 
   /** Starts attempt `attempt` of a step: guards, then the kind's first intent or fact. */
   const dispatch = (node: WorkflowNode, step: string, attempt: number, level: Level) => {
-    if (!admits()) return;
+    if (!open()) return;
     switch (node.kind) {
       case "agent":
         return startTurn(node, step, attempt, level);
@@ -1095,9 +1170,9 @@ export const decide = (
     // Whatever just resolved may be retried at once (a `map`, `loop` or `branch` resolves while dispatching).
     const a = latest(step);
     const r = a === undefined ? null : resolutionOf(a);
-    if (a === undefined || r === null || !willRetry(node, a, r) || !admits()) return;
-    const backoff = node.retry?.backoff === undefined ? 0 : durationMs(node.retry.backoff);
-    if (ctx.now >= Date.parse(r.at) + backoff) dispatch(node, step, a.attempt + 1, level);
+    if (a === undefined || r === null || !open()) return;
+    const ready = retryReadyAt(node, a.attempt, r.status, r.at, markedFailed(step, a.attempt));
+    if (ready !== null && ctx.now >= ready) dispatch(node, step, a.attempt + 1, level);
   }
 
   /** Readiness, guard and first dispatch of a step that has no attempt; false when it did not start. */
@@ -1109,7 +1184,7 @@ export const decide = (
       skip(step, "dead-path");
       return false;
     }
-    if (!admits()) return false;
+    if (!open()) return false;
     if (node.when !== undefined) {
       const guard = evaluate(node.when, envFor(level));
       if (Result.isFailure(guard)) {
@@ -1307,6 +1382,15 @@ export const decide = (
   const endWith = (status: "succeeded" | "failed" | "cancelled" | "budget_exhausted") => {
     emit("ended", { _tag: "RunEnded", status, at: nowIso });
     interruptLive();
+    // Nothing stays running in an ended run: every attempt without an outcome ends with it. An
+    // accept or judge sub-step is never resolved itself; views read its own exit or settle.
+    for (const step of new Set([...state.attempts.keys(), ...overlay.keys()])) {
+      if (isSubStep(step)) continue;
+      const a = latest(step);
+      if (a !== undefined && resolutionOf(a) === null) {
+        resolve(step, a.attempt, "cancelled", null, null, `the run ended ${status}`);
+      }
+    }
     emit(
       `outcome:${runId}`,
       { _tag: "RunOutcome", runId, status },
@@ -1405,11 +1489,7 @@ export const decide = (
 
 /** The node a step key names: the last path segment, without its `[i]` index. */
 const nodeAt = (compiled: CompiledWorkflow, step: string): WorkflowNode | undefined => {
-  const id =
-    step
-      .split("/")
-      .at(-1)
-      ?.replace(/\[\d+\]$/, "") ?? step;
+  const id = nodeIdOfStep(step);
   const search = (graph: CompiledGraph): WorkflowNode | undefined => {
     for (const [nodeId, node] of graph.nodes) {
       if (nodeId === id) return node.node;
@@ -1469,19 +1549,11 @@ export const nextDeadline = (
   }
   for (const attempts of state.attempts.values()) {
     const a = attempts.at(-1);
-    if (a === undefined) continue;
-    const retry = nodeAt(compiled, a.step)?.retry;
-    if (
-      a.resolved !== null &&
-      retry?.backoff !== undefined &&
-      a.resolved.status !== "succeeded" &&
-      a.resolved.status !== "ambiguous" &&
-      a.resolved.status !== "cancelled" &&
-      retry.on.includes(a.resolved.status) &&
-      a.attempt <= retry.max
-    ) {
-      candidates.push(Date.parse(a.resolved.at) + durationMs(retry.backoff));
-    }
+    const node = a === undefined ? undefined : nodeAt(compiled, a.step);
+    if (a?.resolved == null || node === undefined) continue;
+    const marked = state.gates.get(`ambiguous:${a.step}@${a.attempt}`)?.decision?.option === "fail";
+    const ready = retryReadyAt(node, a.attempt, a.resolved.status, a.resolved.at, marked);
+    if (ready !== null) candidates.push(ready);
   }
   const future = candidates.filter((at) => Number.isFinite(at) && at > now);
   return future.length === 0 ? null : Math.min(...future);

@@ -489,6 +489,33 @@ it.each(["approve", "reject", "allowed"])("guards protected commands: %s", (opti
   } else expect(run.intent("unit:c@1")).toMatchObject({ argv });
 });
 
+it("refuses an approved protected command whose argv changed after the gate opened", () => {
+  const argv = ["git", "push", "origin", "{{workspaces.integ.head}}:friend/main"];
+  const run = prepare(
+    TestRun.start(
+      compile({
+        nodes: {
+          c: { ...commandNode, argv },
+          w: commandNode,
+          done: { kind: "output", status: "ready_for_review", value: {} },
+        },
+        edges: ["c -> done", "w -> done"],
+      }),
+    ),
+  );
+  expect(run.intent("open:protect:c@1")).toMatchObject({ ask: expect.stringContaining("a1") });
+  // A parallel writer moves the workspace head before Israel decides.
+  run.add("exited:w@1", unitExited("w", 1, 0, { headSha: "b2" }));
+  run.drive();
+  run.add("gate:protect:c@1", decision("protect:c@1", "approve"));
+  run.drive();
+  expect(run.intent("unit:c@1")).toBeUndefined();
+  expect(run.state().attempts.get("c")?.[0]?.resolved).toMatchObject({
+    status: "failed",
+    error: expect.stringContaining("changed after Israel approved"),
+  });
+});
+
 it.each(["first", "else", "dead"])("selects branch path %s", (mode) => {
   const run = prepare(
     TestRun.start(
@@ -801,5 +828,299 @@ describe("review regressions", () => {
     run.add("settled:a@1", turnSettled("a", 1, "completed"));
     run.drive();
     expect(run.deadline(T0 + 90_000)).toBe(T0 + 7_200_000);
+  });
+
+  describe("panel regressions", () => {
+    const tagged = {
+      kind: "agent",
+      model: "$lead",
+      prompt: "Tag",
+      workspace: "integ",
+      access: "write",
+      output: { tag: { type: "string", pattern: "^v[0-9]+$" } },
+    };
+    const push = {
+      kind: "command",
+      cwd: "integ",
+      argv: ["node", "tag.ts", "{{nodes.a.output.tag}}"],
+    };
+
+    it("checks an agent's output against its shape before a successor uses it", () => {
+      const run = ready({ a: tagged, c: push }, ["a -> c"]);
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed", { tag: "--unexpected-option" }));
+      const out = keysOf(run.drive());
+      expect(out).toContain("nudge:a@1");
+      expect(out).not.toContain("unit:c@1");
+      run.add("result:nudge:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1:nudge", turnSettled("a", 1, "completed", { tag: "v2", extra: "-rf" }));
+      run.drive();
+      expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({
+        status: "succeeded",
+        output: { tag: "v2" },
+      });
+      expect(run.intent("unit:c@1")).toMatchObject({ argv: ["node", "tag.ts", "v2"] });
+    });
+
+    it("fails the step when the correction turn's output is still invalid", () => {
+      const run = ready({ a: tagged, c: push }, ["a -> c"]);
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed", { tag: "x" }));
+      run.drive();
+      run.add("result:nudge:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1:nudge", turnSettled("a", 1, "completed", { tag: "--force" }));
+      run.drive();
+      expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({
+        status: "failed",
+        error: "tag does not match ^v[0-9]+$",
+      });
+      expect(run.intent("unit:c@1")).toBeUndefined();
+    });
+
+    it("takes no verdict from a judge turn that did not complete", () => {
+      const run = ready(
+        {
+          a: { ...agentNode, access: "write", accept: { judge: "$sol", criterion: "Done?" } },
+        },
+        [],
+      );
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed"));
+      run.drive();
+      run.add("result:judge:a@1", { _tag: "TurnStarted", threadId: "wf:j" });
+      run.add("settled:a/judge@1", turnSettled("a/judge", 1, "failed", { pass: true }));
+      run.drive();
+      expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({ port: "fail" });
+    });
+
+    it("applies the step's timeout to its judge turn", () => {
+      const run = ready(
+        {
+          a: {
+            ...agentNode,
+            access: "write",
+            timeout: "1m",
+            accept: { judge: "$sol", criterion: "Done?" },
+          },
+        },
+        [],
+      );
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed"));
+      run.drive();
+      run.add("result:judge:a@1", { _tag: "TurnStarted", threadId: "wf:j" }, T0);
+      expect(keysOf(run.drive(T0 + 90_000))).toContain("interrupt:judge:a@1");
+    });
+
+    it("fails a turn stopped outside the workflow instead of replaying it", () => {
+      const run = ready({ a: { ...agentNode, access: "write" } }, []);
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "interrupted"));
+      expect(keysOf(run.drive())).not.toContain("turn:a@2");
+      expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({ status: "failed" });
+    });
+
+    it("pauses for Israel on a command the engine could not observe, retry policy or not", () => {
+      const run = ready(
+        {
+          c: {
+            ...commandNode,
+            replay: "never",
+            check: "exit != 1",
+            retry: { max: 1, on: ["failed"] },
+          },
+        },
+        [],
+      );
+      run.drive();
+      run.add("result:unit:c@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add("exited:c@1", unitExited("c", 1, null, { signal: "UNOBSERVED", tail: "unreadable" }));
+      const out = keysOf(run.drive());
+      expect(out).not.toContain("unit:c@2");
+      expect(out).toContain("open:ambiguous:c@1");
+      expect(run.state().paused?.reason).toBe("ambiguous");
+    });
+
+    it("retries nothing after Israel marks an unobserved command failed", () => {
+      const run = ready(
+        { c: { ...commandNode, replay: "never", retry: { max: 1, on: ["failed"] } } },
+        [],
+      );
+      run.drive();
+      run.add("result:unit:c@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add("exited:c@1", unitExited("c", 1, null, { signal: "UNOBSERVED", tail: "unreadable" }));
+      run.drive();
+      run.add("gate:ambiguous:c@1", decision("ambiguous:c@1", "fail"));
+      const out = keysOf(run.drive());
+      expect(out).toContain("resolved:c@1");
+      expect(out).not.toContain("unit:c@2");
+      expect(run.state().ended?.status).toBe("failed");
+    });
+
+    it("pauses for Israel on a turn the engine could not observe", () => {
+      const run = ready(
+        { a: { ...agentNode, access: "write", retry: { max: 1, on: ["failed"] } } },
+        [],
+      );
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      const unknown = turnSettled("a", 1, "failed");
+      if (unknown._tag !== "TurnSettled") throw new Error("fixture");
+      run.add("settled:a@1", { ...unknown, unobserved: true, text: "projection unavailable" });
+      const out = keysOf(run.drive());
+      expect(out).not.toContain("turn:a@2");
+      expect(out).toContain("open:ambiguous:a@1");
+    });
+
+    it("reads no check from an accept command whose outcome is unknown", () => {
+      const run = ready(
+        {
+          a: {
+            ...agentNode,
+            access: "write",
+            accept: { argv: ["node", "t.ts"], check: "exit != 1" },
+          },
+        },
+        [],
+      );
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed"));
+      run.drive();
+      run.add("result:accept:a@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add("exited:a/accept@1", unitExited("a/accept", 1, null, { lost: true }));
+      run.drive();
+      expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({ status: "failed" });
+    });
+
+    it.each(["nudge", "judge"] as const)(
+      "replays the step when upstream cancels its %s turn",
+      (kind) => {
+        const run = ready(
+          {
+            a: {
+              ...agentNode,
+              access: "write",
+              ...(kind === "nudge"
+                ? { output: { tag: { type: "string" } } }
+                : { accept: { judge: "$sol", criterion: "Done?" } }),
+            },
+          },
+          [],
+        );
+        run.drive();
+        run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+        run.add("settled:a@1", turnSettled("a", 1, "completed", null, "no json"));
+        run.drive();
+        if (kind === "nudge") {
+          run.add("result:nudge:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+          run.add("settled:a@1:nudge", turnSettled("a", 1, "cancelled"));
+        } else {
+          run.add("result:judge:a@1", { _tag: "TurnStarted", threadId: "wf:j" });
+          run.add("settled:a/judge@1", turnSettled("a/judge", 1, "cancelled"));
+        }
+        expect(keysOf(run.drive())).toContain("turn:a@2");
+        expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({ status: "lost" });
+      },
+    );
+
+    it("replays a lost agent turn without a retry policy", () => {
+      const run = ready({ a: { ...agentNode, access: "write" } }, []);
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "cancelled"));
+      expect(keysOf(run.drive())).toContain("turn:a@2");
+    });
+
+    it("replays a lost safe command at once even when its retry policy has a backoff", () => {
+      const run = ready(
+        {
+          c: {
+            ...commandNode,
+            replay: "safe",
+            retry: { max: 1, on: ["failed"], backoff: "10m" },
+          },
+        },
+        [],
+      );
+      run.drive();
+      run.add("result:unit:c@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add("exited:c@1", unitExited("c", 1, null, { lost: true, started: true }));
+      expect(keysOf(run.drive())).toContain("unit:c@2");
+    });
+
+    it("gives a continuation its own token reservation", () => {
+      const run = ready(
+        {
+          a: { ...agentNode, access: "write", tokenReservation: 1000 },
+          b: {
+            ...agentNode,
+            access: "write",
+            thread: "continue:a",
+            tokenReservation: 9000,
+          },
+        },
+        ["a -> b"],
+      );
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed"));
+      run.drive();
+      expect(run.intent("turn:b@1")).toMatchObject({ mode: "continue", reservation: 9000 });
+    });
+
+    it("reaches an output after the last start the budget allows", () => {
+      const run = TestRun.start(
+        compile({
+          budget: { steps: 1, wall: "2h", tokens: 100000 },
+          nodes: {
+            a: commandNode,
+            done: { kind: "output", status: "ready_for_review", value: {} },
+          },
+          edges: ["a -> done"],
+        }),
+        runStarted({ budget: { steps: 1, wallMs: 7200000, tokens: 100000, usd: null } }),
+      );
+      prepare(run);
+      run.add("exited:a@1", unitExited("a", 1, 0));
+      expect(run.drive().find((f) => f.key === "ended")?.fact).toMatchObject({
+        status: "succeeded",
+      });
+    });
+
+    it("resolves the attempts a cancel stops", () => {
+      const run = ready({ c: commandNode }, []);
+      run.drive();
+      run.add("result:unit:c@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add("control:c", control("cancel"));
+      run.drive();
+      expect(run.state().attempts.get("c")?.[0]?.resolved).toMatchObject({ status: "cancelled" });
+    });
+
+    it("stays paused while another ambiguous gate waits", () => {
+      const run = ready(
+        {
+          x: { ...commandNode, replay: "never" },
+          y: { ...commandNode, replay: "never" },
+          done: { kind: "output", status: "ready_for_review", value: {} },
+        },
+        ["x -> done", "y -> done"],
+      );
+      run.drive();
+      for (const step of ["x", "y"]) {
+        run.add(`result:unit:${step}@1`, { _tag: "UnitSpawned", unit: step, at: iso(T0) });
+        run.add(`exited:${step}@1`, unitExited(step, 1, null, { lost: true, started: true }));
+      }
+      run.drive();
+      expect(run.state().paused?.reason).toBe("ambiguous");
+      run.add("gate:ambiguous:x@1", decision("ambiguous:x@1", "fail"));
+      expect(keysOf(run.drive()).some((k) => k.startsWith("resume:"))).toBe(false);
+      expect(run.state().paused?.reason).toBe("ambiguous");
+    });
   });
 });

@@ -17,6 +17,8 @@ export class WorkflowGitError extends Data.TaggedError("WorkflowGitError")<{
   readonly message: string;
   /** The compare-and-swap of `advance` lost: the ref is neither `from` nor `to`. */
   readonly conflict?: boolean;
+  /** Retrying cannot help: the branch already exists outside this worktree. */
+  readonly permanent?: boolean;
 }> {}
 
 export interface PreparedWorktree {
@@ -30,8 +32,8 @@ export class WorkflowGit extends Context.Service<
   WorkflowGit,
   {
     /**
-     * A worktree of `repoRoot` at `path`: on `branch` created from `baseRef` (an existing branch is
-     * reused), or detached at `baseRef` when `branch` is null. A worktree already at `path` on the
+     * A worktree of `repoRoot` at `path`: on `branch` created from `baseRef` (a branch that already
+     * exists elsewhere is refused), or detached at `baseRef` when `branch` is null. A worktree already at `path` on the
      * expected branch is adopted; anything else there is removed and rebuilt. Prunes stale worktrees first.
      */
     readonly prepare: (input: {
@@ -70,6 +72,9 @@ export class WorkflowGit extends Context.Service<
   }
 >()("t3/bots/workflows/git/Workspaces/WorkflowGit") {}
 
+const BAD_REVISION =
+  /invalid reference|not a valid object name|unknown revision|bad revision|not a valid ref/i;
+
 const git = (path: string, args: ReadonlyArray<string>) =>
   Effect.tryPromise({
     try: () =>
@@ -90,7 +95,12 @@ const git = (path: string, args: ReadonlyArray<string>) =>
             error ? reject(new Error(stderr || error.message)) : resolve(stdout.trim()),
         );
       }),
-    catch: (error) => new WorkflowGitError({ message: String(error) }),
+    catch: (error) =>
+      new WorkflowGitError({
+        message: String(error),
+        // A ref that does not resolve (a bad base or param) fails the same way every time.
+        permanent: BAD_REVISION.test(String(error)),
+      }),
   });
 
 const worktree = Effect.fn("WorkflowGit.worktree")(function* (repoRoot: string, path: string) {
@@ -124,13 +134,18 @@ const make = Effect.sync(() =>
           (yield* git(repoRoot, ["show-ref", "--verify", `refs/heads/${branch}`]).pipe(
             Effect.option,
           ));
+        // Adopting it would start this run from an earlier run's head, not from baseRef.
+        if (exists && exists._tag === "Some") {
+          return yield* new WorkflowGitError({
+            message: `Branch ${branch} already exists from an earlier run; delete it or name another branch.`,
+            permanent: true,
+          });
+        }
         yield* git(
           repoRoot,
           branch === null
             ? ["worktree", "add", "--detach", path, baseRef]
-            : exists && exists._tag === "Some"
-              ? ["worktree", "add", path, branch]
-              : ["worktree", "add", "-b", branch, path, baseRef],
+            : ["worktree", "add", "-b", branch, path, baseRef],
         );
       }
       return { path, branch, headSha: yield* head(path) };

@@ -67,4 +67,58 @@ describe("foldRun", () => {
       exited: { exit: 0 },
     });
   });
+
+  it("takes a workspace's head from the observation folded last, whatever the step order", () => {
+    const unit = (step: string) => ({
+      _tag: "StartUnit" as const,
+      key: `unit:${step}@1`,
+      step,
+      attempt: 1,
+      argv: ["true"],
+      cwd: { name: "integ", path: "/w" },
+      heavy: false,
+      replay: "safe" as const,
+      timeoutMs: 100,
+      env: {},
+    });
+    const exited = (step: string, headSha: string) => ({
+      _tag: "UnitExited" as const,
+      step,
+      attempt: 1,
+      exit: 0,
+      signal: null,
+      queuedMs: 0,
+      out: null,
+      tail: "",
+      lost: false,
+      started: true,
+      headSha,
+    });
+    const state = foldRun("r", [
+      stored(0, "ws:integ", {
+        _tag: "IntentRecorded",
+        intent: {
+          _tag: "PrepareWorkspace",
+          key: "ws:integ",
+          name: "integ",
+          projectRef: "t3code",
+          baseRef: "main",
+          branch: "wf/x",
+        },
+      }),
+      stored(1, "result:ws:integ", {
+        _tag: "WorkspaceReady",
+        name: "integ",
+        path: "/w",
+        branch: "wf/x",
+        headSha: "h0",
+      }),
+      stored(2, "unit:a@1", { _tag: "IntentRecorded", intent: unit("a") }),
+      stored(3, "unit:b@1", { _tag: "IntentRecorded", intent: unit("b") }),
+      // b settles first; a settles later on top of b's commits.
+      stored(4, "exited:b@1", exited("b", "h1")),
+      stored(5, "exited:a@1", exited("a", "h2")),
+    ]);
+    expect(state.workspaces.get("integ")?.headSha).toBe("h2");
+  });
 });

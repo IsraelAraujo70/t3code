@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import { make, type UnitStart } from "./Units.ts";
 
@@ -133,5 +135,21 @@ it.effect("stops by name, and a unit already collected counts as stopped", () =>
     using broken = setup("inactive", 1);
     const error = yield* broken.units.stop("wf-test").pipe(Effect.flip);
     expect(error.message).toBe("failed");
+  }),
+);
+
+it.effect("asks systemd about a waiting unit every ten seconds, not every second", () =>
+  Effect.gen(function* () {
+    using waiting = setup("active");
+    const observed = yield* waiting.units
+      .observe({ unit: "wf-test", receiptDir: waiting.input.receiptDir, spawnedAt: 0 })
+      .pipe(Effect.forkScoped);
+    for (let second = 0; second < 20; second++) yield* TestClock.adjust("1 second");
+    const checks = waiting.calls.filter(([, args]) => args[1] === "is-active").length;
+    expect(checks).toBe(3);
+    waiting.write("started.json", { at: "1970-01-01T00:00:00.000Z" });
+    waiting.write("exit.json", { exit: 0, signal: null, out: null, parseError: null, tail: "" });
+    yield* TestClock.adjust("1 second");
+    expect((yield* Fiber.join(observed)).exit).toBe(0);
   }),
 );

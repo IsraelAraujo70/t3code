@@ -6,10 +6,17 @@ import * as NodePath from "node:path";
 
 const args = process.argv.slice(2);
 const separator = args.indexOf("--");
-const option = (name: string) => args[args.indexOf(name) + 1]!;
+// Only wfUnit's own options, before `--`: the command's argv may contain the same words.
+const options = args.slice(0, separator);
+const option = (name: string) => options[options.indexOf(name) + 1]!;
 const receipt = option("--receipt");
 /** After the command exits, how long its output may still drain before leftovers are killed. */
-const drainMs = args.includes("--drain-ms") ? Number(option("--drain-ms")) : 2000;
+const drainMs = options.includes("--drain-ms") ? Number(option("--drain-ms")) : 2000;
+const parse = option("--parse");
+/** stdout kept: all of a parsed result up to 1 MiB, else the tail the receipt reports. */
+const keepBytes = parse === "none" ? 8192 : 1 << 20;
+/** The parsed result lands in the journal and in every fold of the run, so it stays small. */
+const MAX_OUT_BYTES = 64 * 1024;
 const startedAt = new Date().toISOString();
 NodeFS.mkdirSync(receipt, { recursive: true });
 const fd = NodeFS.openSync(NodePath.join(receipt, "started.json"), "w");
@@ -38,7 +45,7 @@ const killGroup = (signal: NodeJS.Signals) => {
 let stdout = Buffer.alloc(0);
 let stderr = Buffer.alloc(0);
 child.stdout.on("data", (data: Buffer) => {
-  stdout = Buffer.concat([stdout, data]).subarray(-65536);
+  stdout = Buffer.concat([stdout, data]).subarray(-keepBytes);
 });
 child.stderr.on("data", (data: Buffer) => {
   stderr = Buffer.concat([stderr, data]).subarray(-8192);
@@ -70,7 +77,6 @@ const finish = (code: number | null, signal: NodeJS.Signals | null) => {
   killGroup("SIGKILL");
   let out: unknown = null;
   let parseError: string | null = null;
-  const parse = option("--parse");
   if (parse !== "none") {
     try {
       const text = stdout.toString().trim();
@@ -85,9 +91,14 @@ const finish = (code: number | null, signal: NodeJS.Signals | null) => {
     } catch (error) {
       parseError = String(error);
     }
+    if (parseError === null && JSON.stringify(out).length > MAX_OUT_BYTES) {
+      out = null;
+      parseError = `the parsed result is over ${MAX_OUT_BYTES / 1024} KiB; write large results to a file and print its path`;
+    }
   }
-  NodeFS.writeFileSync(
-    NodePath.join(receipt, "exit.json.tmp"),
+  const temp = NodeFS.openSync(NodePath.join(receipt, "exit.json.tmp"), "w");
+  NodeFS.writeSync(
+    temp,
     JSON.stringify({
       exit: spawnError ? 127 : code,
       signal: timedOut ? "TIMEOUT" : signal,
@@ -99,6 +110,9 @@ const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       stderrTail: spawnError ? String(spawnError) : stderr.toString(),
     }),
   );
+  // Durable before it is visible: an empty exit.json after a power loss would never decode.
+  NodeFS.fsyncSync(temp);
+  NodeFS.closeSync(temp);
   NodeFS.renameSync(NodePath.join(receipt, "exit.json.tmp"), NodePath.join(receipt, "exit.json"));
   process.exit(0);
 };

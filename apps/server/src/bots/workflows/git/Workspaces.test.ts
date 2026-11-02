@@ -49,7 +49,16 @@ it.effect("prepares, adopts, merges, advances and removes isolated worktrees", (
     expect(NodeFS.existsSync(path)).toBe(false);
     expect((yield* service.prepare({ ...input, branch: null })).headSha).toBe(base);
     yield* service.remove({ repoRoot: repo, path });
-    expect((yield* service.prepare(input)).headSha).toBe(next);
+    // The branch survives its worktree; a new run on it would start from the old head.
+    const refused = yield* service.prepare(input).pipe(Effect.flip);
+    expect(refused.permanent).toBe(true);
+    const badBase = yield* service
+      .prepare({ ...input, branch: "work-bad", baseRef: "no-such-ref" })
+      .pipe(Effect.flip);
+    expect(badBase.permanent).toBe(true);
+    expect((yield* service.prepare({ ...input, branch: "work-2", baseRef: next })).headSha).toBe(
+      next,
+    );
     git("checkout", "-b", "conflicting", base);
     NodeFS.writeFileSync(NodePath.join(repo, "collision"), "other");
     git("add", "collision");

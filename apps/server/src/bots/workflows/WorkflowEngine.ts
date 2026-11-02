@@ -4,6 +4,7 @@
  * append until the run ends and nothing it recorded waits for a result. The journal is the only
  * inbox: an actor subscribes before it reads, so no fact lands between the read and the wait.
  */
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
@@ -50,6 +51,7 @@ import { type Intent, type NewFact, runStream, workflowStream } from "./facts.ts
 import { canonicalParams } from "./params.ts";
 import { applyRunFact, foldRun, liveTarget } from "./fold.ts";
 import { runIdFor } from "./ids.ts";
+import { isSubStep } from "./steps.ts";
 import { WorkflowInterpreter } from "./Interpreter.ts";
 import { Journal, WorkflowJournalError } from "./Journal.ts";
 import type { GateDecided, IntentEntry, RunState } from "./state.ts";
@@ -147,7 +149,12 @@ export class WorkflowEngine extends Context.Service<
 >()("t3/bots/workflows/WorkflowEngine") {}
 
 /** A retryable IntentFailed: the actor runs the same intent again, its key still free. */
-class RetryLater extends Data.TaggedError("RetryLater")<{}> {}
+class RetryLater extends Data.TaggedError("RetryLater")<{
+  readonly facts: ReadonlyArray<NewFact>;
+}> {}
+
+/** How often a retryable failure is tried before its error is stored as final. */
+const MAX_INTENT_TRIES = 10;
 
 const DEFAULT_TICK = Duration.seconds(5);
 const STEP_THREAD_ID = /^wf:wfr_[a-f0-9]{20}:[a-f0-9]{16,64}$/;
@@ -170,20 +177,36 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   const promoting = yield* Semaphore.make(1);
   const retryEvery = options.retryEvery ?? DEFAULT_RETRY;
 
-  /** Executes one intent until it has a result; a retryable failure is tried again later. */
+  /**
+   * Executes one intent until it has a result. A retryable failure is tried again every
+   * `retryEvery`, MAX_INTENT_TRIES times in all; then its error is stored as final, so the step
+   * fails with the reason instead of waiting out the wall budget.
+   */
   const execute = (runId: string, intent: Intent): Effect.Effect<void, WorkflowJournalError> =>
     interpreter.execute(runId, intent).pipe(
       Effect.flatMap((facts): Effect.Effect<void, RetryLater | WorkflowJournalError> => {
         const failed = facts.find((f) => f.fact._tag === "IntentFailed");
         return failed?.fact._tag === "IntentFailed" && failed.fact.retryable
-          ? Effect.fail(new RetryLater())
+          ? Effect.fail(new RetryLater({ facts }))
           : Effect.asVoid(journal.append(facts));
       }),
       Effect.retry({
         while: (error) => error._tag === "RetryLater",
         schedule: Schedule.spaced(retryEvery),
+        times: MAX_INTENT_TRIES - 1,
       }),
-      Effect.catchTags({ RetryLater: () => Effect.void }),
+      Effect.catchTags({
+        RetryLater: ({ facts }) =>
+          Effect.asVoid(
+            journal.append(
+              facts.map((f) =>
+                f.fact._tag === "IntentFailed"
+                  ? { ...f, fact: { ...f.fact, retryable: false } }
+                  : f,
+              ),
+            ),
+          ),
+      }),
     );
 
   const observe = (runId: string, entry: IntentEntry) =>
@@ -205,10 +228,24 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     const failureSubscribers = yield* catalog.failureSubscribers(started.workflowId);
     const runDir = `${options.runsDir}/${runId}`;
 
+    // Work that fails is logged and relaunched by the next pass only after `retryEvery`, so a
+    // failure that repeats (an append that cannot succeed) never spins.
     const launch = (key: string, effect: Effect.Effect<void, WorkflowJournalError>) =>
-      FiberMap.run(work, key, effect.pipe(Effect.ensuring(Queue.offer(wake, undefined))), {
-        onlyIfMissing: true,
-      });
+      FiberMap.run(
+        work,
+        key,
+        effect.pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logError("workflow work failed", { runId, key, cause }).pipe(
+                Effect.andThen(Effect.sleep(retryEvery)),
+              ),
+          ),
+          Effect.ensuring(Queue.offer(wake, undefined)),
+        ),
+        { onlyIfMissing: true },
+      );
 
     while (true) {
       for (const fact of yield* journal.read(stream, state.lastSeq))
@@ -263,9 +300,18 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   });
 
   const ensureActor = (runId: string) =>
-    FiberMap.run(actors, runId, Effect.scoped(runActor(runId)), { onlyIfMissing: true }).pipe(
-      Effect.asVoid,
-    );
+    FiberMap.run(
+      actors,
+      runId,
+      Effect.scoped(runActor(runId)).pipe(
+        Effect.tapCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Effect.logError("workflow run actor failed; the tick revives it", { runId, cause }),
+        ),
+      ),
+      { onlyIfMissing: true },
+    ).pipe(Effect.asVoid);
 
   /** Turns the workflow's pending TriggerFired facts into runs, skips or waits; one at a time. */
   const promote = Effect.fn("WorkflowEngine.promote")(function* (workflowId: string) {
@@ -352,8 +398,16 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       readonly compiled: CompiledWorkflow | null;
     }> = [];
     for (const { runId } of created) {
-      const { state, compiled } = yield* loadRun(runId);
-      if (state.started !== null) summaries.push({ summary: runSummary(state), state, compiled });
+      // One run that cannot load (its pinned version no longer compiles) must not hide the rest.
+      const loaded = yield* loadRun(runId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("workflow run could not be loaded", { runId, cause }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+      if (loaded === null || loaded.state.started === null) continue;
+      summaries.push({ summary: runSummary(loaded.state), ...loaded });
     }
     return summaries;
   });
@@ -427,10 +481,13 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           const stream = runStream(input.runId);
           const changes = Stream.fromSubscription(subscription).pipe(
             Stream.filter((fact) => fact.stream === stream),
-            Stream.mapEffect((fact) =>
+            // Publish order is not commit order: a published fact only says the stream moved,
+            // so the subscriber reads what committed after its last fact, as the actor does.
+            Stream.mapEffect(() =>
               Effect.gen(function* () {
-                if (fact.seq <= state.lastSeq) return [];
-                state = applyRunFact(state, fact);
+                for (const fact of yield* journal.read(stream, state.lastSeq)) {
+                  state = applyRunFact(state, fact);
+                }
                 if (compiled === null && state.started !== null) {
                   compiled = (yield* catalog.pinned(state.started.workflowId, state.started.commit))
                     .compiled;
@@ -458,6 +515,8 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       by: string,
     ) {
       const control = input.control;
+      // An unknown run fails here, before a control could open a stream for it.
+      yield* summaryOf(input.runId);
       yield* journal.append([
         {
           stream: runStream(input.runId),
@@ -523,8 +582,11 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
             billable: 0,
             costed: 0,
           };
-          entry.attempts += 1;
-          if (view.status !== "succeeded" && view.endedAt !== null) entry.failures += 1;
+          // An accept or judge sub-step spends for its step but is not another attempt of it.
+          if (!isSubStep(view.key)) {
+            entry.attempts += 1;
+            if (view.status !== "succeeded" && view.endedAt !== null) entry.failures += 1;
+          }
           if (view.cost !== null) {
             entry.billable += view.cost.billable;
             entry.costed += 1;

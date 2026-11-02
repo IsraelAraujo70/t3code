@@ -12,6 +12,7 @@ it.live.each([
   ["none", "process.exit(7)", 7, null],
   ["none", "setInterval(() => {}, 1000)", null, "TIMEOUT"],
   ["missing", "", 127, null],
+  ["json", 'console.log(JSON.stringify({ big: "x".repeat(100000) }))', 0, null],
   // A descendant that keeps stdout open must not hold the receipt: at timeout, or after an exit
   // in time whose drain runs past the deadline (timeout 300 ms, drain 600 ms).
   [
@@ -57,6 +58,7 @@ it.live.each([
       expect(receipt).toMatchObject({ exit, signal });
       if (script.includes("ok:true")) expect(receipt.out).toEqual({ ok: true });
       if (script.includes('"bad"')) expect(receipt.parseError).toBeTypeOf("string");
+      if (script.includes("big")) expect(receipt.parseError).toMatch(/over 64 KiB/);
       expect(JSON.parse(NodeFS.readFileSync(dir + "/started.json", "utf8")).pid).toBeGreaterThan(0);
     } finally {
       NodeFS.rmSync(dir, { recursive: true });

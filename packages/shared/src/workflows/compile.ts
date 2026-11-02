@@ -22,6 +22,7 @@ import { citesHeavyScript, classifyCommand } from "./command.ts";
 import { exprPaths, parseExpr } from "./expr.ts";
 import { ancestors, buildGraph, formatEdge, parseEdge } from "./graph.ts";
 import { isModelAlias, modelFamily, resolveModelUse } from "./models.ts";
+import { matchesWhole } from "./output.ts";
 import { parseTemplate } from "./template.ts";
 import type {
   CompiledGraph,
@@ -149,6 +150,9 @@ export const compileWorkflow = (
         report(path, "schema", `node id "${id}" must match ${WORKFLOW_NODE_ID_PATTERN}`);
       }
       if (nodeById.has(id)) report(path, "schema", `node id "${id}" is used twice`);
+      if (id === "accept" || id === "judge") {
+        report(path, "schema", `node id "${id}" is reserved for an agent step's acceptance`);
+      }
       nodeById.set(id, node);
       if (node.kind === "map" || node.kind === "loop")
         collectNodes(node.body.nodes, `${path}.body.`);
@@ -197,6 +201,14 @@ export const compileWorkflow = (
   const checkShape = (shape: WorkflowOutputShape | undefined, path: string) => {
     for (const [field, spec] of Object.entries(shape ?? {})) {
       checkPattern(spec.pattern, `${path}.${field}.pattern`);
+      // A pattern makes a field trusted, so it must be one checkOutput enforces.
+      if (spec.pattern !== undefined && spec.type !== "string" && spec.type !== "string[]") {
+        report(
+          `${path}.${field}.pattern`,
+          "schema",
+          `a pattern applies to string and string[] fields, not ${spec.type}`,
+        );
+      }
     }
   };
   for (const [name, spec] of Object.entries(definition.params ?? {})) {
@@ -212,7 +224,7 @@ export const compileWorkflow = (
     } else if (
       spec.pattern !== undefined &&
       typeof spec.default === "string" &&
-      safeTest(spec.pattern, spec.default) === false
+      !matchesWhole(spec.pattern, spec.default)
     ) {
       report(`${path}.default`, "schema", `"${spec.default}" does not match ${spec.pattern}`);
     }
@@ -555,6 +567,7 @@ export const compileWorkflow = (
   function checkThread(
     spec: {
       readonly thread?: string | undefined;
+      readonly model: WorkflowModelUse;
       readonly workspace: WorkflowWorkspaceUse;
       readonly access?: "read" | "write" | undefined;
     },
@@ -590,6 +603,20 @@ export const compileWorkflow = (
         `${path}.thread`,
         "thread-continue",
         `a thread keeps one workspace and one access: use ${target}'s workspace and access, or a new thread`,
+      );
+    }
+    const mine = resolveModelUse(spec.model, definition.models);
+    const theirs = resolveModelUse(continued.model, definition.models);
+    if (
+      Result.isSuccess(mine) &&
+      Result.isSuccess(theirs) &&
+      JSON.stringify([mine.success.provider, mine.success.model, mine.success.effort]) !==
+        JSON.stringify([theirs.success.provider, theirs.success.model, theirs.success.effort])
+    ) {
+      report(
+        `${path}.thread`,
+        "thread-continue",
+        `a thread keeps one model: use ${target}'s model, or a new thread`,
       );
     }
   }

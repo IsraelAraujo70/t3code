@@ -9,3 +9,4 @@ export * from "./graph.ts";
 export * from "./command.ts";
 export * from "./models.ts";
 export * from "./compile.ts";
+export * from "./output.ts";
