@@ -191,7 +191,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/chat/ChatHeader.tsx",
     markers: 2,
-    why: "bot conversation header shows the bot's face instead of the Scratch project",
+    why: "bot conversation faces and workflow step run backlinks replace the project crumb",
   },
   {
     file: "apps/web/src/components/chat/TimelineUserMessageRow.tsx",
