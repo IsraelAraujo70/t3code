@@ -1,11 +1,14 @@
 import { WorkflowId, WorkflowRunId, type WorkflowRunSummary } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as TestClock from "effect/testing/TestClock";
 
-import { Journal, layerMemory } from "./Journal.ts";
+import * as BotsDb from "../BotsDb.ts";
+import { Journal, layerFromDb, layerMemory } from "./Journal.ts";
 import { type NewFact, runStream, workflowStream } from "./facts.ts";
 import { runStarted } from "./testkit/decideHarness.ts";
 
@@ -214,6 +217,18 @@ it.effect(
       );
       assert.deepEqual((yield* journal.lastRuns).get("example"), newer);
     }).pipe(Effect.provide(layerMemory)),
+);
+
+it.effect("stores the summary's active time in the run row", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const sql = yield* SqlClient.SqlClient;
+    const runId = "wfr_00000000000000000003";
+    yield* journal.putRun(row(summary(runId, "2026-11-02T00:00:00.000Z", { activeMs: 1234 }), 1));
+    const rows = yield* sql<{ readonly active_ms: number }>`
+      SELECT active_ms FROM workflow_runs WHERE run_id = ${runId}`;
+    assert.deepEqual(rows, [{ active_ms: 1234 }]);
+  }).pipe(Effect.provide(layerFromDb.pipe(Layer.provideMerge(BotsDb.layerMemory)))),
 );
 
 it.effect("reports runs whose row is missing or behind, and counts a reopened run as live", () =>

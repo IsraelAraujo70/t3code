@@ -400,4 +400,13 @@ it("counts live active time from the caller clock", () => {
     pauses: [{ at: "2026-11-02T10:00:00.000Z", resumedAt: null, reason: "user" as const }],
   };
   expect(runSummary(paused, T0 + 1234).activeSince).toBeNull();
+  const ended = {
+    ...state,
+    ended: {
+      _tag: "RunEnded" as const,
+      status: "succeeded" as const,
+      at: "2026-11-02T10:00:01.000Z",
+    },
+  };
+  expect(runSummary(ended, T0 + 5000)).toMatchObject({ activeMs: 1000, activeSince: null });
 });
