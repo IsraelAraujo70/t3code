@@ -1,6 +1,8 @@
 // @effect-diagnostics globalDateInEffect:off deterministicKeys:off - Poll accepts explicit Date watermarks; the service key follows the workflow trigger contract.
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
+import { EventSinkV2 } from "../../../orchestration-v2/EventSink.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -41,6 +43,9 @@ const decodePulls = Schema.decodeEffect(
   ),
 );
 
+const FOLLOWED_EVENT_TYPES = ["thread.settled", "thread.pull-request-link-updated"] as const;
+type FollowedEventType = (typeof FOLLOWED_EVENT_TYPES)[number];
+
 export const make = Effect.fn("WorkflowTriggers.make")(function* (
   options: {
     readonly engine?: Pick<WorkflowEngine["Service"], "start">;
@@ -49,94 +54,92 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
   } = {},
 ) {
   const orchestrator = yield* Effect.serviceOption(OrchestratorV2);
+  const eventSink = yield* Effect.serviceOption(EventSinkV2);
   const provided = yield* Effect.serviceOption(WorkflowEngine);
   const engine = options.engine ? Option.some(options.engine) : provided;
   const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fireEvent = Effect.fnUntraced(function* (stored: OrchestrationV2StoredEvent) {
+    if (Option.isNone(engine)) return;
+    const event = stored.event;
+    for (const target of yield* listTriggerTargets) {
+      if (!target.enabled) continue;
+      const trigger = target.trigger;
+      if (event.type === "thread.settled" && trigger.kind === "threadSettled") {
+        const thread = event.payload;
+        const payload = { threadId: thread.id, projectId: thread.projectId, title: thread.title };
+        const filters = {
+          ...(trigger.projectId === undefined ? {} : { projectId: trigger.projectId }),
+          ...(trigger.botId === undefined ? {} : { botId: trigger.botId }),
+          ...(trigger.titlePrefix === undefined ? {} : { titlePrefix: trigger.titlePrefix }),
+        };
+        if (!settledMatches(filters, payload)) continue;
+        yield* fireTrigger(engine.value, target, {
+          kind: "threadSettled",
+          occurrence: occurrenceKey.settled(thread.id, stored.sequence),
+          label: `thread settled: ${thread.title.slice(0, 80)}`,
+          payload,
+        });
+      }
+      if (
+        event.type === "thread.pull-request-link-updated" &&
+        trigger.kind === "prMerged" &&
+        trigger.scope === "linked"
+      ) {
+        const link = event.payload;
+        if (
+          link.repository !== trigger.repo ||
+          link.snapshot?.state !== "merged" ||
+          (trigger.base && link.snapshot.baseBranch !== trigger.base)
+        )
+          continue;
+        const headSha = link.watch?.headSha ?? null;
+        yield* fireTrigger(engine.value, target, {
+          kind: "prMerged",
+          occurrence: occurrenceKey.prMerged(link.repository, link.number, headSha ?? "merged"),
+          label: `PR #${link.number} merged`,
+          payload: {
+            repo: link.repository,
+            number: link.number,
+            title: link.snapshot.title,
+            url: link.url,
+            mergeSha: headSha,
+          },
+        });
+      }
+    }
+  });
+
+  /**
+   * Follows one event type from its cursor, live: the stored-event stream keeps going after the
+   * replay, so this runs until it fails. A failed start stops it before its cursor moves, and the
+   * caller starts it again; the occurrence keys make the replayed fires no-ops.
+   */
+  const followEvents = Effect.fn("WorkflowTriggers.followEvents")(function* (
+    eventType: FollowedEventType,
+  ) {
+    if (Option.isNone(engine) || Option.isNone(orchestrator)) return;
+    const source = `events:${eventType}`;
+    const stored = yield* getCursor(source);
+    let after: number;
+    if (Option.isSome(stored)) after = Number(stored.value);
+    else {
+      // Nothing from before the sources first started fires: begin at the newest event.
+      after = Option.isSome(eventSink) ? yield* eventSink.value.latestSequence() : 0;
+      yield* setCursor(source, String(after));
+    }
+    yield* orchestrator.value
+      .streamStoredEventsFrom({ eventType, afterSequence: after })
+      .pipe(
+        Stream.runForEach((stored) =>
+          fireEvent(stored).pipe(Effect.andThen(setCursor(source, String(stored.sequence)))),
+        ),
+      );
+  }, Effect.provideContext(context));
+
   const poll = Effect.fn("WorkflowTriggers.poll")(function* (now: Date) {
     if (Option.isNone(engine)) return;
     const targets = yield* listTriggerTargets;
-    if (Option.isSome(orchestrator)) {
-      for (const eventType of ["thread.settled", "thread.pull-request-link-updated"] as const) {
-        yield* Effect.gen(function* () {
-          const source = `events:${eventType}`;
-          const cursor = yield* getCursor(source);
-          const events = yield* Stream.runCollect(
-            orchestrator.value.streamStoredEventsFrom({
-              eventType,
-              afterSequence: Option.isSome(cursor) ? Number(cursor.value) : 0,
-            }),
-          );
-          for (const stored of events) {
-            if (Option.isSome(cursor))
-              for (const target of targets) {
-                if (!target.enabled) continue;
-                const event = stored.event;
-                const trigger = target.trigger;
-                if (event.type === "thread.settled" && trigger.kind === "threadSettled") {
-                  const thread = event.payload;
-                  const payload = {
-                    threadId: thread.id,
-                    projectId: thread.projectId,
-                    title: thread.title,
-                  };
-                  if (
-                    settledMatches(
-                      {
-                        ...(trigger.projectId === undefined
-                          ? {}
-                          : { projectId: trigger.projectId }),
-                        ...(trigger.botId === undefined ? {} : { botId: trigger.botId }),
-                        ...(trigger.titlePrefix === undefined
-                          ? {}
-                          : { titlePrefix: trigger.titlePrefix }),
-                      },
-                      payload,
-                    )
-                  )
-                    yield* fireTrigger(engine.value, target, {
-                      kind: "threadSettled",
-                      occurrence: occurrenceKey.settled(thread.id, stored.sequence),
-                      label: `thread settled: ${thread.title.slice(0, 80)}`,
-                      payload,
-                    });
-                }
-                if (
-                  event.type === "thread.pull-request-link-updated" &&
-                  trigger.kind === "prMerged" &&
-                  trigger.scope === "linked"
-                ) {
-                  const link = event.payload;
-                  if (
-                    link.repository !== trigger.repo ||
-                    link.snapshot?.state !== "merged" ||
-                    (trigger.base && link.snapshot.baseBranch !== trigger.base)
-                  )
-                    continue;
-                  yield* fireTrigger(engine.value, target, {
-                    kind: "prMerged",
-                    occurrence: occurrenceKey.prMerged(
-                      link.repository,
-                      link.number,
-                      link.watch?.headSha ?? "merged",
-                    ),
-                    label: `PR #${link.number} merged`,
-                    payload: {
-                      repo: link.repository,
-                      number: link.number,
-                      title: link.snapshot.title,
-                      url: link.url,
-                      mergeSha: link.watch?.headSha ?? null,
-                    },
-                  });
-                }
-              }
-            yield* setCursor(source, String(stored.sequence));
-          }
-          if (Option.isNone(cursor) && events.length === 0) yield* setCursor(source, "0");
-        }).pipe(Effect.catchCause(Effect.logWarning));
-      }
-    }
     for (const target of targets) {
       // One trigger's failure (the engine, git, the database) leaves its cursor and the others alone.
       yield* pollTarget(target, now).pipe(
@@ -266,7 +269,7 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
       }
     }
   });
-  return { poll, available: Option.isSome(engine) };
+  return { poll, followEvents, available: Option.isSome(engine) };
 });
 export class WorkflowTriggers extends Context.Service<
   WorkflowTriggers,
@@ -276,13 +279,23 @@ export const layer = Layer.effect(
   WorkflowTriggers,
   Effect.gen(function* () {
     const service = yield* make();
-    if (service.available)
+    if (service.available) {
       yield* forkParked(
         Effect.gen(function* () {
           yield* service.poll(new Date(yield* Clock.currentTimeMillis));
         }).pipe(Effect.catchCause(Effect.logWarning), Effect.repeat(Schedule.spaced("30 seconds"))),
       );
-    else yield* Effect.logWarning("WorkflowTriggers: WorkflowEngine unavailable");
+      for (const eventType of FOLLOWED_EVENT_TYPES) {
+        yield* forkParked(
+          service.followEvents(eventType).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("workflow event trigger stopped", { eventType, cause }),
+            ),
+            Effect.repeat(Schedule.spaced("30 seconds")),
+          ),
+        );
+      }
+    } else yield* Effect.logWarning("WorkflowTriggers: WorkflowEngine unavailable");
     return service;
   }),
 );
