@@ -33,6 +33,7 @@ const MODULES = [
   },
   { path: "bots/threadWatch/tools.ts", exports: ["ThreadWatchToolkit"], group: "fork" },
   { path: "bots/kanban/tools.ts", exports: ["KanbanToolkit"], group: "fork" },
+  { path: "bots/workflows/mcp/tools.ts", exports: ["WorkflowToolkit"], group: "fork" },
 ];
 const HELP = `Usage: node scripts/friend/wf/mcp-token-count.ts [--json]
 Estimates tokens as ceil(JSON.stringify(inventory).length / 4), not tokenizer tokens.

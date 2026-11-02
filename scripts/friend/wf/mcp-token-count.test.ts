@@ -18,6 +18,16 @@ it("counts the complete checkout inventory through the CLI", () => {
   for (const name of ["watch_thread", "kanban_list", "memory_list", "delegate_task"]) {
     expect(output.perTool[name]).toBeGreaterThan(0);
   }
+  // Every workflow tool the bots MCP advertises is measured.
+  const workflowTools = Array.from(
+    NodeFS.readFileSync(
+      NodePath.join(ROOT, "apps/server/src/bots/workflows/mcp/tools.ts"),
+      "utf8",
+    ).matchAll(/Tool\.make\("(workflow_\w+)"/g),
+    (match) => match[1]!,
+  );
+  expect(workflowTools.length).toBeGreaterThan(0);
+  for (const name of workflowTools) expect(output.perTool[name]).toBeGreaterThan(0);
 });
 
 it("matches the upstream server inventory byte budget", () => {
@@ -46,7 +56,8 @@ it("detects toolkit registration drift", () => {
     NodePath.join(ROOT, "apps/server/src/mcp/McpHttpServer.ts"),
     "utf8",
   );
-  expect(registeredToolkitNames(source)).toHaveLength(18);
+  expect(registeredToolkitNames(source)).toHaveLength(19);
+  expect(registeredToolkitNames(source)).toContain("WorkflowToolkit");
   expect(() => checkToolkitNames(source)).not.toThrow();
   expect(() =>
     checkToolkitNames(`${source}\ntoolkitRegistration(UnexpectedToolkit, layer)`),
