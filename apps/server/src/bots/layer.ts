@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { BotsError, KanbanError } from "@t3tools/contracts";
+import { BotsError, KanbanError, WorkflowsError } from "@t3tools/contracts";
 
 import { isBotsHost, NOT_BOTS_HOST_MESSAGE } from "./BotsHost.ts";
 import * as BotsInstructions from "./BotsInstructions.ts";
@@ -34,6 +34,41 @@ import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+
+import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinitions.ts";
+import { layer as WorkflowCatalogLayer } from "./workflows/definitions/catalog.ts";
+import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
+import * as Journal from "./workflows/Journal.ts";
+
+// Workflows: definitions repository, catalog and hand-edit watcher (bots host only).
+const layerWorkflows = Layer.mergeAll(WorkflowCatalogLayer, WatcherLayer).pipe(
+  Layer.provideMerge(WorkflowDefinitions.layer),
+  Layer.provideMerge(Journal.layer),
+);
+const workflowsNotHost = () =>
+  Effect.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }));
+const layerWorkflowsOff = Layer.succeed(
+  WorkflowDefinitions.WorkflowDefinitions,
+  WorkflowDefinitions.WorkflowDefinitions.of({
+    repoPath: "",
+    changes: Stream.empty,
+    snapshot: Stream.fail(
+      new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }),
+    ),
+    documentChanges: () =>
+      Stream.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE })),
+    list: workflowsNotHost(),
+    document: workflowsNotHost,
+    validate: workflowsNotHost,
+    save: workflowsNotHost,
+    fromTemplate: workflowsNotHost,
+    setEnabled: workflowsNotHost,
+    delete: workflowsNotHost,
+    restore: workflowsNotHost,
+    history: workflowsNotHost,
+    ingest: workflowsNotHost,
+  }),
+);
 
 const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE }));
 
@@ -209,6 +244,7 @@ export const layerOff = Layer.mergeAll(
   layerGuestStoreOff,
   layerGuestArtifactsOff,
   layerKanbanOff,
+  layerWorkflowsOff,
 );
 
 /**
@@ -269,8 +305,15 @@ export const layerService = Layer.unwrap(
             Layer.provideMerge(BotsService.layer),
             Layer.provideMerge(ThreadWatchStore.layer),
             Layer.provideMerge(KanbanService.layer),
+            Layer.provideMerge(layerWorkflows),
           )
-        : Layer.mergeAll(layerServiceOff, layerThreadWatchOff, layerKanbanOff, layerRotationOff),
+        : Layer.mergeAll(
+            layerServiceOff,
+            layerThreadWatchOff,
+            layerKanbanOff,
+            layerRotationOff,
+            layerWorkflowsOff,
+          ),
     ),
   ),
 );
