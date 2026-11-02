@@ -115,9 +115,9 @@ function DetailContent({
                 </View>
                 <WorkflowGraph model={toCanvasModel(document.definition)} />
                 <ListSection title="Triggers">
-                  {(document.definition.triggers ?? []).map((trigger) => (
-                    <Text key={trigger.id}>
-                      {trigger.id} · {trigger.kind}
+                  {Object.entries(document.definition.triggers ?? {}).map(([id, trigger]) => (
+                    <Text key={id}>
+                      {id} · {trigger.kind}
                     </Text>
                   ))}
                 </ListSection>

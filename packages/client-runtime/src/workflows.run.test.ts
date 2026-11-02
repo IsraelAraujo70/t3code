@@ -115,7 +115,7 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     status: "running",
     pausedFor: null,
     skipReason: null,
-    trigger: { kind: "manual", label: "Manual" },
+    trigger: { id: "manual", kind: "manual", label: "Manual" },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: null,
     outputStatus: null,
@@ -128,6 +128,7 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     activeSince: null,
   });
   const view: WorkflowRunView = {
+    trigger: { ...summary.trigger, occurrence: "manual", test: false, payloadBytes: 0 },
     summary,
     definition: null,
     seq: 1,
@@ -244,7 +245,7 @@ it("computes live active time from the summary anchor", () => {
     status: "running",
     pausedFor: null,
     skipReason: null,
-    trigger: { kind: "manual", label: "Manual" },
+    trigger: { id: "manual", kind: "manual", label: "Manual" },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: null,
     outputStatus: null,

@@ -30,6 +30,7 @@ function fixture(): WorkflowDocument {
   };
   return {
     workflowId: workflowId,
+    triggers: [],
     source: "schema: t3.workflow/v1",
     definition,
     revision: revision("a".repeat(40)),
