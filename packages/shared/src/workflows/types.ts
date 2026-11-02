@@ -155,6 +155,7 @@ export interface HostLimits {
   /** Projects linked to a Linear team; `card.project` may not be one. */
   readonly linearLinkedProjects?: ReadonlySet<string>;
   /** Saved workflows by id → the workflows each one calls. Absent → only self-calls are caught. */
+  readonly callTargets?: ReadonlyMap<string, { readonly from: ReadonlyArray<string> | null }>;
   readonly callGraph?: ReadonlyMap<string, ReadonlyArray<string>>;
 }
 

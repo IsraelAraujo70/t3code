@@ -1,3 +1,4 @@
+import { isOnDemandTrigger } from "./triggers.ts";
 /** The workflow compiler: decode, every static check of the design (§1.3), then the semantic hash. */
 import * as Cron from "effect/Cron";
 import * as Result from "effect/Result";
@@ -802,6 +803,12 @@ export const compileWorkflow = (
   }
 
   function checkCall(workflow: string, path: string) {
+    if (host.callTargets !== undefined) {
+      const target = host.callTargets.get(workflow);
+      if (target === undefined) report(path, "trigger", `${workflow} has no call trigger`);
+      else if (target.from !== null && !target.from.includes(definition.id))
+        report(path, "trigger", `${workflow} is not callable from ${definition.id}`);
+    }
     if (workflow === definition.id) {
       report(path, "call-cycle", "a workflow cannot call itself");
       return;
@@ -865,6 +872,15 @@ export const compileWorkflow = (
 
   // ── Triggers and card ───────────────────────────────────────────────────────────────────────
 
+  const onDemandKinds = new Set<string>();
+  const nodeIds = new Set<string>();
+  function collectIds(nodes: WorkflowDefinition["nodes"]) {
+    for (const [id, node] of Object.entries(nodes)) {
+      nodeIds.add(id);
+      if (node.kind === "map" || node.kind === "loop") collectIds(node.body.nodes);
+    }
+  }
+  collectIds(definition.nodes);
   const triggerScope: Scope = {
     nodes: new Set(),
     roots: new Set(["trigger"]),
@@ -872,6 +888,18 @@ export const compileWorkflow = (
   };
   Object.entries(definition.triggers ?? {}).forEach(([id, trigger]) => {
     const path = `triggers.${id}`;
+    if (isOnDemandTrigger(trigger.kind)) {
+      if (onDemandKinds.has(trigger.kind))
+        report(path, "trigger", `a workflow has at most one ${trigger.kind} trigger`);
+      onDemandKinds.add(trigger.kind);
+    }
+    if (nodeIds.has(id)) report(path, "trigger", `trigger id "${id}" is also a node id`);
+    if (trigger.kind === "bot" && !trigger.description.trim())
+      report(
+        `${path}.description`,
+        "trigger",
+        "the bot trigger needs a description of when to run it",
+      );
     if (!WORKFLOW_NODE_ID_PATTERN.test(id))
       report(path, "schema", `trigger id "${id}" must match ${WORKFLOW_NODE_ID_PATTERN}`);
     for (const [key, value] of Object.entries(

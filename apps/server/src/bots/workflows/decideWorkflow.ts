@@ -3,7 +3,7 @@
  * Pure, like `decide`; the engine appends what it returns in one transaction.
  */
 import * as DateTime from "effect/DateTime";
-import { matchesWhole } from "@t3tools/shared/workflows";
+import { decodeRunParams } from "@t3tools/shared/workflows";
 import { runStream, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
 import { suspendedNotice } from "./notices/notices.ts";
@@ -94,27 +94,12 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
       continue;
     }
     const { definition } = current.version.compiled;
-    const declarations = definition.params ?? {};
-    const params: Record<string, string | number | boolean> = {};
-    let valid = Object.keys(trigger.params).every((key) => Object.hasOwn(declarations, key));
-    for (const [name, spec] of Object.entries(declarations)) {
-      const value = Object.hasOwn(trigger.params, name) ? trigger.params[name] : spec.default;
-      if (
-        (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") ||
-        typeof value !== spec.type
-      ) {
-        valid = false;
-        continue;
-      }
-      if (typeof value === "string" && spec.pattern !== undefined) {
-        if (!matchesWhole(spec.pattern, value)) valid = false;
-      }
-      params[name] = value;
-    }
-    if (!valid) {
+    const decoded = decodeRunParams(definition.params, trigger.params);
+    if (!decoded.ok) {
       skip("invalid");
       continue;
     }
+    const params = decoded.params;
     const concurrency = definition.concurrency ?? "single";
     if (busy && concurrency === "queue") break;
     if (busy && concurrency === "single") {

@@ -25,12 +25,11 @@ import {
   type WorkflowsSnapshot,
   type WorkflowSummary,
   type WorkflowDefinition,
-  type WorkflowTrigger,
   type WorkflowTriggerSummary,
   type WorkflowValidateInput,
   type WorkflowValidateResult,
 } from "@t3tools/contracts";
-import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
+import { compileWorkflow, DEFAULT_HOST_LIMITS, triggerLabel } from "@t3tools/shared/workflows";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -142,28 +141,6 @@ const internal = (cause: unknown) =>
 /** Template ids are file names in the library; the pattern keeps `../` out of the path. */
 const WORKFLOW_ID = /^[a-z][a-z0-9-]{0,62}$/;
 
-const label = (trigger: WorkflowTrigger): string => {
-  switch (trigger.kind) {
-    case "cron":
-      return `${trigger.expr} (${trigger.tz})`;
-    case "webhook":
-      return "webhook";
-    case "upstreamTag":
-      return `tag ${trigger.pattern} on ${trigger.remote}`;
-    case "prMerged":
-      return `PR merged in ${trigger.repo}`;
-    case "threadSettled":
-      return "thread settled";
-    case "workflowFailed":
-      return `${trigger.workflow ?? "any"} failed`;
-    case "manual":
-      return "Run now";
-    case "bot":
-      return "bot";
-    case "call":
-      return "called by a workflow";
-  }
-};
 /** The summaries of a definition's triggers; `urls` maps webhook task ids to their public URLs. */
 const triggerSummaries = (
   workflowId: string,
@@ -174,7 +151,7 @@ const triggerSummaries = (
     id,
     kind: trigger.kind,
     title: trigger.title ?? null,
-    label: label(trigger),
+    label: triggerLabel(trigger),
     webhookUrl:
       trigger.kind === "webhook" ? (urls.get(workflowHookTaskId(workflowId, id)) ?? null) : null,
     enabled: true,
@@ -210,6 +187,7 @@ const make = Effect.gen(function* () {
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const status = journal.workflowStatus;
   const callGraph = new Map<string, ReadonlyArray<string>>();
+  const callTargets = new Map<string, { readonly from: ReadonlyArray<string> | null }>();
   const calls = (nodes: Readonly<Record<string, WorkflowNode>>): string[] =>
     Object.values(nodes).flatMap((node) =>
       node.kind === "call"
@@ -220,13 +198,20 @@ const make = Effect.gen(function* () {
     );
   const refreshGraph = Effect.fn("WorkflowDefinitions.refreshGraph")(function* () {
     callGraph.clear();
+    callTargets.clear();
     for (const id of yield* repo.listIds) {
       const file = Option.getOrNull(yield* repo.read(id));
       if (!file) continue;
       const parsed = parseWorkflowSource(file.text);
       if (Result.isFailure(parsed)) continue;
       const compiled = compileWorkflow(parsed.success, DEFAULT_HOST_LIMITS);
-      if (Result.isSuccess(compiled)) callGraph.set(id, calls(compiled.success.definition.nodes));
+      if (Result.isSuccess(compiled)) {
+        callGraph.set(id, calls(compiled.success.definition.nodes));
+        const trigger = Object.values(compiled.success.definition.triggers ?? {}).find(
+          (trigger) => trigger.kind === "call",
+        );
+        if (trigger?.kind === "call") callTargets.set(id, { from: trigger.from ?? null });
+      }
     }
   });
   const compile = (input: WorkflowValidateInput) => {
@@ -234,7 +219,7 @@ const make = Effect.gen(function* () {
       "source" in input ? parseWorkflowSource(input.source) : Result.succeed(input.definition);
     return Result.isFailure(parsed)
       ? Result.fail([parsed.failure])
-      : compileWorkflow(parsed.success, { ...DEFAULT_HOST_LIMITS, callGraph });
+      : compileWorkflow(parsed.success, { ...DEFAULT_HOST_LIMITS, callGraph, callTargets });
   };
   /** A file compiles only under its own name: `<id>.workflow.yaml` must say `id: <id>`. */
   const compileFile = (id: string, text: string) => {
