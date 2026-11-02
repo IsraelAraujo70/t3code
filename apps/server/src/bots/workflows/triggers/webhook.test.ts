@@ -89,7 +89,6 @@ const recordingEngine = (requests: Array<TriggerRequest>) =>
         requests.push(request);
         return { runId };
       }),
-    isStepThread: () => false,
   });
 
 it.effect("a delivery becomes the trigger's TriggerFired once the engine is bound", () =>

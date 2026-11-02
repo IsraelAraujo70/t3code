@@ -75,6 +75,7 @@ export class Journal extends Context.Service<
       key: string,
     ) => Effect.Effect<Option.Option<StoredFact>, WorkflowJournalError>;
     /** Run ids that started and did not end, plus ended runs with an intent still waiting for its result. */
+    readonly ledgerIds: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     readonly liveRuns: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     /** Workflow ids with a TriggerFired that has neither RunCreated nor TriggerSkipped. */
     readonly pendingTriggers: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
@@ -246,6 +247,12 @@ const make = Effect.gen(function* () {
         yield* sql<Row>`SELECT * FROM workflow_facts WHERE stream = ${stream} AND seq > ${afterSeq} ORDER BY seq`;
       return yield* Effect.forEach(rows, decode);
     }, Effect.mapError(fail)),
+    ledgerIds: sql<{
+      readonly id: string;
+    }>`SELECT DISTINCT substr(stream, 8) AS id FROM workflow_facts WHERE stream LIKE 'ledger:%' ORDER BY id`.pipe(
+      Effect.map((rows) => rows.map((row) => row.id)),
+      Effect.mapError(fail),
+    ),
     liveRuns: sql<{
       readonly id: string;
     }>`SELECT substr(stream, 5) AS id FROM workflow_facts f WHERE stream LIKE 'run:%' AND

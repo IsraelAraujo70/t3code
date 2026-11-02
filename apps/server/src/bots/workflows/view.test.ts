@@ -381,3 +381,14 @@ describe("run views", () => {
     expect(stepDetail(run.compiled, run.state(), "a", 2)).toBeNull();
   });
 });
+
+it("counts live active time from the caller clock", () => {
+  const run = TestRun.start(
+    compile({
+      nodes: { a: agent, done: { kind: "output", status: "ready_for_review", value: {} } },
+      edges: ["a -> done"],
+    }),
+    runStarted({ hash: `sha256:${"0".repeat(64)}` }),
+  );
+  expect(runSummary(run.state(), T0 + 1234).activeMs).toBe(1234);
+});

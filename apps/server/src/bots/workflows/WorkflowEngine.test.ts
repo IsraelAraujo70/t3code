@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { type WorkflowRunDelta, WorkflowStepKey } from "@t3tools/contracts";
+import {
+  type WorkflowRunDelta,
+  WorkflowStepKey,
+  WorkflowLedgerId,
+  WorkflowId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -513,4 +518,124 @@ it.effect(
         Effect.provide(Layer.mergeAll(layerFromDb, layer, layerCatalog([twoSteps]))),
       );
     }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+it.effect("reads persisted ledgers with filters, pagination and metric conversion", () =>
+  Effect.gen(function* () {
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    yield* Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/runs" });
+      const at = "2026-11-02T10:00:00.000Z";
+      for (const key of ["one", "two"]) {
+        yield* journal.append([
+          {
+            stream: "ledger:experiments",
+            key: `register:${key}`,
+            fact: {
+              _tag: "EntryRegistered",
+              key,
+              runId: "wfr_0123456789abcdef0123",
+              workflowId: "demo",
+              step: "plan",
+              hypothesis: key,
+              barHash: "bar",
+              at,
+            },
+          },
+          {
+            stream: "ledger:experiments",
+            key: `resolve:${key}`,
+            fact: {
+              _tag: "EntryResolved",
+              key,
+              verdict: "kept",
+              before: { objective: 1, values: { score: 1 } },
+              after: { score: 2 },
+              sha: "abc",
+              note: null,
+              at,
+            },
+          },
+        ]);
+      }
+      const page = yield* engine.ledger({ limit: 1 });
+      assert.deepEqual(page.entries.length, 1);
+      assert.deepEqual(page.entries[0]?.before, { objective: 1, values: { score: 1 } });
+      assert.deepEqual(page.entries[0]?.after, null);
+      assert.deepEqual(page.nextCursor, "1");
+      const next = yield* engine.ledger({
+        ledger: WorkflowLedgerId.make("experiments"),
+        workflowId: WorkflowId.make("demo"),
+        verdict: "kept",
+        cursor: "1",
+        limit: 1,
+      });
+      assert.equal(next.entries[0]?.key, "two");
+      assert.equal(next.nextCursor, null);
+      assert.deepEqual((yield* engine.ledger({ verdict: "rejected" })).entries, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+          interpreter,
+          layerCatalog([twoSteps]),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("delivers a queued occurrence skipped on its workflow stream", () =>
+  Effect.gen(function* () {
+    const { layer: interpreter } = yield* makeFakeInterpreter({});
+    yield* Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/runs" });
+      const occurrence = "manual:queued";
+      const runId = runIdFor("demo", occurrence);
+      yield* journal.append([
+        {
+          stream: workflowStream("demo"),
+          key: occurrence,
+          fact: {
+            _tag: "TriggerFired",
+            runId,
+            ...request(occurrence),
+            at: "2026-11-02T00:00:00.000Z",
+          },
+        },
+      ]);
+      const deltas = yield* Queue.unbounded<WorkflowRunDelta>();
+      yield* engine.subscribeRun({ runId, afterSeq: 0 }).pipe(
+        Stream.runForEach((delta) => Queue.offer(deltas, delta)),
+        Effect.forkScoped,
+      );
+      yield* journal.append([
+        {
+          stream: workflowStream("demo"),
+          key: `skipped:${occurrence}`,
+          fact: {
+            _tag: "TriggerSkipped",
+            occurrence,
+            reason: "busy",
+          },
+        },
+      ]);
+      const chunk = yield* Queue.take(deltas).pipe(
+        Effect.repeat({ until: (delta) => delta.summary.status === "skipped" }),
+      );
+      assert.equal(chunk.summary.status, "skipped");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+          interpreter,
+          layerCatalog([twoSteps]),
+        ),
+      ),
+    );
+  }),
 );

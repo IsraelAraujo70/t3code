@@ -13,8 +13,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import type { Json } from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
@@ -40,7 +42,8 @@ import {
   type WorkflowRunView,
   type WorkflowStepDetail,
   type WorkflowRunStepInput,
-  parseWorkflowStepThreadId,
+  WorkflowLedgerEntry,
+  WorkflowMetricReading,
 } from "@t3tools/contracts";
 import { type CompiledWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 
@@ -100,6 +103,9 @@ export interface WorkflowEngineOptions {
   readonly retryEvery?: Duration.Input;
 }
 
+const decodeLedgerEntry = Schema.decodeEffect(WorkflowLedgerEntry);
+const decodeMetricReading = Schema.decodeUnknownOption(WorkflowMetricReading);
+
 export class WorkflowEngine extends Context.Service<
   WorkflowEngine,
   {
@@ -152,7 +158,6 @@ export class WorkflowEngine extends Context.Service<
       input: WorkflowLedgerInput,
     ) => Effect.Effect<WorkflowLedgerPage, WorkflowJournalError>;
     /** A step thread (`wf:<runId>:<keyHash>`), which no MCP tool may use to edit or run workflows. */
-    readonly isStepThread: (threadId: string) => boolean;
   }
 >()("t3/bots/workflows/WorkflowEngine") {}
 
@@ -473,18 +478,19 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   const project = (state: RunState) =>
     state.started === null
       ? Effect.void
-      : journal
-          .putRun({
-            summary: runSummary(state),
-            lastSeq: state.lastSeq,
-            pendingIntents: [...state.intents.values()].filter((e) => e.result === null).length,
-            parentRunId: state.started.parent?.runId ?? null,
-          })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("workflow run projection failed", { runId: state.runId, error }),
-            ),
-          );
+      : Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            journal.putRun({
+              summary: runSummary(state, now),
+              lastSeq: state.lastSeq,
+              pendingIntents: [...state.intents.values()].filter((e) => e.result === null).length,
+              parentRunId: state.started!.parent?.runId ?? null,
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("workflow run projection failed", { runId: state.runId, error }),
+          ),
+        );
 
   /** At boot: rows missing or behind their stream are folded again (a crash between append and row). */
   const rebuildProjection = Effect.gen(function* () {
@@ -545,7 +551,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
 
   const summaryOf = Effect.fn("WorkflowEngine.summaryOf")(function* (runId: string) {
     const { state } = yield* loadRun(runId);
-    if (state.started !== null) return runSummary(state);
+    if (state.started !== null) return runSummary(state, yield* Clock.currentTimeMillis);
     const workflowId = yield* journal.workflowOfRun(runId);
     if (workflowId._tag === "None") return yield* unknownRun(runId);
     const current = yield* catalog.current(workflowId.value);
@@ -595,7 +601,10 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         ),
       );
       if (loaded === null || loaded.state.started === null) continue;
-      summaries.push({ summary: runSummary(loaded.state), ...loaded });
+      summaries.push({
+        summary: runSummary(loaded.state, yield* Clock.currentTimeMillis),
+        ...loaded,
+      });
     }
     return summaries;
   });
@@ -645,7 +654,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       }
       const steps = pageOf(stepViews(compiled, state), input.stepsCursor, STEPS_PAGE);
       return {
-        summary: runSummary(state),
+        summary: runSummary(state, yield* Clock.currentTimeMillis),
         definition: compiled.definition,
         seq: state.lastSeq,
         steps: steps.page,
@@ -659,16 +668,23 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         Effect.gen(function* () {
           const subscription = yield* journal.subscribe;
           let { state, compiled } = yield* loadRun(input.runId);
+          const owner = yield* journal.workflowOfRun(input.runId);
           let sent = input.afterSeq;
-          const deltaNow = (): ReadonlyArray<WorkflowRunDelta> => {
+          const deltaNow = (now: number): ReadonlyArray<WorkflowRunDelta> => {
             if (compiled === null || state.lastSeq <= sent) return [];
-            const delta = runDelta(compiled, state, sent);
+            const delta = runDelta(compiled, state, sent, now);
             sent = state.lastSeq;
             return [delta];
           };
           const stream = runStream(input.runId);
           const changes = Stream.fromSubscription(subscription).pipe(
-            Stream.filter((fact) => fact.stream === stream),
+            Stream.filter(
+              (fact) =>
+                fact.stream === stream ||
+                (state.started === null &&
+                  Option.isSome(owner) &&
+                  fact.stream === workflowStream(owner.value)),
+            ),
             // Publish order is not commit order: a published fact only says the stream moved,
             // so the subscriber reads what committed after its last fact, as the actor does.
             Stream.mapEffect(() =>
@@ -680,12 +696,38 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
                   compiled = (yield* catalog.pinned(state.started.workflowId, state.started.commit))
                     .compiled;
                 }
-                return deltaNow();
+                if (state.started === null) {
+                  const summary = yield* summaryOf(input.runId);
+                  return [
+                    {
+                      runId: input.runId,
+                      seq: state.lastSeq,
+                      summary,
+                      steps: [],
+                      gates: [],
+                      blocks: [],
+                    },
+                  ];
+                }
+                return deltaNow(yield* Clock.currentTimeMillis);
               }),
             ),
             Stream.flatMap((deltas) => Stream.fromIterable(deltas)),
           );
-          return Stream.concat(Stream.fromIterable(deltaNow()), changes);
+          const initial =
+            state.started === null
+              ? [
+                  {
+                    runId: input.runId,
+                    seq: state.lastSeq,
+                    summary: yield* summaryOf(input.runId),
+                    steps: [],
+                    gates: [],
+                    blocks: [],
+                  },
+                ]
+              : deltaNow(yield* Clock.currentTimeMillis);
+          return Stream.concat(Stream.fromIterable(initial), changes);
         }),
       ),
     stepDetail: Effect.fn("WorkflowEngine.stepDetail")(function* (input: WorkflowRunStepInput) {
@@ -818,10 +860,26 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         series: [],
       };
     }),
-    ledger: Effect.fn("WorkflowEngine.ledger")(function* (_input: WorkflowLedgerInput) {
-      return yield* Effect.succeed({ entries: [], nextCursor: null });
+    ledger: Effect.fn("WorkflowEngine.ledger")(function* (input: WorkflowLedgerInput) {
+      const entries: WorkflowLedgerEntry[] = [];
+      for (const id of input.ledger ? [input.ledger] : yield* journal.ledgerIds) {
+        const ledger = foldLedger(id, yield* journal.read(ledgerStream(id)));
+        for (const entry of ledger.entries.values()) {
+          if (input.workflowId && entry.workflowId !== input.workflowId) continue;
+          if (input.verdict && entry.verdict !== input.verdict) continue;
+          entries.push(
+            yield* decodeLedgerEntry({
+              ...entry,
+              ledger: id,
+              before: Option.getOrNull(decodeMetricReading(entry.before)),
+              after: Option.getOrNull(decodeMetricReading(entry.after)),
+            }).pipe(Effect.orDie),
+          );
+        }
+      }
+      const result = pageOf(entries, input.cursor, input.limit ?? 100);
+      return { entries: result.page, nextCursor: result.next };
     }),
-    isStepThread: (threadId: string) => parseWorkflowStepThreadId(threadId) !== null,
   };
 
   const engine = {

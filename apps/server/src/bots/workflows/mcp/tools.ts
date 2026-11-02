@@ -1,3 +1,4 @@
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 /**
  * Workflow tools for bots (design §6). The handlers call the same `WorkflowDefinitions` and
  * `WorkflowEngine` methods as the RPCs. No tool decides a gate.
@@ -27,6 +28,7 @@ const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
+    ServerEnvironment,
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     BotsService.BotsService,
