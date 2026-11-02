@@ -6,25 +6,50 @@
  * commit. Each committed version is kept in `workflow_versions`; `workflow_index` is a rebuildable
  * cache of what is on disk. A workflow is off until its first `Toggled` fact.
  */
-import type {
-  WorkflowDeleteInput,
-  WorkflowDeleteResult,
-  WorkflowDocument,
-  WorkflowFromTemplateInput,
-  WorkflowHistoryInput,
-  WorkflowHistoryPage,
-  WorkflowRestoreInput,
-  WorkflowSaveInput,
-  WorkflowSaveResult,
-  WorkflowSetEnabledInput,
-  WorkflowsSnapshot,
-  WorkflowSummary,
-  WorkflowValidateInput,
-  WorkflowValidateResult,
+import {
+  WorkflowDocRevision,
+  WorkflowId,
+  WorkflowsError,
+  type WorkflowDeleteInput,
+  type WorkflowDeleteResult,
+  type WorkflowDocument,
+  type WorkflowFromTemplateInput,
+  type WorkflowHistoryInput,
+  type WorkflowHistoryPage,
+  type WorkflowNode,
+  type WorkflowRestoreInput,
+  type WorkflowSaveInput,
+  type WorkflowSaveResult,
+  type WorkflowSetEnabledInput,
+  type WorkflowsSnapshot,
+  type WorkflowSummary,
+  type WorkflowTrigger,
+  type WorkflowValidateInput,
+  type WorkflowValidateResult,
 } from "@t3tools/contracts";
+import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import { stringify } from "yaml";
+
+import { ServerConfig } from "../../../config.ts";
+import { Journal } from "../Journal.ts";
+import { workflowStream } from "../facts.ts";
+import { workflowStatus } from "../workflowStatus.ts";
+import * as Store from "./definitionsStore.ts";
+import { WorkflowRepo, layer as repoLayer } from "./WorkflowRepo.ts";
+import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
 
 /** Who writes. Commit author: `Owner`, `Owner (hand edit)` for ingestion, `<name> (bot)`. */
 export type WorkflowAuthor =
@@ -85,25 +110,6 @@ export class WorkflowDefinitions extends Context.Service<
   }
 >()("t3/bots/workflows/definitions/WorkflowDefinitions") {}
 
-import { WorkflowsError, type WorkflowTrigger, type WorkflowNode } from "@t3tools/contracts";
-import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
-import * as Result from "effect/Result";
-import * as Semaphore from "effect/Semaphore";
-import * as DateTime from "effect/DateTime";
-import * as Schema from "effect/Schema";
-import { WorkflowId, WorkflowDocRevision } from "@t3tools/contracts";
-import * as Path from "effect/Path";
-import { ServerConfig } from "../../../config.ts";
-import { Journal } from "../Journal.ts";
-import { workflowStream } from "../facts.ts";
-import { workflowStatus } from "../workflowStatus.ts";
-import { WorkflowRepo, layer as repoLayer } from "./WorkflowRepo.ts";
-import { parseWorkflowSource, toCanonicalYaml } from "./yamlCodec.ts";
-import * as Store from "./definitionsStore.ts";
-
 const workflowId = Schema.decodeSync(WorkflowId);
 const revision = Schema.decodeSync(WorkflowDocRevision);
 const isWorkflowsError = Schema.is(WorkflowsError);
@@ -115,25 +121,26 @@ const internal = (cause: unknown) =>
         message: "Workflow definitions operation failed.",
         cause,
       });
-const label = (t: WorkflowTrigger): string => {
-  switch (t.kind) {
+const label = (trigger: WorkflowTrigger): string => {
+  switch (trigger.kind) {
     case "cron":
-      return `${t.expr} (${t.tz})`;
+      return `${trigger.expr} (${trigger.tz})`;
     case "webhook":
       return "webhook";
     case "upstreamTag":
-      return `tag ${t.pattern} on ${t.remote}`;
+      return `tag ${trigger.pattern} on ${trigger.remote}`;
     case "prMerged":
-      return `PR merged in ${t.repo}`;
+      return `PR merged in ${trigger.repo}`;
     case "threadSettled":
       return "thread settled";
     case "workflowFailed":
-      return `${t.workflow ?? "any"} failed`;
+      return `${trigger.workflow ?? "any"} failed`;
   }
 };
-import * as SqlClient from "effect/sql/SqlClient";
 const make = Effect.gen(function* () {
   const repo = yield* WorkflowRepo;
+  const fs = yield* FileSystem.FileSystem;
+  const nodePath = yield* Path.Path;
   const journal = yield* Journal;
   const sql = yield* SqlClient.SqlClient;
   const store = <A, E>(e: Effect.Effect<A, E, SqlClient.SqlClient>) =>
@@ -235,7 +242,6 @@ const make = Effect.gen(function* () {
   });
   const toggle = Effect.fn("WorkflowDefinitions.toggle")(function* (
     id: string,
-    commit: string,
     enabled: boolean,
     by: string,
     key: string,
@@ -243,7 +249,7 @@ const make = Effect.gen(function* () {
     yield* journal.append([
       {
         stream: workflowStream(id),
-        key: `toggled:${key}:${commit}`,
+        key,
         fact: { _tag: "Toggled", enabled, by, at: yield* now },
       },
     ]);
@@ -270,7 +276,7 @@ const make = Effect.gen(function* () {
             author: "Owner (hand edit)",
             message: "Hand edit",
           });
-          yield* toggle(current, commit, false, "Owner (hand edit)", "deleted");
+          yield* toggle(current, false, "Owner (hand edit)", `toggled:deleted:${commit}`);
           yield* store(Store.deleteIndex(current));
           yield* PubSub.publish(bus, current);
         }
@@ -362,10 +368,9 @@ const make = Effect.gen(function* () {
               if (!file)
                 yield* toggle(
                   id,
-                  commit,
                   author.kind === "user" || author.canManageBots,
                   by,
-                  "created",
+                  `toggled:created:${commit}`,
                 );
               else if (
                 author.kind === "bot" &&
@@ -373,7 +378,7 @@ const make = Effect.gen(function* () {
                 (result.success.definition.triggers?.length ?? 0) > 0 &&
                 (yield* status(id)).enabled
               )
-                yield* toggle(id, commit, false, by, "bot-save");
+                yield* toggle(id, false, by, `toggled:bot-save:${commit}`);
               yield* PubSub.publish(bus, id);
               return {
                 _tag: "Saved" as const,
@@ -402,10 +407,10 @@ const make = Effect.gen(function* () {
           enabled: d.enabled,
           suspended: d.suspended,
           diagnostics: d.diagnostics.length,
-          triggers: (d.definition?.triggers ?? []).map((t) => ({
-            id: t.id,
-            kind: t.kind,
-            label: label(t),
+          triggers: (d.definition?.triggers ?? []).map((trigger) => ({
+            id: trigger.id,
+            kind: trigger.kind,
+            label: label(trigger),
             webhookUrl: null,
           })),
           headCommit: d.headCommit,
@@ -433,17 +438,169 @@ const make = Effect.gen(function* () {
   const snapshot = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(bus);
-      const read = list.pipe(
-        Effect.map((workflows) => ({ repoPath: repo.root, workflows, deleted: [], templates: [] })),
-      );
+      const read = Effect.gen(function* () {
+        const workflows = yield* list;
+        const deleted = yield* Effect.forEach(yield* repo.deleted, (entry) =>
+          Effect.gen(function* () {
+            const source = Option.getOrNull(yield* repo.show(entry.workflowId, entry.commit));
+            const parsed = source === null ? null : compile({ source });
+            return {
+              ...entry,
+              workflowId: workflowId(entry.workflowId),
+              title:
+                parsed && Result.isSuccess(parsed)
+                  ? parsed.success.definition.title
+                  : entry.workflowId,
+            };
+          }),
+        );
+        const root = nodePath.join(import.meta.dirname, "..", "library");
+        const templates: WorkflowsSnapshot["templates"][number][] = [];
+        for (const file of (yield* fs.exists(root)) ? yield* fs.readDirectory(root) : []) {
+          if (!file.endsWith(".workflow.yaml")) continue;
+          const parsed = compile({ source: yield* fs.readFileString(nodePath.join(root, file)) });
+          if (Result.isFailure(parsed)) continue;
+          const definition = parsed.success.definition;
+          templates.push({
+            templateId: workflowId(file.replace(/\.workflow\.yaml$/, "")),
+            title: definition.title,
+            description: definition.description ?? null,
+            triggers: (definition.triggers ?? []).map((trigger) => ({
+              id: trigger.id,
+              kind: trigger.kind,
+              label: label(trigger),
+              webhookUrl: null,
+            })),
+          });
+        }
+        return { repoPath: repo.root, workflows, deleted, templates };
+      }).pipe(Effect.mapError(internal));
       return Stream.concat(
         Stream.fromEffect(read),
         Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => read)),
       );
     }),
   );
-  const unavailable = () =>
-    Effect.fail(new WorkflowsError({ code: "unavailable", message: "Not implemented yet." }));
+  const summary = Effect.fn("WorkflowDefinitions.summary")(function* (id: string) {
+    yield* document(id);
+    const rows = yield* list;
+    const row = rows.find((entry) => entry.workflowId === id);
+    if (!row)
+      return yield* new WorkflowsError({ code: "not-found", message: "Workflow not found." });
+    return row;
+  });
+  const authorName = (author: WorkflowAuthor) =>
+    author.kind === "user" ? "Owner" : `${author.name} (bot)`;
+  const setEnabled = Effect.fn("WorkflowDefinitions.setEnabled")(function* (
+    input: WorkflowSetEnabledInput,
+    author: WorkflowAuthor,
+  ) {
+    if (author.kind === "bot" && !author.canManageBots)
+      return yield* new WorkflowsError({ code: "permission", message: "Cannot manage workflows." });
+    yield* document(input.workflowId);
+    yield* toggle(
+      input.workflowId,
+      input.enabled,
+      authorName(author),
+      `toggled:${input.clientRequestId}`,
+    );
+    yield* PubSub.publish(bus, input.workflowId);
+    return yield* summary(input.workflowId);
+  }, Effect.mapError(internal));
+  const remove = Effect.fn("WorkflowDefinitions.delete")(
+    (input: WorkflowDeleteInput, author: WorkflowAuthor) =>
+      lock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            yield* document(input.workflowId);
+            const commit = yield* repo.remove({
+              workflowId: input.workflowId,
+              author: authorName(author),
+              message: `Delete ${input.workflowId}`,
+            });
+            yield* toggle(input.workflowId, false, authorName(author), `toggled:deleted:${commit}`);
+            yield* store(Store.deleteIndex(input.workflowId));
+            yield* PubSub.publish(bus, input.workflowId);
+            return { workflowId: input.workflowId, commit };
+          }),
+        )
+        .pipe(Effect.mapError(internal)),
+  );
+  const restore = Effect.fn("WorkflowDefinitions.restore")(
+    (input: WorkflowRestoreInput, author: WorkflowAuthor) =>
+      lock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            if (Option.isSome(yield* repo.read(input.workflowId)))
+              return yield* new WorkflowsError({
+                code: "invalid-request",
+                message: "Workflow already exists.",
+              });
+            const deleted = (yield* repo.deleted).find(
+              (entry) => entry.workflowId === input.workflowId,
+            );
+            const source = deleted
+              ? Option.getOrNull(yield* repo.show(input.workflowId, deleted.commit))
+              : null;
+            if (source === null)
+              return yield* new WorkflowsError({
+                code: "not-found",
+                message: "Workflow not found.",
+              });
+            yield* repo.writeAtomic(input.workflowId, source);
+            yield* repo.commit({
+              workflowId: input.workflowId,
+              author: authorName(author),
+              message: `Restore ${input.workflowId}`,
+            });
+            yield* index(input.workflowId);
+            yield* PubSub.publish(bus, input.workflowId);
+            return yield* summary(input.workflowId);
+          }),
+        )
+        .pipe(Effect.mapError(internal)),
+  );
+  const history = Effect.fn("WorkflowDefinitions.history")(function* (input: WorkflowHistoryInput) {
+    const skip = Number(input.cursor ?? 0);
+    const limit = input.limit ?? 50;
+    const commits = yield* repo.log(input.workflowId, { skip, limit: limit + 1 });
+    if (commits.length === 0 && skip === 0)
+      return yield* new WorkflowsError({ code: "not-found", message: "Workflow not found." });
+    const versions: WorkflowHistoryPage["versions"][number][] = [];
+    for (const entry of commits.slice(0, limit)) {
+      const stored = yield* store(Store.getVersion(input.workflowId, entry.commit));
+      const source =
+        stored?.source ?? Option.getOrNull(yield* repo.show(input.workflowId, entry.commit));
+      if (source === null) continue;
+      const compiled = compile({ source });
+      if (Result.isFailure(compiled)) continue;
+      versions.push({ ...entry, revision: revision(entry.revision), hash: compiled.success.hash });
+    }
+    return { versions, nextCursor: commits.length > limit ? String(skip + limit) : null };
+  }, Effect.mapError(internal));
+  const fromTemplate = Effect.fn("WorkflowDefinitions.fromTemplate")(function* (
+    input: WorkflowFromTemplateInput,
+    author: WorkflowAuthor,
+  ) {
+    const path = nodePath.join(
+      import.meta.dirname,
+      "..",
+      "library",
+      `${input.templateId}.workflow.yaml`,
+    );
+    if (!(yield* fs.exists(path)))
+      return yield* new WorkflowsError({ code: "not-found", message: "Template not found." });
+    const parsed = compile({ source: yield* fs.readFileString(path) });
+    if (Result.isFailure(parsed)) return yield* internal(parsed.failure);
+    return yield* save(
+      {
+        source: stringify({ ...parsed.success.definition, id: input.workflowId }),
+        workflowId: input.workflowId,
+        message: `From template ${input.templateId}`,
+      },
+      author,
+    );
+  }, Effect.mapError(internal));
   yield* repo.ensure.pipe(Effect.mapError(internal));
   yield* ingest();
   return WorkflowDefinitions.of({
@@ -456,11 +613,11 @@ const make = Effect.gen(function* () {
     ingest,
     changes,
     snapshot,
-    fromTemplate: unavailable,
-    setEnabled: unavailable,
-    delete: unavailable,
-    restore: unavailable,
-    history: unavailable,
+    fromTemplate,
+    setEnabled,
+    delete: remove,
+    restore,
+    history,
   });
 });
 export const layer = Layer.unwrap(
