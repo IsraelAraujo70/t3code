@@ -889,6 +889,9 @@ importers:
       remark-parse:
         specifier: 'catalog:'
         version: 11.0.0(supports-color@8.1.1)
+      roughjs:
+        specifier: ^4.6.6
+        version: 4.6.6
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.6.0
