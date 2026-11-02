@@ -186,7 +186,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/mobile/src/features/threads/ThreadRouteScreen.tsx",
     markers: 5,
-    why: 'bot conversation header: the bot\'s face, no "No project" subtitle; Back returns to the Kanban tab',
+    why: 'bot conversation header: the bot\'s face, no "No project" subtitle; workflow steps link to their run; Back returns to the Kanban tab',
   },
   {
     file: "apps/web/src/components/chat/ChatHeader.tsx",

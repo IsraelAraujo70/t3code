@@ -1,4 +1,6 @@
 import { type CanvasModel, stepStatusTone } from "@t3tools/client-runtime/workflows";
+import { useMemo } from "react";
+import { useWorkflowColors } from "./WorkflowStatus";
 import { ScrollView, useWindowDimensions } from "react-native";
 import Svg, { G, Path, Text } from "react-native-svg";
 import rough from "roughjs/bin/rough";
@@ -15,9 +17,10 @@ export function WorkflowGraph({
 }) {
   const { width } = useWindowDimensions();
   const geometry = graphGeometry(model, width - 32);
-  const generator = rough.generator();
+  const generator = useMemo(() => rough.generator(), []);
+  const colors = useWorkflowColors();
   const color = useResolveClassNames("text-foreground").color;
-  const foreground = typeof color === "string" ? color : "gray";
+  const foreground = typeof color === "string" ? color : colors.neutral;
   const fill = useResolveClassNames("bg-screen").backgroundColor;
   const background = typeof fill === "string" ? fill : "transparent";
   const paths = (drawable: ReturnType<typeof generator.rectangle>) =>
@@ -68,16 +71,7 @@ export function WorkflowGraph({
               {paths(
                 generator.rectangle(node.x, node.y, node.w, node.h, {
                   seed: drawingSeed(node.id),
-                  stroke: node.status
-                    ? ({
-                        success: "green",
-                        neutral: foreground,
-                        info: "blue",
-                        muted: foreground,
-                        danger: "red",
-                        warning: "orange",
-                      }[stepStatusTone(node.status)] ?? foreground)
-                    : foreground,
+                  stroke: node.status ? colors[stepStatusTone(node.status)] : foreground,
                   fill: geometry.nodes.some((child) => child.parent === node.id)
                     ? "transparent"
                     : background,

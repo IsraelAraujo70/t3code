@@ -117,6 +117,7 @@ import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail"
 // Fork (friend): a bot conversation's header shows the bot's face; the Kanban tab's return tab.
 import { isBotChatThread } from "@t3tools/client-runtime/bot-chat";
 import { botHeaderAvatar } from "../../bots/BotHeaderAvatar";
+import { workflowStepHeaderLink } from "../../bots/workflows/WorkflowStepBackLink";
 import { threadReturnTab, type ThreadReturnTab } from "../../bots/threadReturnTab";
 
 function InspectorPaneRoleActivation() {
@@ -987,8 +988,11 @@ function ThreadRouteContent(
             props.inspectorPresentation ? null : (
               <ThreadHeader
                 title={selectedThread.title}
-                // Fork (friend): a bot conversation's header shows the bot's face.
-                avatar={botHeaderAvatar(selectedThread.id)}
+                // Fork (friend): headers show bot faces or a workflow step's run link.
+                avatar={
+                  botHeaderAvatar(selectedThread.id) ??
+                  workflowStepHeaderLink(selectedThread.environmentId, selectedThread.id)
+                }
                 subtitle={headerSubtitle}
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}

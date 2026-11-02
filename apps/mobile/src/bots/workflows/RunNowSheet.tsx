@@ -1,10 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
-import { Modal, Pressable, ScrollView, Switch, TextInput } from "react-native";
+import { ScrollView, Switch, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, WorkflowDefinition, WorkflowId } from "@t3tools/contracts";
 import { defaultRunParams, parseRunParam } from "@t3tools/client-runtime/workflows";
 import * as Crypto from "expo-crypto";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Notice } from "../../components/ui/Notice";
+import { Sheet } from "../../components/ui/Sheet";
+import { WorkflowEditField } from "./WorkflowEditField";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { workflowsEnvironment } from "./state";
@@ -56,11 +60,11 @@ export function RunNowSheet({
     setPending(false);
   };
   return (
-    <Modal visible onRequestClose={onClose} animationType="slide">
+    <Sheet title="Run now" onClose={onClose}>
       <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }}>
         <Text>Run now</Text>
         {Object.entries(definition.params ?? {}).map(([key, spec]) => (
-          <ScrollView key={key}>
+          <View key={key}>
             <Text>{key}</Text>
             {spec.type === "boolean" ? (
               <Switch
@@ -69,23 +73,23 @@ export function RunNowSheet({
                 onValueChange={(value) => setValues({ ...values, [key]: String(value) })}
               />
             ) : (
-              <TextInput
-                accessibilityLabel={key}
-                value={values[key]}
-                keyboardType={spec.type === "number" ? "numeric" : "default"}
-                onChangeText={(value) => setValues({ ...values, [key]: value })}
+              <WorkflowEditField
+                label={key}
+                value={values[key] ?? ""}
+                onChange={(value) => setValues({ ...values, [key]: value })}
               />
             )}
-            {errors[key] && <Text>{errors[key]}</Text>}
-          </ScrollView>
+            {errors[key] && <Notice tone="danger" message={errors[key]} />}
+          </View>
         ))}
-        <Pressable disabled={pending || !canRun} onPress={() => void submit()}>
-          <Text>{pending ? "Starting…" : "Start run"}</Text>
-        </Pressable>
-        <Pressable disabled={pending} onPress={onClose}>
-          <Text>Cancel</Text>
-        </Pressable>
+        <ControlPill
+          label={pending ? "Starting…" : "Start run"}
+          variant="primary"
+          disabled={pending || !canRun}
+          onPress={() => void submit()}
+        />
+        <ControlPill label="Cancel" variant="pill" disabled={pending} onPress={onClose} />
       </ScrollView>
-    </Modal>
+    </Sheet>
   );
 }
