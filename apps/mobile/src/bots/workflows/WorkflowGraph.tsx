@@ -15,7 +15,7 @@ import { ScrollView, useWindowDimensions } from "react-native";
 import Svg, { G, Path, Text, Rect, Circle } from "react-native-svg";
 import rough from "roughjs/bin/rough";
 import { useResolveClassNames } from "uniwind";
-import { edgePillSize, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
+import { edgePillSize, edgeGeometry, fitText, graphGeometry } from "./WorkflowGraph.logic";
 
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 
@@ -54,7 +54,6 @@ export function WorkflowGraph({
               fillStyle: style.fill,
               stroke: hue.stroke,
               ...(style.fill === "none" ? {} : { fill: hue.fill }),
-              ...(style.shape === "frame" ? { strokeLineDash: [...CANVAS_FRAME_DASH] } : {}),
             }),
           ),
         ];
@@ -156,6 +155,13 @@ export function WorkflowGraph({
                     d={path.d}
                     stroke={path.stroke}
                     strokeWidth={path.strokeWidth}
+                    // roughjs `toPaths` drops `strokeLineDash`, so the frame dash is applied here.
+                    strokeDasharray={
+                      style.shape === "frame" &&
+                      path.stroke !== CANVAS_HUES[style.hue][dark ? "dark" : "light"].fill
+                        ? CANVAS_FRAME_DASH.join(" ")
+                        : undefined
+                    }
                     fill={path.fill ?? "none"}
                     opacity={
                       path.fill && path.fill !== "none"
@@ -169,10 +175,10 @@ export function WorkflowGraph({
                   />
                 ))}
                 <Text x={12} y={24} fill={foreground} fontSize={14}>
-                  {node.label}
+                  {fitText(node.label, node.w - 24, 8)}
                 </Text>
                 <Text x={12} y={44} fill={colors.muted} fontSize={11}>
-                  {node.subtitle}
+                  {fitText(node.subtitle, node.w - 24, 6)}
                 </Text>
                 {mark && mark !== "dim" && (
                   <G>

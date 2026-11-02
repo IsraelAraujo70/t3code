@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { edgePillSize, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
+import { edgePillSize, fitText, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
 
 describe("mobile graph geometry", () => {
   it("resolves body coordinates before fitting the graph", () => {
@@ -45,5 +45,7 @@ describe("mobile graph geometry", () => {
     });
     expect(edgePillSize("yes")).toEqual({ width: 37, height: 18 });
     expect(edgePillSize("")).toEqual({ width: 16, height: 18 });
+    expect(fitText("ls -la", 196, 6)).toBe("ls -la");
+    expect(fitText("gate · Continue to the second step?", 60, 6)).toBe("gate · Co…");
   });
 });

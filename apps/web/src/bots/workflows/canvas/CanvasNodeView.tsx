@@ -38,7 +38,6 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
           fillStyle: fill,
           stroke: "S",
           ...(fill === "none" ? {} : { fill: "F" }),
-          ...(shape === "frame" ? { strokeLineDash: [...CANVAS_FRAME_DASH] } : {}),
         }),
       ),
     [id, shape, fill, width, height],
@@ -85,6 +84,10 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
             stroke={p.stroke === "F" ? ink : stroke}
             opacity={p.stroke === "F" ? 0.55 : 1}
             strokeWidth={p.strokeWidth}
+            // roughjs `toPaths` drops `strokeLineDash`, so the frame dash is applied here.
+            strokeDasharray={
+              shape === "frame" && p.stroke === "S" ? CANVAS_FRAME_DASH.join(" ") : undefined
+            }
           />
         ))}
       </svg>

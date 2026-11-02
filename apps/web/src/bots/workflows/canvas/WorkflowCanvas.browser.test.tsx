@@ -150,3 +150,16 @@ it("shows run badges and preserves rough strokes across status changes", async (
   );
   await expect.element(screen.getByText("ok").first()).toBeVisible();
 });
+it("draws map and loop frames dashed", async () => {
+  const base = fixture();
+  const model: CanvasModel = {
+    ...base,
+    nodes: [{ ...base.nodes[0]!, id: "each", kind: "map", w: 300, h: 160 }],
+    edges: [],
+    annotations: [],
+  };
+  await using screen = await render(<WorkflowCanvas model={model} mode="edit" />);
+  await expect.element(screen.getByText("Node 0")).toBeVisible();
+  const dashed = document.querySelectorAll('[data-id="each"] svg path[stroke-dasharray="8 6"]');
+  expect(dashed.length).toBeGreaterThan(0);
+});
