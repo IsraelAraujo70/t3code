@@ -94,7 +94,12 @@ export const runSummary = (state: RunState): WorkflowRunSummary => {
       state.ended === null
         ? [...state.gates.values()].filter((g) => g.decision === null).length
         : 0,
-    pullRequest: null,
+    pullRequest:
+      [...state.intents.values()]
+        .reverse()
+        .flatMap((entry) =>
+          entry.result?._tag === "PullRequestOpened" ? [entry.result.url] : [],
+        )[0] ?? null,
     activeMs: null,
   };
 };

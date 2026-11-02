@@ -73,6 +73,7 @@ export interface DecideContext {
   readonly failureSubscribers: ReadonlyArray<{
     readonly workflowId: string;
     readonly triggerId: string;
+    readonly params?: Readonly<Record<string, string>>;
   }>;
   // wf-engine slices 7-8: the ledgers of `ledgerIdsOf(compiled)`, folded fresh before each pass, and the budget the engine tracks.
   readonly ledgers?: ReadonlyMap<string, LedgerState>;
@@ -679,6 +680,7 @@ export const decide = (
   const pullRequestOf = (
     pr: NonNullable<Extract<WorkflowNode, { readonly kind: "output" }>["pullRequest"]>,
     step: string,
+    attempt: number,
     level: Level,
   ): Result.Result<Extract<Intent, { readonly _tag: "OpenPullRequest" }>, string> => {
     const exported = blockExport(level, pr.workspace);
@@ -705,7 +707,7 @@ export const decide = (
     if (Result.isFailure(body)) return Result.fail(body.failure);
     return Result.succeed({
       _tag: "OpenPullRequest",
-      key: `pr:${step}`,
+      key: `pr:${step}@${attempt}`,
       workspace: workspace.name,
       branch: workspace.branch,
       sha: workspace.head,
@@ -1304,10 +1306,18 @@ export const decide = (
           return resolve(step, attempt, "failed", "fail", null, handoff.failure);
         // wf-engine slice 8: the engine publishes the journal's sha as a draft pull request.
         const published =
-          node.pullRequest === undefined ? null : pullRequestOf(node.pullRequest, step, level);
+          node.pullRequest === undefined
+            ? null
+            : pullRequestOf(node.pullRequest, step, attempt, level);
         if (published !== null && Result.isFailure(published))
           return resolve(step, attempt, "failed", "fail", null, published.failure);
-        if (published !== null) record(published.success);
+        if (published !== null) {
+          record(published.success);
+          const result = resultOf(published.success.key);
+          if (result?._tag === "IntentFailed" && !result.retryable)
+            return resolve(step, attempt, "failed", "fail", null, result.error);
+          if (result?._tag !== "PullRequestOpened") return;
+        }
         // wf-engine slice 7: `promote` marks the kept ledger entry of that sha as validated.
         if (node.promote !== undefined) {
           const sha = render(node.promote.sha, env);
@@ -1878,6 +1888,19 @@ export const decide = (
     for (const subscriber of ctx.failureSubscribers) {
       if (subscriber.workflowId === started.workflowId) continue;
       const occurrence = once(`run-failed:${runId}`);
+      const params: Record<string, Json> = {};
+      const trigger = {
+        kind: "workflowFailed",
+        label: `${definition.title} failed`,
+        runId,
+        workflowId: started.workflowId,
+      };
+      for (const [name, template] of Object.entries(subscriber.params ?? {})) {
+        const parsed = parseTemplate(template);
+        if (Result.isFailure(parsed)) continue;
+        const value = evalTemplateValue(parsed.success, { roots: { trigger } });
+        if (Result.isSuccess(value)) params[name] = value.success;
+      }
       emit(
         occurrence,
         {
@@ -1887,7 +1910,7 @@ export const decide = (
           kind: "workflowFailed",
           occurrence,
           label: `${definition.title} failed`,
-          params: {},
+          params,
           payload: { runId, workflowId: started.workflowId },
           causalDepth: started.causalDepth + 1,
           parent: null,

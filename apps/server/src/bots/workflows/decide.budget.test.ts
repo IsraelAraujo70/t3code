@@ -303,6 +303,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
 
   it.each([
     ["wf/demo", "OpenPullRequest"],
+    ["wf/failure", "IntentFailed"],
     ["release/1", null],
   ] as const)("publishes an output's pull request from branch %s", (branch, published) => {
     const run = begin({
@@ -323,17 +324,38 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
     run.result("turn:work@1", { _tag: "TurnStarted", threadId: "tw" });
     run.add("settled:work@1", settledWith("work", "complete", 10, "def"));
     pass(run);
-    const pr = run.intent("pr:done");
+    const pr = run.intent("pr:done@1");
     if (published === null) {
       expect(pr).toBeUndefined();
       expect(run.state().attempts.get("done")?.[0]?.resolved?.status).toBe("failed");
-    } else
+    } else {
+      expect(run.state().output).toBeNull();
       expect(pr).toMatchObject({
-        _tag: published,
-        branch: "wf/demo",
+        _tag: "OpenPullRequest",
+        branch,
         sha: "def",
         base: "friend/main",
       });
+      if (published === "IntentFailed") {
+        run.result("pr:done@1", {
+          _tag: "IntentFailed",
+          error: "publication denied",
+          retryable: false,
+        });
+        pass(run);
+        expect(run.state().attempts.get("done")?.[0]?.resolved).toMatchObject({ status: "failed" });
+        expect(run.state().ended?.status).toBe("failed");
+        return;
+      }
+      run.result("pr:done@1", {
+        _tag: "PullRequestOpened",
+        url: "https://example.com/pr/1",
+        branch,
+      });
+      pass(run);
+      expect(run.state().output).not.toBeNull();
+      expect(run.state().ended?.status).toBe("succeeded");
+    }
   });
 
   it.each([
@@ -457,7 +479,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
     run.result("turn:fix@1", { _tag: "TurnStarted", threadId: "tf" });
     run.add("settled:fix@1", settledWith("fix", "complete", 10, "f2"));
     pass(run);
-    expect(run.intent("pr:done")).toMatchObject({ branch: "wf/r/climb/best", sha: "f2" });
+    expect(run.intent("pr:done@1")).toMatchObject({ branch: "wf/r/climb/best", sha: "f2" });
   });
 
   it("reserves each child run's whole budget, so concurrent calls never share a balance", () => {
@@ -542,7 +564,7 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
       at: iso(T0),
     });
     pass(run);
-    expect(run.intent("pr:done")).toMatchObject({ sha: "merged" });
+    expect(run.intent("pr:done@1")).toMatchObject({ sha: "merged" });
   });
 
   it("refuses a child whose budget is larger than what is left, never clipping it", () => {

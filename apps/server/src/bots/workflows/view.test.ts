@@ -56,6 +56,30 @@ function approve(run: TestRun) {
 }
 
 describe("run views", () => {
+  it("reports the last published pull request", () => {
+    const run = prepare(compile());
+    for (const [key, url] of [
+      ["pr:a", "https://example.com/1"],
+      ["pr:b", "https://example.com/2"],
+    ]) {
+      run.add(key!, {
+        _tag: "IntentRecorded",
+        intent: {
+          _tag: "OpenPullRequest",
+          key: key!,
+          workspace: "integ",
+          branch: "wf/demo",
+          sha: "a1",
+          base: "main",
+          title: "T",
+          body: "B",
+        },
+      });
+      run.result(key!, { _tag: "PullRequestOpened", url: url!, branch: "wf/demo" });
+    }
+    expect(runSummary(run.state()).pullRequest).toBe("https://example.com/2");
+  });
+
   it("summarizes running, user-paused and completed runs", () => {
     const run = prepare(
       compile({

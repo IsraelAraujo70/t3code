@@ -67,7 +67,11 @@ const make = Effect.gen(function* () {
       workflowId: string,
     ) {
       const rows = yield* Store.listIndex().pipe(Effect.provideService(SqlClient.SqlClient, sql));
-      const subscribers: Array<{ workflowId: string; triggerId: string }> = [];
+      const subscribers: Array<{
+        workflowId: string;
+        triggerId: string;
+        params?: Readonly<Record<string, string>>;
+      }> = [];
       for (const row of rows) {
         if (row.valid !== 1 || row.workflow_id === workflowId) continue;
         const triggers = yield* decodeTriggers(row.triggers_json);
@@ -76,7 +80,11 @@ const make = Effect.gen(function* () {
             trigger.kind === "workflowFailed" &&
             (!trigger.workflow || trigger.workflow === workflowId)
           )
-            subscribers.push({ workflowId: row.workflow_id, triggerId: trigger.id });
+            subscribers.push({
+              workflowId: row.workflow_id,
+              triggerId: trigger.id,
+              params: trigger.params ?? {},
+            });
       }
       return subscribers.sort(
         (a, b) =>
