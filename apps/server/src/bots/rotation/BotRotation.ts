@@ -33,7 +33,6 @@ import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService
 import { forkParked } from "../../serverActivation.ts";
 import { BotsService } from "../BotsService.ts";
 import { BotsStore } from "../BotsStore.ts";
-import { GuestStore } from "../guest/GuestStore.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
 import {
   botRotationStep,
@@ -69,7 +68,6 @@ const failure = (message: string) => (cause: unknown) => new BotsError({ message
 const make = Effect.gen(function* () {
   const bots = yield* BotsService;
   const store = yield* BotsStore;
-  const guests = yield* GuestStore;
   const kanban = yield* KanbanService;
   const scheduled = yield* ScheduledTaskService.ScheduledTaskService;
   const engine = yield* Orchestrator.OrchestratorV2;
@@ -161,8 +159,7 @@ const make = Effect.gen(function* () {
     }
     const inFlight = yield* Ref.get(handoffInFlight);
     if (inFlight !== null && inFlight !== bot.id) return;
-    const guestOwned = Option.isSome(yield* guests.guestOfBot(bot.id));
-    const request = handoffRequest(guestOwned ? "files" : "memory");
+    const request = handoffRequest();
     yield* engine
       .dispatch({
         type: "message.dispatch",

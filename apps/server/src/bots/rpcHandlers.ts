@@ -50,7 +50,6 @@ export const layerHandlers = ServerBotsRpcGroup.toLayer(
       [BOTS_WS_METHODS.botHistory]: (input) => bots.history(input),
       [BOTS_WS_METHODS.botRestartSession]: (input) => restarts.restart(input),
       [BOTS_WS_METHODS.botLinkedEnvironments]: (input) => bots.setBotLinkedEnvironments(input),
-      [BOTS_WS_METHODS.botMakeRegular]: (input) => bots.makeRegular(input),
       [BOTS_WS_METHODS.threadOpen]: (input) => bots.openThread(input),
       [BOTS_WS_METHODS.threadList]: (input) => bots.listThreads(input),
       [BOTS_WS_METHODS.memoryCreate]: (input) => bots.createMemory(input, "user"),

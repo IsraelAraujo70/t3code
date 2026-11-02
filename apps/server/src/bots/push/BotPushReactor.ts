@@ -3,12 +3,7 @@
  * event tail: a restart never resends what was already news before it. Pushes run beside the
  * stream, so a slow FCM never holds up the next event.
  */
-import {
-  parseBotThreadId,
-  type Bot,
-  type GuestId,
-  type OrchestrationV2DomainEvent,
-} from "@t3tools/contracts";
+import { parseBotThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -22,16 +17,8 @@ import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { BotsStore } from "../BotsStore.ts";
-import { GuestStore } from "../guest/GuestStore.ts";
 import * as BotPushDelivery from "./BotPushDelivery.ts";
-import type { BotPushData } from "./BotPushDelivery.ts";
-import {
-  botPushData,
-  botPushNotice,
-  guestPushData,
-  type BotPushChange,
-  type BotPushNotice,
-} from "./botPushNotice.ts";
+import { botPushData, botPushNotice, type BotPushChange } from "./botPushNotice.ts";
 
 /** Keys remembered so a repeated event never pushes twice; old ones are long settled. */
 const MAX_SENT_KEYS = 512;
@@ -45,49 +32,10 @@ export class BotPushReactor extends Context.Service<
   }
 >()("t3/bots/push/BotPushReactor") {}
 
-/** One push to send: its payload and the phones it goes to. */
-export interface BotPushSend {
-  readonly data: BotPushData;
-  readonly audience: BotPushDelivery.BotPushAudience;
-}
-
-/**
- * Every party to the bot gets the push: the owner always (T3's data-only push, on the owner's
- * phones), and the guest the bot is shared with, if any (a minimal payload with a visible
- * notification, on the guest's phones). Rejected tokens are dropped from their own registry.
- */
-export function pushesFor(
-  bot: Pick<Bot, "name">,
-  guestId: Option.Option<GuestId>,
-  notice: BotPushNotice,
-  ownerData: BotPushData,
-  store: Pick<BotsStore["Service"], "listPushDevices" | "deletePushDevice">,
-  guests: Pick<GuestStore["Service"], "listPushDevices" | "deletePushDevice">,
-): ReadonlyArray<BotPushSend> {
-  const owner: BotPushSend = {
-    data: ownerData,
-    audience: { devices: store.listPushDevices, drop: store.deletePushDevice },
-  };
-  if (Option.isNone(guestId)) return [owner];
-  const id = guestId.value;
-  return [
-    owner,
-    {
-      data: guestPushData(notice),
-      audience: {
-        devices: guests.listPushDevices(id),
-        drop: (token) => guests.deletePushDevice(id, token),
-        notification: { title: bot.name, body: notice.body },
-      },
-    },
-  ];
-}
-
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const store = yield* BotsStore;
-  const guests = yield* GuestStore;
   const delivery = yield* BotPushDelivery.BotPushDelivery;
   const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const scope = yield* Effect.scope;
@@ -138,10 +86,13 @@ const make = Effect.gen(function* () {
         environmentId,
         sentAt: yield* Clock.currentTimeMillis,
       });
-      const guestId = yield* guests.guestOfBot(bot.id);
-      for (const push of pushesFor(bot, guestId, notice, ownerData, store, guests)) {
-        yield* Effect.forkIn(delivery.deliver(push.data, push.audience), scope);
-      }
+      yield* Effect.forkIn(
+        delivery.deliver(ownerData, {
+          devices: store.listPushDevices,
+          drop: store.deletePushDevice,
+        }),
+        scope,
+      );
     },
     (effect, event) =>
       effect.pipe(

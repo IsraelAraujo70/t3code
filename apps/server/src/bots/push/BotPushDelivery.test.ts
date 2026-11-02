@@ -201,46 +201,6 @@ describe("BotPushDelivery", () => {
     );
   });
 
-  it.effect("sends guest notifications and drops rejected tokens only through the audience", () => {
-    const requests: Array<Recorded> = [];
-    return Effect.gen(function* () {
-      const delivery = yield* BotPushDelivery.BotPushDelivery;
-      const store = yield* BotsStore.BotsStore;
-      yield* register("guest-token");
-      const dropped: string[] = [];
-      const notification = { title: "Bia's bot", body: "Done." };
-      yield* delivery.deliver(DATA, {
-        devices: Effect.succeed([{ token: "guest-token", label: null }]),
-        drop: (token) =>
-          Effect.sync(() => {
-            dropped.push(token);
-          }),
-        notification,
-      });
-      assert.deepStrictEqual(dropped, ["guest-token"]);
-      assert.strictEqual((yield* store.listPushDevices).length, 1);
-      assert.deepStrictEqual(
-        JSON.parse(requests.find((request) => request.url === SEND_URL)!.body),
-        {
-          message: {
-            token: "guest-token",
-            data: DATA,
-            notification,
-            android: { priority: "HIGH", ttl: "600s", notification: { channel_id: "respostas" } },
-          },
-        },
-      );
-    }).pipe(
-      Effect.provide(
-        layerTest(
-          { [BotPushDelivery.FCM_SERVICE_ACCOUNT_ENV]: writeServiceAccount() },
-          { "guest-token": { status: 404, body: {} } },
-          requests,
-        ),
-      ),
-    );
-  });
-
   it.effect("is off and sends nothing without a service account", () => {
     const requests: Array<Recorded> = [];
     return Effect.gen(function* () {

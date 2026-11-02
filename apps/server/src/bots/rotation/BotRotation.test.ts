@@ -26,7 +26,6 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import { BotsService } from "../BotsService.ts";
 import { BotsStore } from "../BotsStore.ts";
-import { GuestStore } from "../guest/GuestStore.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
 import { BotRotation, layerBase } from "./BotRotation.ts";
 import { BOT_ROTATION_POLICY, handoffMessageId } from "./rotationPolicy.ts";
@@ -110,7 +109,6 @@ const setup = (bots: Array<Bot>) =>
                 Effect.asVoid,
               ),
           }),
-          Layer.mock(GuestStore)({ guestOfBot: () => Effect.succeedNone }),
           Layer.mock(KanbanService)({
             refresh: Effect.sync(() => void log.push("kanban refresh")),
           }),

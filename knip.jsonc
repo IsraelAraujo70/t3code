@@ -56,10 +56,7 @@
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
-        // Fork (friend): the guest CLI, the sandbox proxy and the voice probes run by path.
-        "src/bots/guest/cli.ts",
-        "src/bots/guest/guestVoiceProbe.ts",
-        "src/bots/guest/sandbox/proxy-main.mjs",
+        // Fork (friend): the fork's voice bench runs by path.
         "src/bots/voice/voiceBench.ts",
       ],
       // The generated operations export every selection's class.

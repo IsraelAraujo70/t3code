@@ -7,7 +7,6 @@ import {
   BotMemoryId,
   botSideThreadId,
   botThreadId,
-  GuestId,
   ProviderInstanceId,
   ThreadId,
   type Bot,
@@ -19,11 +18,9 @@ import {
   BOT_INSTRUCTION_SECTION_LIMIT,
   BotsInstructions,
   buildBotInstructions,
-  buildGuestBotInstructions,
   layer as instructionsLayer,
 } from "./BotsInstructions.ts";
 import { BotsStore, layerFromDb as storeLayerFromDb } from "./BotsStore.ts";
-import { GuestStore, layerFromDb as guestLayerFromDb } from "./guest/GuestStore.ts";
 import { VOICE_MESSAGE_PREFIX } from "./voice/voiceMessage.ts";
 
 const bot: Bot = {
@@ -189,12 +186,6 @@ describe("buildBotInstructions", () => {
     assert.include(section!.text, "t3_thread_read");
     assert.include(section!.text, "Waiting on Ana for PR 12.");
 
-    // A guest's bot has no thread tools: only its handoff.
-    const guest = buildGuestBotInstructions({ bot, memories: [], guestName: "Bia", earlier });
-    const guestSection = guest.sections.find((candidate) => candidate.key === "earlier");
-    assert.include(guestSection!.text, "Waiting on Ana for PR 12.");
-    assert.notInclude(guestSection!.text, "t3_thread_read");
-
     const first = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [] });
     assert.isUndefined(first.sections.find((candidate) => candidate.key === "earlier"));
   });
@@ -203,8 +194,7 @@ describe("buildBotInstructions", () => {
 describe("reply style", () => {
   it("tells every bot to reply like a chat without dropping the specifics", () => {
     const owner = buildBotInstructions({ bot, memories: [], aboutMe: "", peers: [] });
-    const guest = buildGuestBotInstructions({ bot, memories: [], guestName: "Bia" });
-    for (const { sections } of [owner, guest]) {
+    for (const { sections } of [owner]) {
       // Last, so it is the freshest guidance; the role still wins on format.
       const style = sections.at(-1)!;
       assert.strictEqual(style.key, "reply-style");
@@ -219,53 +209,12 @@ describe("reply style", () => {
       assert.include(style.text, `starts with "${VOICE_MESSAGE_PREFIX.trim()}" was spoken`);
       assert.include(style.text, "Use no lists, headings, tables, links, code");
     }
-    // Only the owner's bots can hand long material to a T3 thread.
     assert.include(owner.sections.at(-1)!.text, "a file or a T3 thread");
-    assert.notInclude(guest.sections.at(-1)!.text, "T3");
-  });
-});
-
-describe("buildGuestBotInstructions", () => {
-  it("names the guest and the sandbox, and carries none of the owner's tools or profile", () => {
-    const { sections } = buildGuestBotInstructions({
-      bot,
-      memories: [memory("mem_1", "Pays rent on the 5th")],
-      guestName: "Bia",
-    });
-    assert.deepStrictEqual(
-      sections.map((section) => section.key),
-      ["bot", "memories", "people", "workspace", "helpers", "reply-style"],
-    );
-    const shared = buildGuestBotInstructions({
-      bot,
-      memories: [],
-      guestName: "Bia",
-      ownerName: "Israel",
-    });
-    assert.include(
-      shared.sections.find((section) => section.key === "people")!.text,
-      "Any other message from the user comes from Israel.",
-    );
-    assert.include(sections[0]!.text, "You are Al, Bia's assistant.");
-    assert.include(sections[0]!.text, "Reviews pull requests.");
-    // Guests have no memory tools, so the ids that memory_forget takes are not shown.
-    assert.strictEqual(sections[1]!.text, "- Pays rent on the 5th");
-    assert.include(sections[2]!.text, 'starts with "Bia:" comes from Bia');
-    assert.include(sections[3]!.text, "/home/guest");
-    assert.include(sections[3]!.text, "$GOOGLE_API_URL");
-    assert.include(sections[3]!.text, "$GOOGLE_APIS_DOC");
-    for (const helper of ["Task tool", "web-research", "drafting", "numbers", "organize"]) {
-      assert.include(sections[4]!.text, helper);
-    }
-    const all = sections.map((section) => section.text).join("\n");
-    for (const ownerOnly of ["memory_save", "t3_thread_launch", "delegate_task", "bot_create"]) {
-      assert.notInclude(all, ownerOnly);
-    }
   });
 });
 
 const layerTest = instructionsLayer.pipe(
-  Layer.provideMerge(Layer.merge(storeLayerFromDb, guestLayerFromDb)),
+  Layer.provideMerge(storeLayerFromDb),
   Layer.provide(BotsDb.layerMemory),
 );
 
@@ -311,45 +260,6 @@ describe("BotsInstructions.forThread", () => {
           "Moved to Lisbon",
         );
       }
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("gives a guest's bot guest instructions and hides it from the owner's bots", () =>
-    Effect.gen(function* () {
-      const store = yield* BotsStore;
-      const guests = yield* GuestStore;
-      const instructions = yield* BotsInstructions;
-      const guestBot: Bot = { ...bot, id: BotId.make(`b_${"c".repeat(32)}`), name: "Fin" };
-      yield* store.insertBot(bot);
-      yield* store.insertBot({ ...guestBot, position: 1 });
-      yield* store.setAboutMe("I build T3.");
-      yield* guests.insertGuest({
-        id: GuestId.make("bia"),
-        name: "Bia",
-        tokenHash: null,
-        tokenCreatedAt: null,
-        createdAt: bot.createdAt,
-        updatedAt: bot.createdAt,
-      });
-      yield* guests.assignBot(GuestId.make("bia"), guestBot.id, bot.createdAt);
-      // Memories the bot saved before it became a guest's carry over, read-only.
-      yield* store.insertMemory(
-        memory("mem_kept", "Rent is due on the 5th", { botId: guestBot.id }),
-      );
-      yield* store.insertMemory(
-        memory("mem_off", "An old account", { botId: guestBot.id, enabled: false }),
-      );
-
-      const forGuestBot = yield* instructions.forThread(botThreadId(guestBot.id, 1));
-      assert.strictEqual(
-        forGuestBot!.sections.find((section) => section.key === "memories")?.text,
-        "- Rent is due on the 5th",
-      );
-      assert.include(forGuestBot!.sections[0]!.text, "You are Fin, Bia's assistant.");
-      assert.isUndefined(forGuestBot!.sections.find((section) => section.key === "owner"));
-
-      const forOwnerBot = yield* instructions.forThread(botThreadId(bot.id, 1));
-      assert.isUndefined(forOwnerBot!.sections.find((section) => section.key === "other-bots"));
     }).pipe(Effect.provide(layerTest)),
   );
 

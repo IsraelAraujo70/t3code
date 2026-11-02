@@ -104,17 +104,13 @@ export function botRotationStep(input: {
   return { kind: "handoff" };
 }
 
-/** Owner bots save to their T3 memory; a guest's bot has no T3 tools, only its sandbox's files. */
-export type BotRotationSaver = "memory" | "files";
-
-export const handoffRequest = (
-  saver: BotRotationSaver,
-): { readonly text: string; readonly notification: OrchestrationV2Notification } => ({
+export const handoffRequest = (): {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+} => ({
   text: [
     "T3 starts a fresh conversation for you right after this turn, so each one stays small and quick to open. This conversation is archived; the next one starts with your memories, your instructions, the reply you write now, and this thread's id, which you can read with t3_thread_read if you ever need the details.",
-    saver === "memory"
-      ? "First save with memory_save anything durable you learned here that is not in your memories yet: facts about the user, decisions and corrections. Merge related memories and forget stale ones first, so everything fits your memory budget."
-      : "First update the notes file in your home directory with anything durable you learned here: decisions, corrections from the user, and promises you made.",
+    "First save with memory_save anything durable you learned here that is not in your memories yet: facts about the user, decisions and corrections. Merge related memories and forget stale ones first, so everything fits your memory budget.",
     `Then reply with a handoff for yourself, at most ${BOT_ROTATION_POLICY.handoffLimit} characters: open work and who is waiting on it, the threads you follow (with their ids), and what you promised to do next. Write only the handoff. Start no new work.`,
   ].join("\n\n"),
   notification: {

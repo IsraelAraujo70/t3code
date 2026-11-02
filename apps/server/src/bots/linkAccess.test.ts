@@ -15,7 +15,6 @@ import {
   CommandId,
   EnvironmentId,
   EventId,
-  GuestId,
   MessageId,
   NodeId,
   OrchestratorMcpFailure,
@@ -30,7 +29,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
@@ -70,12 +68,10 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BotsStoreModule from "./BotsStore.ts";
 import { BotsStore } from "./BotsStore.ts";
-import * as GuestStore from "./guest/GuestStore.ts";
 import * as BotLinkAccess from "./linkAccess.ts";
 
 const allowedBot = BotId.make("b_allowed");
 const deniedBot = BotId.make("b_denied");
-const guestBot = BotId.make("b_guest");
 
 describe("originAllows", () => {
   const thread = (id: string) => ThreadId.make(id);
@@ -84,7 +80,7 @@ describe("originAllows", () => {
     senders: Record<string, ReadonlyArray<string>> = {},
     agentSchedules: ReadonlyArray<string> = [],
   ): BotLinkAccess.ThreadOrigins => ({
-    allowedBots: Effect.succeed([allowedBot, guestBot]),
+    allowedBots: Effect.succeed([allowedBot]),
     lineage: (threadId) => {
       const shell = shells[threadId];
       return Effect.succeed(
@@ -101,7 +97,6 @@ describe("originAllows", () => {
         threads: (senders[threadId] ?? []).map(thread),
         agentSchedule: agentSchedules.includes(threadId),
       }),
-    isGuestBot: (botId) => Effect.succeed(botId === guestBot),
   });
   const decide = (origin: BotLinkAccess.ThreadOrigins, threadId: string) =>
     BotLinkAccess.originAllows(origin, thread(threadId));
@@ -118,15 +113,13 @@ describe("originAllows", () => {
     }),
   );
 
-  it.effect("allows a listed bot and refuses an unlisted or guest one", () =>
+  it.effect("allows a listed bot and refuses an unlisted one", () =>
     Effect.gen(function* () {
       const none = origins({});
       assert.isTrue(yield* decide(none, botThreadId(allowedBot, 2)));
       assert.isFalse(yield* decide(none, botThreadId(deniedBot, 1)));
-      assert.isFalse(yield* decide(none, botThreadId(guestBot, 1)));
       assert.isTrue(yield* decide(none, botSideThreadId(allowedBot, "0123abcd")));
       assert.isFalse(yield* decide(none, botSideThreadId(deniedBot, "0123abcd")));
-      assert.isFalse(yield* decide(none, botSideThreadId(guestBot, "0123abcd")));
     }),
   );
 
@@ -268,13 +261,12 @@ const botRow = (id: BotId): Bot => ({
   updatedAt: "2026-10-28T00:00:00.000Z",
 });
 
-/** bots.sqlite with the user's switch on for the allowed bot and, wrongly, the guest's. */
+/** bots.sqlite with the user's switch on for the allowed bot. */
 const layerBotsStore = Layer.effectDiscard(
   Effect.gen(function* () {
     const store = yield* BotsStore;
-    for (const id of [allowedBot, deniedBot, guestBot]) yield* store.insertBot(botRow(id));
+    for (const id of [allowedBot, deniedBot]) yield* store.insertBot(botRow(id));
     yield* store.setBotLinkedEnvironments(allowedBot, true);
-    yield* store.setBotLinkedEnvironments(guestBot, true);
   }),
 ).pipe(Layer.provideMerge(BotsStoreModule.layerMemory));
 
@@ -301,12 +293,6 @@ const layerPeers = Layer.mergeAll(
     Layer.mock(ServerEnvironment.ServerEnvironment)({ getEnvironmentId: Effect.succeed(here) }),
   ),
   Layer.provide(BotLinkAccess.layer),
-  Layer.provide(
-    Layer.mock(GuestStore.GuestStore)({
-      guestOfBot: (botId) =>
-        Effect.succeed(botId === guestBot ? Option.some(GuestId.make("bia")) : Option.none()),
-    }),
-  ),
   Layer.provideMerge(layerBotsStore),
 );
 
@@ -523,13 +509,12 @@ const reachMac = (scope: McpInvocationContext.McpInvocationScope) =>
   });
 
 it.layer(Layer.provideMerge(layerTools, layerOrchestration))("reaching the Mac", (it) => {
-  it.effect("refuses an unlisted bot, a guest's bot and a thread an unlisted bot started", () =>
+  it.effect("refuses an unlisted bot and a thread an unlisted bot started", () =>
     Effect.gen(function* () {
       const macCalls = yield* MacCalls;
       yield* seedCaller(botThreadId(deniedBot, 1));
       const callers = [
         yield* seedCaller(botThreadId(deniedBot, 2)),
-        yield* seedCaller(botThreadId(guestBot, 1)),
         yield* seedCaller(ThreadId.make("thread:launched-by-denied"), botThreadId(deniedBot, 1)),
       ];
       yield* Ref.set(macCalls, []);

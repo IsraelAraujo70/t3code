@@ -14,26 +14,14 @@ import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
 import * as BotsStore from "./BotsStore.ts";
 import * as BotCompactionReactor from "./compaction/BotCompactionReactor.ts";
-import * as CodexImages from "./guest/CodexImages.ts";
-import * as GuestArtifacts from "./guest/GuestArtifacts.ts";
-import * as GuestHttp from "./guest/GuestHttp.ts";
-import * as GuestIdle from "./guest/GuestIdle.ts";
-import * as GuestModelPin from "./guest/GuestModelPin.ts";
-import * as GuestService from "./guest/GuestService.ts";
-import * as GuestStore from "./guest/GuestStore.ts";
-import * as GuestVoice from "./guest/GuestVoice.ts";
-import * as GuestTools from "./guest/GuestTools.ts";
-import * as HostMcpForward from "./guest/HostMcpForward.ts";
+import * as HostMcpForward from "./hostMcp/HostMcpForward.ts";
 import * as KanbanPoller from "./kanban/KanbanPoller.ts";
 import * as KanbanService from "./kanban/KanbanService.ts";
 import * as BotPushReactor from "./push/BotPushReactor.ts";
 import * as BotQueueReactor from "./queue/BotQueueReactor.ts";
-import * as BotSessionRestart from "./restart/BotSessionRestart.ts";
 import * as BotRotation from "./rotation/BotRotation.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
-import * as VoiceSession from "./voice/VoiceSession.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 const notHost = () => Effect.fail(new BotsError({ message: NOT_BOTS_HOST_MESSAGE }));
 
@@ -66,8 +54,6 @@ const layerStoreOff = Layer.succeed(
     // Off the bots host no bot is allowed links: BotLinkAccess refuses when this fails.
     listLinkedEnvironmentBots: notHost(),
     setBotLinkedEnvironments: notHost,
-    listGuestBotIds: notHost(),
-    makeRegular: notHost,
   }),
 );
 
@@ -99,9 +85,7 @@ const layerServiceOff = Layer.succeed(
     renameSection: notHost,
     deleteSection: notHost,
     arrange: notHost,
-    ensureConversation: notHost,
     setBotLinkedEnvironments: notHost,
-    makeRegular: notHost,
     openThread: notHost,
     listThreads: notHost,
     // Not a bots host: no thread belongs to a bot here.
@@ -168,84 +152,27 @@ const layerThreadWatchOff = Layer.succeed(
   }),
 );
 
-// Guests live in bots.sqlite too; only the bots host has them.
-const layerGuestStoreOff = Layer.succeed(
-  GuestStore.GuestStore,
-  GuestStore.GuestStore.of({
-    listGuests: notHost(),
-    getGuest: notHost,
-    getGuestByTokenHash: notHost,
-    insertGuest: notHost,
-    setTokenHash: notHost,
-    deleteGuest: notHost,
-    listGuestBotIds: notHost,
-    listAssignments: notHost(),
-    guestOfBot: notHost,
-    assignBot: notHost,
-    unassignBot: notHost,
-    upsertPushDevice: notHost,
-    deletePushDevice: notHost,
-    listPushDevices: notHost,
-  }),
-);
-
-const layerGuestArtifactsOff = Layer.succeed(
-  GuestArtifacts.GuestArtifacts,
-  GuestArtifacts.GuestArtifacts.of({
-    record: notHost,
-    listForThread: notHost,
-    get: notHost,
-    countImagesSince: notHost,
-    recorded: Stream.empty,
-  }),
-);
-
 /** Everything a server that is not the bots host provides instead of bots. */
 export const layerOff = Layer.mergeAll(
   layerStoreOff,
   layerInstructionsOff,
   layerServiceOff,
   layerThreadWatchOff,
-  layerGuestStoreOff,
-  layerGuestArtifactsOff,
   layerKanbanOff,
 );
 
-/**
- * BotsStore, GuestStore, BotsInstructions, GuestModelPin, GuestTools and GuestArtifacts, for the
- * orchestration runtime (RunExecutionService, Orchestrator) and the bots layers above it. Other
- * servers provide no GuestTools, so their turns carry no app tools.
- */
+/** The bots store, instructions and host MCP tools for the orchestration runtime. */
 export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? Layer.mergeAll(BotsInstructions.layer, GuestModelPin.layer, GuestTools.layer).pipe(
-            Layer.provide(HostMcpForward.layer),
-            Layer.provideMerge(GuestArtifacts.layer),
-            Layer.provide(CodexImages.layer),
-            Layer.provide(ProjectionStore.layer),
+        ? Layer.mergeAll(BotsInstructions.layer, HostMcpForward.layer).pipe(
             Layer.provideMerge(BotsStore.layer),
-            Layer.provideMerge(GuestStore.layer),
           )
-        : Layer.mergeAll(
-            layerStoreOff,
-            layerInstructionsOff,
-            layerGuestStoreOff,
-            layerGuestArtifactsOff,
-          ),
+        : Layer.mergeAll(layerStoreOff, layerInstructionsOff),
     ),
   ),
 );
-
-/** The guest listener (voice included) and the idle stop of guest sandboxes. */
-const layerGuests = Layer.merge(
-  GuestHttp.layerListener.pipe(
-    Layer.provide(GuestVoice.layer.pipe(Layer.provide(VoiceSession.layerLive))),
-    Layer.provide(GuestService.layer),
-  ),
-  GuestIdle.layerStart.pipe(Layer.provide(BotSessionRestart.layerLive)),
-).pipe(Layer.provide(ProjectionStore.layer));
 
 /**
  * BotsService, thread watches (store and waking reactor), bot compaction, conversation rotation,
@@ -257,7 +184,6 @@ export const layerService = Layer.unwrap(
     Effect.map((host) =>
       host
         ? Layer.mergeAll(
-            layerGuests,
             ThreadWatchReactor.layerStart,
             BotCompactionReactor.layerStart,
             BotRotation.layerStart,

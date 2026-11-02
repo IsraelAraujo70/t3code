@@ -240,7 +240,7 @@ export class HostMcpForward extends Context.Service<
      */
     readonly forThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<AppTools> | undefined>;
   }
->()("t3/bots/HostMcpForward") {}
+>()("t3/bots/hostMcp/HostMcpForward") {}
 
 /** The config file HostMcpForward reads: `T3CODE_BOT_HOST_MCP_FILE` or `~/.t3-friend/bot-host-mcp.json`. */
 export const hostMcpConfigFile = Effect.gen(function* () {

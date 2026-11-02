@@ -13,7 +13,7 @@ import { isDictationConfigured } from "./dictation/Dictation.ts";
 import { FCM_SERVICE_ACCOUNT_ENV, readServiceAccount } from "./push/BotPushDelivery.ts";
 import { readWebhookPublicBaseUrl } from "./webhookPublicBase.ts";
 import { readKanbanPollSeconds } from "./kanban/KanbanPoller.ts";
-import { HostMcpConfig } from "./guest/HostMcpForward.ts";
+import { HostMcpConfig } from "./hostMcp/HostMcpForward.ts";
 
 export type BotsHostStaticStatus = Omit<BotsHostStatus, "hostMcp">;
 

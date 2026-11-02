@@ -4,7 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { hostMcpConfigFile } from "./guest/HostMcpForward.ts";
+import { hostMcpConfigFile } from "./hostMcp/HostMcpForward.ts";
 import { readBotsHostStaticStatus, readHostMcpServers } from "./hostStatus.ts";
 
 const run = (env: Record<string, string>) =>
