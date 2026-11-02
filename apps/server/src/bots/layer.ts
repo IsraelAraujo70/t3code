@@ -40,12 +40,17 @@ import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinition
 import { layer as WorkflowCatalogLayer } from "./workflows/definitions/catalog.ts";
 import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
 import * as Journal from "./workflows/Journal.ts";
+import { layer as WorkflowTriggersLayer } from "./workflows/triggers/WorkflowTriggers.ts";
 
 /**
  * Workflows: definitions repository, catalog and hand-edit watcher (bots host only). Their tables
  * live in bots.sqlite, so BotsDb is provided here: the server's own SqlClient must never reach them.
  */
-export const layerWorkflows = Layer.mergeAll(WorkflowCatalogLayer, WatcherLayer).pipe(
+export const layerWorkflows = Layer.mergeAll(
+  WorkflowCatalogLayer,
+  WatcherLayer,
+  WorkflowTriggersLayer,
+).pipe(
   Layer.provideMerge(WorkflowDefinitions.layer),
   Layer.provideMerge(Journal.layerFromDb),
   Layer.provide(BotsDb.layer),
