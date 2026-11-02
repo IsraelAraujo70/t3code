@@ -25,7 +25,11 @@ export type CronDecision =
   | { readonly _tag: "Idle" }
   | { readonly _tag: "Invalid"; readonly message: string };
 
-/** Decides the latest due occurrence and advances only past handled occurrences. */
+/**
+ * The latest occurrence after the watermark that is due at `now`, walked forward with `Cron.next`:
+ * `Cron.prev` throws across a spring-forward gap. A wall time that repeats when clocks go back
+ * fires once, at its first passage.
+ */
 export const cronDecision = (input: {
   readonly triggerId: string;
   readonly expr: string;
@@ -38,9 +42,13 @@ export const cronDecision = (input: {
   try {
     const parsed = Cron.parse(input.expr, input.tz);
     if (Result.isFailure(parsed)) return { _tag: "Invalid", message: parsed.failure.message };
-    const second = new Date(Math.floor(input.now.getTime() / 1000) * 1000);
-    const at = Cron.match(parsed.success, second) ? second : Cron.prev(parsed.success, input.now);
-    if (at <= input.watermark) return { _tag: "Idle" };
+    let at = Cron.next(parsed.success, input.watermark);
+    if (at > input.now) return { _tag: "Idle" };
+    for (let step = 0; step < MAX_CATCH_UP_STEPS; step++) {
+      const following = Cron.next(parsed.success, at);
+      if (following > input.now) break;
+      at = following;
+    }
     const grace = input.misfire.mode === "latest" ? input.misfire.graceMs : input.toleranceMs;
     return input.now.getTime() - at.getTime() <= grace
       ? { _tag: "Fire", occurrence: occurrenceKey.cron(input.triggerId, at), at, watermark: at }
@@ -49,6 +57,9 @@ export const cronDecision = (input: {
     return { _tag: "Invalid", message: String(error) };
   }
 };
+
+/** Bounds one catch-up walk; a longer gap is skipped over the next ticks. */
+const MAX_CATCH_UP_STEPS = 10_000;
 
 /** Uses the definition's misfire policy when provided. */
 export const misfirePolicy = (

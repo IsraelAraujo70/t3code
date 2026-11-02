@@ -91,25 +91,40 @@ describe("occurrences", () => {
   });
 });
 
+/** Ticks every 5 minutes for a day and returns what fired. */
+const firedOver = (expr: string, tz: string, from: string, hours: number) => {
+  let watermark = new Date(from);
+  const fired: Array<string> = [];
+  for (let minute = 5; minute <= hours * 60; minute += 5) {
+    const now = new Date(new Date(from).getTime() + minute * 60_000);
+    const result = cronDecision({
+      triggerId: "t",
+      expr,
+      tz,
+      now,
+      watermark,
+      misfire: { mode: "latest", graceMs: 3_600_000 },
+      toleranceMs: 60_000,
+    });
+    expect(result._tag).not.toBe("Invalid");
+    if (result._tag === "Fire") fired.push(result.at.toISOString());
+    if (result._tag === "Fire" || result._tag === "Skip") watermark = result.watermark;
+  }
+  return fired;
+};
+
 it.each([
-  ["0 3 * * *", "America/Sao_Paulo", "2026-11-01T06:00:00Z", "2026-11-01T06:00:00.000Z"],
-  ["30 1 * * *", "America/New_York", "2026-11-01T05:30:00Z", "2026-11-01T05:30:00.000Z"],
-  ["30 1 * * *", "America/New_York", "2026-11-01T06:30:00Z", "2026-11-01T06:30:00.000Z"],
-  // Effect skips the nonexistent spring occurrence and keeps the following day.
-  ["30 2 * * *", "America/New_York", "2026-03-09T06:30:00Z", "2026-03-09T06:30:00.000Z"],
-])("timezone %s %s %s", (expr, tz, now, expected) => {
-  const result = cronDecision({
-    triggerId: "t",
-    expr,
-    tz,
-    now: new Date(now),
-    watermark: new Date(new Date(now).getTime() - 1000),
-    misfire: { mode: "latest", graceMs: 3600000 },
-    toleranceMs: 1000,
-  });
-  expect(result._tag).toBe("Fire");
-  if (result._tag === "Fire") expect(result.at.toISOString()).toBe(expected);
+  // 03:00 in São Paulo (no DST since 2019) is 06:00Z.
+  ["0 3 * * *", "America/Sao_Paulo", "2026-11-01T00:00:00Z", ["2026-11-01T06:00:00.000Z"]],
+  // Clocks go back at 02:00 EDT: 01:30 happens twice and fires once, at its first passage.
+  ["30 1 * * *", "America/New_York", "2026-11-01T00:00:00Z", ["2026-11-01T05:30:00.000Z"]],
+  // Clocks go forward at 02:00 EST: 02:30 does not exist; it runs once, at 03:30 EDT.
+  ["30 2 * * *", "America/New_York", "2026-03-08T00:00:00Z", ["2026-03-08T07:30:00.000Z"]],
+  ["30 2 * * *", "America/New_York", "2026-03-09T00:00:00Z", ["2026-03-09T06:30:00.000Z"]],
+])("%s in %s fires once over the day from %s", (expr, tz, from, expected) => {
+  expect(firedOver(expr, tz, from, 24)).toEqual(expected);
 });
+
 it.each([
   ["bad", "UTC"],
   ["0 * * * *", "invalid/zone"],
