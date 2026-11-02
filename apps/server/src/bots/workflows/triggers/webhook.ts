@@ -1,3 +1,4 @@
+import { webhookPayload } from "./webhookPayload.ts";
 /**
  * Webhook triggers (design §5): each one is a scheduled task `wf-hook:<workflowId>:<triggerId>`
  * that the engine keeps in step with the definitions. The scheduled-task service sits below the
@@ -99,7 +100,7 @@ export const layerBindHook = Layer.effectDiscard(
         kind: "webhook",
         occurrence: occurrenceKey.webhook(input.deliveryId),
         label: "webhook",
-        payload: { text: input.prompt },
+        payload: webhookPayload(input.request, input.prompt),
       }).pipe(Effect.mapError(failed));
     }, Effect.provideContext(context));
     yield* Deferred.succeed(binding.value.fire, fire);
