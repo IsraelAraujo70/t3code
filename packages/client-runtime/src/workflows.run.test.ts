@@ -161,6 +161,12 @@ it("folds newer deltas by identity and ignores stale deltas", () => {
     [2, "running"],
   ]);
   expect(view.steps).toEqual([first]);
+  const warned = foldRunDelta(view, { ...delta, warnings: ["Bot b_x no longer exists."] });
+  expect(warned.warnings).toEqual(["Bot b_x no longer exists."]);
+  // A delta without warnings leaves the list as it was.
+  expect(foldRunDelta(warned, { ...delta, seq: 3 }).warnings).toEqual([
+    "Bot b_x no longer exists.",
+  ]);
   const block = {
     _tag: "hillclimb" as const,
     step: first.key,
