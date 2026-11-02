@@ -67,7 +67,11 @@ export const Intent = Schema.TaggedUnion({
   Interrupt: {
     key: Text,
     step: Text,
-    target: Schema.Union([Schema.Struct({ threadId: Text }), Schema.Struct({ unit: Text })]),
+    target: Schema.Union([
+      Schema.Struct({ threadId: Text }),
+      Schema.Struct({ unit: Text }),
+      Schema.Struct({ childRunId: Text }),
+    ]),
   },
   AnswerRequest: {
     key: Text,
@@ -251,8 +255,16 @@ export const RunFact = Schema.TaggedUnion({
   },
   /** Key `control:<clientRequestId>`. */
   ControlRequested: {
-    control: Schema.Literals(["cancel", "pause", "resume", "retry"]),
+    control: Schema.Literals(["cancel", "pause", "resume", "retry", "amendBudget"]),
     step: NullableText,
+    /** New ceilings for `amendBudget`; the budget slice applies them. */
+    budget: Schema.optional(
+      Schema.Struct({
+        steps: Schema.optional(Schema.Number),
+        wallMs: Schema.optional(Schema.Number),
+        tokens: Schema.optional(Schema.Number),
+      }),
+    ),
     by: Text,
     at: Text,
   },
@@ -271,6 +283,8 @@ export type RunFact = typeof RunFact.Type;
 export const WorkflowFact = Schema.TaggedUnion({
   /** Key = occurrence (`manual:<id>`, `cron:<trigger>:<iso>`, …). */
   TriggerFired: {
+    /** `runIdFor(workflowId, occurrence)`, so a queued run is found by its id alone. */
+    runId: Text,
     triggerId: Text,
     kind: Text,
     occurrence: Text,
