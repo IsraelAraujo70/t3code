@@ -146,6 +146,18 @@ const failWith = (message: string) => (cause: unknown) => new BotsError({ messag
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Bots a guest owned before guest mode was removed stay hidden: their threads may sit on a host
+  // model that only the removed GuestModelPin kept them off. The guest tables are otherwise unread.
+  const hiddenGuestBots = yield* sql`SELECT bot_id AS "botId" FROM guest_bots ORDER BY bot_id`.pipe(
+    Effect.flatMap(decodeBotIds),
+    Effect.orElseSucceed(() => []),
+  );
+  if (hiddenGuestBots.length > 0) {
+    yield* Effect.logWarning("Hiding bots that belonged to a guest; guest mode was removed.", {
+      botIds: hiddenGuestBots.map((row) => row.botId),
+    });
+  }
+
   const selectBots = sql`
     SELECT
       id,
@@ -160,6 +172,7 @@ const make = Effect.gen(function* () {
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM bots
+    WHERE id NOT IN (SELECT bot_id FROM guest_bots)
   `;
   const selectSections = sql`
     SELECT id, name, position, created_at AS "createdAt", updated_at AS "updatedAt"
@@ -268,7 +281,7 @@ const make = Effect.gen(function* () {
       Effect.mapError(failWith("Could not read bots from bots.sqlite")),
     ),
     getBot: Effect.fn("BotsStore.getBot")((id) =>
-      sql`${selectBots} WHERE id = ${id}`.pipe(
+      sql`${selectBots} AND id = ${id}`.pipe(
         Effect.flatMap(decodeBots),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read bot ${id} from bots.sqlite`)),
@@ -460,12 +473,15 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodePushDevices),
       Effect.mapError(failWith("Could not read push devices from bots.sqlite")),
     ),
-    listLinkedEnvironmentBots:
-      sql`SELECT bot_id AS "botId" FROM linked_environment_bots ORDER BY rowid`.pipe(
-        Effect.flatMap(decodeBotIds),
-        Effect.map((rows) => rows.map((row) => row.botId)),
-        Effect.mapError(failWith("Could not read the bots allowed linked environments")),
-      ),
+    listLinkedEnvironmentBots: sql`
+        SELECT bot_id AS "botId" FROM linked_environment_bots
+        WHERE bot_id NOT IN (SELECT bot_id FROM guest_bots)
+        ORDER BY rowid
+      `.pipe(
+      Effect.flatMap(decodeBotIds),
+      Effect.map((rows) => rows.map((row) => row.botId)),
+      Effect.mapError(failWith("Could not read the bots allowed linked environments")),
+    ),
     setBotLinkedEnvironments: Effect.fn("BotsStore.setBotLinkedEnvironments")(
       (botId, linkedEnvironments) =>
         (linkedEnvironments

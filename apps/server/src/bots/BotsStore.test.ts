@@ -13,6 +13,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as BotsDb from "./BotsDb.ts";
 import { BotsStore, layerFromDb, layerMemory } from "./BotsStore.ts";
@@ -290,4 +291,26 @@ it.effect(
         ),
       ),
     ),
+);
+
+it.effect("hides a bot that a guest owned, with its linked environments", () =>
+  Effect.gen(function* () {
+    const store = yield* BotsStore;
+    const sql = yield* SqlClient.SqlClient;
+    const at = "2026-01-01T00:00:00.000Z";
+    yield* store.insertBot(makeBot("owned"));
+    yield* store.insertBot(makeBot("kept"));
+    yield* store.setBotLinkedEnvironments(BotId.make("owned"), true);
+    yield* store.setBotLinkedEnvironments(BotId.make("kept"), true);
+    // Rows left in bots.sqlite by the removed guest mode.
+    yield* sql`INSERT INTO guests (id, name, created_at, updated_at) VALUES ('bia', 'Bia', ${at}, ${at})`;
+    yield* sql`INSERT INTO guest_bots (bot_id, guest_id, created_at) VALUES ('owned', 'bia', ${at})`;
+
+    assert.deepStrictEqual(
+      (yield* store.listBots).map((bot) => bot.id),
+      ["kept"],
+    );
+    assert.isTrue(Option.isNone(yield* store.getBot(BotId.make("owned"))));
+    assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, ["kept"]);
+  }).pipe(Effect.provide(layerFromDb.pipe(Layer.provideMerge(BotsDb.layerMemory)))),
 );
