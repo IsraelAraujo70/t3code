@@ -34,6 +34,7 @@ import * as BotRotation from "./rotation/BotRotation.ts";
 import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
+import * as Workflows from "./workflows/layer.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinitions.ts";
@@ -321,6 +322,8 @@ export const layerService = Layer.unwrap(
             BotQueueReactor.layerStart,
             BotPushReactor.layerStart,
             KanbanPoller.layerStart,
+            // Workflows: the engine, its catalog and the host interpreter.
+            Workflows.layer,
           ).pipe(
             Layer.provideMerge(BotRotation.layer),
             Layer.provideMerge(BotsService.layer),

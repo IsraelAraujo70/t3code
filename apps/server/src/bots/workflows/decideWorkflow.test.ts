@@ -183,3 +183,31 @@ it.each([
     false,
   );
 });
+it("tells the parent when its child's trigger is skipped", () => {
+  const child = trigger(1);
+  if (child.fact._tag !== "TriggerFired") throw new Error("fixture");
+  const parent = { runId: "wfr_00000000000000000009", step: "call@1" };
+  const result = decideWorkflow({
+    ...input(),
+    facts: [{ ...child, fact: { ...child.fact, parent, causalDepth: 1 } }],
+    current: { _tag: "Missing" },
+  });
+  expect(result.find((x) => x.stream === `run:${parent.runId}`)).toEqual({
+    stream: `run:${parent.runId}`,
+    key: `child:${child.fact.runId}`,
+    fact: {
+      _tag: "ChildRunEnded",
+      childRunId: child.fact.runId,
+      status: "skipped",
+      output: { reason: "invalid" },
+      cost: {
+        billable: 0,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        usage: "unavailable",
+        usdEstimate: null,
+      },
+    },
+  });
+});
