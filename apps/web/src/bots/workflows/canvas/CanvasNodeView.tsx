@@ -28,7 +28,10 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
   const { shape, fill } = style;
   const hue = CANVAS_HUES[style.hue];
   const stroke = `light-dark(${hue.light.stroke}, ${hue.dark.stroke})`;
-  const ink = `light-dark(${hue.light.fill}, color-mix(in srgb, ${hue.dark.fill} 35%, transparent))`;
+  const ink =
+    fill === "solid"
+      ? `light-dark(${hue.light.fill}, color-mix(in srgb, ${hue.dark.fill} 35%, transparent))`
+      : `light-dark(${hue.light.fill}, ${hue.dark.fill})`;
   const paths = useMemo(
     () =>
       generator.toPaths(
@@ -43,7 +46,7 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
       ),
     [id, shape, fill, width, height],
   );
-  const mark = model?.status && !edit ? canvasStatusMark(model.status) : undefined;
+  const mark = model?.status ? canvasStatusMark(model.status) : undefined;
   const status = mark ? CANVAS_STATUS_MARKS[mark] : undefined;
   const tone = status
     ? `var(--${status.tone === "danger" ? "destructive" : status.tone === "muted" ? "muted-foreground" : status.tone})`
