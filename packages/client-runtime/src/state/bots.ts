@@ -52,6 +52,9 @@ export function createBotsEnvironmentAtoms<R, E>(
       keyof typeof BOTS_WS_METHODS,
       | "directorySubscribe"
       | "kanbanSubscribe"
+      | "workflowsSubscribe"
+      | "workflowsDocumentSubscribe"
+      | "workflowsRunSubscribe"
       | "dictationTranscribe"
       | "voiceSession"
       | "voiceReady"

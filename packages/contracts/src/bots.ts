@@ -23,9 +23,16 @@ import {
 } from "./baseSchemas.ts";
 import { KANBAN_RPCS, KANBAN_WS_METHODS } from "./kanban.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import {
+  WORKFLOWS_GUARDED_RPC_SCOPES,
+  WORKFLOWS_READ_RPC_SCOPES,
+  WORKFLOWS_RPCS,
+  WORKFLOWS_WS_METHODS,
+} from "./workflowsRpc.ts";
 
 export * from "./kanban.ts";
 export * from "./workflows.ts";
+export * from "./workflowsRpc.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -387,6 +394,7 @@ export const BOTS_WS_METHODS = {
   voiceReconnect: "bots.voice.reconnect",
   voiceReport: "bots.voice.report",
   ...KANBAN_WS_METHODS,
+  ...WORKFLOWS_WS_METHODS,
 } as const;
 
 const BotsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
@@ -705,6 +713,7 @@ export const BOTS_RPCS = [
   VoiceReconnectRpc,
   VoiceReportRpc,
   ...KANBAN_RPCS,
+  ...WORKFLOWS_RPCS,
 ] as const;
 
 /** Mutations: guarded on clients and enforced on the server. */
@@ -764,6 +773,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   // Reads Linear with the server's key and spends its OpenRouter allowance.
   [BOTS_WS_METHODS.kanbanTicketDetail]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.kanbanAiFilter]: AuthOrchestrationOperateScope,
+  ...WORKFLOWS_GUARDED_RPC_SCOPES,
 } as const;
 
 /** Every bots RPC's server scope. */
@@ -772,6 +782,7 @@ export const BOTS_RPC_SCOPES = {
   [BOTS_WS_METHODS.botHistory]: AuthOrchestrationReadScope,
   [BOTS_WS_METHODS.threadList]: AuthOrchestrationReadScope,
   [BOTS_WS_METHODS.kanbanSubscribe]: AuthOrchestrationReadScope,
+  ...WORKFLOWS_READ_RPC_SCOPES,
   ...BOTS_GUARDED_RPC_SCOPES,
 } as const;
 
