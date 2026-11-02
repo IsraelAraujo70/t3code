@@ -180,27 +180,21 @@ const make = Effect.fn("WorkflowRepo.make")(function* (root: string) {
       wrap(
         "log",
         Effect.gen(function* () {
-          const commits = (yield* git(["log", "--format=%H", "--", workflowFileName(id)]))
-            .trim()
-            .split("\n")
-            .filter(Boolean);
+          // One git call: --raw gives the file's blob sha per commit; a removal (status D) is skipped.
+          const output = yield* git([
+            "log",
+            "--format=%x1e%H%x00%an%x00%aI%x00%B%x00",
+            "--raw",
+            "--no-abbrev",
+            "--",
+            workflowFileName(id),
+          ]);
           const result: RepoCommit[] = [];
-          for (const commit of commits) {
-            const text = yield* show(id, commit);
-            if (Option.isNone(text)) continue;
-            const metadata = (yield* git([
-              "show",
-              "-s",
-              "--format=%an%x00%aI%x00%B",
-              commit,
-            ])).split("\0");
-            result.push({
-              commit,
-              revision: revisionOf(text.value),
-              author: metadata[0] ?? "",
-              at: metadata[1] ?? "",
-              message: (metadata[2] ?? "").trimEnd(),
-            });
+          for (const chunk of output.split("\x1e").slice(1)) {
+            const [commit = "", author = "", at = "", message = "", raw = ""] = chunk.split("\0");
+            const blob = /^:\d{6} \d{6} [0-9a-f]+ ([0-9a-f]+) ([A-Z])/m.exec(raw);
+            if (blob === null || blob[2] === "D") continue;
+            result.push({ commit, revision: blob[1]!, author, at, message: message.trimEnd() });
           }
           return result.slice(page.skip, page.skip + page.limit);
         }),
