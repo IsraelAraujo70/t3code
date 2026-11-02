@@ -53,14 +53,9 @@ it("keeps the legacy already-contained result inside a fixture", () => {
   git(repo, "tag", "v1.2.3");
   const destination = NodePath.join(repo, "scripts/friend");
   NodeFS.mkdirSync(NodePath.join(destination, "wf"), { recursive: true });
-  NodeFS.copyFileSync(
-    NodePath.join(import.meta.dirname, "merge-upstream.ts"),
-    NodePath.join(destination, "merge-upstream.ts"),
-  );
-  NodeFS.copyFileSync(
-    NodePath.join(import.meta.dirname, "wf/cli.ts"),
-    NodePath.join(destination, "wf/cli.ts"),
-  );
+  for (const file of ["merge-upstream.ts", "wf/cli.ts", "wf/select-upstream-tag.ts"]) {
+    NodeFS.copyFileSync(NodePath.join(import.meta.dirname, file), NodePath.join(destination, file));
+  }
   const result = runWfCli(
     NodePath.relative(
       NodePath.join(import.meta.dirname, "wf"),

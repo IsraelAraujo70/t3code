@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
 import { UPSTREAM_URL, STABLE_TAG, runCli, type MergeUpstreamOutput } from "./wf/cli.ts";
+import { highestStableTag } from "./wf/select-upstream-tag.ts";
 const repoRoot = NodePath.join(import.meta.dirname, "..", "..");
 
 function flag(name: string): string | undefined {
@@ -54,18 +55,7 @@ if (NodeProcess.argv.includes("--json")) {
     let tag = flag("--tag");
     if (tag !== undefined && !STABLE_TAG.test(tag)) throw new Error("Not a stable release tag.");
     if (tag === undefined) {
-      const tags = git(["ls-remote", "--tags", "--refs", remote], cwd)
-        .split("\n")
-        .map((line) => line.split("\t")[1]?.replace("refs/tags/", ""))
-        .filter((value): value is string => value !== undefined && STABLE_TAG.test(value));
-      tags.sort((a, b) => {
-        const av = a.slice(1).split(".").map(Number);
-        const bv = b.slice(1).split(".").map(Number);
-        return (
-          (bv[0] ?? 0) - (av[0] ?? 0) || (bv[1] ?? 0) - (av[1] ?? 0) || (bv[2] ?? 0) - (av[2] ?? 0)
-        );
-      });
-      tag = tags[0];
+      tag = highestStableTag(git(["ls-remote", "--tags", "--refs", remote], cwd));
       if (!tag) throw new Error("No stable upstream tag found.");
     }
     git(["fetch", "--quiet", "--no-tags", remote, `+refs/tags/${tag}:refs/tags/${tag}`], cwd);
