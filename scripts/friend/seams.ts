@@ -518,7 +518,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/sidebar/SidebarChrome.tsx",
     markers: 3,
-    why: "the Mac app's self-update notice and the kanban button in the sidebar footer",
+    why: "the Mac app's self-update notice and the kanban and workflows buttons in the sidebar footer",
   },
   {
     file: "apps/web/src/components/sidebar/mainAppLocation.ts",
