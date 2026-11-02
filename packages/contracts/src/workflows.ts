@@ -292,6 +292,12 @@ export const WorkflowOutputNode = Schema.Struct({
   /** Marks the ledger entry of that sha as validated. */
   promote: Schema.optional(Schema.Struct({ ledger: WorkflowLedgerKey, sha: WorkflowTemplate })),
   notify: Schema.optional(Schema.Boolean),
+  /**
+   * Posts the rendered `report` to the current main thread of the workflow's `bot`, once per run.
+   * Top level only; an empty report posts nothing. The post wakes the bot, and replaces the
+   * finished push.
+   */
+  postToBot: Schema.optional(Schema.Boolean),
 });
 export type WorkflowOutputNode = typeof WorkflowOutputNode.Type;
 
@@ -599,6 +605,11 @@ export const WorkflowDefinition = Schema.Struct({
   description: Schema.optional(Schema.String),
   /** Project of the step threads and the webhook tasks. */
   home: Schema.Struct({ project: Schema.String }),
+  /**
+   * The bot this workflow works for: its `agent` steps get the bot's host MCP servers, and an
+   * output with `postToBot` reports in its conversation. A bot may only bind a workflow to itself.
+   */
+  bot: Schema.optional(TriggerBotId),
   params: Schema.optional(Schema.Record(Schema.String, WorkflowParamSpec)),
   /** Trigger id → trigger. Ids share the node namespace, so they also key `canvas.positions`. */
   triggers: Schema.optional(Schema.Record(Schema.String, WorkflowTrigger)),
@@ -638,6 +649,7 @@ export const WORKFLOW_DIAGNOSTIC_CODES = [
   "call-cycle",
   "card-linear",
   "thread-continue",
+  "bot",
 ] as const;
 export const WorkflowDiagnosticCode = Schema.Literals(WORKFLOW_DIAGNOSTIC_CODES);
 export type WorkflowDiagnosticCode = typeof WorkflowDiagnosticCode.Type;

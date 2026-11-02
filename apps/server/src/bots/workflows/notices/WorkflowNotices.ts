@@ -6,6 +6,7 @@ import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import * as KanbanStore from "../../kanban/KanbanStore.ts";
 import * as BotPushDelivery from "../../push/BotPushDelivery.ts";
 import * as WorkflowCards from "../card/WorkflowCards.ts";
+import * as BotPosts from "../publish/BotPosts.ts";
 import * as PullRequests from "../publish/PullRequests.ts";
 import { workflowPushData, type NotifyIntent } from "./notices.ts";
 
@@ -44,11 +45,13 @@ export const layer = Layer.effect(
 );
 
 /**
- * Notices, the run's card and pull requests, as the host interpreter reads them (wf-engine
- * slice 8). Provided where BotsStore, ServerEnvironment and KanbanService already exist.
+ * Notices, the run's card, pull requests and posts to the bound bot, as the host interpreter reads
+ * them (wf-engine slice 8). Provided where BotsStore, ServerEnvironment, KanbanService and the
+ * orchestrator already exist.
  */
 export const deliveryLayer = Layer.mergeAll(
   layer.pipe(Layer.provide(BotPushDelivery.layer)),
   WorkflowCards.layer.pipe(Layer.provide(KanbanStore.layer)),
   PullRequests.layer,
+  BotPosts.layer,
 );

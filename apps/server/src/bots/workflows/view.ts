@@ -319,8 +319,13 @@ export const runDelta = (
     steps: stepViews(compiled, state).filter((v) => changedAfter(state, v, afterSeq)),
     gates: gateViews(state).filter((g) => (state.gates.get(g.key)?.lastSeq ?? 0) > afterSeq),
     blocks: blockViews(compiled, state, afterSeq),
+    ...(state.warnings.some((w) => w.seq > afterSeq) ? { warnings: runWarnings(state) } : {}),
   };
 };
+
+/** The run's warnings, oldest first; absent from views of runs that have none. */
+export const runWarnings = (state: RunState): ReadonlyArray<string> =>
+  state.warnings.map((warning) => warning.message);
 
 const changedAfter = (
   state: RunState,

@@ -29,6 +29,7 @@ export const emptyRunState = (runId: string): RunState => ({
   // wf-engine slices 7-8.
   blocks: new Map(),
   pauses: [],
+  warnings: [],
   usage: new Map(),
   releasedBranches: new Set(),
 });
@@ -141,6 +142,9 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
     }
     case "OutputSet":
       next.output = fact;
+      break;
+    case "RunWarned":
+      next.warnings = [...next.warnings, { message: fact.message, seq: stored.seq }];
       break;
     case "RunPaused":
       next.paused = fact;

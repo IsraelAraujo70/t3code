@@ -30,6 +30,7 @@ import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinition
 import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
 import { layer as WorkflowTriggersLayer } from "./workflows/triggers/WorkflowTriggers.ts";
 import * as WorkflowWebhooks from "./workflows/triggers/webhook.ts";
+import * as WorkflowStepBots from "./workflows/stepBot.ts";
 
 /**
  * Workflows on the bots host: the engine block (engine, catalog, definitions, journal) with the
@@ -215,7 +216,7 @@ export const layerCore = Layer.unwrap(
       host
         ? Layer.mergeAll(
             BotsInstructions.layer,
-            HostMcpForward.layer,
+            HostMcpForward.layer.pipe(Layer.provide(WorkflowStepBots.layer)),
             // The scheduled-task service, below the runtime, reads the workflow webhook hook here.
             WorkflowWebhooks.layerHook,
           ).pipe(Layer.provideMerge(BotsStore.layer))

@@ -35,7 +35,8 @@ export const handlers = Effect.gen(function* () {
     [M.workflowsSubscribe]: () => definitions.snapshot,
     [M.workflowsDocumentSubscribe]: (input: { readonly workflowId: string }) =>
       definitions.documentChanges(input.workflowId),
-    [M.workflowsValidate]: definitions.validate,
+    [M.workflowsValidate]: (input: Parameters<typeof definitions.validate>[0]) =>
+      definitions.validate(input, { kind: "user" }),
     [M.workflowsSave]: (input: Parameters<typeof definitions.save>[0]) =>
       definitions.save(input, { kind: "user" }),
     [M.workflowsFromTemplate]: (input: Parameters<typeof definitions.fromTemplate>[0]) =>

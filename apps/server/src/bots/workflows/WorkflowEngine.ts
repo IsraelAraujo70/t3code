@@ -86,6 +86,7 @@ import {
   runDelta,
   runSummary,
   runTriggerView,
+  runWarnings,
   stepDetail,
   stepViews,
 } from "./view.ts";
@@ -777,6 +778,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         nextStepsCursor: steps.next === null ? null : `${state.lastSeq}:${steps.next}`,
         blocks: blockViews(compiled, state),
         gates: gateViews(state),
+        ...(state.warnings.length === 0 ? {} : { warnings: runWarnings(state) }),
       };
     }),
     subscribeRun: (input: WorkflowRunSubscribeInput) =>

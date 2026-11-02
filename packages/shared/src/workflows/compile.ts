@@ -666,6 +666,22 @@ export const compileWorkflow = (
         if (node.handoff !== undefined) checkTemplate(node.handoff, `${path}.handoff`, scope);
         if (node.promote !== undefined)
           checkTemplate(node.promote.sha, `${path}.promote.sha`, scope);
+        if (node.postToBot === true) {
+          if (definition.bot === undefined)
+            report(
+              `${path}.postToBot`,
+              "bot",
+              "postToBot needs the workflow's bot: set bot at the top",
+            );
+          if (node.report === undefined)
+            report(`${path}.postToBot`, "bot", "postToBot posts the report: add a report");
+          if (path !== `nodes.${id}`)
+            report(
+              `${path}.postToBot`,
+              "bot",
+              "only a top-level output posts to the bot; a map or loop body would post once per item",
+            );
+        }
         if (node.pullRequest !== undefined) {
           const pr = node.pullRequest;
           checkWorkspaceUse(pr.workspace, `${path}.pullRequest.workspace`, ctx);

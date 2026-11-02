@@ -41,6 +41,7 @@ export type IntentResult = Exclude<
       | "GateDecided"
       | "ControlRequested"
       | "ChildRunEnded"
+      | "RunWarned"
       // wf-engine slices 7-8.
       | "BlockAdvanced"
       | "TurnUsageReported";
@@ -132,6 +133,8 @@ export interface RunState {
   // wf-engine slices 7-8: block events by block step, every pause with its end, mid-turn usage.
   readonly blocks: ReadonlyMap<string, ReadonlyArray<BlockEventEntry>>;
   readonly pauses: ReadonlyArray<PauseSpan>;
+  /** RunWarned messages in journal order, with the seq that wrote each. */
+  readonly warnings: ReadonlyArray<{ readonly message: string; readonly seq: number }>;
   /** Highest billable a provider reported mid-turn, by start intent key. */
   readonly usage: ReadonlyMap<string, number>;
   /** Branches of this run that a newer run took over after it ended. */

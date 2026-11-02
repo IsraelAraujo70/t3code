@@ -84,7 +84,12 @@ const callerBot = Effect.gen(function* () {
   if (Option.isNone(bot)) return yield* denied;
   return {
     bot: bot.value,
-    author: { kind: "bot" as const, name: bot.value.name, canManageBots: bot.value.canManageBots },
+    author: {
+      kind: "bot" as const,
+      id: bot.value.id,
+      name: bot.value.name,
+      canManageBots: bot.value.canManageBots,
+    },
   };
 });
 const engineAvailable = Effect.gen(function* () {
@@ -188,7 +193,7 @@ const handlers = (
       const definitions = yield* WorkflowDefinitions.WorkflowDefinitions;
       if (input.dryRun) {
         const { diagnostics } = yield* definitions
-          .validate({ source: input.source })
+          .validate({ source: input.source }, author)
           .pipe(Effect.mapError(failure));
         return { ok: diagnostics.length === 0, diagnostics };
       }

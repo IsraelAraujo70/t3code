@@ -134,7 +134,12 @@ it.live("checks toggle permission and paginates committed history", () =>
       const input = decodeToggle({ workflowId: id, enabled: true, clientRequestId: "toggle-test" });
       expect(
         yield* definitions
-          .setEnabled(input, { kind: "bot", name: "Bot", canManageBots: false })
+          .setEnabled(input, {
+            kind: "bot",
+            id: "b_00000000000000000000000000000001",
+            name: "Bot",
+            canManageBots: false,
+          })
           .pipe(Effect.flip),
       ).toMatchObject({ code: "permission" });
       expect(yield* definitions.setEnabled(input, { kind: "user" })).toMatchObject({
@@ -157,7 +162,12 @@ it.live("checks toggle permission and paginates committed history", () =>
           baseRevision: active.revision,
           message: "Bot edit",
         },
-        { kind: "bot", name: "Bot", canManageBots: false },
+        {
+          kind: "bot",
+          id: "b_00000000000000000000000000000001",
+          name: "Bot",
+          canManageBots: false,
+        },
       );
       expect(botSaved).toMatchObject({ _tag: "Saved", enabled: false });
       // Turned back on, the same content saved again by the bot (same commit) turns it off again.
@@ -175,7 +185,12 @@ it.live("checks toggle permission and paginates committed history", () =>
             baseRevision: unchanged.revision,
             message: "Bot edit again",
           },
-          { kind: "bot", name: "Bot", canManageBots: false },
+          {
+            kind: "bot",
+            id: "b_00000000000000000000000000000001",
+            name: "Bot",
+            canManageBots: false,
+          },
         ),
       ).toMatchObject({ _tag: "Saved", enabled: false });
       for (const title of ["Second", "Third"]) {
@@ -230,7 +245,12 @@ it.live("disables bot edits before a failed version index", () =>
             baseRevision: doc.revision,
             message: "Bot version",
           },
-          { kind: "bot", name: "Bot", canManageBots: false },
+          {
+            kind: "bot",
+            id: "b_00000000000000000000000000000001",
+            name: "Bot",
+            canManageBots: false,
+          },
         )
         .pipe(Effect.flip);
       const journal = yield* Journal.Journal;
@@ -428,7 +448,12 @@ it.live("creates bot workflows disabled", () =>
       ).toBe(doc.source);
       const bot = yield* definitions.save(
         { source: source.replaceAll("mcp-token-cut", "bot-copy"), message: "Bot" },
-        { kind: "bot", name: "Ralph", canManageBots: false },
+        {
+          kind: "bot",
+          id: "b_00000000000000000000000000000001",
+          name: "Ralph",
+          canManageBots: false,
+        },
       );
       expect(bot).toMatchObject({ _tag: "Saved", enabled: false });
     }),

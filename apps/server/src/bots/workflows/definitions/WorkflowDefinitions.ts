@@ -7,6 +7,7 @@
  * cache of what is on disk. A workflow is off until its first `Toggled` fact.
  */
 import {
+  BotId,
   WorkflowDocRevision,
   WorkflowId,
   WorkflowsError,
@@ -25,6 +26,7 @@ import {
   type WorkflowsSnapshot,
   type WorkflowSummary,
   type WorkflowDefinition,
+  type WorkflowDiagnostic,
   type WorkflowTriggerSummary,
   type WorkflowValidateInput,
   type WorkflowValidateResult,
@@ -46,6 +48,7 @@ import * as Stream from "effect/Stream";
 import { stringify } from "yaml";
 
 import { ServerConfig } from "../../../config.ts";
+import * as BotsStore from "../../BotsStore.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { workflowHookTaskId } from "../triggers/hook.ts";
 import { Journal } from "../Journal.ts";
@@ -67,7 +70,12 @@ export interface BotEntry {
 
 export type WorkflowAuthor =
   | { readonly kind: "user" }
-  | { readonly kind: "bot"; readonly name: string; readonly canManageBots: boolean };
+  | {
+      readonly kind: "bot";
+      readonly id: string;
+      readonly name: string;
+      readonly canManageBots: boolean;
+    };
 
 export class WorkflowDefinitions extends Context.Service<
   WorkflowDefinitions,
@@ -83,9 +91,10 @@ export class WorkflowDefinitions extends Context.Service<
     readonly documentChanges: (
       workflowId: string,
     ) => Stream.Stream<WorkflowDocument, WorkflowsError>;
-    /** Same checks as `save`, nothing written. */
+    /** Same checks as `save`, nothing written; the bot binding rules apply when `author` is given. */
     readonly validate: (
       input: WorkflowValidateInput,
+      author?: WorkflowAuthor,
     ) => Effect.Effect<WorkflowValidateResult, WorkflowsError>;
     readonly save: (
       input: WorkflowSaveInput,
@@ -128,6 +137,7 @@ export class WorkflowDefinitions extends Context.Service<
 >()("t3/bots/workflows/definitions/WorkflowDefinitions") {}
 
 const workflowId = Schema.decodeSync(WorkflowId);
+const isBotId = Schema.is(BotId);
 const revision = Schema.decodeSync(WorkflowDocRevision);
 const isWorkflowsError = Schema.is(WorkflowsError);
 const internal = (cause: unknown) =>
@@ -181,6 +191,8 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const nodePath = yield* Path.Path;
   const journal = yield* Journal;
+  // Optional so definitions work without bots (tests); the bots host always has the store.
+  const bots = yield* Effect.serviceOption(BotsStore.BotsStore);
   const sql = yield* SqlClient.SqlClient;
   const store = <A, E>(e: Effect.Effect<A, E, SqlClient.SqlClient>) =>
     e.pipe(Effect.provideService(SqlClient.SqlClient, sql));
@@ -236,13 +248,62 @@ const make = Effect.gen(function* () {
         ])
       : result;
   };
+  /** The bot the workflow's file binds now, or else its last committed version; null when none. */
+  const boundBot = Effect.fn("WorkflowDefinitions.boundBot")(function* (id: string) {
+    const file = Option.getOrNull(yield* repo.read(id));
+    if (file) {
+      const current = compileFile(id, file.text);
+      if (Result.isSuccess(current)) return current.success.definition.bot ?? null;
+    }
+    const head = Option.getOrNull(yield* repo.head(id));
+    const version = head ? yield* store(Store.getVersion(id, head.commit)) : undefined;
+    if (!version) return null;
+    const bot = (JSON.parse(version.definition_json) as { readonly bot?: unknown }).bot;
+    return typeof bot === "string" ? bot : null;
+  });
+  /**
+   * Who may bind a workflow to which bot: the bot must exist, and a bot author may neither bind a
+   * workflow to another bot nor change or drop another bot's binding. The owner binds freely.
+   */
+  const bindingIssues = Effect.fn("WorkflowDefinitions.bindingIssues")(function* (
+    definition: WorkflowDefinition,
+    author: WorkflowAuthor | undefined,
+  ) {
+    const issues: WorkflowDiagnostic[] = [];
+    const next = definition.bot ?? null;
+    if (author?.kind === "bot") {
+      const before = yield* boundBot(definition.id);
+      const own = (bot: string | null) => bot === null || bot === author.id;
+      if (before !== next && !(own(before) && own(next)))
+        issues.push({
+          path: "bot",
+          code: "bot",
+          message:
+            before !== null && !own(before)
+              ? `This workflow works for bot ${before}; only that bot or the owner can change its bot.`
+              : `A bot can only bind a workflow to itself: use bot: ${author.id} or leave bot out.`,
+        });
+    }
+    if (next !== null && Option.isSome(bots)) {
+      const found = isBotId(next) ? yield* bots.value.getBot(next) : Option.none();
+      if (Option.isNone(found))
+        issues.push({ path: "bot", code: "bot", message: `There is no bot ${next}.` });
+    }
+    return issues;
+  });
   const validate = Effect.fn("WorkflowDefinitions.validate")(function* (
     input: WorkflowValidateInput,
+    author?: WorkflowAuthor,
   ) {
     yield* refreshGraph().pipe(Effect.mapError(internal));
     const result = compile(input);
     if (Result.isFailure(result))
       return { diagnostics: result.failure, normalizedSource: null, semanticHash: null };
+    const binding = yield* bindingIssues(result.success.definition, author).pipe(
+      Effect.mapError(internal),
+    );
+    if (binding.length > 0)
+      return { diagnostics: binding, normalizedSource: null, semanticHash: null };
     const normalizedSource = toCanonicalYaml(result.success.definition);
     const again = compile({ source: normalizedSource });
     if (Result.isFailure(again) || again.success.hash !== result.success.hash)
@@ -441,8 +502,10 @@ const make = Effect.gen(function* () {
                     { path: "id", code: "schema" as const, message: "Workflow id does not match." },
                   ],
                 };
-              const checked = yield* validate(prepared);
-              const canonical = checked.normalizedSource!;
+              const checked = yield* validate(prepared, author);
+              if (checked.normalizedSource === null)
+                return { _tag: "Invalid" as const, diagnostics: checked.diagnostics };
+              const canonical = checked.normalizedSource;
               const reread = Option.getOrNull(yield* repo.read(id));
               if (file?.revision !== reread?.revision) continue;
               const by = author.kind === "user" ? "Owner" : `${author.name} (bot)`;
