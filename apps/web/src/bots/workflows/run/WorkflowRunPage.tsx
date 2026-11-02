@@ -1,3 +1,4 @@
+import { Alert, AlertDescription } from "../../../components/ui/alert";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -179,6 +180,15 @@ function RunContent({
       }
     >
       <div className="space-y-6 p-6">
+        {view.warnings?.length ? (
+          <Alert variant="warning">
+            <AlertDescription>
+              {[...new Set(view.warnings)].map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {queryError ? (
           <p role="alert" className="text-sm text-destructive-foreground">
             {queryError}

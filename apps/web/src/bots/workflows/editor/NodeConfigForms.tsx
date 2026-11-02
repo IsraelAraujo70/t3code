@@ -185,6 +185,7 @@ const fields = {
     { path: "pullRequest", format: "json" },
     { path: "promote", format: "json" },
     { path: "notify", toggle: true },
+    { path: "postToBot", toggle: true },
   ],
   branch: [{ path: "cases", format: "json" }, { path: "else" }],
   call: [{ path: "workflow" }, { path: "params", format: "json" }],
