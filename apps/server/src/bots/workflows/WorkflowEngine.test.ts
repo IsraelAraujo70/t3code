@@ -919,3 +919,82 @@ it.effect(
       );
     }),
 );
+
+const BOT = `b_${"a".repeat(32)}`;
+const botRoutine = (status: "no_change" | "ready_for_review") =>
+  compile({
+    bot: BOT,
+    params: { news: { type: "string", default: "" } },
+    nodes: {
+      look: { kind: "agent", model: "$lead", prompt: "Look", workspace: "integ" },
+      done: { kind: "output", status, value: {}, report: "{{ params.news }}", postToBot: true },
+    },
+    edges: ["look -> done"],
+  });
+
+it.effect("posts a bot routine's report once, also when a restart replays the post", () =>
+  Effect.gen(function* () {
+    const { fake, layer } = yield* makeFakeInterpreter({});
+    fake.stall.add("post:done");
+    const services = Layer.mergeAll(
+      layerFromDb,
+      layer,
+      layerCatalog([botRoutine("ready_for_review")]),
+    );
+    const runId = yield* Effect.gen(function* () {
+      const subscription = yield* (yield* Journal).subscribe;
+      const engine = yield* make({ runsDir: "/runs" });
+      const { runId } = yield* engine.start({
+        ...request("manual:post"),
+        params: { news: "BTC -8%" },
+      });
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "post:done" }),
+      );
+      return runId;
+    }).pipe(Effect.scoped, Effect.provide(services));
+    fake.stall.delete("post:done");
+    for (const restart of [1, 2]) {
+      yield* Effect.gen(function* () {
+        const subscription = yield* (yield* Journal).subscribe;
+        const engine = yield* make({ runsDir: "/runs" });
+        yield* engine.tick;
+        if (restart === 1)
+          yield* PubSub.take(subscription).pipe(
+            Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "ended" }),
+          );
+        const state = yield* engine.runState(runId);
+        assert.equal(state.ended?.status, "succeeded");
+        const look = state.intents.get("turn:look@1")?.intent;
+        assert.equal(look?._tag === "StartTurn" ? look.bot : undefined, BOT);
+        // The post replaced the finished push: the bot's reply is what notifies.
+        assert.isFalse(state.intents.has("notify:end"));
+      }).pipe(Effect.scoped, Effect.provide(services));
+    }
+    assert.equal(fake.executions.get("post:done"), 2);
+    assert.deepEqual([...fake.posts.values()], [{ botId: BOT, report: "BTC -8%" }]);
+  }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+it.effect("posts nothing for an empty report and keeps the finished push", () =>
+  Effect.gen(function* () {
+    const { fake, layer } = yield* makeFakeInterpreter({});
+    yield* Effect.gen(function* () {
+      const subscription = yield* (yield* Journal).subscribe;
+      const engine = yield* make({ runsDir: "/runs" });
+      const { runId } = yield* engine.start(request("manual:quiet"));
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "ended" }),
+      );
+      const state = yield* engine.runState(runId);
+      assert.isFalse(state.intents.has("post:done"));
+      assert.isTrue(state.intents.has("notify:end"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(layerFromDb, layer, layerCatalog([botRoutine("ready_for_review")])),
+      ),
+    );
+    assert.equal(fake.posts.size, 0);
+  }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
