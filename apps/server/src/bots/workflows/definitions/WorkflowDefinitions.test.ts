@@ -16,6 +16,8 @@ import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { workflowStatus } from "../workflowStatus.ts";
+import type { ScheduledTask } from "@t3tools/contracts";
+import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { ServerConfig } from "../../../config.ts";
 import * as BotsDb from "../../BotsDb.ts";
 import * as Journal from "../Journal.ts";
@@ -38,6 +40,8 @@ const withDefinitions = <E>(
     definitions: Definitions,
     harness: Harness,
   ) => Effect.Effect<void, E, Journal.Journal | FileSystem.FileSystem | SqlClient.SqlClient>,
+  /** Services the definitions read when present, such as the scheduled-task service. */
+  extra: Layer.Layer<never> = Layer.empty,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -45,7 +49,10 @@ const withDefinitions = <E>(
       const root = yield* fs.makeTempDirectoryScoped();
       const db = BotsDb.layerMemory;
       const services = Layer.merge(db, Journal.layerFromDb.pipe(Layer.provide(db)));
-      const instance = layer.pipe(Layer.provide(ServerConfig.layerTest(root, root)));
+      const instance = layer.pipe(
+        Layer.provide(ServerConfig.layerTest(root, root)),
+        Layer.provide(extra),
+      );
       yield* Effect.gen(function* () {
         const definitions = yield* WorkflowDefinitions;
         const context = yield* Effect.context<
@@ -78,6 +85,7 @@ const withDefinitions = <E>(
           layer.pipe(
             Layer.provideMerge(services),
             Layer.provide(ServerConfig.layerTest(root, root)),
+            Layer.provide(extra),
           ),
         ),
       );
@@ -488,6 +496,46 @@ it.live("a hand edit whose id differs from its file name is invalid and never co
         valid: false,
         diagnostics: [{ path: "id", code: "schema" }],
       });
+    }),
+  ),
+);
+
+it.live("a webhook trigger shows the URL of its scheduled task", () =>
+  withDefinitions(
+    (definitions) =>
+      Effect.gen(function* () {
+        const source = (yield* librarySource("inbox")).replace(
+          /^triggers:.*$/m,
+          "triggers: [{ id: push, kind: webhook }]",
+        );
+        expect((yield* definitions.save({ source, message: "hook" }, { kind: "user" }))._tag).toBe(
+          "Saved",
+        );
+        const [summary] = yield* definitions.list;
+        expect(summary?.triggers).toEqual([
+          {
+            id: "push",
+            kind: "webhook",
+            label: "webhook",
+            webhookUrl: "https://hooks.example.com/api/hooks/wf-hook%3Ainbox%3Apush/token",
+          },
+        ]);
+      }),
+    Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+      list: () =>
+        Effect.succeed({
+          tasks: [
+            {
+              id: "wf-hook:inbox:push",
+              webhook: {
+                path: "/api/hooks/wf-hook%3Ainbox%3Apush/token",
+                url: "https://hooks.example.com/api/hooks/wf-hook%3Ainbox%3Apush/token",
+                hasSecret: false,
+              },
+            } as unknown as ScheduledTask,
+          ],
+        }),
+      subscribeList: () => Stream.empty,
     }),
   ),
 );

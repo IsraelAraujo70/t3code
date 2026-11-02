@@ -44,6 +44,8 @@ import * as Stream from "effect/Stream";
 import { stringify } from "yaml";
 
 import { ServerConfig } from "../../../config.ts";
+import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
+import { workflowHookTaskId } from "../triggers/hook.ts";
 import { Journal } from "../Journal.ts";
 import { workflowStream } from "../facts.ts";
 import { workflowStatus } from "../workflowStatus.ts";
@@ -144,6 +146,23 @@ const label = (trigger: WorkflowTrigger): string => {
 };
 const make = Effect.gen(function* () {
   const repo = yield* WorkflowRepo;
+  // Webhook triggers are scheduled tasks; their URLs come from there when the service is present.
+  const scheduledTasks = yield* Effect.serviceOption(ScheduledTaskService.ScheduledTaskService);
+  const webhookUrls = Option.isNone(scheduledTasks)
+    ? Effect.succeed(new Map<string, string>())
+    : scheduledTasks.value.list().pipe(
+        Effect.map(
+          ({ tasks }) =>
+            new Map(
+              tasks.flatMap((task) =>
+                task.webhook === undefined
+                  ? []
+                  : [[task.id as string, task.webhook.url ?? task.webhook.path] as const],
+              ),
+            ),
+        ),
+        Effect.orElseSucceed(() => new Map<string, string>()),
+      );
   const fs = yield* FileSystem.FileSystem;
   const nodePath = yield* Path.Path;
   const journal = yield* Journal;
@@ -426,6 +445,7 @@ const make = Effect.gen(function* () {
   );
   const list = Effect.fn("WorkflowDefinitions.list")(function* () {
     yield* refreshGraph();
+    const urls = yield* webhookUrls;
     return yield* Effect.forEach(yield* repo.listIds, (id) =>
       document(id).pipe(
         Effect.map((d) => ({
@@ -442,7 +462,10 @@ const make = Effect.gen(function* () {
             id: trigger.id,
             kind: trigger.kind,
             label: label(trigger),
-            webhookUrl: null,
+            webhookUrl:
+              trigger.kind === "webhook"
+                ? (urls.get(workflowHookTaskId(id, trigger.id)) ?? null)
+                : null,
           })),
           headCommit: d.headCommit,
           revision: d.revision,
@@ -506,9 +529,18 @@ const make = Effect.gen(function* () {
         }
         return { repoPath: repo.root, workflows, deleted, templates };
       }).pipe(Effect.mapError(internal));
+      // A webhook task appears after the save that asked for it, so its URL arrives as a change too.
+      const taskChanges = Option.isNone(scheduledTasks)
+        ? Stream.empty
+        : scheduledTasks.value.subscribeList().pipe(
+            Stream.drop(1),
+            Stream.orElseSucceed(() => undefined),
+          );
       return Stream.concat(
         Stream.fromEffect(read),
-        Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => read)),
+        Stream.merge(Stream.fromSubscription(subscription), taskChanges).pipe(
+          Stream.mapEffect(() => read),
+        ),
       );
     }),
   );
