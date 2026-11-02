@@ -1,14 +1,7 @@
 /**
- * Which provider instances run a guest's bots inside the Docker sandbox. A sandbox instance is a
- * `claudeAgent` instance whose binary is the fork's launcher (`sandbox/t3-guest-claude`) and whose
- * environment names the guest with `T3CODE_GUEST_ID`. The launcher starts the container; nothing
- * here starts processes.
- *
- * Two checks with opposite failure directions:
- * - `declaresGuest` is broad: any instance naming a guest gets no T3 MCP credential, even when
- *   its binary is misconfigured, so a sandboxed process never holds a token for the host.
- * - `isSandboxedFor` is strict: the guest API sends to a bot only when its instance is enabled,
- *   names that guest, and launches through the real launcher file.
+ * A guest's sandbox instance: a `claudeAgent` running the fork's launcher with `T3CODE_GUEST_ID`.
+ * `declaresGuest` is broad (any guest entry withholds the T3 MCP credential); `isSandboxedFor` is
+ * strict (enabled, names that guest, and launches through the real launcher file).
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a sync check on the adapter's turn path.
 import * as NodeFS from "node:fs";
@@ -41,12 +34,18 @@ const guestEntries = (instance: ProviderInstanceConfig | undefined) =>
  */
 export function declaredGuest(instance: ProviderInstanceConfig | undefined): string | null {
   const value = guestEntries(instance).at(-1)?.value;
-  return value === undefined || value === "" ? null : value;
+  // A secret-provider reference names no guest we can read here.
+  return typeof value !== "string" || value === "" ? null : value;
 }
 
-/** Pure. Whether this instance must never receive a T3 MCP credential: any entry names a guest. */
+/**
+ * Pure. Whether this instance must never receive a T3 MCP credential: any entry names a guest.
+ * A secret-provider reference counts, since it may resolve to one.
+ */
 export function declaresGuest(instances: ProviderInstances, instanceId: ProviderInstanceId) {
-  return guestEntries(instances[instanceId]).some((variable) => variable.value.trim() !== "");
+  return guestEntries(instances[instanceId]).some(
+    (variable) => typeof variable.value !== "string" || variable.value.trim() !== "",
+  );
 }
 
 /**
