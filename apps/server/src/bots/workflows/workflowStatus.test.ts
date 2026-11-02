@@ -28,6 +28,20 @@ describe("workflowStatus", () => {
       { enabled: true, suspended: false, toggledSeq: 1 },
     ],
   ] as const)("%s", (_case, facts, expected) => {
-    expect(workflowStatus(stored(facts))).toEqual(expected);
+    expect(workflowStatus(stored(facts))).toEqual({ ...expected, off: new Set() });
   });
+});
+
+it("folds independent trigger switches without changing them on workflow toggles", () => {
+  const toggle = (triggerId: string, enabled: boolean): Fact => ({
+    _tag: "TriggerToggled",
+    triggerId,
+    enabled,
+    by: "israel",
+    at: "t",
+  });
+  expect(workflowStatus(stored([toggle("a", false)])).off).toEqual(new Set(["a"]));
+  expect(
+    workflowStatus(stored([toggle("a", false), toggle("b", false), toggle("a", true), off])).off,
+  ).toEqual(new Set(["b"]));
 });

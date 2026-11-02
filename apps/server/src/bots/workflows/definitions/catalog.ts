@@ -6,7 +6,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { WorkflowCatalog, type CurrentVersion } from "../Catalog.ts";
-import { WorkflowJournalError } from "../Journal.ts";
+import { Journal, WorkflowJournalError } from "../Journal.ts";
 import * as Definitions from "./WorkflowDefinitions.ts";
 import * as Store from "./definitionsStore.ts";
 
@@ -18,6 +18,7 @@ const failure = (cause: unknown) =>
   new WorkflowJournalError({ message: "Workflow catalog operation failed.", cause });
 const make = Effect.gen(function* () {
   const definitions = yield* Definitions.WorkflowDefinitions;
+  const journal = yield* Journal;
   const sql = yield* SqlClient.SqlClient;
   const pinned = Effect.fn("WorkflowCatalog.pinned")(function* (
     workflowId: string,
@@ -58,7 +59,7 @@ const make = Effect.gen(function* () {
       if (Result.isFailure(compiled)) return { _tag: "Invalid" };
       return {
         _tag: "Ready",
-        off: new Set(),
+        off: (yield* journal.workflowStatus(workflowId)).off,
         version: { workflowId, commit: document.headCommit, compiled: compiled.success },
         enabled: document.enabled,
         suspended: document.suspended,
