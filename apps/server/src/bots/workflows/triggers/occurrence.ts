@@ -44,11 +44,17 @@ export const cronDecision = (input: {
     if (Result.isFailure(parsed)) return { _tag: "Invalid", message: parsed.failure.message };
     let at = Cron.next(parsed.success, input.watermark);
     if (at > input.now) return { _tag: "Idle" };
+    let caughtUp = false;
     for (let step = 0; step < MAX_CATCH_UP_STEPS; step++) {
       const following = Cron.next(parsed.success, at);
-      if (following > input.now) break;
+      if (following > input.now) {
+        caughtUp = true;
+        break;
+      }
       at = following;
     }
+    // Still behind after a full walk: `at` is not the latest due occurrence, so advance only.
+    if (!caughtUp) return { _tag: "Skip", at, watermark: at };
     const grace = input.misfire.mode === "latest" ? input.misfire.graceMs : input.toleranceMs;
     return input.now.getTime() - at.getTime() <= grace
       ? { _tag: "Fire", occurrence: occurrenceKey.cron(input.triggerId, at), at, watermark: at }
@@ -58,7 +64,7 @@ export const cronDecision = (input: {
   }
 };
 
-/** Bounds one catch-up walk; a longer gap is skipped over the next ticks. */
+/** Bounds one catch-up walk; a longer gap is skipped over the next ticks without firing. */
 const MAX_CATCH_UP_STEPS = 10_000;
 
 /** Uses the definition's misfire policy when provided. */

@@ -141,3 +141,22 @@ it.each([
     })._tag,
   ).toBe("Invalid");
 });
+
+it("a catch-up longer than one walk fires only the latest occurrence, once", () => {
+  const input = {
+    triggerId: "t",
+    expr: "* * * * *",
+    tz: "UTC",
+    misfire: { mode: "latest" as const, graceMs: 3_600_000 },
+    toleranceMs: 60_000,
+    now: new Date("2026-01-07T23:00:00Z"),
+  };
+  let watermark = new Date("2026-01-01T00:00:00Z");
+  const fired: Array<string> = [];
+  for (let tick = 0; tick < 5; tick++) {
+    const result = cronDecision({ ...input, watermark });
+    if (result._tag === "Fire") fired.push(result.at.toISOString());
+    if (result._tag === "Fire" || result._tag === "Skip") watermark = result.watermark;
+  }
+  expect(fired).toEqual(["2026-01-07T23:00:00.000Z"]);
+});
