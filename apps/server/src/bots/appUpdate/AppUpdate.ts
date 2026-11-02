@@ -1,6 +1,6 @@
 /**
  * Build scripts replace latest.json atomically. The server trusts its sha256; clients verify downloads.
- * These routes require owner auth on the main listener; GuestApi owns guest updates.
+ * These routes require owner auth on the main listener.
  */
 import * as NodeOS from "node:os";
 

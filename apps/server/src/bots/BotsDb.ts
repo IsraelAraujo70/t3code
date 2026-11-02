@@ -33,6 +33,8 @@ const runMigrations = Migrator.make({})({
     "3_Sections": Migration0003,
     "4_BotManagers": Migration0004,
     "5_BotPushDevices": Migration0005,
+    // Guest mode is gone (BotsStore only reads guest_bots to hide those bots), but these ran in
+    // production: keep them.
     "6_Guests": Migration0006,
     "7_GuestArtifacts": Migration0007,
     "8_Kanban": Migration0008,

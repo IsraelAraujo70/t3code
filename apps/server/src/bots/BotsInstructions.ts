@@ -25,9 +25,7 @@ import {
 
 import { BOT_SENDER_PREFIX } from "./botSender.ts";
 import { BotsStore } from "./BotsStore.ts";
-import { ownerName } from "./guest/guestSender.ts";
 import { VOICE_MESSAGE_PREFIX } from "./voice/voiceMessage.ts";
-import { GuestStore } from "./guest/GuestStore.ts";
 
 /** Section texts never exceed this, so adapters can deliver each section on its own. */
 export const BOT_INSTRUCTION_SECTION_LIMIT = 3_500;
@@ -51,34 +49,6 @@ export interface BotInstructionInput {
   /** Set for a side thread: the main conversation it runs beside. */
   readonly sideOf?: ThreadId | undefined;
 }
-
-export interface GuestBotInstructionInput {
-  readonly bot: Bot;
-  /** Only enabled memories, oldest first. */
-  readonly memories: ReadonlyArray<BotMemory>;
-  /** The guest's display name. */
-  readonly guestName: string;
-  /** The server owner's display name (`T3CODE_OWNER_NAME`), when configured. */
-  readonly ownerName?: string | undefined;
-  readonly earlier?: BotEarlierConversations | undefined;
-}
-
-// Guest bots run in a Docker sandbox with no T3 MCP tools, so they get none of the owner's tool
-// instructions, profile or peers; their files are their only memory they can write.
-const GUEST_WORKSPACE_TEXT = [
-  "You run inside an isolated Linux container. Your home directory, /home/guest, persists between conversations: keep notes, lists and files there, and read them back when they matter. Repositories you were given are cloned in your home directory.",
-  "You can reach the internet (through a proxy) and use git, but you cannot reach the computer that hosts you or anything on its network.",
-  "You have no T3 tools: you cannot start other threads, message other bots or save memories with a tool. When something must be remembered, write it to a file in your home directory.",
-  "Your user's own Google account (Gmail, Sheets, Calendar and Drive) is reachable with curl at $GOOGLE_API_URL, without any token; read $GOOGLE_APIS_DOC before the first use. When $LURIAN_BOT_API_URL is set, it is Lurian's Bot API, also without a token. Before you send an e-mail, delete something, or change anything your user did not clearly ask for, confirm with them first.",
-  "Reply in the language the user writes in, simply and kindly.",
-].join("\n\n");
-
-// The helpers are defined in the sandbox image (sandbox/claude/agents), and the limits named here
-// are enforced there (sandbox/claude/managed-settings.json, sandbox/subagent-budget.mjs).
-const GUEST_HELPERS_TEXT = [
-  "For work that takes many steps, start a helper with the Task tool: web-research (several searches, with sources), drafting (a longer text or several versions), numbers (totals, budgets, spreadsheets and Lurian's data, computed exactly) or organize (tidying notes and files). A helper runs in this same container with your access, knows only the brief you write, and returns one report. Put everything it needs in the brief (the question, the data, the tone, the limits), and check its report before you relay it. Do quick things yourself.",
-  "Helpers spend your user's quota: start at most 4 per message and at most 3 at once; they cannot start helpers of their own. A helper cannot ask anyone anything, so confirm a send, a deletion or a change with your user before you ask a helper to do it.",
-].join("\n\n");
 
 const WORK_TOOLS_TEXT = [
   "Code changes never happen in this thread. Find the project with t3_project_list, start a thread for the task with t3_thread_launch in its own worktree, and make the first message a self-contained brief: goal, scope, limits, and when it is done. Then call watch_thread on it and end your turn: T3 wakes you when its run ends or it waits on a question or an approval, so never keep a turn or a background agent open just to wait. When woken, read it with t3_thread_read, answer what it is missing with t3_thread_send or t3_pending_request_respond, and once the work is done, report back and call unwatch_thread.",
@@ -110,10 +80,6 @@ const replyStyleText = (longMaterial: string) =>
 
 const OWNER_REPLY_STYLE_TEXT = replyStyleText(
   "Put long material, such as a full report or a long document, in a file or a T3 thread and reply with its path or link and a one-line summary.",
-);
-
-const GUEST_REPLY_STYLE_TEXT = replyStyleText(
-  "When something long is needed, such as a full report, send its most important part first and offer the rest.",
 );
 
 const MANAGE_BOTS_TEXT =
@@ -211,51 +177,6 @@ export function buildBotInstructions(input: BotInstructionInput): AppInstruction
   return { fingerprint: fingerprintOf(sections), sections };
 }
 
-/**
- * A guest's bot may be shared with the owner, who writes from T3. The guest's messages arrive as
- * `<guest>: <text>` (guestSender.fromGuest); the owner's arrive as they typed them.
- */
-const peopleText = (input: GuestBotInstructionInput) => {
-  const owner = input.ownerName ?? "the person who set you up for them";
-  return [
-    `Two people may write in this conversation: ${input.guestName} and ${owner}.`,
-    `A message that starts with "${input.guestName}:" comes from ${input.guestName}; that prefix is added by the app, not typed. Any other message from the user comes from ${owner}.`,
-    "Both see the whole conversation. When it matters, say whom you are answering, and keep track of what each of them asked for.",
-  ].join("\n\n");
-};
-
-/**
- * Pure. Identity and role, read-only memories, the sandbox the bot works in, its helper agents,
- * and how to reply.
- */
-export function buildGuestBotInstructions(input: GuestBotInstructionInput): AppInstructions {
-  const { bot, memories } = input;
-  const identity = `You are ${bot.name}, ${input.guestName}'s assistant. This thread is your ongoing conversation with ${input.guestName}.`;
-  const role = bot.role.trim();
-  const sections = [
-    {
-      key: "bot",
-      title: "Who you are",
-      text: role.length > 0 ? `${identity}\n\n${role}` : identity,
-    },
-    ...(memories.length > 0
-      ? [
-          {
-            key: "memories",
-            title: "What you know",
-            text: memories.map((memory) => `- ${memory.text}`).join("\n"),
-          },
-        ]
-      : []),
-    ...earlierSection(input.earlier, false),
-    { key: "people", title: "Who is talking", text: peopleText(input) },
-    { key: "workspace", title: "Where you work", text: GUEST_WORKSPACE_TEXT },
-    { key: "helpers", title: "Helpers", text: GUEST_HELPERS_TEXT },
-    { key: "reply-style", title: "How to reply", text: GUEST_REPLY_STYLE_TEXT },
-  ].flatMap(splitSection);
-  return { fingerprint: fingerprintOf(sections), sections };
-}
-
 const fingerprintOf = (sections: ReadonlyArray<Section>) =>
   NodeCrypto.createHash("sha256")
     .update(JSON.stringify(sections.map((section) => [section.key, section.text])))
@@ -305,13 +226,11 @@ export class BotsInstructions extends Context.Service<
   }
 >()("t3/bots/BotsInstructions") {}
 
-/** Reads through BotsStore and GuestStore. */
-export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore> = Layer.effect(
+/** Reads through BotsStore. */
+export const layer: Layer.Layer<BotsInstructions, never, BotsStore> = Layer.effect(
   BotsInstructions,
   Effect.gen(function* () {
     const store = yield* BotsStore;
-    const guests = yield* GuestStore;
-    const owner = Option.getOrUndefined(yield* ownerName);
     // Runs inside forThread's span.
     const earlierOf = Effect.fnUntraced(function* (bot: Bot) {
       if (bot.homeGeneration <= 1) return undefined;
@@ -334,26 +253,13 @@ export const layer: Layer.Layer<BotsInstructions, never, BotsStore | GuestStore>
           (memory) => memory.enabled,
         );
         const earlier = yield* earlierOf(bot.value);
-        const assignments = yield* guests.listAssignments;
-        const guestId = assignments.get(parsed.botId);
-        if (guestId !== undefined) {
-          const guest = yield* guests.getGuest(guestId);
-          return buildGuestBotInstructions({
-            bot: bot.value,
-            memories,
-            guestName: Option.isSome(guest) ? guest.value.name : guestId,
-            ownerName: owner,
-            earlier,
-          });
-        }
         const aboutMe = yield* store.getAboutMe;
         const bots = yield* store.listBots;
         return buildBotInstructions({
           bot: bot.value,
           memories,
           aboutMe,
-          // A guest's bots are not the owner's to hand work to.
-          peers: bots.filter((peer) => peer.id !== parsed.botId && !assignments.has(peer.id)),
+          peers: bots.filter((peer) => peer.id !== parsed.botId),
           earlier,
           sideOf:
             parsed.kind === "side"

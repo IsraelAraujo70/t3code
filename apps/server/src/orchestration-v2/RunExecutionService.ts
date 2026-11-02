@@ -40,7 +40,7 @@ import * as Stream from "effect/Stream";
 // Fork (friend): bot threads get their role and memories as trusted turn instructions.
 import * as Option from "effect/Option";
 import * as BotsInstructions from "../bots/BotsInstructions.ts";
-import * as GuestTools from "../bots/guest/GuestTools.ts";
+import * as HostMcpForward from "../bots/hostMcp/HostMcpForward.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
@@ -621,7 +621,7 @@ export const layer: Layer.Layer<
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     // Fork (friend): optional, so runtimes and tests without bots keep the upstream behaviour.
     const botsInstructions = yield* Effect.serviceOption(BotsInstructions.BotsInstructions);
-    const guestTools = yield* Effect.serviceOption(GuestTools.GuestTools);
+    const hostMcpForward = yield* Effect.serviceOption(HostMcpForward.HostMcpForward);
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1672,16 +1672,9 @@ export const layer: Layer.Layer<
                 }).pipe(Effect.as(undefined)),
               ),
             );
-        const appTools = Option.isNone(guestTools)
+        const appTools = Option.isNone(hostMcpForward)
           ? undefined
-          : yield* guestTools.value.forThread(input.run.threadId).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to read guest tools.", {
-                  threadId: input.run.threadId,
-                  cause,
-                }).pipe(Effect.as(undefined)),
-              ),
-            );
+          : yield* hostMcpForward.value.forThread(input.run.threadId);
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,

@@ -108,13 +108,6 @@ export class BotsStore extends Context.Service<
       botId: BotId,
       linkedEnvironments: boolean,
     ) => Effect.Effect<void, BotsError>;
-    /** Every bot assigned to a guest. */
-    readonly listGuestBotIds: Effect.Effect<ReadonlyArray<BotId>, BotsError>;
-    /**
-     * In one transaction, removes the bot from its guest (if any) and stores its new model and
-     * updatedAt. Fails when the bot does not exist, leaving both rows as they were.
-     */
-    readonly makeRegular: (bot: Bot) => Effect.Effect<void, BotsError>;
   }
 >()("t3/bots/BotsStore") {}
 
@@ -152,6 +145,20 @@ const failWith = (message: string) => (cause: unknown) => new BotsError({ messag
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  // Bots a guest owned before guest mode was removed read as gone: they leave the directory, the
+  // bot RPCs and tools, the peer lists and linked environments. Their threads stay, and still run
+  // when something sends to them. Nothing else reads the guest tables.
+  const notGuestOwned = sql`NOT EXISTS (SELECT 1 FROM guest_bots g WHERE g.bot_id = bots.id)`;
+  const hiddenGuestBots = yield* sql`SELECT bot_id AS "botId" FROM guest_bots ORDER BY bot_id`.pipe(
+    Effect.flatMap(decodeBotIds),
+    Effect.mapError(failWith("Could not read the bots that belonged to a guest")),
+  );
+  if (hiddenGuestBots.length > 0) {
+    yield* Effect.logWarning("Hiding bots that belonged to a guest; guest mode was removed.", {
+      botIds: hiddenGuestBots.map((row) => row.botId),
+    });
+  }
 
   const selectBots = sql`
     SELECT
@@ -270,12 +277,12 @@ const make = Effect.gen(function* () {
         Effect.mapError(failWith(`Could not read the handoffs of bot ${botId}`)),
       ),
     ),
-    listBots: sql`${selectBots} ORDER BY position, created_at, id`.pipe(
+    listBots: sql`${selectBots} WHERE ${notGuestOwned} ORDER BY position, created_at, id`.pipe(
       Effect.flatMap(decodeBots),
       Effect.mapError(failWith("Could not read bots from bots.sqlite")),
     ),
     getBot: Effect.fn("BotsStore.getBot")((id) =>
-      sql`${selectBots} WHERE id = ${id}`.pipe(
+      sql`${selectBots} WHERE id = ${id} AND ${notGuestOwned}`.pipe(
         Effect.flatMap(decodeBots),
         Effect.map((rows) => Option.fromNullishOr(rows[0])),
         Effect.mapError(failWith(`Could not read bot ${id} from bots.sqlite`)),
@@ -467,12 +474,17 @@ const make = Effect.gen(function* () {
       Effect.flatMap(decodePushDevices),
       Effect.mapError(failWith("Could not read push devices from bots.sqlite")),
     ),
-    listLinkedEnvironmentBots:
-      sql`SELECT bot_id AS "botId" FROM linked_environment_bots ORDER BY rowid`.pipe(
-        Effect.flatMap(decodeBotIds),
-        Effect.map((rows) => rows.map((row) => row.botId)),
-        Effect.mapError(failWith("Could not read the bots allowed linked environments")),
-      ),
+    listLinkedEnvironmentBots: sql`
+        SELECT bot_id AS "botId" FROM linked_environment_bots
+        WHERE NOT EXISTS (
+          SELECT 1 FROM guest_bots g WHERE g.bot_id = linked_environment_bots.bot_id
+        )
+        ORDER BY rowid
+      `.pipe(
+      Effect.flatMap(decodeBotIds),
+      Effect.map((rows) => rows.map((row) => row.botId)),
+      Effect.mapError(failWith("Could not read the bots allowed linked environments")),
+    ),
     setBotLinkedEnvironments: Effect.fn("BotsStore.setBotLinkedEnvironments")(
       (botId, linkedEnvironments) =>
         (linkedEnvironments
@@ -483,42 +495,6 @@ const make = Effect.gen(function* () {
           Effect.mapError(failWith("Could not change the bot's linked environments")),
         ),
     ),
-    listGuestBotIds: sql`SELECT bot_id AS "botId" FROM guest_bots ORDER BY bot_id`.pipe(
-      Effect.flatMap(decodeBotIds),
-      Effect.map((rows) => rows.map((row) => row.botId)),
-      Effect.mapError(failWith("Could not read the guests' bots")),
-    ),
-    makeRegular: Effect.fn("BotsStore.makeRegular")((bot) =>
-      encodeBot(bot).pipe(
-        Effect.flatMap((row) =>
-          sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql`DELETE FROM guest_bots WHERE bot_id = ${row.id}`;
-              return yield* sql`
-                UPDATE bots SET model_json = ${row.model}, updated_at = ${row.updatedAt}
-                WHERE id = ${row.id}
-                RETURNING id
-              `.pipe(
-                // Rolls the guest row back too.
-                Effect.filterOrFail(
-                  (rows) => rows.length > 0,
-                  () => new BotsError({ message: `Bot ${bot.id} does not exist` }),
-                ),
-              );
-            }),
-          ),
-        ),
-        Effect.asVoid,
-        Effect.mapError((error) =>
-          error._tag === "BotsError"
-            ? error
-            : new BotsError({
-                message: `Could not make bot ${bot.id} a regular bot`,
-                cause: error,
-              }),
-        ),
-      ),
-    ),
   });
 });
 
@@ -528,5 +504,5 @@ export const layer = Layer.effect(BotsStore, make).pipe(Layer.provide(BotsDb.lay
 /** A migrated in-memory database, for tests. */
 export const layerMemory = Layer.effect(BotsStore, make).pipe(Layer.provide(BotsDb.layerMemory));
 
-/** Over an existing bots database, for tests that share one with GuestStore. */
+/** Over an existing bots database, for tests that share it across services. */
 export const layerFromDb = Layer.effect(BotsStore, make);

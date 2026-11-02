@@ -12,7 +12,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -20,7 +19,6 @@ import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { BotsStore } from "../BotsStore.ts";
-import { GuestStore } from "../guest/GuestStore.ts";
 import { botCompactionPending, botCompactionStep, latestContextUsage } from "./botCompaction.ts";
 
 export class BotCompactionReactor extends Context.Service<
@@ -34,7 +32,6 @@ const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const store = yield* BotsStore;
-  const guests = yield* GuestStore;
 
   const react = Effect.fnUntraced(function* (threadId: ThreadId, run: OrchestrationV2Run) {
     if (run.status !== "completed") return;
@@ -44,13 +41,10 @@ const make = Effect.gen(function* () {
     ]);
     if (thread.deletedAt !== null || thread.archivedAt !== null) return;
     const providerThreadId = run.providerThreadId ?? thread.activeProviderThreadId;
-    const parsed = parseBotThreadId(threadId);
-    const guestOwned = parsed !== null && Option.isSome(yield* guests.guestOfBot(parsed.botId));
     const step = botCompactionStep(
       run,
       latestContextUsage(providerTurns, providerThreadId),
       botCompactionPending(runs),
-      guestOwned ? "files" : "memory",
     );
     if (step === null) return;
     yield* engine.dispatch({

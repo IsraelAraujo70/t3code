@@ -1,7 +1,6 @@
 /**
  * What the voice probes share: the WebRTC client they run in a headless Chromium, and how a run is
- * scored against the reply. See `voiceBench.ts` (in process) and `guest/guestVoiceProbe.ts` (over
- * the guest API).
+ * scored against the reply. See `voiceBench.ts` (in process).
  */
 import * as Schema from "effect/Schema";
 

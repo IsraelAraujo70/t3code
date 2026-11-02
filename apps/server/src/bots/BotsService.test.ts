@@ -17,7 +17,6 @@ import {
   BotId,
   botThreadId,
   parseBotThreadOwner,
-  GuestId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -42,14 +41,10 @@ import {
   layerFromDb as storeLayerFromDb,
   layerMemory as storeLayerMemory,
 } from "./BotsStore.ts";
-import * as GuestStore from "./guest/GuestStore.ts";
-import { GUEST_ID_ENV, SANDBOX_LAUNCHER_PATH } from "./guest/sandboxInstance.ts";
 
 const SCRATCH = ProjectId.make("scratch-project");
 const CODEX = ProviderInstanceId.make("codex");
 const CLAUDE = ProviderInstanceId.make("claude");
-/** Bia's Docker sandbox: names her and launches through the real launcher. */
-const SANDBOX = ProviderInstanceId.make("claude_bia");
 
 const input: BotCreateInput = {
   name: "Al",
@@ -157,7 +152,6 @@ const makeOrchestration = Effect.gen(function* () {
   const instances = [
     { instanceId: CODEX, driverKind: "codex", enabled: true },
     { instanceId: CLAUDE, driverKind: "claudeAgent", enabled: true },
-    { instanceId: SANDBOX, driverKind: "claudeAgent", enabled: true },
   ] as unknown as ReadonlyArray<ProviderInstance>;
 
   const layer = Layer.mergeAll(
@@ -175,16 +169,7 @@ const makeOrchestration = Effect.gen(function* () {
       getInstance: (id: ProviderInstanceId) =>
         Effect.succeed(instances.find((instance) => instance.instanceId === id)),
     } as unknown as ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]),
-    ServerSettings.layerTest({
-      providerInstances: {
-        [SANDBOX]: {
-          driver: "claudeAgent",
-          enabled: true,
-          environment: [{ name: GUEST_ID_ENV, value: "bia", sensitive: false }],
-          config: { binaryPath: SANDBOX_LAUNCHER_PATH },
-        },
-      },
-    }),
+    ServerSettings.layerTest(),
     NodeServices.layer,
     // The host status reads the env at startup: keep it off the developer's machine config.
     ConfigProvider.layer(
@@ -495,23 +480,6 @@ describe("BotsService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("a guest's bot keeps one conversation", () =>
-    Effect.gen(function* () {
-      const guestBotIds: Array<BotId> = [];
-      const { orchestration, startService } = yield* setup({
-        storeOverrides: () => ({ listGuestBotIds: Effect.sync(() => [...guestBotIds]) }),
-      });
-      const service = yield* startService;
-      const bot = yield* service.createBot(input);
-      guestBotIds.push(bot.id);
-      const launchesBefore = orchestration.launches.length;
-
-      const refused = yield* Effect.flip(service.openThread({ botId: bot.id, title: "Side" }));
-      assert.match(refused.message, /belongs to a guest/);
-      assert.strictEqual(orchestration.launches.length, launchesBefore);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("memories: duplicates fail, updates and deletes apply by id", () =>
     Effect.gen(function* () {
       const { startService } = yield* setup();
@@ -694,7 +662,6 @@ describe("BotsService", () => {
         bots: [],
         aboutMe: "",
         linkedEnvironmentBotIds: [],
-        guestBotIds: [],
       });
       // hostStatus.test.ts covers the values; the directory only has to carry them.
       assert.deepStrictEqual(host?.hostMcp, []);
@@ -723,16 +690,11 @@ describe("BotsService", () => {
 });
 
 describe("BotsService linked environments", () => {
-  it.effect("only the user's switch lets a bot use linked environments, never a guest's bot", () =>
+  it.effect("only the user's switch lets a bot use linked environments", () =>
     Effect.gen(function* () {
       const orchestration = yield* makeOrchestration;
-      const stores = yield* Layer.build(
-        Layer.mergeAll(storeLayerFromDb, GuestStore.layerFromDb).pipe(
-          Layer.provide(BotsDb.layerMemory),
-        ),
-      );
+      const stores = yield* Layer.build(storeLayerFromDb.pipe(Layer.provide(BotsDb.layerMemory)));
       const store = Context.get(stores, BotsStore);
-      const guests = Context.get(stores, GuestStore.GuestStore);
       const service = yield* Layer.build(
         botsServiceLayer.pipe(
           Layer.provide(orchestration.layer),
@@ -752,106 +714,6 @@ describe("BotsService linked environments", () => {
       assert.deepStrictEqual((yield* latest).linkedEnvironmentBotIds, [bot.id]);
       yield* service.setBotLinkedEnvironments({ botId: bot.id, linkedEnvironments: false });
       assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, []);
-
-      const guestBot = yield* service.createBot({ ...input, name: "Bia's" });
-      yield* guests.insertGuest({
-        id: GuestId.make("bia"),
-        name: "Bia",
-        tokenHash: null,
-        tokenCreatedAt: null,
-        createdAt: "2026-10-28T00:00:00.000Z",
-        updatedAt: "2026-10-28T00:00:00.000Z",
-      });
-      yield* guests.assignBot(GuestId.make("bia"), guestBot.id, "2026-10-28T00:00:00.000Z");
-      const refused = yield* Effect.flip(
-        service.setBotLinkedEnvironments({ botId: guestBot.id, linkedEnvironments: true }),
-      );
-      assert.match(refused.message, /belongs to a guest/);
-      assert.deepStrictEqual(yield* store.listLinkedEnvironmentBots, []);
-      assert.deepStrictEqual((yield* latest).guestBotIds, [guestBot.id]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("only the owner's makeRegular takes a guest's bot out of its sandbox", () =>
-    Effect.gen(function* () {
-      const orchestration = yield* makeOrchestration;
-      const stores = yield* Layer.build(
-        Layer.mergeAll(storeLayerFromDb, GuestStore.layerFromDb).pipe(
-          Layer.provide(BotsDb.layerMemory),
-        ),
-      );
-      const store = Context.get(stores, BotsStore);
-      const guests = Context.get(stores, GuestStore.GuestStore);
-      const service = yield* Layer.build(
-        botsServiceLayer.pipe(
-          Layer.provide(orchestration.layer),
-          Layer.provide(Layer.succeedContext(stores)),
-        ),
-      ).pipe(Effect.map((context) => Context.get(context, BotsService)));
-      const latest = Stream.runHead(service.directory).pipe(Effect.map(Option.getOrThrow));
-
-      const sandboxed: ModelSelection = {
-        instanceId: SANDBOX,
-        model: "claude-sonnet-5-5",
-        options: [{ id: "effort", value: "high" }],
-      };
-      const bot = yield* service.createBot({
-        name: "Financeiro",
-        role: "Bills.",
-        model: sandboxed,
-      });
-      yield* service.createMemory({ botId: bot.id, text: "Pays rent on the 5th." }, "user");
-      yield* service.createMemory({ botId: bot.id, text: "Bank is Nubank." }, "bot");
-      yield* guests.insertGuest({
-        id: GuestId.make("bia"),
-        name: "Bia",
-        tokenHash: null,
-        tokenCreatedAt: null,
-        createdAt: "2026-10-28T00:00:00.000Z",
-        updatedAt: "2026-10-28T00:00:00.000Z",
-      });
-      yield* guests.assignBot(GuestId.make("bia"), bot.id, "2026-10-28T00:00:00.000Z");
-      const thread = orchestration.threads.get(botThreadId(bot.id, 1))!;
-      const unchanged = () =>
-        Effect.gen(function* () {
-          assert.deepStrictEqual(yield* store.listGuestBotIds, [bot.id]);
-          assert.deepStrictEqual(Option.getOrThrow(yield* store.getBot(bot.id)).model, sandboxed);
-          assert.deepStrictEqual(thread.modelSelection, sandboxed);
-        });
-
-      // A plain edit cannot move it onto the host, nor can makeRegular target a sandbox.
-      const edited = yield* Effect.flip(
-        service.updateBot({ botId: bot.id, model: { ...sandboxed, instanceId: CLAUDE } }),
-      );
-      assert.match(edited.message, /Make it a regular bot/);
-      const toSandbox = yield* Effect.flip(
-        service.makeRegular({ botId: bot.id, model: sandboxed }),
-      );
-      assert.match(toSandbox.message, /not an enabled provider instance on the host/);
-      // Nothing moves while it works.
-      thread.busy = true;
-      const busy = yield* Effect.flip(service.makeRegular({ botId: bot.id }));
-      assert.match(busy.message, /is working/);
-      thread.busy = false;
-      yield* unchanged();
-
-      // Default: same model and options on the first host instance of the same driver.
-      const regular = yield* service.makeRegular({ botId: bot.id });
-      const onHost = { ...sandboxed, instanceId: CLAUDE };
-      assert.deepStrictEqual(regular.model, onHost);
-      assert.deepStrictEqual(yield* store.listGuestBotIds, []);
-      assert.deepStrictEqual(Option.getOrThrow(yield* store.getBot(bot.id)).model, onHost);
-      assert.strictEqual((yield* store.listMemories(bot.id)).length, 2);
-      assert.deepStrictEqual(thread.modelSelection, onHost);
-      assert.deepStrictEqual((yield* latest).guestBotIds, []);
-      const switches = () =>
-        orchestration.commands.filter((command) => command.type === "thread.model-selection.set");
-      assert.strictEqual(switches().length, 1);
-
-      // A retry converges without moving the conversation again; edits work like any bot's now.
-      assert.deepStrictEqual((yield* service.makeRegular({ botId: bot.id })).model, onHost);
-      assert.strictEqual(switches().length, 1);
-      yield* service.updateBot({ botId: bot.id, role: "Bills and taxes." });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -86,8 +86,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-// Fork (friend): guest bots stay on their sandboxed model.
-import * as GuestModelPin from "../bots/guest/GuestModelPin.ts";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -1008,8 +1006,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-  // Fork (friend): optional, so runtimes and tests without bots keep the upstream behaviour.
-  const guestModelPin = yield* Effect.serviceOption(GuestModelPin.GuestModelPin);
 
   /** The driver when this provider runs `/goal` natively, else undefined. */
   const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
@@ -13469,11 +13465,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   }, withCommandMetrics);
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatchWithReceipt = Effect.fnUntraced(function* (received: OrchestrationV2ServerCommand) {
-    // Fork (friend): a guest's bot runs on its own sandboxed model, whoever sends to it.
-    const command = Option.isNone(guestModelPin)
-      ? received
-      : yield* guestModelPin.value.pin(received);
+  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),

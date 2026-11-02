@@ -1204,13 +1204,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
-    id: "bots-guests",
-    title: "Guest bots",
-    to: "/settings/bots",
-    searchTerms: ["friend guest sandbox"],
-    environmentOnly: true,
-  },
-  {
     id: "kanban",
     title: "Kanban & Linear",
     to: "/settings/kanban",

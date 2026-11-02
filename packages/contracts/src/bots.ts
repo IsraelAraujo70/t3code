@@ -183,8 +183,6 @@ export const BotDirectory = Schema.Struct({
   linkedEnvironmentBotIds: Schema.Array(BotId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
-  /** Bots that belong to a guest: never allowed linked environments. */
-  guestBotIds: Schema.Array(BotId).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   /** Absent from servers built before it. */
   host: Schema.optionalKey(BotsHostStatus),
 });
@@ -302,22 +300,12 @@ export const BotHistory = Schema.Struct({
 });
 export type BotHistory = typeof BotHistory.Type;
 
-/** Lets one bot use linked environments, or stops it. A guest's bot cannot be let. */
+/** Lets one bot use linked environments, or stops it. */
 export const BotLinkedEnvironmentsInput = Schema.Struct({
   botId: BotId,
   linkedEnvironments: Schema.Boolean,
 });
 export type BotLinkedEnvironmentsInput = typeof BotLinkedEnvironmentsInput.Type;
-
-/**
- * Takes a bot away from its guest and runs it on a host provider instance. Without `model` it keeps
- * its model and options on the first enabled host instance of the same driver.
- */
-export const BotMakeRegularInput = Schema.Struct({
-  botId: BotId,
-  model: Schema.optionalKey(ModelSelection),
-});
-export type BotMakeRegularInput = typeof BotMakeRegularInput.Type;
 
 export const BotSectionCreateInput = Schema.Struct({ name: BotSectionName });
 export type BotSectionCreateInput = typeof BotSectionCreateInput.Type;
@@ -375,7 +363,6 @@ export const BOTS_WS_METHODS = {
   botHistory: "bots.bot.history",
   botRestartSession: "bots.bot.restartSession",
   botLinkedEnvironments: "bots.bot.linkedEnvironments",
-  botMakeRegular: "bots.bot.makeRegular",
   threadOpen: "bots.thread.open",
   threadList: "bots.thread.list",
   memoryCreate: "bots.memory.create",
@@ -464,11 +451,6 @@ export const BotThreadListRpc = Rpc.make(BOTS_WS_METHODS.threadList, {
 export const BotLinkedEnvironmentsRpc = Rpc.make(BOTS_WS_METHODS.botLinkedEnvironments, {
   payload: BotLinkedEnvironmentsInput,
   success: BotLinkedEnvironmentsInput,
-  error: BotsRpcError,
-});
-export const BotMakeRegularRpc = Rpc.make(BOTS_WS_METHODS.botMakeRegular, {
-  payload: BotMakeRegularInput,
-  success: Bot,
   error: BotsRpcError,
 });
 export const BotMemoryCreateRpc = Rpc.make(BOTS_WS_METHODS.memoryCreate, {
@@ -694,7 +676,6 @@ export const BOTS_RPCS = [
   BotHistoryRpc,
   BotRestartSessionRpc,
   BotLinkedEnvironmentsRpc,
-  BotMakeRegularRpc,
   BotThreadOpenRpc,
   BotThreadListRpc,
   BotMemoryCreateRpc,
@@ -725,8 +706,6 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   [BOTS_WS_METHODS.botRestartSession]: AuthOrchestrationOperateScope,
   // Lets a bot act on the user's other machines: the user's session only, never a tool.
   [BOTS_WS_METHODS.botLinkedEnvironments]: AuthOrchestrationOperateScope,
-  // Moves a guest's bot out of its sandbox onto the host: the user's session only, never a tool.
-  [BOTS_WS_METHODS.botMakeRegular]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.threadOpen]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,

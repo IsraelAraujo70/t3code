@@ -13,7 +13,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
@@ -21,10 +20,7 @@ import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type * as PeerForwarding from "../peer/PeerForwarding.ts";
 import type * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import { BotsStore } from "./BotsStore.ts";
-import * as GuestStore from "./guest/GuestStore.ts";
-import { withholdsGuestMcp } from "./guest/sandboxInstance.ts";
 
 type Scope = McpInvocationContext.McpInvocationScope;
 
@@ -47,7 +43,6 @@ export interface ThreadOrigins {
     },
     SqlError.SqlError
   >;
-  readonly isGuestBot: (botId: BotId) => Effect.Effect<boolean, BotsError>;
 }
 
 // Bounds the walk; an origin tree larger than this refuses rather than loads without end.
@@ -55,7 +50,7 @@ const MAX_ORIGIN_THREADS = 64;
 
 /**
  * Whether the thread and everything it answers to may use links. A bot conversation may when its
- * bot is listed and belongs to no guest. Any other thread may when its parent, its root and every
+ * bot is listed. Any other thread may when its parent, its root and every
  * thread that messaged it may; a scheduled task made by an agent has no origin to check, so it
  * refuses.
  */
@@ -74,7 +69,7 @@ export const originAllows = Effect.fn("BotLinkAccess.originAllows")(function* (
     const bot = parseBotThreadOwner(next);
     if (bot !== null) {
       allowed ??= yield* origins.allowedBots;
-      if (!allowed.includes(bot.botId) || (yield* origins.isGuestBot(bot.botId))) return false;
+      if (!allowed.includes(bot.botId)) return false;
       continue;
     }
     const lineage = yield* origins.lineage(next);
@@ -150,8 +145,6 @@ const make = Effect.gen(function* () {
   const store = yield* BotsStore;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
-  const guests = yield* GuestStore.GuestStore;
-  const settings = yield* ServerSettings.ServerSettingsService;
 
   const origins: ThreadOrigins = {
     allowedBots: store.listLinkedEnvironmentBots,
@@ -179,16 +172,12 @@ const make = Effect.gen(function* () {
           agentSchedule: rows.some((row) => row.agentSchedule === 1),
         })),
       ),
-    isGuestBot: (botId) => guests.guestOfBot(botId).pipe(Effect.map(Option.isSome)),
   };
 
   const allows = Effect.fn("BotLinkAccess.allows")(
     function* (scope: Scope) {
       if (scope.client?.linked === true) return false;
       if (scope.thread === undefined) return scope.client !== undefined;
-      if (yield* withholdsGuestMcp(Option.some(settings), scope.thread.providerInstanceId)) {
-        return false;
-      }
       return yield* originAllows(origins, scope.thread.threadId);
     },
     Effect.catchCause((cause) =>

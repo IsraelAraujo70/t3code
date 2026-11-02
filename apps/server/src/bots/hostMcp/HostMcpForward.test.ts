@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { BotId } from "@t3tools/contracts";
+import { BotId, botSideThreadId, botThreadId, ThreadId } from "@t3tools/contracts";
 import type { AppTools } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
@@ -208,8 +208,8 @@ const withForward = <A, E>(
 const run = (servers: ReadonlyArray<AppTools>, name: string, args: unknown) =>
   Effect.promise(() => servers[0]!.tools.find((tool) => tool.name === name)!.run(args));
 
-/** What the sandboxed CLI sees of the tools. */
-const sandboxView = (servers: ReadonlyArray<AppTools>) =>
+/** What the agent's CLI sees of the tools. */
+const agentView = (servers: ReadonlyArray<AppTools>) =>
   JSON.stringify(
     servers.map((server) =>
       server.tools.map(({ name, description, inputSchema }) => ({
@@ -242,6 +242,12 @@ describe("HostMcpForward", () => {
             isError: true,
           });
           assert.isTrue((yield* run(servers, "balance", "nubank")).isError);
+          // Side threads act as their bot.
+          const sideThread = yield* service.forThread(botSideThreadId(financeBot, "a1b2c3d4"));
+          assert.deepStrictEqual(
+            sideThread?.map((server) => server.server),
+            ["pluggy"],
+          );
         }),
       );
       assert.isAbove(fake.authorizations.length, 0);
@@ -257,6 +263,8 @@ describe("HostMcpForward", () => {
       yield* withForward({ url: fake.url, token: TOKEN }, ({ service }) =>
         Effect.gen(function* () {
           assert.deepStrictEqual(yield* service.forBot(assistantBot), []);
+          assert.isUndefined(yield* service.forThread(botThreadId(assistantBot, 1)));
+          assert.isUndefined(yield* service.forThread(ThreadId.make("thread-1")));
         }),
       );
       yield* withForward({ url: fake.url, token: TOKEN, raw: null }, ({ service }) =>
@@ -334,7 +342,7 @@ describe("HostMcpForward", () => {
     }),
   );
 
-  it.live("keeps a reflected token out of everything the sandbox and the log get", () =>
+  it.live("keeps a reflected token out of everything the agent and the log get", () =>
     Effect.gen(function* () {
       const echo = (authorization: string) => `you sent ${authorization}`;
       const mode = (args: unknown) => (args as { mode?: string } | undefined)?.mode;
@@ -378,7 +386,7 @@ describe("HostMcpForward", () => {
           ];
           assert.isTrue(results[1]!.isError);
           assert.isTrue(results[3]!.isError);
-          const seen = sandboxView(servers) + JSON.stringify(results);
+          const seen = agentView(servers) + JSON.stringify(results);
           assert.include(seen, "[redacted]");
           assert.notInclude(seen, TOKEN);
           assert.isFalse(logs.some((log) => log.includes(TOKEN)));
@@ -520,7 +528,7 @@ describe("HostMcpForward", () => {
     Effect.gen(function* () {
       const fake = yield* fakeServer();
       const invalid = [
-        [{ name: "t3-guest", url: fake.url, tokenFile: "/x" }],
+        [{ name: "t3-code", url: fake.url, tokenFile: "/x" }],
         [{ name: "Pluggy", url: fake.url, tokenFile: "/x" }],
         [{ name: "pluggy", url: "http://10.0.0.5:3796/mcp", tokenFile: "/x" }],
         [{ name: "pluggy", url: "http://localhost:3796/mcp", tokenFile: "/x" }],

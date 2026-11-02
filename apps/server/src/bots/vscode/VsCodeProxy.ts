@@ -2,7 +2,7 @@
 /**
  * VS Code's HTTP and WebSocket traffic for sessions holding terminal:operate. An iframe cannot send
  * a bearer token, so a media `wsTicket` is traded once for a grant cookie scoped to this path that
- * dies with its session. The guest listener has no such route. See FORK.md, "VS Code".
+ * dies with its session. See FORK.md, "VS Code".
  */
 import * as NodeCrypto from "node:crypto";
 

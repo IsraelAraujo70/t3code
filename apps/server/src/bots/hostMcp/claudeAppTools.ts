@@ -1,7 +1,7 @@
 /**
  * AppTools as a Claude Agent SDK in-process MCP server. The SDK relays the CLI's MCP traffic for
- * `type: "sdk"` servers over the CLI's own stdin/stdout, so a CLI in a guest's Docker sandbox
- * calls these tools on the host without any network route or credential.
+ * `type: "sdk"` servers over the CLI's own stdin/stdout, so the CLI calls these tools on the host
+ * without being given a network route or credential.
  */
 import type {
   McpSdkServerConfigWithInstance,

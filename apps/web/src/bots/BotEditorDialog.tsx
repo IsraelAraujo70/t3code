@@ -65,7 +65,7 @@ const ROTATION_LABELS: Record<BotRotation, string> = {
  * Creates a bot (`bot` null) or edits one. `bot` is the live directory entry, so a bot deleted
  * elsewhere while the dialog is open shows as missing instead of saving into nothing. The linked
  * environments switch saves through its own owner-only command, never through `bots.bot.update`,
- * which bot tools also reach; a guest's bot never gets it.
+ * which bot tools also reach.
  */
 export function BotEditorDialog({
   environmentId,
@@ -73,7 +73,6 @@ export function BotEditorDialog({
   bot,
   editing,
   linkedEnvironments,
-  guest,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
@@ -82,7 +81,6 @@ export function BotEditorDialog({
   readonly editing: boolean;
   /** Whether the user lets this bot use linked environments today. */
   readonly linkedEnvironments: boolean;
-  readonly guest: boolean;
   readonly onClose: () => void;
 }) {
   const settings = useEnvironmentSettings(environmentId);
@@ -149,11 +147,7 @@ export function BotEditorDialog({
       return;
     }
     // The bot is saved, so a failed switch is reported apart instead of inviting a second save.
-    if (
-      !guest &&
-      draft.linkedEnvironments !== null &&
-      draft.linkedEnvironments !== linkedEnvironments
-    )
+    if (draft.linkedEnvironments !== null && draft.linkedEnvironments !== linkedEnvironments)
       reportCommandResult(
         "Could not change the bot's linked environments",
         await setLinked({
@@ -288,25 +282,23 @@ export function BotEditorDialog({
                 </p>
               </div>
             </div>
-            {guest ? null : (
-              <div className="flex items-center gap-3">
-                <Switch
-                  id="bot-linked-environments"
-                  checked={draft.linkedEnvironments ?? linkedEnvironments}
-                  disabled={!canLink}
-                  onCheckedChange={(checked) =>
-                    setDraft((current) => ({ ...current, linkedEnvironments: checked }))
-                  }
-                />
-                <div className="space-y-0.5">
-                  <Label htmlFor="bot-linked-environments">May work on linked environments</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Lets this bot, and the threads it starts, delegates or messages, work on your
-                    other machines (Settings → Environments), with each link's access.
-                  </p>
-                </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                id="bot-linked-environments"
+                checked={draft.linkedEnvironments ?? linkedEnvironments}
+                disabled={!canLink}
+                onCheckedChange={(checked) =>
+                  setDraft((current) => ({ ...current, linkedEnvironments: checked }))
+                }
+              />
+              <div className="space-y-0.5">
+                <Label htmlFor="bot-linked-environments">May work on linked environments</Label>
+                <p className="text-xs text-muted-foreground">
+                  Lets this bot, and the threads it starts, delegates or messages, work on your
+                  other machines (Settings → Environments), with each link's access.
+                </p>
               </div>
-            )}
+            </div>
             {error ? (
               <p className="text-sm text-destructive" role="alert">
                 {error}

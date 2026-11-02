@@ -15,7 +15,6 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   Trash2Icon,
-  UserRoundCheckIcon,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -38,18 +37,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../components/ui/empty";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
 import { Textarea } from "../components/ui/textarea";
-import { deriveProviderInstanceEntries } from "../providerInstances";
 import { BotAvatar } from "./BotAvatar";
 import { BotEditorDialog } from "./BotEditorDialog";
 import { BotMemories } from "./BotMemories";
@@ -117,9 +106,7 @@ function BotsEnvironmentSettings({
   const [editor, setEditor] = useState<{ readonly botId: BotId | null } | null>(null);
   const editedBot =
     editor?.botId != null ? (directory?.bots.find((bot) => bot.id === editor.botId) ?? null) : null;
-  const guestBotIds = directory?.guestBotIds ?? [];
-  const ownBots = directory?.bots.filter((bot) => !guestBotIds.includes(bot.id)) ?? [];
-  const guestBots = directory?.bots.filter((bot) => guestBotIds.includes(bot.id)) ?? [];
+  const bots = directory?.bots ?? [];
   const linkedIds = directory?.linkedEnvironmentBotIds ?? [];
   const row = (bot: BotDirectoryEntry) => (
     <BotRow
@@ -128,7 +115,6 @@ function BotsEnvironmentSettings({
       connected={connected}
       bot={bot}
       linkedEnvironments={linkedIds.includes(bot.id)}
-      guest={guestBotIds.includes(bot.id)}
       onEdit={() => setEditor({ botId: bot.id })}
     />
   );
@@ -161,7 +147,7 @@ function BotsEnvironmentSettings({
           <SettingsRow title="Could not load bots" description={error} role="alert" />
         ) : directory === null ? (
           <SettingsRow title="Loading bots…" role="status" />
-        ) : ownBots.length === 0 ? (
+        ) : bots.length === 0 ? (
           <SettingsRow
             title="No bots yet"
             description="A bot keeps one conversation, its own memories and a standing role. Give it a name, a role and a model."
@@ -173,7 +159,7 @@ function BotsEnvironmentSettings({
             }
           />
         ) : (
-          ownBots.map(row)
+          bots.map(row)
         )}
       </SettingsSection>
       {connected && directory !== null ? (
@@ -188,15 +174,6 @@ function BotsEnvironmentSettings({
         connected={connected}
         host={directory?.host}
       />
-      {guestBots.length > 0 ? (
-        <SettingsSection {...searchableSetting("bots-guests")}>
-          <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
-            Each runs in a sandbox for a guest, who talks to it from the guest app. Guests are
-            created on the bots host with the guest CLI.
-          </p>
-          {guestBots.map(row)}
-        </SettingsSection>
-      ) : null}
       {directory?.host ? <HostStatusSection status={directory.host} bots={directory.bots} /> : null}
       {editor ? (
         <BotEditorDialog
@@ -206,7 +183,6 @@ function BotsEnvironmentSettings({
           bot={editedBot}
           editing={editor.botId !== null}
           linkedEnvironments={editor.botId !== null && linkedIds.includes(editor.botId)}
-          guest={editor.botId !== null && guestBotIds.includes(editor.botId)}
           onClose={() => setEditor(null)}
         />
       ) : null}
@@ -214,20 +190,18 @@ function BotsEnvironmentSettings({
   );
 }
 
-/** One bot with its memories and actions; guest bots use it too, so actions added here reach both. */
+/** One bot with its memories and actions. */
 function BotRow({
   environmentId,
   connected,
   bot,
   linkedEnvironments,
-  guest,
   onEdit,
 }: {
   readonly environmentId: EnvironmentId;
   readonly connected: boolean;
   readonly bot: BotDirectoryEntry;
   readonly linkedEnvironments: boolean;
-  readonly guest: boolean;
   readonly onEdit: () => void;
 }) {
   const providers =
@@ -241,19 +215,6 @@ function BotRow({
     label: "bot reset conversation",
   });
   const remove = useAtomCommand(botsEnvironment.deleteBot, { label: "bot delete" });
-  const canMakeRegular = useAtomValue(botsEnvironment.makeRegular.permissionAtom(environmentId));
-  const makeRegular = useAtomCommand(botsEnvironment.makeRegular, { label: "bot make regular" });
-  // Same driver keeps the model and its options valid; the server refuses sandbox instances.
-  const instances = guest ? deriveProviderInstanceEntries(providers) : [];
-  const currentDriver = instances.find(
-    (entry) => entry.instanceId === bot.model.instanceId,
-  )?.driverKind;
-  const hostTargets = instances.filter(
-    (entry) =>
-      entry.enabled &&
-      entry.driverKind === currentDriver &&
-      entry.instanceId !== bot.model.instanceId,
-  );
   const [busy, setBusy] = useState(false);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
   const enabledMemories = bot.memories.filter((memory) => memory.enabled).length;
@@ -276,21 +237,6 @@ function BotRow({
       action === "reset" ? "Could not reset conversation" : "Could not delete bot",
       result,
     );
-  };
-
-  const moveToHost = async (target: (typeof hostTargets)[number]) => {
-    if (busy) return;
-    const confirmed = await confirmDestructive(
-      `Make ${bot.name} your own bot?\nIt leaves its guest, who can no longer reach it, and runs on ${target.displayName} on this machine with full access. The conversation, role and memories stay.`,
-    );
-    if (!confirmed) return;
-    setBusy(true);
-    const result = await makeRegular({
-      environmentId,
-      input: { botId: bot.id, model: { ...bot.model, instanceId: target.instanceId } },
-    });
-    setBusy(false);
-    reportCommandResult(`Could not make ${bot.name} a regular bot`, result);
   };
 
   return (
@@ -352,21 +298,6 @@ function BotRow({
                 <RotateCcwIcon />
                 Reset conversation
               </MenuItem>
-              {guest ? (
-                <MenuSub>
-                  <MenuSubTrigger disabled={!canMakeRegular || hostTargets.length === 0}>
-                    <UserRoundCheckIcon />
-                    Make it a regular bot
-                  </MenuSubTrigger>
-                  <MenuSubPopup>
-                    {hostTargets.map((target) => (
-                      <MenuItem key={target.instanceId} onClick={() => void moveToHost(target)}>
-                        {target.displayName}
-                      </MenuItem>
-                    ))}
-                  </MenuSubPopup>
-                </MenuSub>
-              ) : null}
               <MenuSeparator />
               <MenuItem disabled={!canDelete} onClick={() => void act("delete")}>
                 <Trash2Icon />

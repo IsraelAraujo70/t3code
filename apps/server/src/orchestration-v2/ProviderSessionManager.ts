@@ -44,8 +44,6 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
-// Fork (friend): guest sandboxes get no T3 MCP credential.
-import { withholdsGuestMcp } from "../bots/guest/sandboxInstance.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -445,20 +443,7 @@ export const layerWithOptions = (
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
-      // Fork (friend): a guest's sandboxed instance never receives a T3 MCP credential.
-      const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-        withholdsGuestMcp(serverSettings, providerInstanceId).pipe(
-          Effect.flatMap((withheld) =>
-            withheld
-              ? mcpSessions
-                  .clear(threadId)
-                  .pipe(
-                    Effect.as<PreparedMcpCredential>({ mcpCredentialId: undefined, issued: false }),
-                  )
-              : prepareHostMcpSession(threadId, providerInstanceId),
-          ),
-        );
-      const prepareHostMcpSession = (
+      const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
       ): Effect.Effect<PreparedMcpCredential> =>

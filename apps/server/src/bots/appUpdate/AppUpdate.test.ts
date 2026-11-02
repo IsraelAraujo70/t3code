@@ -181,13 +181,11 @@ it.layer(NodeServices.layer)("app update routes", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  // A guest's token is not an environment session, so the main listener sees no credential; the
-  // guest listener's own router has no route here at all.
   it.effect.each(
     apps.flatMap((app) => [
       {
         app,
-        name: "no credential (a guest's token)",
+        name: "no credential",
         scopes: [],
         error: new EnvironmentAuth.ServerAuthMissingCredentialError({}),
         status: 401,
