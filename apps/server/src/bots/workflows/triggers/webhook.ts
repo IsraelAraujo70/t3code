@@ -1,4 +1,3 @@
-import { webhookPayload } from "./webhookPayload.ts";
 /**
  * Webhook triggers (design §5): each one is a scheduled task `wf-hook:<workflowId>:<triggerId>`
  * that the engine keeps in step with the definitions. The scheduled-task service sits below the
@@ -43,6 +42,7 @@ import {
 } from "./hook.ts";
 import { occurrenceKey } from "./occurrence.ts";
 import { makeTriggerTargets, type TriggerTarget } from "./targets.ts";
+import { webhookPayload } from "./webhookPayload.ts";
 
 type HookFire = WorkflowTriggerHook["Service"]["fire"];
 
