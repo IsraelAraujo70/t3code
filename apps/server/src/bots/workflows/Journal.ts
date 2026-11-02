@@ -186,7 +186,7 @@ const make = Effect.gen(function* () {
         tokens_cache_read: s.cost.cacheRead,
         tokens_reserved: s.reservedTokens,
         usd_estimate: s.cost.usdEstimate,
-        active_ms: 0,
+        active_ms: s.activeMs ?? 0,
         open_gates: s.openGates,
         pending_intents: row.pendingIntents,
         last_seq: row.lastSeq,

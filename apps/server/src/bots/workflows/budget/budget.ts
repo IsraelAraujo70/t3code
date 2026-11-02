@@ -152,6 +152,19 @@ export const activeMs = (state: RunState, now: number, from?: number): number =>
   return Math.max(0, now - start - inactive);
 };
 
+/** Whether the started run's active clock is counting at the supplied instant. */
+export const activeClockRunning = (state: RunState, now: number): boolean => {
+  if (!state.started || state.ended || Date.parse(state.started.at) > now) return false;
+  if (
+    state.pauses.some((p) => p.resumedAt === null && Date.parse(p.at) <= now) ||
+    [...state.gates.values()].some(
+      (g) => g.openedAt !== null && !g.decision && Date.parse(g.openedAt) <= now,
+    )
+  )
+    return false;
+  return true;
+};
+
 /** The epoch ms at which active time from `from` reaches `limitMs`; null while time is not counting. */
 export const activeDeadline = (
   state: RunState,
@@ -159,13 +172,7 @@ export const activeDeadline = (
   limitMs: number,
   from?: number,
 ): number | null => {
-  if (
-    state.pauses.some((p) => p.resumedAt === null && Date.parse(p.at) <= now) ||
-    [...state.gates.values()].some(
-      (g) => g.openedAt !== null && !g.decision && Date.parse(g.openedAt) <= now,
-    )
-  )
-    return null;
+  if (!activeClockRunning(state, now)) return null;
   return now + Math.max(0, limitMs - activeMs(state, now, from));
 };
 

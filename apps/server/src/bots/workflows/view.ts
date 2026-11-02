@@ -1,4 +1,3 @@
-import { activeMs } from "./budget/budget.ts";
 /**
  * What clients read about a run, derived from the folded journal and never stored (§1.4). Pure:
  * the engine reads the facts, folds them and calls these.
@@ -10,6 +9,7 @@ import type {
   WorkflowStepAttemptView,
   WorkflowStepDetail,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import type { CompiledWorkflow } from "@t3tools/shared/workflows";
 
 import {
@@ -22,7 +22,7 @@ import {
   type WorkflowStepCost,
 } from "@t3tools/contracts";
 import { runIdFor } from "./ids.ts";
-// wf-engine slice 7.
+import { activeClockRunning, activeMs } from "./budget/budget.ts";
 import { blockViews } from "./blocks/registry.ts";
 import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import type { StoredFact } from "./facts.ts";
@@ -51,12 +51,10 @@ const sumCosts = (
 };
 
 /** The summary of a run that started (its stream has RunStarted). */
-export const runSummary = (
-  state: RunState,
-  now = Date.parse(state.ended?.at ?? state.started!.at),
-): WorkflowRunSummary => {
+export const runSummary = (state: RunState, now?: number): WorkflowRunSummary => {
   const started = state.started;
   if (!started) throw new Error("RunStarted required");
+  now ??= Date.parse(state.ended?.at ?? started.at);
   const total = sumCosts(
     [...state.attempts.values()].flat().flatMap((a) => [a.settled?.cost, a.nudge?.cost]),
   ) ?? {
@@ -105,7 +103,7 @@ export const runSummary = (
           entry.result?._tag === "PullRequestOpened" ? [entry.result.url] : [],
         )[0] ?? null,
     activeMs: activeMs(state, state.ended ? Date.parse(state.ended.at) : now),
-    activeSince: null,
+    activeSince: activeClockRunning(state, now) ? DateTime.formatIso(DateTime.makeUnsafe(now)) : null,
   };
 };
 
@@ -288,7 +286,7 @@ export const runDelta = (
   compiled: CompiledWorkflow,
   state: RunState,
   afterSeq: number,
-  now = Date.parse(state.ended?.at ?? state.started!.at),
+  now?: number,
 ): WorkflowRunDelta => {
   return {
     runId: WorkflowRunId.make(state.runId),
@@ -296,7 +294,6 @@ export const runDelta = (
     summary: runSummary(state, now),
     steps: stepViews(compiled, state).filter((v) => changedAfter(state, v, afterSeq)),
     gates: gateViews(state).filter((g) => (state.gates.get(g.key)?.lastSeq ?? 0) > afterSeq),
-    // wf-engine slice 7.
     blocks: blockViews(compiled, state, afterSeq),
   };
 };

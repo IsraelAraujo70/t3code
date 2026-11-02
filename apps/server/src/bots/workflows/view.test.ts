@@ -390,5 +390,11 @@ it("counts live active time from the caller clock", () => {
     }),
     runStarted({ hash: `sha256:${"0".repeat(64)}` }),
   );
-  expect(runSummary(run.state(), T0 + 1234).activeMs).toBe(1234);
+  const state = run.state();
+  expect(runSummary(state, T0 + 1234)).toMatchObject({
+    activeMs: 1234,
+    activeSince: "2026-11-02T10:00:01.234Z",
+  });
+  const paused = { ...state, pauses: [{ at: "2026-11-02T10:00:00.000Z", resumedAt: null, reason: "user" }] };
+  expect(runSummary(paused, T0 + 1234).activeSince).toBeNull();
 });
