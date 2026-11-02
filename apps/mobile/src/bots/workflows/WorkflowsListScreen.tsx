@@ -67,7 +67,10 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
                   · {workflow.lastRun?.openGates ?? 0} open gates
                 </Text>
                 {workflow.triggers.map((trigger) => (
-                  <Text key={trigger.id}>{trigger.label}</Text>
+                  <Text key={trigger.id}>
+                    {trigger.label}
+                    {trigger.enabled === false ? " (off)" : ""}
+                  </Text>
                 ))}
                 {workflow.lastRun && (
                   <View className="gap-1">

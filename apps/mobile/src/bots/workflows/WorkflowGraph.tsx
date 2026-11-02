@@ -8,10 +8,11 @@ import {
   canvasStatusMark,
   canvasShapePath,
   canvasSeed,
+  canvasTriggerType,
 } from "@t3tools/client-runtime/workflows";
 import { useMemo } from "react";
 import { useWorkflowColors } from "./WorkflowStatus";
-import { ScrollView, useWindowDimensions } from "react-native";
+import { View, Text as NativeText, ScrollView, useWindowDimensions } from "react-native";
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect, Text } from "react-native-svg";
 import rough from "roughjs/bin/rough";
 import { useResolveClassNames } from "uniwind";
@@ -23,8 +24,10 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 export function WorkflowGraph({
   model,
   onPressNode,
+  firedTriggerId,
 }: {
   model: CanvasModel;
+  firedTriggerId?: string;
   onPressNode?: (id: string) => void;
 }) {
   const { width } = useWindowDimensions();
@@ -73,134 +76,161 @@ export function WorkflowGraph({
         />
       ));
   return (
-    <ScrollView horizontal>
-      <ScrollView style={{ maxHeight: 500 }}>
-        <Svg
-          width={geometry.w * geometry.scale}
-          height={geometry.h * geometry.scale}
-          viewBox={`0 0 ${geometry.w} ${geometry.h}`}
-        >
-          {model.edges.map((edge) => {
-            const from = geometry.nodes.find((node) => node.id === edge.from);
-            const to = geometry.nodes.find((node) => node.id === edge.to);
-            if (!from || !to) return null;
-            const edgeLayout = edgeGeometry(from, to);
-            return (
-              <G key={edge.id}>
-                <G opacity={0.65}>
-                  {paths(
-                    generator.path(edgeLayout.path, {
-                      seed: canvasSeed(edge.id),
-                      stroke: foreground,
-                    }),
+    <View className="gap-3">
+      <View className="flex-row flex-wrap gap-2">
+        {model.triggers.map((trigger) => {
+          const hue =
+            CANVAS_HUES[CANVAS_NODE_STYLES[canvasTriggerType(trigger.kind)].hue][
+              dark ? "dark" : "light"
+            ];
+          return (
+            <View
+              key={trigger.id}
+              style={{
+                borderColor: hue.stroke,
+                borderWidth: firedTriggerId === trigger.id ? 3 : 1,
+                backgroundColor: hue.fill,
+                borderRadius: 12,
+                padding: 8,
+              }}
+            >
+              <NativeText style={{ color: hue.stroke }}>
+                {trigger.label}
+                {firedTriggerId === trigger.id ? " · Fired" : ""}
+              </NativeText>
+            </View>
+          );
+        })}
+      </View>
+      <ScrollView horizontal>
+        <ScrollView style={{ maxHeight: 500 }}>
+          <Svg
+            width={geometry.w * geometry.scale}
+            height={geometry.h * geometry.scale}
+            viewBox={`0 0 ${geometry.w} ${geometry.h}`}
+          >
+            {model.edges.map((edge) => {
+              const from = geometry.nodes.find((node) => node.id === edge.from);
+              const to = geometry.nodes.find((node) => node.id === edge.to);
+              if (!from || !to) return null;
+              const edgeLayout = edgeGeometry(from, to);
+              return (
+                <G key={edge.id}>
+                  <G opacity={0.65}>
+                    {paths(
+                      generator.path(edgeLayout.path, {
+                        seed: canvasSeed(edge.id),
+                        stroke: foreground,
+                      }),
+                    )}
+                    {paths(
+                      generator.linearPath(
+                        [
+                          [to.x - 11, to.y + to.h / 2 - 6],
+                          [to.x, to.y + to.h / 2],
+                          [to.x - 11, to.y + to.h / 2 + 6],
+                        ],
+                        { seed: canvasSeed(edge.id), stroke: foreground },
+                      ),
+                    )}
+                  </G>
+                  {edge.port && (
+                    <Rect
+                      x={edgeLayout.labelX - edgePillSize(edge.port).width / 2}
+                      y={edgeLayout.labelY - 13}
+                      {...edgePillSize(edge.port)}
+                      rx={9}
+                      fill={background}
+                      stroke={foreground}
+                      strokeWidth={0.5}
+                    />
                   )}
-                  {paths(
-                    generator.linearPath(
-                      [
-                        [to.x - 11, to.y + to.h / 2 - 6],
-                        [to.x, to.y + to.h / 2],
-                        [to.x - 11, to.y + to.h / 2 + 6],
-                      ],
-                      { seed: canvasSeed(edge.id), stroke: foreground },
-                    ),
-                  )}
+                  <Text
+                    textAnchor="middle"
+                    fontSize={11}
+                    x={edgeLayout.labelX}
+                    y={edgeLayout.labelY}
+                    fill={foreground}
+                  >
+                    {edge.port ?? ""}
+                  </Text>
                 </G>
-                {edge.port && (
-                  <Rect
-                    x={edgeLayout.labelX - edgePillSize(edge.port).width / 2}
-                    y={edgeLayout.labelY - 13}
-                    {...edgePillSize(edge.port)}
-                    rx={9}
-                    fill={background}
-                    stroke={foreground}
-                    strokeWidth={0.5}
-                  />
-                )}
-                <Text
-                  textAnchor="middle"
-                  fontSize={11}
-                  x={edgeLayout.labelX}
-                  y={edgeLayout.labelY}
-                  fill={foreground}
+              );
+            })}
+            {geometry.nodes.map((node) => {
+              const style = CANVAS_NODE_STYLES[node.kind];
+              const mark = node.status ? canvasStatusMark(node.status) : undefined;
+              const tone = mark ? colors[CANVAS_STATUS_MARKS[mark].tone] : foreground;
+              return (
+                <G
+                  key={node.id}
+                  transform={`translate(${node.x} ${node.y})`}
+                  opacity={mark === "dim" ? 0.5 : 1}
+                  onPress={() => onPressNode?.(node.id)}
+                  accessibilityLabel={`${node.label}, ${style.label}${mark ? `, ${CANVAS_STATUS_MARKS[mark].label}` : ""}`}
                 >
-                  {edge.port ?? ""}
-                </Text>
-              </G>
-            );
-          })}
-          {geometry.nodes.map((node) => {
-            const style = CANVAS_NODE_STYLES[node.kind];
-            const mark = node.status ? canvasStatusMark(node.status) : undefined;
-            const tone = mark ? colors[CANVAS_STATUS_MARKS[mark].tone] : foreground;
-            return (
-              <G
-                key={node.id}
-                transform={`translate(${node.x} ${node.y})`}
-                opacity={mark === "dim" ? 0.5 : 1}
-                onPress={() => onPressNode?.(node.id)}
-                accessibilityLabel={`${node.label}, ${style.label}${mark ? `, ${CANVAS_STATUS_MARKS[mark].label}` : ""}`}
-              >
-                {mark && mark !== "dim" && (
-                  <Path
-                    d={canvasShapePath(style.shape, node.w + 12, node.h + 12)}
-                    transform="translate(-6 -6)"
-                    stroke={tone}
-                    strokeWidth={mark === "ok" ? 2 : 3}
-                    fill="none"
-                  />
-                )}
-                {drawings.get(node.id)?.map((path) => (
-                  <Path
-                    key={path.d}
-                    d={path.d}
-                    stroke={path.stroke}
-                    strokeWidth={path.strokeWidth}
-                    // roughjs `toPaths` drops `strokeLineDash`, so the frame dash is applied here.
-                    strokeDasharray={
-                      style.shape === "frame" &&
-                      path.stroke !== CANVAS_HUES[style.hue][dark ? "dark" : "light"].fill
-                        ? CANVAS_FRAME_DASH.join(" ")
-                        : undefined
-                    }
-                    fill={path.fill ?? "none"}
-                    opacity={
-                      path.fill && path.fill !== "none"
-                        ? dark && style.fill === "solid"
-                          ? 0.35
-                          : 1
-                        : path.stroke === CANVAS_HUES[style.hue][dark ? "dark" : "light"].fill
-                          ? 0.55
-                          : 1
-                    }
-                  />
-                ))}
-                <Defs>
-                  <ClipPath id={`wf-text-${node.id}`}>
-                    <Rect x={12} y={0} width={Math.max(0, node.w - 24)} height={node.h} />
-                  </ClipPath>
-                </Defs>
-                {/* SVG text never clips and the font is proportional, so the clip is the bound. */}
-                <G clipPath={`url(#wf-text-${node.id})`}>
-                  <Text x={12} y={24} fill={foreground} fontSize={14}>
-                    {fitText(node.label, node.w - 24, 8)}
-                  </Text>
-                  <Text x={12} y={44} fill={colors.muted} fontSize={11}>
-                    {fitText(node.subtitle, node.w - 24, 6)}
-                  </Text>
-                </G>
-                {mark && mark !== "dim" && (
-                  <G>
-                    <Circle cx={node.w} cy={0} r={9} fill={tone} />
-                    <Text x={node.w} y={4} textAnchor="middle" fill="white" fontSize={12}>
-                      {{ running: "●", waiting: "!", failed: "✕", ok: "✓" }[mark]}
+                  {mark && mark !== "dim" && (
+                    <Path
+                      d={canvasShapePath(style.shape, node.w + 12, node.h + 12)}
+                      transform="translate(-6 -6)"
+                      stroke={tone}
+                      strokeWidth={mark === "ok" ? 2 : 3}
+                      fill="none"
+                    />
+                  )}
+                  {drawings.get(node.id)?.map((path) => (
+                    <Path
+                      key={path.d}
+                      d={path.d}
+                      stroke={path.stroke}
+                      strokeWidth={path.strokeWidth}
+                      // roughjs `toPaths` drops `strokeLineDash`, so the frame dash is applied here.
+                      strokeDasharray={
+                        style.shape === "frame" &&
+                        path.stroke !== CANVAS_HUES[style.hue][dark ? "dark" : "light"].fill
+                          ? CANVAS_FRAME_DASH.join(" ")
+                          : undefined
+                      }
+                      fill={path.fill ?? "none"}
+                      opacity={
+                        path.fill && path.fill !== "none"
+                          ? dark && style.fill === "solid"
+                            ? 0.35
+                            : 1
+                          : path.stroke === CANVAS_HUES[style.hue][dark ? "dark" : "light"].fill
+                            ? 0.55
+                            : 1
+                      }
+                    />
+                  ))}
+                  <Defs>
+                    <ClipPath id={`wf-text-${node.id}`}>
+                      <Rect x={12} y={0} width={Math.max(0, node.w - 24)} height={node.h} />
+                    </ClipPath>
+                  </Defs>
+                  {/* SVG text never clips and the font is proportional, so the clip is the bound. */}
+                  <G clipPath={`url(#wf-text-${node.id})`}>
+                    <Text x={12} y={24} fill={foreground} fontSize={14}>
+                      {fitText(node.label, node.w - 24, 8)}
+                    </Text>
+                    <Text x={12} y={44} fill={colors.muted} fontSize={11}>
+                      {fitText(node.subtitle, node.w - 24, 6)}
                     </Text>
                   </G>
-                )}
-              </G>
-            );
-          })}
-        </Svg>
+                  {mark && mark !== "dim" && (
+                    <G>
+                      <Circle cx={node.w} cy={0} r={9} fill={tone} />
+                      <Text x={node.w} y={4} textAnchor="middle" fill="white" fontSize={12}>
+                        {{ running: "●", waiting: "!", failed: "✕", ok: "✓" }[mark]}
+                      </Text>
+                    </G>
+                  )}
+                </G>
+              );
+            })}
+          </Svg>
+        </ScrollView>
       </ScrollView>
-    </ScrollView>
+    </View>
   );
 }
