@@ -5,6 +5,7 @@ import { WorkflowNode, type WorkflowDefinition, type WorkflowNodeKind } from "@t
 import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 import {
   autoLayout,
+  nodeSubtitle,
   canvasEdgeId,
   defaultNodeConfig,
   findNode,
@@ -102,6 +103,9 @@ describe("canvas conversion", () => {
     const def = fixture();
     const compiled = compileWorkflow(def, DEFAULT_HOST_LIMITS);
     expect(Result.isFailure(compiled) ? compiled.failure : []).toEqual([]);
+    expect(toCanvasModel(def).nodes.find((node) => node.id === "inner")?.subtitle).toBe(
+      "command · echo",
+    );
     const result = fromCanvasModel(toCanvasModel(def), def);
     expect(result.definition).toEqual(def);
     expect(result.diagnostics).toEqual([]);
@@ -146,6 +150,17 @@ describe("canvas conversion", () => {
 describe("layout and configuration", () => {
   it("lays out all levels deterministically and preserves fixed positions", () => {
     const def = fixture();
+    const spacing = autoLayout({
+      ...def,
+      nodes: {
+        a: defaultNodeConfig("command"),
+        b: defaultNodeConfig("output"),
+        c: defaultNodeConfig("output"),
+      },
+      edges: ["a -> c", "b -> c"],
+    });
+    expect(spacing.b!.y - (spacing.a!.y + 72)).toBe(72);
+    expect(spacing.c!.x - (spacing.a!.x + 220)).toBe(120);
     const fixed = { command: { x: 9, y: 8, w: 7, h: 6 } };
     expect(autoLayout(def)).toEqual(autoLayout(def));
     expect(autoLayout(def, fixed).command).toEqual(fixed.command);
@@ -171,5 +186,38 @@ describe("node edits", () => {
     expect(
       withNodeStatuses(toCanvasModel(def), new Map()).nodes.every((n) => n.status === undefined),
     ).toBe(true);
+  });
+});
+
+describe("node subtitles", () => {
+  it.each([
+    [
+      {
+        kind: "agent",
+        model: "$lead",
+        prompt: "Go",
+        workspace: { project: "t3code", readOnly: true },
+      },
+      "agent · claude-opus-5-5 high",
+    ],
+    [
+      {
+        kind: "agent",
+        model: "$x",
+        prompt: "Go",
+        workspace: { project: "t3code", readOnly: true },
+      },
+      "agent · $x",
+    ],
+    [defaultNodeConfig("agent"), "agent · claude-opus-5-5"],
+    [defaultNodeConfig("command"), "command · echo hello"],
+    [defaultNodeConfig("branch"), "branch · yes / no"],
+    [defaultNodeConfig("output"), "output · no_change"],
+  ] satisfies ReadonlyArray<readonly [WorkflowNode, string]>)("summarizes %j", (node, expected) => {
+    expect(
+      nodeSubtitle(node, {
+        lead: { provider: "claude", model: "claude-opus-5-5", effort: "high" },
+      }),
+    ).toBe(expected);
   });
 });
