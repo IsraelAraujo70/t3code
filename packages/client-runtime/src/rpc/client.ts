@@ -50,9 +50,12 @@ export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
-  // Fork (friend): the live bots directory and kanban.
+  // Fork (friend): the live bots directory, kanban and workflows.
   | typeof BOTS_WS_METHODS.directorySubscribe
   | typeof BOTS_WS_METHODS.kanbanSubscribe
+  | typeof BOTS_WS_METHODS.workflowsSubscribe
+  | typeof BOTS_WS_METHODS.workflowsDocumentSubscribe
+  | typeof BOTS_WS_METHODS.workflowsRunSubscribe
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeShell

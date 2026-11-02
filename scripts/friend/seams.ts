@@ -79,7 +79,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "packages/client-runtime/src/rpc/client.ts",
     markers: 2,
-    why: "bots directory is a subscription; a voice session is a stream command",
+    why: "bots directory, kanban and workflows are subscriptions; a voice session is a stream command",
   },
   {
     file: "packages/client-runtime/src/operations/commands.ts",
