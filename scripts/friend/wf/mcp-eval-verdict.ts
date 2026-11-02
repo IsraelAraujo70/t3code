@@ -31,7 +31,7 @@ const readLines = <A>(file: string, decode: (value: unknown) => A): A[] => {
       .filter(Boolean)
       .map((line) => decode(JSON.parse(line)));
   } catch (cause) {
-    throw new Error(`Invalid data in ${file}: ${String(cause)}`);
+    throw new Error(`Invalid data in ${file}: ${String(cause)}`, { cause });
   }
 };
 const rows = (file: string): Row[] => readLines(file, Schema.decodeUnknownSync(RowSchema));
