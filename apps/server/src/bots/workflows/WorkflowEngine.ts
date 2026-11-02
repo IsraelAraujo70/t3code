@@ -157,7 +157,6 @@ export class WorkflowEngine extends Context.Service<
     readonly ledger: (
       input: WorkflowLedgerInput,
     ) => Effect.Effect<WorkflowLedgerPage, WorkflowJournalError>;
-    /** A step thread (`wf:<runId>:<keyHash>`), which no MCP tool may use to edit or run workflows. */
   }
 >()("t3/bots/workflows/WorkflowEngine") {}
 
@@ -649,7 +648,18 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       return yield* summaryOf(runId);
     }),
     runView: Effect.fn("WorkflowEngine.runView")(function* (input: WorkflowRunGetInput) {
-      const { state, compiled } = yield* loadRun(input.runId);
+      const loaded = yield* loadRun(input.runId);
+      const [pin, offset] = input.stepsCursor?.includes(":") ? input.stepsCursor.split(":") : [];
+      const state =
+        pin === undefined
+          ? loaded.state
+          : foldRun(
+              input.runId,
+              (yield* journal.read(runStream(input.runId))).filter(
+                (fact) => fact.seq <= Number(pin),
+              ),
+            );
+      const compiled = loaded.compiled;
       if (compiled === null) {
         return {
           summary: yield* summaryOf(input.runId),
@@ -661,13 +671,13 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           gates: [],
         };
       }
-      const steps = pageOf(stepViews(compiled, state), input.stepsCursor, STEPS_PAGE);
+      const steps = pageOf(stepViews(compiled, state), offset ?? input.stepsCursor, STEPS_PAGE);
       return {
         summary: runSummary(state, yield* Clock.currentTimeMillis),
         definition: compiled.definition,
         seq: state.lastSeq,
         steps: steps.page,
-        nextStepsCursor: steps.next,
+        nextStepsCursor: steps.next === null ? null : `${state.lastSeq}:${steps.next}`,
         blocks: blockViews(compiled, state),
         gates: gateViews(state),
       };
@@ -678,6 +688,25 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           const subscription = yield* journal.subscribe;
           let { state, compiled } = yield* loadRun(input.runId);
           const owner = yield* journal.workflowOfRun(input.runId);
+          const current =
+            state.started === null && Option.isSome(owner)
+              ? yield* catalog.current(owner.value)
+              : null;
+          const title =
+            current?._tag === "Ready"
+              ? current.version.compiled.definition.title
+              : Option.isSome(owner)
+                ? owner.value
+                : "";
+          const queuedFacts =
+            state.started === null && Option.isSome(owner)
+              ? yield* journal.read(workflowStream(owner.value))
+              : [];
+          const trigger = queuedFacts.find(
+            (entry) => entry.fact._tag === "TriggerFired" && entry.fact.runId === input.runId,
+          );
+          let queued = pendingSummary(queuedFacts, input.runId, title);
+          const occurrence = trigger?.fact._tag === "TriggerFired" ? trigger.fact.occurrence : null;
           let sent = input.afterSeq;
           const deltaNow = (now: number): ReadonlyArray<WorkflowRunDelta> => {
             if (compiled === null || state.lastSeq <= sent) return [];
@@ -692,12 +721,33 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
                 fact.stream === stream ||
                 (state.started === null &&
                   Option.isSome(owner) &&
-                  fact.stream === workflowStream(owner.value)),
+                  fact.stream === workflowStream(owner.value) &&
+                  (fact.key === `created:${occurrence}` || fact.key === `skipped:${occurrence}`)),
             ),
             // Publish order is not commit order: a published fact only says the stream moved,
             // so the subscriber reads what committed after its last fact, as the actor does.
-            Stream.mapEffect(() =>
+            Stream.mapEffect((published) =>
               Effect.gen(function* () {
+                if (published.stream !== stream && Option.isSome(owner) && trigger !== undefined) {
+                  const found = [];
+                  for (const key of [`created:${occurrence}`, `skipped:${occurrence}`]) {
+                    const entry = yield* journal.get(workflowStream(owner.value), key);
+                    if (Option.isSome(entry)) found.push(entry.value);
+                  }
+                  const summary = pendingSummary([trigger, ...found], input.runId, title);
+                  if (summary === null || summary.status === queued?.status) return [];
+                  queued = summary;
+                  return [
+                    {
+                      runId: input.runId,
+                      seq: state.lastSeq,
+                      summary,
+                      steps: [],
+                      gates: [],
+                      blocks: [],
+                    },
+                  ];
+                }
                 for (const fact of yield* journal.read(stream, state.lastSeq)) {
                   state = applyRunFact(state, fact);
                 }
@@ -729,14 +779,16 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
                   {
                     runId: input.runId,
                     seq: state.lastSeq,
-                    summary: yield* summaryOf(input.runId),
+                    summary: queued ?? (yield* unknownRun(input.runId)),
                     steps: [],
                     gates: [],
                     blocks: [],
                   },
                 ]
               : deltaNow(yield* Clock.currentTimeMillis);
-          return Stream.concat(Stream.fromIterable(initial), changes);
+          return Stream.concat(Stream.fromIterable(initial), changes).pipe(
+            Stream.takeUntil((delta) => delta.summary.status === "skipped"),
+          );
         }),
       ),
     stepDetail: Effect.fn("WorkflowEngine.stepDetail")(function* (input: WorkflowRunStepInput) {

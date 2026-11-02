@@ -1191,7 +1191,7 @@ Regras:
 - **Mesma validação.** Os handlers chamam `WorkflowDefinitions.save` e `WorkflowEngine.start`, os mesmos métodos das RPCs. A edição de um bot vira commit com autor `<nome do bot> (bot)`.
 - **Quem pode.** Qualquer bot que não seja de guest pode ler, rascunhar e validar. Salvar com gatilhos ativos, ativar e rodar exigem `canManageBots` (`handlers.ts:123`). Workflow salvo por bot sem essa permissão fica desativado até o Israel ativar no app. Bot de guest não recebe estas ferramentas.
 - **Sem portão.** Nenhuma ferramenta decide portão. Só a RPC `gate.decide`, com sessão de usuário, decide.
-- **Sem autoedição.** Os handlers recusam quem chama de dentro de uma thread de passo (`WorkflowEngine.isStepThread`). Um workflow não edita, roda nem cancela workflows.
+- **Sem autoedição.** Os handlers recusam quem chama de dentro de uma thread de passo (`isWorkflowStepThreadId`). Um workflow não edita, roda nem cancela workflows.
 - **Eval.** O texto das ferramentas fala com modelos e precisa de caso em `evals/mcp-tool-use` antes de ir ao ar (AGENTS.md, "Evals"). Hoje o catálogo da eval não inclui toolkits do fork (`evals/mcp-tool-use/run.ts:303`). A fatia 9 inclui os toolkits do fork e casos para "valida com dryRun antes de salvar" e "não tenta aprovar portão".
 
 ---
