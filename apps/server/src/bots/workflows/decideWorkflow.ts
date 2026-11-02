@@ -1,4 +1,3 @@
-import { originOf, resolveTrigger, triggerBlock } from "./triggers/policy.ts";
 /**
  * The workflow decider (§3.2): turns each pending TriggerFired into a run, a skip, or a wait.
  * Pure, like `decide`; the engine appends what it returns in one transaction.
@@ -8,6 +7,7 @@ import { decodeRunParams } from "@t3tools/shared/workflows";
 import { runStream, workflowStream } from "./facts.ts";
 import { runIdFor } from "./ids.ts";
 import { suspendedNotice } from "./notices/notices.ts";
+import { callerOf, originOf, resolveTrigger, triggerBlock } from "./triggers/policy.ts";
 import type { CurrentVersion } from "./Catalog.ts";
 import type { NewFact, StoredFact } from "./facts.ts";
 
@@ -88,25 +88,6 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
     }
     const { definition } = current.version.compiled;
     const resolved = resolveTrigger(definition.triggers, trigger.triggerId, trigger.kind);
-    const payload = trigger.payload;
-    const source =
-      typeof payload === "object" && payload !== null
-        ? trigger.kind === "bot" && "bot" in payload
-          ? payload.bot
-          : trigger.kind === "call" && "parent" in payload
-            ? payload.parent
-            : null
-        : null;
-    const caller =
-      typeof source === "object" && source !== null
-        ? trigger.kind === "bot" && "id" in source && typeof source.id === "string"
-          ? source.id
-          : trigger.kind === "call" &&
-              "workflowId" in source &&
-              typeof source.workflowId === "string"
-            ? source.workflowId
-            : null
-        : null;
     const block = triggerBlock({
       trigger: resolved,
       firedKind: trigger.kind,
@@ -116,7 +97,7 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
         suspended: current.suspended || suspendedNow,
         off: current.off,
       },
-      caller,
+      caller: callerOf(trigger.kind, trigger.payload),
     });
     if (block !== null || resolved === undefined) {
       skip(block ?? "invalid");
