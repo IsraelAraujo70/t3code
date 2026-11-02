@@ -241,8 +241,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/scheduledTasks/ScheduledTaskService.ts",
-    markers: 2,
-    why: "rebindThread moves a bot's tasks to its next conversation generation",
+    markers: 11,
+    why: "rebindThread moves bot tasks; workflow webhook tasks require engine ownership and dispatch through its optional hook",
   },
   {
     file: "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts",
