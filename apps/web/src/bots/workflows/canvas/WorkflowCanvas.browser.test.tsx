@@ -94,3 +94,32 @@ it("deletes a node by keyboard with its connections in one change", async () => 
     expect(model?.annotations).toEqual(fixture().annotations);
   });
 });
+
+it("keeps the clicked node selected when the parent re-renders with a new model", async () => {
+  const changed = vi.fn();
+  function Reselecting() {
+    const [selected, setSelected] = useState<string | null>(null);
+    const [model, setModel] = useState(fixture);
+    return (
+      <div style={{ width: 900, height: 500 }} data-selected={selected ?? ""}>
+        <WorkflowCanvas
+          // Selecting hands the canvas a new, equal model, as an unmemoized parent would.
+          model={selected === null ? model : { ...model }}
+          mode="edit"
+          onSelectNode={setSelected}
+          onChange={(next) => {
+            setModel(next);
+            changed(next);
+          }}
+        />
+      </div>
+    );
+  }
+  await using screen = await render(<Reselecting />);
+  await userEvent.click(screen.getByText("Node 1"));
+  await vi.waitFor(() => expect(document.querySelector('[data-selected="n1"]')).not.toBeNull());
+  await userEvent.keyboard("{Delete}");
+  await vi.waitFor(() =>
+    expect(changed.mock.lastCall?.[0].nodes.map((n: { id: string }) => n.id)).toEqual(["n0", "n2"]),
+  );
+});

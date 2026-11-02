@@ -47,11 +47,7 @@ export function WorkflowPalette(props: {
     );
   };
   return (
-    <div
-      role="toolbar"
-      aria-label="Add workflow node"
-      className="absolute left-2 top-2 z-10 flex max-w-full flex-wrap gap-1 rounded border border-border bg-background p-1"
-    >
+    <div role="toolbar" aria-label="Add workflow node" className="flex max-w-full flex-wrap gap-1">
       {kinds.map((kind) => (
         <Button
           key={kind}

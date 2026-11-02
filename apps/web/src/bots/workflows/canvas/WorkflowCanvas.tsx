@@ -120,6 +120,17 @@ function RoughEdge(props: EdgeProps) {
     </>
   );
 }
+/** A parent re-render hands over a new model; what the user selected stays selected. */
+function keepSelection(next: ReactFlowScene, previous: ReactFlowScene): ReactFlowScene {
+  const nodes = new Set(previous.nodes.filter((n) => n.selected).map((n) => n.id));
+  const edges = new Set(previous.edges.filter((e) => e.selected).map((e) => e.id));
+  if (nodes.size === 0 && edges.size === 0) return next;
+  return {
+    ...next,
+    nodes: next.nodes.map((n) => (nodes.has(n.id) ? { ...n, selected: true } : n)),
+    edges: next.edges.map((e) => (edges.has(e.id) ? { ...e, selected: true } : e)),
+  };
+}
 const nodeTypes = { workflow: Box, note: Box, frame: Box };
 const edgeTypes = { rough: RoughEdge };
 function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: WorkflowCanvasProps) {
@@ -130,7 +141,11 @@ function Canvas({ model, mode, onChange, onSelectNode, toolbar, className }: Wor
     scene: reactFlowAdapter.fromModel(model, mode),
   }));
   if (state.model !== model || state.mode !== mode)
-    setState({ model, mode, scene: reactFlowAdapter.fromModel(model, mode) });
+    setState({
+      model,
+      mode,
+      scene: keepSelection(reactFlowAdapter.fromModel(model, mode), state.scene),
+    });
   const scene = state.scene;
   const [menu, setMenu] = useState<{ x: number; y: number; edge?: string } | null>(null);
   const editable = mode === "edit";

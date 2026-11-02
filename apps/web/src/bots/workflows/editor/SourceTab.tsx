@@ -8,23 +8,25 @@ export interface SourceTabProps {
   readonly document: WorkflowDocument;
   readonly hasDraft: boolean;
   readonly saving: boolean;
+  /** The text being edited: the editor keeps it across tab switches and remote updates. */
+  readonly text: string;
+  /** The file changed on disk after this text was started; saving will ask what to do. */
+  readonly stale: boolean;
+  readonly onTextChange: (text: string) => void;
   readonly onSave: (source: string, message: string) => void;
 }
 
-/** Shows disk source independently of unsaved canvas changes. */
+/** Edits the file's YAML; the canvas draft and this text are never mixed. */
 export function SourceTab(props: SourceTabProps) {
-  return (
-    <SourceEditor key={`${props.document.workflowId}:${props.document.revision}`} {...props} />
-  );
-}
-
-function SourceEditor(props: SourceTabProps) {
-  const [text, setText] = useState(props.document.source);
+  const text = props.text;
   const [message, setMessage] = useState(`Edit ${props.document.workflowId} source`);
   return (
     <div className="space-y-3">
       {props.hasDraft ? (
         <p role="status">Your canvas edits are not in this text; save or discard them first.</p>
+      ) : null}
+      {props.stale ? (
+        <p role="status">The file changed on disk since you started editing this text.</p>
       ) : null}
       {props.document.dirty ? <p role="status">The file on disk has uncommitted changes.</p> : null}
       {!props.document.valid ? (
@@ -42,7 +44,7 @@ function SourceEditor(props: SourceTabProps) {
           aria-label="Workflow source"
           value={text}
           disabled={props.saving}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => props.onTextChange(event.target.value)}
         />
       </div>
       <p className="text-sm text-muted-foreground">

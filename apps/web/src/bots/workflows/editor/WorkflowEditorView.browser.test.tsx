@@ -129,3 +129,41 @@ it("opening a workflow leaves nothing to save", async () => {
   await expect.element(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
   expect(screen.getByText("Unsaved").elements()).toHaveLength(0);
 });
+
+it("keeps Source text across tabs and overwrites a changed file only when asked", async () => {
+  const document = fixture();
+  const current: WorkflowDocument = {
+    ...document,
+    revision: revision("c".repeat(40)),
+    updatedBy: "Ralph",
+  };
+  const save = vi.fn(async (_input: WorkflowSaveInput) => ({
+    ok: true as const,
+    result: { _tag: "Conflict" as const, workflowId, base: null, current },
+  }));
+  await using screen = await render(
+    <WorkflowEditorView environmentId={environmentId} document={document} save={save} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Source", exact: true }));
+  await userEvent.fill(screen.getByRole("textbox", { name: "Workflow source" }), "title: Mine");
+  await userEvent.click(screen.getByRole("button", { name: "Canvas", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Source", exact: true }));
+  await expect
+    .element(screen.getByRole("textbox", { name: "Workflow source" }))
+    .toHaveValue("title: Mine");
+  await userEvent.click(screen.getByRole("button", { name: "Save source" }));
+  await expect.element(screen.getByText(/while you edited the source/)).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Overwrite", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Save source" }));
+  await vi.waitFor(() => {
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      baseRevision: document.revision,
+      source: "title: Mine",
+    });
+    expect(save.mock.calls[1]?.[0]).toMatchObject({
+      baseRevision: current.revision,
+      source: "title: Mine",
+    });
+  });
+});

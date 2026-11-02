@@ -45,6 +45,11 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(`Edit ${props.document.workflowId}`);
   const [error, setError] = useState<string | null>(null);
+  // Unsaved Source tab text and the revision it started from; null shows the file on disk.
+  const [source, setSource] = useState<{
+    readonly text: string;
+    readonly revision: WorkflowDocument["revision"];
+  } | null>(null);
   const [serverDiagnostics, setServerDiagnostics] = useState<ReadonlyArray<WorkflowDiagnostic>>([]);
   const current = state.draft ?? state.base.definition;
   const model = current === null ? null : toCanvasModel(current);
@@ -79,6 +84,7 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
     switch (response.result._tag) {
       case "Saved":
         dispatch({ type: "saved" });
+        if ("source" in input) setSource(null);
         setServerDiagnostics([]);
         break;
       case "Conflict":
@@ -161,12 +167,19 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
           dispatch({ type: "merge" });
           setServerDiagnostics([]);
         }}
+        sourceDraft={source !== null}
         onReload={() => {
+          setSource(null);
           dispatch({ type: "reload" });
           setServerDiagnostics([]);
           setSelected(null);
         }}
-        onOverwrite={() => dispatch({ type: "overwrite" })}
+        onOverwrite={() => {
+          const current = state.conflict?.current;
+          if (source !== null && current !== undefined)
+            setSource({ text: source.text, revision: current.revision });
+          dispatch({ type: "overwrite" });
+        }}
       />
       {error ? (
         <p role="alert" className="text-sm text-destructive">
@@ -197,27 +210,27 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
           <p>This file does not compile. Fix it in the Source tab.</p>
         ) : (
           <div className="flex min-h-96 flex-1 flex-col gap-3 lg:flex-row">
-            <div className="relative min-h-96 min-w-0 flex-1">
-              <LazyWorkflowCanvas
-                model={model}
-                mode="edit"
-                onSelectNode={setSelected}
-                onChange={(next) => {
-                  if (saving) return;
-                  const converted = fromCanvasModel(next, current);
-                  edit(converted.definition);
+            <div className="flex min-h-96 min-w-0 flex-1 flex-col gap-2">
+              <WorkflowPalette
+                definition={current}
+                disabled={saving}
+                onAdd={(definition, id) => {
+                  edit(definition);
+                  setSelected(id);
                 }}
-                toolbar={
-                  <WorkflowPalette
-                    definition={current}
-                    disabled={saving}
-                    onAdd={(definition, id) => {
-                      edit(definition);
-                      setSelected(id);
-                    }}
-                  />
-                }
               />
+              <div className="relative min-h-96 flex-1">
+                <LazyWorkflowCanvas
+                  model={model}
+                  mode="edit"
+                  onSelectNode={setSelected}
+                  onChange={(next) => {
+                    if (saving) return;
+                    const converted = fromCanvasModel(next, current);
+                    edit(converted.definition);
+                  }}
+                />
+              </div>
             </div>
             <aside className="w-full shrink-0 border-border lg:w-72 lg:border-l lg:pl-3">
               <fieldset disabled={saving}>
@@ -238,11 +251,16 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
           document={state.base}
           hasDraft={state.draft !== null}
           saving={saving}
-          onSave={(source, commitMessage) =>
+          text={source?.text ?? state.base.source}
+          stale={source !== null && source.revision !== state.base.revision}
+          onTextChange={(text) =>
+            setSource({ text, revision: source?.revision ?? state.base.revision })
+          }
+          onSave={(text, commitMessage) =>
             void save({
               workflowId: state.base.workflowId,
-              baseRevision: state.base.revision,
-              source,
+              baseRevision: source?.revision ?? state.base.revision,
+              source: text,
               message: commitMessage,
             })
           }

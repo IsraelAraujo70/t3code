@@ -4,6 +4,8 @@ import type { EditorState } from "./editorState";
 /** Explicit resolution of remote edits, including files that no longer compile. */
 export function ConflictBanner(props: {
   state: EditorState;
+  /** The Source tab holds unsaved text (the canvas draft is then empty). */
+  sourceDraft: boolean;
   disabled: boolean;
   onMerge: () => void;
   onReload: () => void;
@@ -12,12 +14,30 @@ export function ConflictBanner(props: {
   const current = props.state.conflict?.current ?? props.state.remote;
   return (
     <div className="space-y-2" aria-live="polite">
-      {current !== null && props.state.draft !== null ? (
+      {current !== null && (props.state.draft !== null || props.state.conflict !== null) ? (
         <div
           role="alert"
           className="flex flex-wrap items-center gap-2 rounded border border-border p-3 text-sm"
         >
-          {current.definition === null ? (
+          {props.sourceDraft && props.state.draft === null ? (
+            <>
+              <p>
+                Changed by {current.updatedBy ?? "someone"} while you edited the source. Overwrite
+                it with your text, or reload the file and lose your text.
+              </p>
+              <Button size="sm" disabled={props.disabled} onClick={props.onOverwrite}>
+                Overwrite
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={props.disabled}
+                onClick={props.onReload}
+              >
+                Reload
+              </Button>
+            </>
+          ) : current.definition === null ? (
             <>
               <p>
                 The file on disk was changed by hand and does not compile. Overwrite it with your

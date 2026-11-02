@@ -47,16 +47,7 @@ export function createWorkflowsEnvironmentAtoms<R, E>(
     run: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:workflows:run",
       subscribe: (input: { readonly runId: WorkflowRunView["summary"]["runId"] }) =>
-        Stream.unwrap(
-          request(M.workflowsRunGet, { runId: input.runId }).pipe(
-            // `scan` emits `view` first, then each folded delta.
-            Effect.map((view) =>
-              subscribe(M.workflowsRunSubscribe, { runId: input.runId, afterSeq: view.seq }).pipe(
-                Stream.scan(() => view, foldRunDelta),
-              ),
-            ),
-          ),
-        ),
+        followRun(input.runId),
     }),
     validate: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:workflows:validate",
@@ -127,5 +118,33 @@ export function createWorkflowsEnvironmentAtoms<R, E>(
     }),
   };
 }
+
+/**
+ * `run.get`, then its deltas. Deltas never carry the definition, so a run read while still queued
+ * is read again once it pins its version (its `commit` appears), and followed from there.
+ */
+type RunId = WorkflowRunView["summary"]["runId"];
+const readRun = (runId: RunId) => request(M.workflowsRunGet, { runId });
+const runDeltas = (runId: RunId, afterSeq: number) =>
+  subscribe(M.workflowsRunSubscribe, { runId, afterSeq });
+type RunStream = Stream.Stream<
+  WorkflowRunView,
+  Effect.Error<ReturnType<typeof readRun>> | Stream.Error<ReturnType<typeof runDeltas>>,
+  Effect.Services<ReturnType<typeof readRun>> | Stream.Services<ReturnType<typeof runDeltas>>
+>;
+const followRun = (runId: RunId): RunStream =>
+  Stream.unwrap(
+    readRun(runId).pipe(
+      Effect.map((view): RunStream => {
+        // `scan` emits `view` first, then each folded delta.
+        const deltas = runDeltas(runId, view.seq).pipe(Stream.scan(() => view, foldRunDelta));
+        if (view.definition !== null || view.summary.commit !== null) return deltas;
+        return deltas.pipe(
+          Stream.takeUntil((next) => next.summary.commit !== null),
+          Stream.concat(Stream.suspend(() => followRun(runId))),
+        );
+      }),
+    ),
+  );
 
 export type WorkflowsEnvironmentAtoms = ReturnType<typeof createWorkflowsEnvironmentAtoms>;

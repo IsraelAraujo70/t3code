@@ -1,11 +1,5 @@
 import { defaultNodeConfig } from "@t3tools/client-runtime/workflows";
-import {
-  WorkflowDocRevision,
-  WorkflowId,
-  WorkflowNode,
-  type WorkflowDefinition,
-  type WorkflowNodeKind,
-} from "@t3tools/contracts";
+import { WorkflowNode, type WorkflowDefinition, type WorkflowNodeKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
@@ -14,8 +8,6 @@ import { render } from "../../../../test/render";
 import { Inspector } from "./Inspector";
 
 const decodeNode = Schema.decodeOption(WorkflowNode);
-const workflowId = Schema.decodeSync(WorkflowId)("demo");
-const revision = Schema.decodeSync(WorkflowDocRevision);
 
 function fixture(): WorkflowDefinition {
   return {
@@ -249,46 +241,4 @@ it("renders every node kind with a schema-valid default and nested diagnostics",
   );
   await expect.element(screen.getByText(/Nested issue/)).toBeVisible();
   await expect.element(screen.getByText(/Other issue/)).not.toBeInTheDocument();
-});
-
-it("keeps disk source separate from canvas edits and saves edited text with its message", async () => {
-  const { SourceTab } = await import("./SourceTab");
-  const document = {
-    workflowId,
-    revision: revision("a".repeat(40)),
-    source: "title: Disk",
-    definition: fixture(),
-    headCommit: null,
-    hash: null,
-    valid: false,
-    dirty: true,
-    diagnostics: [{ path: "title", code: "schema" as const, message: "Disk issue" }],
-    enabled: true,
-    suspended: false,
-    updatedBy: null,
-    updatedAt: null,
-  };
-  const onSave = vi.fn();
-  await using screen = await render(
-    <SourceTab document={document} hasDraft={true} saving={false} onSave={onSave} />,
-  );
-  await expect
-    .element(screen.getByRole("textbox", { name: "Workflow source" }))
-    .toHaveValue("title: Disk");
-  await expect.element(screen.getByRole("button", { name: "Save source" })).toBeDisabled();
-  await expect
-    .element(
-      screen.getByText("Your canvas edits are not in this text; save or discard them first."),
-    )
-    .toBeVisible();
-  await screen.rerender(
-    <SourceTab document={document} hasDraft={false} saving={false} onSave={onSave} />,
-  );
-  await userEvent.fill(screen.getByRole("textbox", { name: "Workflow source" }), "title: Fixed");
-  await userEvent.fill(
-    screen.getByRole("textbox", { name: "Source commit message" }),
-    "Fix source",
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Save source" }));
-  expect(onSave).toHaveBeenCalledWith("title: Fixed", "Fix source");
 });
