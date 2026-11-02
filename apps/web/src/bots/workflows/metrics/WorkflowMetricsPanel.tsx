@@ -1,3 +1,11 @@
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "../../../components/ui/table";
 import type { EnvironmentId, WorkflowId } from "@t3tools/contracts";
 import { formatDuration, formatTokens, formatUsd } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
@@ -16,95 +24,115 @@ export function WorkflowMetricsPanel(props: {
     }),
   );
   const data = query.data;
-  if (!data) return <p>{query.error ?? "Loading metrics…"}</p>;
+  if (!data)
+    return <p className="text-sm text-muted-foreground">{query.error ?? "Loading metrics…"}</p>;
   const maximum = Math.max(1, ...data.runs.map((run) => run.billable));
   return (
     <div className="space-y-4">
-      {data.runsByStatus.map((row) => (
-        <p key={row.status}>
-          {row.status}: {row.count}
-        </p>
-      ))}
-      <table className="w-full text-left">
-        <thead>
-          <tr>
-            <th>Started</th>
-            <th>Status</th>
-            <th>Active</th>
-            <th>Tokens</th>
-            <th>USD</th>
-          </tr>
-        </thead>
-        <tbody>
+      <h2 className="text-xs font-medium text-muted-foreground">Workflow metrics</h2>
+      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+        {data.runsByStatus.map((row) => (
+          <p key={row.status}>
+            {row.status}: {row.count}
+          </p>
+        ))}
+      </div>
+      <h3 className="text-xs font-medium text-muted-foreground">Runs</h3>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Started</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Active</TableHead>
+            <TableHead>Tokens</TableHead>
+            <TableHead>USD</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {data.runs.map((run) => (
-            <tr key={run.runId}>
-              <td>
+            <TableRow key={run.runId}>
+              <TableCell>
                 <Link
                   to="/workflows/$environmentId/runs/$runId"
                   params={{ environmentId: props.environmentId, runId: run.runId }}
                 >
                   {run.startedAt}
                 </Link>
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 <RunStatusBadge status={run.status} />
-              </td>
-              <td>{run.activeMs === null ? "unknown" : formatDuration(run.activeMs)}</td>
-              <td>
+              </TableCell>
+              <TableCell>
+                {run.activeMs === null ? "unknown" : formatDuration(run.activeMs)}
+              </TableCell>
+              <TableCell>
                 {formatTokens(run.billable)}
                 <div
                   className="h-1 bg-primary"
                   style={{ width: `${(100 * run.billable) / maximum}%` }}
                 />
-              </td>
-              <td>{formatUsd(run.usdEstimate)}</td>
-            </tr>
+              </TableCell>
+              <TableCell>{formatUsd(run.usdEstimate)}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-      <table className="w-full text-left">
-        <thead>
-          <tr>
-            <th>Node</th>
-            <th>Attempts</th>
-            <th>Failures</th>
-            <th>Average tokens</th>
-          </tr>
-        </thead>
-        <tbody>
+        </TableBody>
+      </Table>
+      {data.runs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No runs yet.</p>
+      ) : null}
+      <h3 className="text-xs font-medium text-muted-foreground">Nodes</h3>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Node</TableHead>
+            <TableHead>Attempts</TableHead>
+            <TableHead>Failures</TableHead>
+            <TableHead>Average tokens</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {data.nodes.map((node) => (
-            <tr key={node.node}>
-              <td>{node.node}</td>
-              <td>{node.attempts}</td>
-              <td>{node.failures}</td>
-              <td>
+            <TableRow key={node.node}>
+              <TableCell>{node.node}</TableCell>
+              <TableCell>{node.attempts}</TableCell>
+              <TableCell>{node.failures}</TableCell>
+              <TableCell>
                 {node.averageBillable === null ? "unknown" : formatTokens(node.averageBillable)}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
+      {data.nodes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No node metrics yet.</p>
+      ) : null}
+      {data.series.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No emitted metrics yet.</p>
+      ) : null}
       {data.series.map((series) => (
-        <section key={series.name}>
-          <h3>{series.name}</h3>
-          <table className="w-full text-left">
-            <thead>
-              <tr>
-                <th>At</th>
-                <th>Value</th>
-                <th>Verdict</th>
-              </tr>
-            </thead>
-            <tbody>
+        <section key={series.name} className="space-y-2">
+          <h3 className="text-xs font-medium text-muted-foreground">{series.name}</h3>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>At</TableHead>
+                <TableHead>Value</TableHead>
+                <TableHead>Verdict</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {series.points.map((point) => (
-                <tr key={`${point.runId}-${point.at}`}>
-                  <td>{point.at}</td>
-                  <td>{point.value}</td>
-                  <td>{point.verdict ?? "Pending"}</td>
-                </tr>
+                <TableRow key={`${point.runId}-${point.at}`}>
+                  <TableCell>{point.at}</TableCell>
+                  <TableCell>{point.value}</TableCell>
+                  <TableCell>{point.verdict ?? "Pending"}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
+          {series.points.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No readings yet.</p>
+          ) : null}
         </section>
       ))}
     </div>

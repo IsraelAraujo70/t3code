@@ -1,3 +1,4 @@
+import { Textarea } from "../../../components/ui/textarea";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 import type { EnvironmentId, WorkflowRunId, WorkflowGateView } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogPanel,
+  DialogFooter,
 } from "../../../components/ui/dialog";
 /** Presents a human gate with its evidence before recording a decision. */
 export function GateSheet(props: {
@@ -51,37 +53,55 @@ export function GateSheet(props: {
           <DialogTitle>Needs you</DialogTitle>
         </DialogHeader>
         <DialogPanel>
-          <p>{props.gate.ask}</p>
-          <p className="whitespace-pre-wrap">{props.evidence}</p>
+          <p className="text-sm font-medium">{props.gate.ask}</p>
+          {props.evidence ? (
+            <pre className="max-h-64 overflow-auto rounded-md border bg-muted/30 p-3 text-xs whitespace-pre-wrap break-words">
+              {props.evidence}
+            </pre>
+          ) : null}
           {props.pullRequest ? (
-            <a href={props.pullRequest} target="_blank" rel="noreferrer">
+            <a
+              className="text-sm underline underline-offset-4"
+              href={props.pullRequest}
+              target="_blank"
+              rel="noreferrer"
+            >
               Pull request
             </a>
           ) : null}
-          <label>
+          <label className="block space-y-2 text-xs text-muted-foreground">
             Optional note
-            <textarea
+            <Textarea
               aria-label="Optional note"
               maxLength={4000}
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />
           </label>
-          <div className="flex gap-2">
-            {(props.gate.options.length ? props.gate.options : ["approve", "reject"]).map(
-              (option) => (
-                <Button
-                  key={option}
-                  disabled={pending || !canOperate}
-                  onClick={() => void submit(option)}
-                >
-                  {option}
-                </Button>
-              ),
-            )}
-          </div>
-          {error ? <p role="alert">{error}</p> : null}
+          {error ? (
+            <p role="alert" className="text-sm text-destructive-foreground">
+              {error}
+            </p>
+          ) : null}
         </DialogPanel>
+        <DialogFooter>
+          <Button size="sm" variant="outline" disabled={pending} onClick={props.onClose}>
+            Close
+          </Button>
+          {(props.gate.options.length ? props.gate.options : ["approve", "reject"]).map(
+            (option) => (
+              <Button
+                key={option}
+                size="sm"
+                variant={option === "reject" ? "destructive-outline" : "default"}
+                disabled={pending || !canOperate}
+                onClick={() => void submit(option)}
+              >
+                {option}
+              </Button>
+            ),
+          )}
+        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
