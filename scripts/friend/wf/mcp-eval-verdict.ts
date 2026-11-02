@@ -109,16 +109,15 @@ export function mcpEvalVerdict(): McpEvalVerdictOutput {
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
       });
-      process.stderr.write(result.stdout ?? "");
-      process.stderr.write(result.stderr ?? "");
+      // run.ts logs its fatal error through Effect's logger, which writes to stdout.
+      const log = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+      process.stderr.write(log);
       if (result.status !== 0) {
-        if (result.stderr?.includes("No case matches --case")) {
+        if (log.includes("No case matches --case")) {
           planned--;
           continue;
         }
-        throw new Error(
-          result.error?.message ?? result.stderr?.slice(-8000) ?? "Eval runner failed",
-        );
+        throw new Error(result.error?.message ?? (log.slice(-8000) || "Eval runner failed"));
       }
     }
     const current = rows(file);

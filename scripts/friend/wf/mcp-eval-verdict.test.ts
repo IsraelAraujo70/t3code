@@ -29,6 +29,7 @@ const arg = n => process.argv[process.argv.indexOf(n)+1];
 const id = arg("--case");
 NodeFS.appendFileSync(process.env.CALLS, id+"\\n");
 const item = JSON.parse(process.env.FAKE_EVAL_TABLE)[id];
+if(item.stdout) process.stdout.write(item.stdout);
 if(item.stderr) process.stderr.write(item.stderr);
 if(item.exit) process.exit(item.exit);
 NodeFS.mkdirSync(arg("--out"), {recursive:true});
@@ -116,16 +117,26 @@ NodeFS.writeFileSync(arg("--out")+"/summary.md", "Estimated cost $1");
     case_regressions: 0,
     regressed: [],
   });
-  const skipped = run("skipped", { A: table.A, B: { exit: 1, stderr: "No case matches --case." } });
+  const skipped = run("skipped", {
+    A: table.A,
+    B: { exit: 1, stdout: "ERROR (#1): Error: No case matches --case." },
+  });
   expect(skipped.status).toBe(0);
   expect(JSON.parse(skipped.stdout)).toMatchObject({
     complete: true,
     cases: { planned: 1, finished: 1 },
   });
-  const failed = run("failed", { A: { exit: 1, stderr: "runner failure tail" } });
+  const failed = run("failed", {
+    A: {
+      exit: 1,
+      stdout: "ERROR (#1): Error: Set ANTHROPIC_API_KEY",
+      stderr: "runner failure tail",
+    },
+  });
   expect(failed.status).toBe(1);
   expect(failed.stdout).toBe("");
   expect(failed.stderr).toContain("runner failure tail");
+  expect(failed.stderr).toContain("Set ANTHROPIC_API_KEY");
   const noBaseline = run("no-baseline", table, []);
   expect(noBaseline.status).toBe(0);
   expect(JSON.parse(noBaseline.stdout)).toMatchObject({ case_regressions: 0, regressed: [] });
