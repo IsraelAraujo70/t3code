@@ -195,6 +195,16 @@ export const SEAMS: readonly Seam[] = [
     why: "name the bot that sent a message; read a reply aloud; bot chats as bubbles; a renewed bot conversation points to the previous one",
   },
   {
+    file: "apps/server/src/orchestration-v2/Orchestrator.ts",
+    markers: 3,
+    why: "threads of bots a guest owned take no new turns",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/runtimeLayer.test.ts",
+    markers: 2,
+    why: "threads of bots a guest owned take no new turns (test)",
+  },
+  {
     file: "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
     markers: 2,
     why: "idle-only release for restarting a bot's session",

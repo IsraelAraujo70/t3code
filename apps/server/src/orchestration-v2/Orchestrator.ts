@@ -86,6 +86,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+// Fork (friend): threads of bots a guest owned take no new turns.
+import { BotsStore } from "../bots/BotsStore.ts";
+import { startsRetiredGuestBotTurn } from "../bots/retiredGuestBots.ts";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -1006,6 +1009,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  // Fork (friend): optional, so runtimes and tests without bots keep the upstream behaviour.
+  const botsStore = yield* Effect.serviceOption(BotsStore);
 
   /** The driver when this provider runs `/goal` natively, else undefined. */
   const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
@@ -13466,6 +13471,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    // Fork (friend): a bot a guest owned may sit on a host model, so its threads take no turns.
+    if (
+      Option.isSome(botsStore) &&
+      startsRetiredGuestBotTurn(yield* botsStore.value.retiredGuestBotIds, command)
+    ) {
+      return yield* new OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: new Error("This bot belonged to a guest, and guest mode was removed."),
+      });
+    }
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
