@@ -1,3 +1,9 @@
+// Fork (friend): workflow tasks dispatch only to the engine and require engine ownership.
+import {
+  WorkflowTriggerHook,
+  WorkflowEngineCaller,
+  isWorkflowHookTaskId,
+} from "../bots/workflows/triggers/hook.ts";
 import {
   CommandId,
   MessageId,
@@ -405,6 +411,15 @@ export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(funct
 export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
+    // Fork (friend): the workflow engine is optional for ordinary scheduled tasks.
+    const workflowHook = yield* Effect.serviceOption(WorkflowTriggerHook);
+    const guardWorkflowTask = Effect.fn("ScheduledTaskService.guardWorkflowTask")(function* (
+      id: string | undefined,
+    ) {
+      if (id !== undefined && isWorkflowHookTaskId(id) && !(yield* WorkflowEngineCaller)) {
+        return yield* taskError("This task is managed by a workflow; change it in the workflow.");
+      }
+    });
     const sql = yield* SqlClient.SqlClient;
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
@@ -776,6 +791,11 @@ export const layer = Layer.effect(
           )).length > 0
         )
           return { task: { ...active, lastRunStatus: "succeeded" as const }, threadId: null };
+        // Fork (friend): a scheduler tick must never launch a workflow thread.
+        if (isWorkflowHookTaskId(active.id) && trigger !== "webhook") {
+          if (trigger === "scheduled") return { task: active, threadId: null };
+          return yield* taskError("Workflow tasks fire only by webhook.");
+        }
         const parsedNextRunAt =
           active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
         if (
@@ -864,35 +884,53 @@ export const layer = Layer.effect(
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null
+          // Fork (friend): a workflow delivery goes to the engine hook, never to a thread launch,
+          // and its outcome takes the same completion path as a launch.
+          isWorkflowHookTaskId(active.id)
             ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(Effect.map((launched) => launched.threadId)),
+                Option.isSome(workflowHook) && webhook !== undefined
+                  ? workflowHook.value
+                      .fire({ taskId: active.id, deliveryId: webhook.deliveryId, prompt })
+                      .pipe(
+                        Effect.as(null),
+                        Effect.mapError((cause) =>
+                          taskError("The workflow engine did not accept this delivery.", {
+                            taskId: active.id,
+                            cause,
+                          }),
+                        ),
+                      )
+                  : Effect.fail(taskError("The workflow engine is not available.")),
               )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+            : active.threadId === null
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(Effect.map((launched) => launched.threadId)),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
+                  ),
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1104,6 +1142,8 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
+      // Fork (friend): only the engine manages workflow webhook tasks.
+      yield* guardWorkflowTask(input.id);
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1233,6 +1273,8 @@ export const layer = Layer.effect(
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",
     )(function* (input) {
+      // Fork (friend): only the engine manages workflow webhook tasks.
+      yield* guardWorkflowTask(input.id);
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
       const now = yield* localNow;
@@ -1293,7 +1335,9 @@ export const layer = Layer.effect(
       );
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(
+      // Fork (friend): protect workflow deletion before touching persistence.
+      guardWorkflowTask(input.id).pipe(
+        Effect.andThen(deleteRow(input.id)),
         Effect.andThen(forgetWebhookTask(input.id)),
         Effect.andThen(notifyChanged),
         Effect.as({ id: input.id }),
@@ -1346,6 +1390,10 @@ export const layer = Layer.effect(
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
     )(function* (input: ScheduledTaskRunNowInput) {
+      // Fork (friend): engine ownership does not permit manual webhook dispatch.
+      yield* guardWorkflowTask(input.id);
+      if (isWorkflowHookTaskId(input.id))
+        return yield* taskError("Workflow tasks fire only by webhook.");
       const task = yield* loadTask(input.id);
       if (task.schedule.type === "webhook") {
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
@@ -1362,6 +1410,8 @@ export const layer = Layer.effect(
     const rotateWebhookToken: ScheduledTaskService["Service"]["rotateWebhookToken"] = Effect.fn(
       "ScheduledTaskService.rotateWebhookToken",
     )(function* (input) {
+      // Fork (friend): only the engine manages workflow webhook tasks.
+      yield* guardWorkflowTask(input.id);
       const task = yield* loadTask(input.id);
       if (task.schedule.type !== "webhook") {
         return yield* taskError("Only webhook tasks have a URL token.", { taskId: input.id });
