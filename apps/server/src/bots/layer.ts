@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 
 import { BotsError, KanbanError, WorkflowsError } from "@t3tools/contracts";
 
+import * as BotsDb from "./BotsDb.ts";
 import { isBotsHost, NOT_BOTS_HOST_MESSAGE } from "./BotsHost.ts";
 import * as BotsInstructions from "./BotsInstructions.ts";
 import * as BotsService from "./BotsService.ts";
@@ -40,10 +41,14 @@ import { layer as WorkflowCatalogLayer } from "./workflows/definitions/catalog.t
 import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
 import * as Journal from "./workflows/Journal.ts";
 
-// Workflows: definitions repository, catalog and hand-edit watcher (bots host only).
-const layerWorkflows = Layer.mergeAll(WorkflowCatalogLayer, WatcherLayer).pipe(
+/**
+ * Workflows: definitions repository, catalog and hand-edit watcher (bots host only). Their tables
+ * live in bots.sqlite, so BotsDb is provided here: the server's own SqlClient must never reach them.
+ */
+export const layerWorkflows = Layer.mergeAll(WorkflowCatalogLayer, WatcherLayer).pipe(
   Layer.provideMerge(WorkflowDefinitions.layer),
-  Layer.provideMerge(Journal.layer),
+  Layer.provideMerge(Journal.layerFromDb),
+  Layer.provide(BotsDb.layer),
 );
 const workflowsNotHost = () =>
   Effect.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }));
