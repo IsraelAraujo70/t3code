@@ -16,7 +16,13 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { type ProjectOperationError, ProjectService } from "../../../project/ProjectService.ts";
+// wf-engine slice 8: notices, the run's card and the draft pull request.
+import { WorkflowCards } from "../card/WorkflowCards.ts";
+import { workflowRunWebPath } from "../notices/notices.ts";
+import { WorkflowNotices } from "../notices/WorkflowNotices.ts";
+import { WorkflowPullRequests } from "../publish/PullRequests.ts";
 import { type Intent, type NewFact, type RunFact, runStream, workflowStream } from "../facts.ts";
 import { WorkflowGit, WorkflowGitError } from "../git/Workspaces.ts";
 import { keyHash, runIdFor } from "../ids.ts";
@@ -78,6 +84,11 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
   const turns = yield* WorkflowTurns;
   const projects = yield* ProjectService;
   const journal = yield* Journal;
+  // wf-engine slice 8: optional, so a host without them (tests, the CLI) keeps logging instead.
+  const notices = yield* Effect.serviceOption(WorkflowNotices);
+  const cards = yield* Effect.serviceOption(WorkflowCards);
+  const pullRequests = yield* Effect.serviceOption(WorkflowPullRequests);
+  const environment = yield* Effect.serviceOption(ServerEnvironment);
 
   const runDir = (runId: string) => NodePath.join(options.runsDir, runId);
   /** A workspace's path from its name alone, so GitOp and RemoveWorkspace find it. */
@@ -281,15 +292,62 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
         return [
           result(runId, intent, { _tag: "GateOpened", gateKey: intent.gateKey, at: yield* nowIso }),
         ];
-      case "Notify":
-        // Delivery arrives with the notices (slice 8); until then the notice is only logged.
-        yield* Effect.logInfo("workflow notice", { runId, kind: intent.kind, title: intent.title });
+      case "Notify": {
+        if (Option.isNone(notices)) {
+          yield* Effect.logInfo("workflow notice", {
+            runId,
+            kind: intent.kind,
+            title: intent.title,
+          });
+          return [result(runId, intent, { _tag: "Notified" })];
+        }
+        const workflowId = Option.getOrElse(yield* journal.workflowOfRun(runId), () => "");
+        yield* notices.value.deliver({ runId, workflowId, notice: intent });
         return [result(runId, intent, { _tag: "Notified" })];
-      case "UpsertCard":
-        yield* Effect.logInfo("workflow card", { runId, column: intent.column });
-        return [result(runId, intent, { _tag: "CardUpserted" })];
-      case "OpenPullRequest":
-        return failed(runId, intent, "Pull requests opened by the engine arrive with slice 8.");
+      }
+      case "UpsertCard": {
+        if (Option.isNone(cards) || Option.isNone(environment))
+          return failed(runId, intent, "The kanban is not available on this host.");
+        const project = projectByRef((yield* projects.snapshot).projects, intent.project);
+        if (project === undefined)
+          return failed(runId, intent, `There is no project "${intent.project}".`);
+        const link = workflowRunWebPath(yield* environment.value.getEnvironmentId, runId);
+        return yield* cards.value
+          .upsert({
+            runId,
+            projectId: project.id,
+            column: intent.column,
+            title: intent.title,
+            link,
+          })
+          .pipe(
+            Effect.map(() => [result(runId, intent, { _tag: "CardUpserted" })]),
+            Effect.catch((error) =>
+              Effect.succeed(failed(runId, intent, error.message, error.retryable)),
+            ),
+          );
+      }
+      case "OpenPullRequest": {
+        if (Option.isNone(pullRequests))
+          return failed(runId, intent, "Pull requests are not available on this host.");
+        return yield* pullRequests.value
+          .open({
+            path: workspacePath(runId, intent.workspace),
+            branch: intent.branch,
+            sha: intent.sha,
+            base: intent.base,
+            title: intent.title,
+            body: intent.body,
+          })
+          .pipe(
+            Effect.map(({ url }) => [
+              result(runId, intent, { _tag: "PullRequestOpened", url, branch: intent.branch }),
+            ]),
+            Effect.catch((error) =>
+              Effect.succeed(failed(runId, intent, error.message, error.retryable)),
+            ),
+          );
+      }
       case "StartChildRun":
         return yield* startChild(runId, intent);
     }
