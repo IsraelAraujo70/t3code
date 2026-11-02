@@ -1,3 +1,10 @@
+import * as Deferred from "effect/Deferred";
+import * as Stream from "effect/Stream";
+import { WorkflowDocument } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { TriggerSamples } from "./samples.ts";
+import * as Samples from "./samples.ts";
+import { WorkflowDefinitions } from "../definitions/WorkflowDefinitions.ts";
 import { webhookPayload } from "./webhookPayload.ts";
 // @effect-diagnostics preferSchemaOverJson:off - Fixtures store the definition JSON as the store does.
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -27,6 +34,8 @@ import { type TriggerRequest, WorkflowEngine } from "../WorkflowEngine.ts";
 import { WorkflowEngineCaller, WorkflowTriggerHook } from "./hook.ts";
 import { layerBindHook, layerHook, makeReconciler } from "./webhook.ts";
 
+const decodeDocument = Schema.decodeSync(WorkflowDocument);
+
 const request = { method: "POST", path: "/", query: "", headers: {}, bodyText: '{"ref":"main"}' };
 
 const HOOK = "wf-hook:inbox:push";
@@ -39,7 +48,7 @@ const seed = Effect.fn("test.seed")(function* (
   yield* insertVersion({
     workflow_id: "inbox",
     commit_sha: commit,
-    revision: "rev",
+    revision: "a".repeat(40),
     semantic_hash: "hash",
     source: "",
     author: "test",
@@ -60,7 +69,7 @@ const seed = Effect.fn("test.seed")(function* (
     workflow_id: "inbox",
     path: "inbox.workflow.yaml",
     head_commit: commit,
-    revision: "rev",
+    revision: "a".repeat(40),
     title: "Inbox",
     valid: 1,
     dirty: 0,
@@ -120,7 +129,7 @@ it.effect("a delivery becomes the trigger's TriggerFired once the engine is boun
       occurrence: "webhook:d1",
       payload: webhookPayload(request, '{"ref":"main"}'),
     });
-  }).pipe(Effect.provide(db)),
+  }).pipe(Effect.scoped, Effect.provide(db)),
 );
 
 it.effect("a delivery before the engine waits for it, and fails after 60 s without it", () =>
@@ -264,4 +273,72 @@ it.effect("a workflow whose home project is unknown gets no task", () =>
     }).pipe(Effect.provide(service));
     expect(calls).toEqual([]);
   }).pipe(Effect.provide(Layer.mergeAll(db, NodeServices.layer))),
+);
+
+it.effect("a captured delivery replay never reaches the engine", () =>
+  Effect.gen(function* () {
+    yield* seed([push]);
+    const requests: Array<TriggerRequest> = [];
+    yield* Effect.gen(function* () {
+      const hook = yield* WorkflowTriggerHook;
+      const samples = yield* TriggerSamples;
+      const ready = yield* Deferred.make<void>();
+      const listener = yield* samples.listen("inbox", "push").pipe(
+        Stream.tap(() => Deferred.succeed(ready, undefined)),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(ready);
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "test", prompt: "x" });
+      yield* Fiber.join(listener);
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "test", prompt: "x" });
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "normal", prompt: "x" });
+    }).pipe(
+      Effect.provide(
+        layerBindHook.pipe(
+          Layer.provideMerge(layerHook),
+          Layer.provide(recordingEngine(requests)),
+          Layer.provideMerge(
+            Samples.layer.pipe(
+              Layer.provide(
+                Layer.mock(WorkflowDefinitions)({
+                  repoPath: "/unused",
+                  document: () =>
+                    Effect.succeed(
+                      decodeDocument({
+                        workflowId: "inbox",
+                        source: "",
+                        definition: null,
+                        revision: "a".repeat(40),
+                        headCommit: null,
+                        hash: null,
+                        valid: true,
+                        dirty: false,
+                        diagnostics: [],
+                        enabled: true,
+                        suspended: false,
+                        triggers: [
+                          {
+                            id: "push",
+                            kind: "webhook",
+                            title: null,
+                            label: "push",
+                            webhookUrl: "https://example.com/hook",
+                            enabled: true,
+                            lastFiredAt: null,
+                          },
+                        ],
+                        updatedBy: null,
+                        updatedAt: null,
+                      }),
+                    ),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(requests.map((entry) => entry.occurrence)).toEqual(["webhook:normal"]);
+  }).pipe(Effect.scoped, Effect.provide(db)),
 );

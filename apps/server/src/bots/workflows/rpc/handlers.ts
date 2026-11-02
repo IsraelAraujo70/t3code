@@ -9,6 +9,8 @@ import * as Stream from "effect/Stream";
 
 import { WorkflowDefinitions } from "../definitions/WorkflowDefinitions.ts";
 
+import { TriggerSamples } from "../triggers/samples.ts";
+
 const unavailable = new WorkflowsError({
   code: "unavailable",
   message: "Workflows are not available on this server yet.",
@@ -18,6 +20,7 @@ const operationError = (cause: WorkflowJournalError) =>
 
 export const handlers = Effect.gen(function* () {
   const definitions = yield* WorkflowDefinitions;
+  const samples = yield* Effect.serviceOption(TriggerSamples);
   const engine = yield* Effect.serviceOption(WorkflowEngine);
   const execute = <A>(
     operation: (
@@ -72,8 +75,16 @@ export const handlers = Effect.gen(function* () {
     ) => execute((engine) => engine.metrics(input)),
     // Triggers n1 stubs: the trigger payload, samples and test mode land with their services.
     [M.workflowsRunTrigger]: () => Effect.fail(unavailable),
-    [M.workflowsTriggerSample]: () => Effect.fail(unavailable),
-    [M.workflowsTriggerListen]: () => Stream.fail(unavailable),
+    [M.workflowsTriggerSample]: (input: { workflowId: string; triggerId: string }) =>
+      Option.isSome(samples)
+        ? samples.value
+            .latest(input.workflowId, input.triggerId)
+            .pipe(Effect.map(Option.getOrNull), Effect.mapError(operationError))
+        : Effect.fail(unavailable),
+    [M.workflowsTriggerListen]: (input: { workflowId: string; triggerId: string }) =>
+      Option.isSome(samples)
+        ? samples.value.listen(input.workflowId, input.triggerId)
+        : Stream.fail(unavailable),
     [M.workflowsLedger]: (
       input: Parameters<Context.Service.Shape<typeof WorkflowEngine>["ledger"]>[0],
     ) => execute((engine) => engine.ledger(input)),

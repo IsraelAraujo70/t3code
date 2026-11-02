@@ -17,6 +17,7 @@ import * as Turns from "./exec/Turns.ts";
 import * as Units from "./exec/Units.ts";
 import * as Workspaces from "./git/Workspaces.ts";
 import * as Journal from "./Journal.ts";
+import * as Samples from "./triggers/samples.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 
 export const layer = Layer.unwrap(
@@ -47,6 +48,7 @@ export const layer = Layer.unwrap(
     return WorkflowEngine.layer({ runsDir }).pipe(
       Layer.provide(HostInterpreter.layer({ runsDir }).pipe(Layer.provide(executors))),
       Layer.provideMerge(Catalog.layer),
+      Layer.provideMerge(Samples.layer),
       Layer.provideMerge(Definitions.layer),
       Layer.provideMerge(Journal.layerFromDb),
       Layer.provide(BotsDb.layer),
