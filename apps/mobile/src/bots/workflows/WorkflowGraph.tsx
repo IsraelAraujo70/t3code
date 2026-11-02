@@ -1,11 +1,23 @@
-import { type CanvasModel, stepStatusTone } from "@t3tools/client-runtime/workflows";
+import {
+  type CanvasModel,
+  CANVAS_NODE_STYLES,
+  CANVAS_HUES,
+  CANVAS_ROUGH,
+  CANVAS_FRAME_DASH,
+  CANVAS_STATUS_MARKS,
+  canvasStatusMark,
+  canvasShapePath,
+  canvasSeed,
+} from "@t3tools/client-runtime/workflows";
 import { useMemo } from "react";
 import { useWorkflowColors } from "./WorkflowStatus";
 import { ScrollView, useWindowDimensions } from "react-native";
-import Svg, { G, Path, Text } from "react-native-svg";
+import Svg, { G, Path, Text, Rect, Circle } from "react-native-svg";
 import rough from "roughjs/bin/rough";
 import { useResolveClassNames } from "uniwind";
-import { drawingSeed, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
+import { edgePillSize, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
+
+import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 
 /** Read-only graph shared by workflow definitions and run views. */
 export function WorkflowGraph({
@@ -23,6 +35,32 @@ export function WorkflowGraph({
   const foreground = typeof color === "string" ? color : colors.neutral;
   const fill = useResolveClassNames("bg-screen").backgroundColor;
   const background = typeof fill === "string" ? fill : "transparent";
+  const { themeAppearance } = useAppearancePreferences();
+  const dark = themeAppearance === "dark";
+  const drawingKey = JSON.stringify(model.nodes.map(({ id, kind, w, h }) => ({ id, kind, w, h })));
+  const drawings = useMemo(() => {
+    const nodes: Pick<CanvasModel["nodes"][number], "id" | "kind" | "w" | "h">[] =
+      JSON.parse(drawingKey);
+    return new Map(
+      nodes.map((node) => {
+        const style = CANVAS_NODE_STYLES[node.kind];
+        const hue = CANVAS_HUES[style.hue][dark ? "dark" : "light"];
+        return [
+          node.id,
+          generator.toPaths(
+            generator.path(canvasShapePath(style.shape, node.w, node.h), {
+              ...CANVAS_ROUGH,
+              seed: canvasSeed(node.id),
+              fillStyle: style.fill,
+              stroke: hue.stroke,
+              ...(style.fill === "none" ? {} : { fill: hue.fill }),
+              ...(style.shape === "frame" ? { strokeLineDash: [...CANVAS_FRAME_DASH] } : {}),
+            }),
+          ),
+        ];
+      }),
+    );
+  }, [drawingKey, dark, generator]);
   const paths = (drawable: ReturnType<typeof generator.rectangle>) =>
     generator
       .toPaths(drawable)
@@ -50,42 +88,103 @@ export function WorkflowGraph({
             const edgeLayout = edgeGeometry(from, to);
             return (
               <G key={edge.id}>
-                {paths(
-                  generator.path(edgeLayout.path, {
-                    seed: drawingSeed(edge.id),
-                    stroke: foreground,
-                  }),
+                <G opacity={0.65}>
+                  {paths(
+                    generator.path(edgeLayout.path, {
+                      seed: canvasSeed(edge.id),
+                      stroke: foreground,
+                    }),
+                  )}
+                  {paths(
+                    generator.linearPath(
+                      [
+                        [to.x - 11, to.y + to.h / 2 - 6],
+                        [to.x, to.y + to.h / 2],
+                        [to.x - 11, to.y + to.h / 2 + 6],
+                      ],
+                      { seed: canvasSeed(edge.id), stroke: foreground },
+                    ),
+                  )}
+                </G>
+                {edge.port && (
+                  <Rect
+                    x={edgeLayout.labelX - edgePillSize(edge.port).width / 2}
+                    y={edgeLayout.labelY - 13}
+                    {...edgePillSize(edge.port)}
+                    rx={9}
+                    fill={background}
+                    stroke={foreground}
+                    strokeWidth={0.5}
+                  />
                 )}
-                <Text x={edgeLayout.labelX} y={edgeLayout.labelY} fill={foreground}>
+                <Text
+                  textAnchor="middle"
+                  fontSize={11}
+                  x={edgeLayout.labelX}
+                  y={edgeLayout.labelY}
+                  fill={foreground}
+                >
                   {edge.port ?? ""}
                 </Text>
               </G>
             );
           })}
-          {geometry.nodes.map((node) => (
-            <G
-              key={node.id}
-              onPress={() => onPressNode?.(node.id)}
-              accessibilityLabel={`${node.label}, ${node.kind}${node.status ? `, ${stepStatusTone(node.status)}` : ""}`}
-            >
-              {paths(
-                generator.rectangle(node.x, node.y, node.w, node.h, {
-                  seed: drawingSeed(node.id),
-                  stroke: node.status ? colors[stepStatusTone(node.status)] : foreground,
-                  fill: geometry.nodes.some((child) => child.parent === node.id)
-                    ? "transparent"
-                    : background,
-                  fillStyle: "solid",
-                }),
-              )}
-              <Text x={node.x + 12} y={node.y + 24} fill={foreground} fontSize={14}>
-                {node.label}
-              </Text>
-              <Text x={node.x + 12} y={node.y + 44} fill={foreground} fontSize={11}>
-                {node.kind}
-              </Text>
-            </G>
-          ))}
+          {geometry.nodes.map((node) => {
+            const style = CANVAS_NODE_STYLES[node.kind];
+            const mark = node.status ? canvasStatusMark(node.status) : undefined;
+            const tone = mark ? colors[CANVAS_STATUS_MARKS[mark].tone] : foreground;
+            return (
+              <G
+                key={node.id}
+                transform={`translate(${node.x} ${node.y})`}
+                opacity={mark === "dim" ? 0.5 : 1}
+                onPress={() => onPressNode?.(node.id)}
+                accessibilityLabel={`${node.label}, ${style.label}${mark ? `, ${CANVAS_STATUS_MARKS[mark].label}` : ""}`}
+              >
+                {mark && mark !== "dim" && (
+                  <Path
+                    d={canvasShapePath(style.shape, node.w + 12, node.h + 12)}
+                    transform="translate(-6 -6)"
+                    stroke={tone}
+                    strokeWidth={mark === "ok" ? 2 : 3}
+                    fill="none"
+                  />
+                )}
+                {drawings.get(node.id)?.map((path) => (
+                  <Path
+                    key={path.d}
+                    d={path.d}
+                    stroke={path.stroke}
+                    strokeWidth={path.strokeWidth}
+                    fill={path.fill ?? "none"}
+                    opacity={
+                      path.fill && path.fill !== "none"
+                        ? dark && style.fill === "solid"
+                          ? 0.35
+                          : 1
+                        : path.stroke === CANVAS_HUES[style.hue][dark ? "dark" : "light"].fill
+                          ? 0.55
+                          : 1
+                    }
+                  />
+                ))}
+                <Text x={12} y={24} fill={foreground} fontSize={14}>
+                  {node.label}
+                </Text>
+                <Text x={12} y={44} fill={colors.muted} fontSize={11}>
+                  {node.subtitle}
+                </Text>
+                {mark && mark !== "dim" && (
+                  <G>
+                    <Circle cx={node.w} cy={0} r={9} fill={tone} />
+                    <Text x={node.w} y={4} textAnchor="middle" fill="white" fontSize={12}>
+                      {{ running: "●", waiting: "!", failed: "✕", ok: "✓" }[mark]}
+                    </Text>
+                  </G>
+                )}
+              </G>
+            );
+          })}
         </Svg>
       </ScrollView>
     </ScrollView>

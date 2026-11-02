@@ -15,9 +15,9 @@ export function graphGeometry(model: CanvasModel, width: number) {
   return { nodes, w, h, scale: Math.min(1, Math.max(1, width) / w) };
 }
 
-/** A stable nonzero rough drawing seed for a node or edge. */
-export function drawingSeed(id: string) {
-  return [...id].reduce((seed, char) => (seed * 31 + char.charCodeAt(0)) >>> 0, 1) || 1;
+/** Approximate label bounds with horizontal padding. */
+export function edgePillSize(label: string) {
+  return { width: label.length * 7 + 16, height: 18 };
 }
 
 /** Cubic edge and label coordinates between the source and target boxes. */

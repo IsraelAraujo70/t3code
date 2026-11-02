@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { drawingSeed, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
+import { edgePillSize, edgeGeometry, graphGeometry } from "./WorkflowGraph.logic";
 
 describe("mobile graph geometry", () => {
   it("resolves body coordinates before fitting the graph", () => {
@@ -43,7 +43,7 @@ describe("mobile graph geometry", () => {
       labelX: 250,
       labelY: 77,
     });
-    expect(drawingSeed("child")).toBe(drawingSeed("child"));
-    expect(drawingSeed("parent")).not.toBe(drawingSeed("child"));
+    expect(edgePillSize("yes")).toEqual({ width: 37, height: 18 });
+    expect(edgePillSize("")).toEqual({ width: 16, height: 18 });
   });
 });
