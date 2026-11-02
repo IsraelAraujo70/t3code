@@ -1,13 +1,12 @@
 /**
- * Host MCP servers a bot gets as AppTools: T3 calls them with the Bearer, so neither the bot nor a
- * guest's sandbox is given a route or the secret. Config, rules and failure modes:
- * docs/friend/bot-host-mcp.md.
+ * Host MCP servers a bot gets as AppTools: T3 calls them with the Bearer, so the bot is given
+ * neither a route nor the secret. Config, rules and failure modes: docs/friend/bot-host-mcp.md.
  */
 // Files open with O_NOFOLLOW | O_NONBLOCK and requests go through a capped fetch, which the
 // Effect FileSystem and HttpClient cannot express; the MCP SDK takes a fetch function.
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalFetch:off
-import type { BotId } from "@t3tools/contracts";
+import { parseBotThreadOwner, type BotId, type ThreadId } from "@t3tools/contracts";
 import type { AppTool, AppTools } from "@t3tools/provider-core/server/ProviderAdapter";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
@@ -37,9 +36,8 @@ export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 export const MAX_TOOLS = 128;
 export const MAX_CONTENT_BLOCKS = 64;
 
-/** Server names the agent already sees: the guest's AppTools (GUEST_TOOLS_SERVER, not imported
- * because GuestTools imports this module) and T3's own MCP server. */
-const RESERVED_NAMES: ReadonlySet<string> = new Set(["t3-guest", "t3-code"]);
+/** Server names the agent already sees: T3's own MCP server. */
+const RESERVED_NAMES: ReadonlySet<string> = new Set(["t3-code"]);
 /** Literal addresses only: a name like `localhost` resolves through DNS at request time. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "[::1]"]);
 
@@ -236,8 +234,13 @@ export class HostMcpForward extends Context.Service<
   {
     /** One AppTools per configured server of `botId`; servers that failed to list have no tools. */
     readonly forBot: (botId: BotId) => Effect.Effect<ReadonlyArray<AppTools>>;
+    /**
+     * The AppTools of a bot's thread (main conversation or side thread). Undefined for threads
+     * that are not a bot's and for bots without any configured server.
+     */
+    readonly forThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<AppTools> | undefined>;
   }
->()("t3/bots/guest/HostMcpForward") {}
+>()("t3/bots/HostMcpForward") {}
 
 /** The config file HostMcpForward reads: `T3CODE_BOT_HOST_MCP_FILE` or `~/.t3-friend/bot-host-mcp.json`. */
 export const hostMcpConfigFile = Effect.gen(function* () {
@@ -469,7 +472,14 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  return HostMcpForward.of({ forBot });
+  const forThread = Effect.fn("HostMcpForward.forThread")(function* (threadId: ThreadId) {
+    const parsed = parseBotThreadOwner(threadId);
+    if (parsed === null) return undefined;
+    const servers = yield* forBot(parsed.botId);
+    return servers.length === 0 ? undefined : servers;
+  });
+
+  return HostMcpForward.of({ forBot, forThread });
 });
 
 export const layer = Layer.effect(HostMcpForward, make);

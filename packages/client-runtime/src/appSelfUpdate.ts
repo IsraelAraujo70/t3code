@@ -1,9 +1,8 @@
 /**
- * An app of the fork updating itself from a server: the owner's friend APK (`apps/mobile`) and Mac
- * app (`apps/web` in the desktop shell), both from the bots host, and the guest app (`apps/bia`,
- * from the guest API). Each app supplies the network, file and installer steps; this decides when
- * to check, what to offer, and that nothing is installed unless its sha256 and size match the
- * published build.
+ * An app of the fork updating itself from the bots host: the owner's friend APK (`apps/mobile`) and
+ * Mac app (`apps/web` in the desktop shell). Each app supplies the network, file and installer
+ * steps; this decides when to check, what to offer, and that nothing is installed unless its sha256
+ * and size match the published build.
  */
 import type { MobileUpdateBuild, MobileUpdateInfo } from "@t3tools/contracts";
 
@@ -16,7 +15,7 @@ export interface EmbeddedBuild {
 /** Automatic checks (launch, back to foreground) wait this long after the last one. */
 export const CHECK_INTERVAL_MS = 15 * 60_000;
 
-/** `extra.friendBuild` when this build carries one (the friend preview APK, the guest app). */
+/** `extra.friendBuild` when this build carries one (the friend preview APK). */
 export function readEmbeddedBuild(extra: unknown): EmbeddedBuild | null {
   if (typeof extra !== "object" || extra === null || !("friendBuild" in extra)) return null;
   const build = extra.friendBuild;

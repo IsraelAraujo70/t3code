@@ -6,7 +6,7 @@ import type { AppTools } from "@t3tools/provider-core/server/ProviderAdapter";
 import { claudeAppToolsServer, withClaudeAppTools } from "./claudeAppTools.ts";
 
 const appTools: AppTools = {
-  server: "t3-guest",
+  server: "notes",
   tools: [
     {
       name: "echo",
@@ -45,11 +45,11 @@ describe("claudeAppToolsServer", () => {
   it("keeps the instance out of JSON, so the live-query key stays stable", () => {
     const config = claudeAppToolsServer(appTools);
     assert.isTrue("instance" in config);
-    assert.strictEqual(JSON.stringify(config), '{"type":"sdk","name":"t3-guest"}');
+    assert.strictEqual(JSON.stringify(config), '{"type":"sdk","name":"notes"}');
     // An identity joins the key, so a server whose backing changed opens a new query.
     assert.strictEqual(
       JSON.stringify(claudeAppToolsServer({ ...appTools, identity: "abc123" })),
-      '{"type":"sdk","name":"t3-guest","identity":"abc123"}',
+      '{"type":"sdk","name":"notes","identity":"abc123"}',
     );
   });
 });
@@ -57,8 +57,8 @@ describe("claudeAppToolsServer", () => {
 describe("withClaudeAppTools", () => {
   it("adds the server and pre-approves only its tools", () => {
     const merged = withClaudeAppTools({ allowedTools: ["Read"] }, [appTools]);
-    assert.deepStrictEqual(merged.allowedTools, ["Read", "mcp__t3-guest__*"]);
-    assert.deepStrictEqual(Object.keys(merged.mcpServers ?? {}), ["t3-guest"]);
+    assert.deepStrictEqual(merged.allowedTools, ["Read", "mcp__notes__*"]);
+    assert.deepStrictEqual(Object.keys(merged.mcpServers ?? {}), ["notes"]);
     const plain = { allowedTools: ["Read"] };
     assert.strictEqual(withClaudeAppTools(plain, undefined), plain);
     assert.strictEqual(withClaudeAppTools(plain, []), plain);
@@ -76,8 +76,8 @@ describe("withClaudeAppTools", () => {
         { server: "pluggy", tools: [] },
       ],
     );
-    assert.deepStrictEqual(merged.allowedTools, ["Read", "mcp__t3-guest__*", "mcp__pluggy__*"]);
-    assert.deepStrictEqual(Object.keys(merged.mcpServers ?? {}), ["t3-code", "t3-guest", "pluggy"]);
+    assert.deepStrictEqual(merged.allowedTools, ["Read", "mcp__notes__*", "mcp__pluggy__*"]);
+    assert.deepStrictEqual(Object.keys(merged.mcpServers ?? {}), ["t3-code", "notes", "pluggy"]);
     assert.strictEqual(merged.mcpServers?.["t3-code"]?.type, "http");
   });
 });
