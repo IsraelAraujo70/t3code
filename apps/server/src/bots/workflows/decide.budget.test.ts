@@ -345,6 +345,17 @@ describe("run decider card, pull request and ledger (slices 7-8)", () => {
         pass(run);
         expect(run.state().attempts.get("done")?.[0]?.resolved).toMatchObject({ status: "failed" });
         expect(run.state().ended?.status).toBe("failed");
+        // A retry of the output publishes again under its own attempt's key.
+        run.add("control:r1", {
+          _tag: "ControlRequested",
+          control: "retry",
+          step: "done",
+          by: "user",
+          at: iso(T0),
+        });
+        pass(run);
+        pass(run);
+        expect(run.intent("pr:done@2")).toMatchObject({ _tag: "OpenPullRequest", sha: "def" });
         return;
       }
       run.result("pr:done@1", {
