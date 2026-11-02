@@ -38,7 +38,7 @@ export function TriggerInspector(props: InspectorProps & { id: string; trigger: 
         onEdit={(_path, next) => {
           if (!WORKFLOW_NODE_ID_PATTERN.test(next)) return "Invalid trigger id.";
           if (next === id) return null;
-          if (findNode(definition, next) || definition.triggers?.[next])
+          if (findNode(definition, next) || Object.hasOwn(definition.triggers ?? {}, next))
             return "This id already exists.";
           props.onChange(renameNode(definition, id, next));
           props.onSelect(next);

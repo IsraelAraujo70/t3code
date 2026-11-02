@@ -1,4 +1,3 @@
-import { TriggerInspector } from "./TriggerInspector";
 import { findNode, renameNode, updateNode } from "@t3tools/client-runtime/workflows";
 import {
   type EnvironmentId,
@@ -13,6 +12,7 @@ import * as Schema from "effect/Schema";
 import { Button } from "../../../components/ui/button";
 import { InspectorField, NodeConfigForms } from "./NodeConfigForms";
 import { applyFieldEdit, deleteInspectorNode, inspectorNodePath } from "./inspectorEdits";
+import { TriggerInspector } from "./TriggerInspector";
 import { WorkflowSettingsForm } from "./WorkflowSettingsForm";
 
 const decodeNode = Schema.decodeUnknownOption(WorkflowNode);
@@ -31,7 +31,8 @@ export interface InspectorProps {
 /** Edits a selected node or the workflow settings through schema-validated commits. */
 export function Inspector(props: InspectorProps) {
   const id = props.selected;
-  const trigger = id === null ? undefined : props.definition.triggers?.[id];
+  const triggers = props.definition.triggers ?? {};
+  const trigger = id !== null && Object.hasOwn(triggers, id) ? triggers[id] : undefined;
   if (id !== null && trigger) return <TriggerInspector {...props} id={id} trigger={trigger} />;
   const found = id === null ? null : findNode(props.definition, id);
   if (id === null || found === null)
@@ -72,7 +73,7 @@ export function Inspector(props: InspectorProps) {
           if (props.readOnly || next === id) return null;
           if (!WORKFLOW_NODE_ID_PATTERN.test(next))
             return "Invalid node id. Use lowercase letters, digits and underscores, starting with a letter.";
-          if (findNode(props.definition, next) || props.definition.triggers?.[next])
+          if (findNode(props.definition, next) || Object.hasOwn(triggers, next))
             return "A node with this id already exists.";
           props.onChange(renameNode(props.definition, id, next));
           props.onSelect(next);

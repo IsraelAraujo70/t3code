@@ -6,6 +6,7 @@ import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { randomUUID } from "../../../lib/utils";
+import { commandFailureMessage } from "../../botsSettingsShared";
 import { workflowsEnvironment } from "../state";
 
 /** Shows captured webhook input and runs an explicit test with that event. */
@@ -106,7 +107,7 @@ export function WebhookTriggerPanel({
           }).then((result) =>
             result._tag === "Success"
               ? setRun(result.value.runId)
-              : setError("Could not start run"),
+              : setError(commandFailureMessage(result) ?? "Could not start the run."),
           )
         }
       >
