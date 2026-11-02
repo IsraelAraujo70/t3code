@@ -11,6 +11,9 @@ import { Journal, layerFromDb, WorkflowJournalError } from "../Journal.ts";
 import { upsertIndex, insertVersion } from "../definitions/definitionsStore.ts";
 import { workflowStream } from "../facts.ts";
 import type { TriggerRequest } from "../WorkflowEngine.ts";
+import * as Stream from "effect/Stream";
+import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { make } from "./WorkflowTriggers.ts";
 import { getCursor } from "./cursors.ts";
 
@@ -186,5 +189,105 @@ it.effect("baselines repository merges and limits queries to ten minutes", () =>
     yield* service.poll(new Date("2026-01-01T00:21:00Z"));
     expect(requests).toHaveLength(1);
     expect(requests[0]?.occurrence).toBe("pr:owner/repo#1:abc");
+  }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
+);
+
+/** Stored events by type; only the fields the triggers read are filled in. */
+const orchestratorWith = (events: Array<{ sequence: number; event: unknown }>) =>
+  Layer.mock(OrchestratorV2)({
+    streamStoredEventsFrom: (input) =>
+      Stream.fromIterable(
+        events.filter(
+          (stored) =>
+            stored.sequence > (input?.afterSequence ?? 0) &&
+            (stored.event as { type: string }).type === input?.eventType,
+        ) as unknown as ReadonlyArray<OrchestrationV2StoredEvent>,
+      ),
+  });
+
+const settled = (sequence: number, id: string, title: string) => ({
+  sequence,
+  event: { type: "thread.settled", payload: { id, projectId: "project-app", title } },
+});
+
+it.effect("fires on threads that settle after it is on, never on step threads, and retries", () =>
+  Effect.gen(function* () {
+    yield* seed({ id: "done", kind: "threadSettled", titlePrefix: "Review" });
+    yield* toggle(true, "on");
+    const events = [settled(1, "old", "Review old")];
+    const requests: TriggerRequest[] = [];
+    let fail = false;
+    const service = yield* make({
+      engine: {
+        start: (request) =>
+          Effect.suspend(() => {
+            if (fail) return Effect.fail(new WorkflowJournalError({ message: "busy" }));
+            requests.push(request);
+            return Effect.succeed({ runId });
+          }),
+      },
+    }).pipe(Effect.provide(orchestratorWith(events)));
+    // The first pass only records where the event log is.
+    yield* service.poll(new Date("2026-01-01T00:00:00Z"));
+    expect(requests).toEqual([]);
+    events.push(
+      settled(2, "wf:wfr_00000000000000000000:0123456789abcdef", "Review step"),
+      settled(3, "t-other", "Chat"),
+      settled(4, "t-review", "Review PR 12"),
+    );
+    fail = true;
+    yield* service.poll(new Date("2026-01-01T00:01:00Z"));
+    expect(requests).toEqual([]);
+    fail = false;
+    yield* service.poll(new Date("2026-01-01T00:02:00Z"));
+    yield* service.poll(new Date("2026-01-01T00:03:00Z"));
+    expect(requests.map((request) => request.occurrence)).toEqual(["settled:t-review:4"]);
+    expect(requests[0]?.payload).toMatchObject({ threadId: "t-review", title: "Review PR 12" });
+    expect(yield* getCursor("events:thread.settled")).toEqual(Option.some("4"));
+  }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
+);
+
+const linkUpdated = (sequence: number, number: number, state: string, headSha?: string) => ({
+  sequence,
+  event: {
+    type: "thread.pull-request-link-updated",
+    payload: {
+      repository: "acme/app",
+      number,
+      url: `https://github.com/acme/app/pull/${number}`,
+      snapshot: { state, title: `PR ${number}`, baseBranch: "main" },
+      ...(headSha === undefined ? {} : { watch: { headSha } }),
+    },
+  },
+});
+
+it.effect("fires once per merged linked PR, with or without a watched head", () =>
+  Effect.gen(function* () {
+    yield* seed({ id: "merged", kind: "prMerged", scope: "linked", repo: "acme/app" });
+    yield* toggle(true, "on");
+    const events: Array<{ sequence: number; event: unknown }> = [];
+    const requests: TriggerRequest[] = [];
+    const service = yield* make({
+      engine: {
+        start: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return { runId };
+          }),
+      },
+    }).pipe(Effect.provide(orchestratorWith(events)));
+    yield* service.poll(new Date("2026-01-01T00:00:00Z"));
+    events.push(
+      linkUpdated(1, 7, "open", "aaa"),
+      linkUpdated(2, 7, "merged", "bbb"),
+      linkUpdated(3, 8, "merged"),
+    );
+    yield* service.poll(new Date("2026-01-01T00:01:00Z"));
+    yield* service.poll(new Date("2026-01-01T00:02:00Z"));
+    expect(requests.map((request) => request.occurrence)).toEqual([
+      "pr:acme/app#7:bbb",
+      "pr:acme/app#8:merged",
+    ]);
+    expect(requests[1]?.payload).toMatchObject({ number: 8, mergeSha: null });
   }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
 );
