@@ -117,7 +117,8 @@ const desiredTask = (
   schedule: {
     type: "webhook",
     signature: trigger.signature ?? null,
-    ...(trigger.filters === undefined ? {} : { filters: trigger.filters }),
+    // Omitted filters keep the stored ones in upsert, so removing them must send [].
+    filters: trigger.filters ?? [],
     dedupe: {
       ...(trigger.replayKey === undefined ? {} : { replayKey: trigger.replayKey }),
       // A coalesce key makes each accepted delivery a durable row before the 202.
@@ -146,7 +147,7 @@ const sameTask = (
     existing.enabled === desired.enabled &&
     existing.projectId === desired.projectId &&
     same(existing.schedule.signature, desired.schedule.signature) &&
-    same(existing.schedule.filters, desired.schedule.filters) &&
+    same(existing.schedule.filters ?? [], desired.schedule.filters ?? []) &&
     same(existing.schedule.dedupe, desired.schedule.dedupe) &&
     (!needsSecret || existing.webhook?.hasSecret === true)
   );

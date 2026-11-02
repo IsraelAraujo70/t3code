@@ -29,10 +29,13 @@ import { layerBindHook, layerHook, makeReconciler } from "./webhook.ts";
 const HOOK = "wf-hook:inbox:push";
 const runId = WorkflowRunId.make("wfr_00000000000000000000");
 
-const seed = Effect.fn("test.seed")(function* (triggers: ReadonlyArray<WorkflowTrigger>) {
+const seed = Effect.fn("test.seed")(function* (
+  triggers: ReadonlyArray<WorkflowTrigger>,
+  commit = `head-${triggers.length}`,
+) {
   yield* insertVersion({
     workflow_id: "inbox",
-    commit_sha: `head-${triggers.length}`,
+    commit_sha: commit,
     revision: "rev",
     semantic_hash: "hash",
     source: "",
@@ -53,7 +56,7 @@ const seed = Effect.fn("test.seed")(function* (triggers: ReadonlyArray<WorkflowT
   yield* upsertIndex({
     workflow_id: "inbox",
     path: "inbox.workflow.yaml",
-    head_commit: `head-${triggers.length}`,
+    head_commit: commit,
     revision: "rev",
     title: "Inbox",
     valid: 1,
@@ -218,6 +221,21 @@ it.live("keeps each webhook trigger's task in step, with one secret for its whol
         tasks.delete(HOOK);
         yield* reconcile();
         expect(calls).toEqual([`upsert ${HOOK}`, secret]);
+
+        // Filters removed from the trigger are cleared on the task, and that converges.
+        calls.length = 0;
+        yield* seed(
+          [{ ...push, filters: [{ path: "body.action", op: "equals", value: "opened" }] }],
+          "head-filtered",
+        );
+        yield* reconcile();
+        expect(tasks.get(HOOK)?.schedule).toMatchObject({ filters: [{ path: "body.action" }] });
+        yield* seed([push], "head-unfiltered");
+        yield* reconcile();
+        expect(tasks.get(HOOK)?.schedule).toMatchObject({ filters: [] });
+        calls.length = 0;
+        yield* reconcile();
+        expect(calls).toEqual([]);
 
         calls.length = 0;
         yield* seed([]);
