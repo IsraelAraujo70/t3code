@@ -82,8 +82,8 @@ function History(props: TabProps & { cursor?: string }) {
               <div key={version.commit} className="border-b border-border py-2 text-sm">
                 <p>{version.message}</p>
                 <p className="text-muted-foreground">
-                  {version.author} · {formatRelativeTimeLabel(version.at, Date.parse(now))} ·{" "}
-                  <code>{version.commit.slice(0, 8)}</code>
+                  {version.author} · {formatRelativeTimeLabel(version.at, Date.parse(`${now}:00Z`))}{" "}
+                  · <code>{version.commit.slice(0, 8)}</code>
                 </p>
               </div>
             ))

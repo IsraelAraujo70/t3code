@@ -12,6 +12,7 @@ import * as Result from "effect/Result";
 import { useReducer, useState, type ReactNode } from "react";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
+import { cn } from "../../../lib/utils";
 import { ToggleGroup, Toggle } from "../../../components/ui/toggle-group";
 import { LazyWorkflowCanvas } from "../canvas/LazyWorkflowCanvas";
 import { WorkflowToneBadge } from "../WorkflowStatusBadge";
@@ -96,7 +97,8 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
     }
   };
   return (
-    <div className="flex min-h-full flex-col gap-3 p-4">
+    // A definite height on wide screens; with only min-h-full the canvas row sizes to the inspector.
+    <div className={cn("flex min-h-full flex-col gap-3 p-4", tab === "Canvas" && "lg:h-full")}>
       <header className="flex flex-wrap items-center gap-2">
         <h2 className="font-medium">{current?.title ?? state.base.workflowId}</h2>
         <WorkflowToneBadge
@@ -232,7 +234,7 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
                 />
               </div>
             </div>
-            <aside className="w-full shrink-0 border-border lg:w-72 lg:border-l lg:pl-3">
+            <aside className="w-full shrink-0 border-border lg:w-72 lg:overflow-y-auto lg:border-l lg:pl-3">
               <fieldset disabled={saving}>
                 <Inspector
                   definition={current}

@@ -78,7 +78,7 @@ function RunContent({
   queryError: string | null;
 }) {
   const canOperate = useAtomValue(workflowsEnvironment.runControl.permissionAtom(environmentId));
-  const now = Date.parse(useNowMinute());
+  const now = Date.parse(`${useNowMinute()}:00Z`);
   const summary = view.summary;
   // oxlint-disable-next-line t3code/no-manual-memo -- Keep canvas identity stable across clock ticks as required by the run view.
   const model = useMemo(
