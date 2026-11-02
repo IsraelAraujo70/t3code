@@ -126,6 +126,68 @@ describe("run views", () => {
     expect(make("complete", null).usdEstimate).toBeNull();
   });
 
+  it("charges a step for its turn and its correction turn", () => {
+    const run = prepare(
+      compile({ nodes: { a: { ...agent, output: { tag: { type: "string" } } } } }),
+    );
+    const first = turnSettled("a", 1, "completed", null, "no json");
+    const second = turnSettled("a", 1, "completed", { tag: "v1" });
+    if (first._tag !== "TurnSettled" || second._tag !== "TurnSettled") throw new Error("fixture");
+    run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+    run.add("settled:a@1", { ...first, cost: { ...cost, billable: 10 } });
+    run.drive();
+    run.add("settled:a@1:nudge", { ...second, cost: { ...cost, billable: 5 } });
+    run.drive();
+    expect(stepViews(run.compiled, run.state())[0]?.cost?.billable).toBe(15);
+  });
+
+  it("shows an accept command by what it did once its run succeeded", () => {
+    const run = prepare(
+      compile({
+        nodes: {
+          a: { ...agent, accept: { argv: ["node", "t.ts"], check: "exit == 0" } },
+          done: { kind: "output", status: "ready_for_review", value: {} },
+        },
+        edges: ["a:pass -> done"],
+      }),
+    );
+    run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+    run.add("settled:a@1", turnSettled("a", 1, "completed", {}));
+    run.drive();
+    run.add("result:accept:a@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+    run.add("exited:a/accept@1", unitExited("a/accept", 1, 0, { tail: "12 passed" }));
+    run.drive();
+    expect(runSummary(run.state()).status).toBe("succeeded");
+    expect(stepViews(run.compiled, run.state()).find((v) => v.key === "a/accept")).toMatchObject({
+      status: "succeeded",
+      summary: "12 passed",
+    });
+  });
+
+  it("shows an accept command the run's end stopped as cancelled after its interrupt lands", () => {
+    const run = prepare(
+      compile({
+        nodes: { a: { ...agent, accept: { argv: ["node", "t.ts"], check: "exit == 0" } } },
+      }),
+    );
+    run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+    run.add("settled:a@1", turnSettled("a", 1, "completed", {}));
+    run.drive();
+    run.add("result:accept:a@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+    run.add("control:c", {
+      _tag: "ControlRequested",
+      control: "cancel",
+      step: null,
+      by: "user",
+      at: iso(T0),
+    });
+    expect(run.drive().map((f) => f.key)).toContain("interrupt:accept:a@1");
+    run.add("exited:a/accept@1", unitExited("a/accept", 1, null, { signal: "SIGTERM" }));
+    expect(stepViews(run.compiled, run.state()).find((v) => v.key === "a/accept")?.status).toBe(
+      "cancelled",
+    );
+  });
+
   it("releases the agent token reservation on settlement", () => {
     const run = prepare(compile({ nodes: { a: agent } }));
     expect(run.intent("turn:a@1")?._tag).toBe("StartTurn");

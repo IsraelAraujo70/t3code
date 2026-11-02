@@ -25,6 +25,31 @@ export const emptyRunState = (runId: string): RunState => ({
   workspaces: new Map(),
 });
 
+/**
+ * The workspaces after a turn or command reported the head it left: facts fold in journal order,
+ * so the last observation wins even when parallel steps settle out of order.
+ */
+const advanceHead = (
+  state: Pick<RunState, "workspaces" | "intents">,
+  fact: {
+    readonly step: string;
+    readonly attempt: number;
+    readonly headSha?: string | null | undefined;
+  },
+): RunState["workspaces"] => {
+  if (fact.headSha == null) return state.workspaces;
+  for (const { intent } of state.intents.values()) {
+    if (intent._tag !== "StartTurn" && intent._tag !== "StartUnit") continue;
+    if (intent.step !== fact.step || intent.attempt !== fact.attempt) continue;
+    const name = intent._tag === "StartTurn" ? intent.workspace.name : intent.cwd.name;
+    const ready = state.workspaces.get(name);
+    return ready === undefined
+      ? state.workspaces
+      : new Map(state.workspaces).set(name, { ...ready, headSha: fact.headSha });
+  }
+  return state.workspaces;
+};
+
 /** Applies one fact of the run's stream; facts arrive in seq order. */
 export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
   let next = { ...state, lastSeq: stored.seq, keys: new Set(state.keys).add(stored.key) };
@@ -116,9 +141,11 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
         fact.attempt,
         stored.key.endsWith(":nudge") ? { nudge: fact } : { settled: fact },
       );
+      next.workspaces = advanceHead(next, fact);
       break;
     case "UnitExited":
       updateAttempt(fact.step, fact.attempt, { exited: fact });
+      next.workspaces = advanceHead(next, fact);
       break;
     case "StepResolved":
       updateAttempt(fact.step, fact.attempt, { resolved: fact });

@@ -16,23 +16,44 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
-import { ProjectService } from "../../../project/ProjectService.ts";
+import { type ProjectOperationError, ProjectService } from "../../../project/ProjectService.ts";
 import { type Intent, type NewFact, type RunFact, runStream, workflowStream } from "../facts.ts";
-import { WorkflowGit } from "../git/Workspaces.ts";
+import { WorkflowGit, type WorkflowGitError } from "../git/Workspaces.ts";
 import { keyHash, runIdFor } from "../ids.ts";
 import { WorkflowInterpreter } from "../Interpreter.ts";
-import { Journal } from "../Journal.ts";
+import { Journal, type WorkflowJournalError } from "../Journal.ts";
 import type { IntentResult } from "../state.ts";
 import { projectByRef } from "./projects.ts";
+import { unobservedTurn } from "./turnResult.ts";
 import { WorkflowTurns, type WorkflowTurnError } from "./Turns.ts";
 import { WorkflowUnits, type WorkflowUnitError } from "./Units.ts";
+
+type ExecutorError =
+  | WorkflowTurnError
+  | WorkflowUnitError
+  | WorkflowGitError
+  | WorkflowJournalError
+  | ProjectOperationError;
+
+/** Whether trying the same intent again may succeed: false only for definitive refusals. */
+export const retryable = (error: ExecutorError): boolean => {
+  switch (error._tag) {
+    case "WorkflowTurnError":
+      return error.permanent !== true;
+    case "WorkflowGitError":
+      return error.conflict !== true && error.permanent !== true;
+    default:
+      return true;
+  }
+};
 
 export interface HostInterpreterOptions {
   /** Each run's worktrees and unit receipts live under `<runsDir>/<runId>`. */
   readonly runsDir: string;
 }
 
-const OBSERVE_RETRY = Schedule.spaced("5 seconds");
+/** An observer whose reads keep failing gives up after about five minutes; see `unobserved`. */
+const OBSERVE_RETRY = Schedule.spaced("5 seconds").pipe(Schedule.upTo({ times: 60 }));
 
 const nowIso = Clock.currentTimeMillis.pipe(
   Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
@@ -75,9 +96,12 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     key: `result:${intent.key}`,
     fact,
   });
-  const failed = (runId: string, intent: Intent, error: string): ReadonlyArray<NewFact> => [
-    result(runId, intent, { _tag: "IntentFailed", error, retryable: false }),
-  ];
+  const failed = (
+    runId: string,
+    intent: Intent,
+    error: string,
+    retryable = false,
+  ): ReadonlyArray<NewFact> => [result(runId, intent, { _tag: "IntentFailed", error, retryable })];
 
   const prepare = Effect.fn("HostInterpreter.prepare")(function* (
     runId: string,
@@ -229,16 +253,66 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     }
   });
 
-  /** Any error or defect becomes the intent's IntentFailed: the interpreter never fails. */
+  /**
+   * Any error or defect becomes the intent's IntentFailed: the interpreter never fails. Replaying
+   * an intent is safe by its key, so an error is retryable unless it is definitive; a defect is not.
+   */
   const settle =
-    (runId: string, intent: Intent) =>
-    (effect: Effect.Effect<ReadonlyArray<NewFact>, { readonly message: string }>) =>
+    (runId: string, intent: Intent, retry = true) =>
+    (effect: Effect.Effect<ReadonlyArray<NewFact>, ExecutorError>) =>
       effect.pipe(
-        Effect.catch((error) => Effect.succeed(failed(runId, intent, error.message))),
+        Effect.catch((error) =>
+          Effect.succeed(failed(runId, intent, error.message, retry && retryable(error))),
+        ),
         Effect.catchDefect((defect) =>
           Effect.succeed(failed(runId, intent, Cause.pretty(Cause.die(defect)))),
         ),
       );
+
+  /**
+   * Reads that never succeed try to stop the original, then settle the attempt as unknown: the
+   * decider pauses the run for Israel instead of failing or replaying it, because the original may
+   * still run and no retry may start a second agent or command beside it.
+   */
+  const unobserved = Effect.fn("HostInterpreter.unobserved")(function* (
+    runId: string,
+    intent: Intent,
+    error: WorkflowTurnError | WorkflowUnitError,
+  ) {
+    const stop: Effect.Effect<void, WorkflowTurnError | WorkflowUnitError> =
+      intent._tag === "StartTurn"
+        ? turns.interrupt(runId, `unobserved:${intent.key}`, intent.threadId)
+        : intent._tag === "StartUnit"
+          ? units.stop(unitOf(runId, intent.key).unit)
+          : Effect.void;
+    const stopped = yield* stop.pipe(
+      Effect.as("it was stopped"),
+      Effect.catch((stopError) => Effect.succeed(`stopping it failed too (${stopError.message})`)),
+    );
+    const text = `The workflow could not observe this step (${error.message}); ${stopped}.`;
+    if (intent._tag === "StartTurn") return [unobservedTurn(runId, intent, "unknown", text)];
+    if (intent._tag !== "StartUnit") return [];
+    const failed: RunFact = {
+      _tag: "UnitExited",
+      step: intent.step,
+      attempt: intent.attempt,
+      exit: null,
+      signal: "UNOBSERVED",
+      queuedMs: 0,
+      out: null,
+      tail: text,
+      lost: false,
+      started: true,
+      parseError: null,
+      headSha: null,
+    };
+    const fact: NewFact = {
+      stream: runStream(runId),
+      key: `exited:${intent.step}@${intent.attempt}`,
+      fact: failed,
+    };
+    return [fact];
+  });
 
   const observeUnit = (
     runId: string,
@@ -289,7 +363,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
             : Effect.void;
       return stop.pipe(
         Effect.as(failed(runId, intent, "The run ended before this step started.")),
-        settle(runId, intent),
+        settle(runId, intent, false),
       );
     }),
     observe: (runId, intent, observed) => {
@@ -303,7 +377,10 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
       return stream.pipe(
         Stream.tapError((error) => Effect.logWarning("workflow observe failed", { runId, error })),
         Stream.retry(OBSERVE_RETRY),
-        Stream.orDie,
+        Stream.catchTags({
+          WorkflowTurnError: (error) => Stream.fromIterableEffect(unobserved(runId, intent, error)),
+          WorkflowUnitError: (error) => Stream.fromIterableEffect(unobserved(runId, intent, error)),
+        }),
         // A defect ends this observer after a pause; the actor starts it again on its next pass.
         Stream.catchDefect((defect) =>
           Stream.fromEffectDrain(

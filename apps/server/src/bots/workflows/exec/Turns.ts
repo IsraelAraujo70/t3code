@@ -8,7 +8,6 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import {
@@ -32,7 +31,7 @@ import { WorkflowGit } from "../git/Workspaces.ts";
 import { commandIdFor, messageIdFor } from "../ids.ts";
 import { projectByRef } from "./projects.ts";
 import { type RequestItem, requestResponse, requestText } from "./requests.ts";
-import { lastJsonBlock, stepRuns, turnCost } from "./turnResult.ts";
+import { lastJsonBlock, stepRuns, turnCost, unobservedTurn } from "./turnResult.ts";
 
 type StartTurn = Extract<Intent, { readonly _tag: "StartTurn" }>;
 type AnswerRequest = Extract<Intent, { readonly _tag: "AnswerRequest" }>;
@@ -40,6 +39,8 @@ type AnswerRequest = Extract<Intent, { readonly _tag: "AnswerRequest" }>;
 export class WorkflowTurnError extends Data.TaggedError("WorkflowTurnError")<{
   readonly message: string;
   readonly cause?: unknown;
+  /** Trying the same intent again cannot help (no such project, no instance, a disabled one). */
+  readonly permanent?: boolean;
 }> {}
 
 /** Prefixed to every step prompt: the bots' rules, which the engine's gates do not enforce. */
@@ -109,6 +110,14 @@ const requestItem = (
       item.requestId === requestId,
   );
 
+/** Upstream's projection error for a thread it has never had. */
+const threadNotFound = (error: { readonly _tag: string; readonly cause?: unknown }) =>
+  error._tag === "OrchestratorProjectionError" &&
+  typeof error.cause === "object" &&
+  error.cause !== null &&
+  "_tag" in error.cause &&
+  error.cause._tag === "ProjectionStoreThreadNotFoundError";
+
 const settledStatus = (status: OrchestrationV2Run["status"]) =>
   status === "completed" || status === "cancelled" || status === "interrupted"
     ? status
@@ -121,7 +130,16 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
   const registry = yield* ProviderInstanceRegistry;
   const git = yield* WorkflowGit;
 
-  const fail = (message: string) => (cause: unknown) => new WorkflowTurnError({ message, cause });
+  const fail = (message: string) => (cause: unknown) =>
+    new WorkflowTurnError({
+      message,
+      cause,
+      permanent:
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        cause._tag === "ThreadManagementProviderInstanceDisabledError",
+    });
   const projection = (threadId: string) =>
     threads
       .getThreadProjection(ThreadId.make(threadId))
@@ -133,7 +151,10 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
     );
     const found = projectByRef(snapshot.projects, ref);
     if (found === undefined) {
-      return yield* new WorkflowTurnError({ message: `There is no project "${ref}".` });
+      return yield* new WorkflowTurnError({
+        message: `There is no project "${ref}".`,
+        permanent: true,
+      });
     }
     return found;
   });
@@ -150,6 +171,7 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
     if (instanceId === undefined) {
       return yield* new WorkflowTurnError({
         message: `No enabled provider instance runs ${ref.provider}.`,
+        permanent: true,
       });
     }
     const selection: ModelSelection = {
@@ -166,18 +188,10 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
     return selection;
   });
 
-  /** Our run: the one whose user message is the id this intent sent. */
+  /** Our run: the one whose user message is the id this intent sent, after the thread read fine. */
   const ourRun = Effect.fn("WorkflowTurns.ourRun")(function* (runId: string, intent: StartTurn) {
     const messageId = messageIdFor(runId, intent.key);
-    const run = (yield* projection(intent.threadId)).runs.find(
-      (r) => r.userMessageId === messageId,
-    );
-    if (run === undefined) {
-      return yield* new WorkflowTurnError({
-        message: "The step thread has no run for its message.",
-      });
-    }
-    return run;
+    return (yield* projection(intent.threadId)).runs.find((r) => r.userMessageId === messageId);
   });
 
   const settledFact = Effect.fn("WorkflowTurns.settledFact")(function* (
@@ -214,30 +228,6 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
     return fact;
   });
 
-  /** The thread never got a run for our message: the turn cannot settle, so it failed. */
-  const lostFact = (runId: string, intent: StartTurn): NewFact => ({
-    stream: runStream(runId),
-    key: `settled:${intent.step}@${intent.attempt}${intent.key.startsWith("nudge:") ? ":nudge" : ""}`,
-    fact: {
-      _tag: "TurnSettled",
-      step: intent.step,
-      attempt: intent.attempt,
-      status: "failed",
-      text: "The step thread has no run for the workflow's message.",
-      output: null,
-      outputError: null,
-      cost: {
-        billable: 0,
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        usage: "unavailable",
-        usdEstimate: null,
-      },
-      headSha: null,
-    },
-  });
-
   const pendingRequests = Effect.fn("WorkflowTurns.pendingRequests")(function* (
     runId: string,
     intent: StartTurn,
@@ -263,12 +253,24 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
   const observe = (runId: string, intent: StartTurn): Stream.Stream<NewFact, WorkflowTurnError> =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const found = yield* ourRun(runId, intent).pipe(
-          Effect.retry({ schedule: Schedule.spaced("1 second"), times: FIND_RUN_TRIES }),
-          Effect.option,
-        );
-        if (found._tag === "None") return Stream.make(lostFact(runId, intent));
-        const run = found.value;
+        // A read that fails fails the stream, which the interpreter retries; only reads that
+        // succeed and show no run for our message, for FIND_RUN_TRIES seconds, mean it was lost.
+        let run: OrchestrationV2Run | undefined;
+        for (let tries = 0; run === undefined && tries < FIND_RUN_TRIES; tries++) {
+          run = yield* ourRun(runId, intent);
+          if (run === undefined) yield* Effect.sleep("1 second");
+        }
+        if (run === undefined) {
+          return Stream.make(
+            // No run for our message: no agent ran for it, so replaying it is safe.
+            unobservedTurn(
+              runId,
+              intent,
+              "lost",
+              "The step thread has no run for the workflow's message.",
+            ),
+          );
+        }
         const projectId = (yield* projection(intent.threadId)).thread.projectId;
         // Waits in chunks; between chunks it reports the requests the agent is waiting on.
         const chunk: Stream.Stream<NewFact, WorkflowTurnError> = Stream.unwrap(
@@ -343,9 +345,15 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
       key: string,
       threadId: string,
     ) {
-      const thread = yield* threads
-        .getThreadProjection(ThreadId.make(threadId))
-        .pipe(Effect.option);
+      // Only a thread that does not exist has nothing to stop; any other read error is a failed stop.
+      const thread = yield* threads.getThreadProjection(ThreadId.make(threadId)).pipe(
+        Effect.asSome,
+        Effect.catch((error) =>
+          threadNotFound(error)
+            ? Effect.succeedNone
+            : Effect.fail(fail("Could not read the step thread to stop it.")(error)),
+        ),
+      );
       if (thread._tag === "None") return;
       yield* threads
         .interruptThread({
@@ -363,7 +371,7 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
         intent.answer,
       );
       if (Result.isFailure(response)) {
-        return yield* new WorkflowTurnError({ message: response.failure });
+        return yield* new WorkflowTurnError({ message: response.failure, permanent: true });
       }
       yield* threads
         .dispatch({

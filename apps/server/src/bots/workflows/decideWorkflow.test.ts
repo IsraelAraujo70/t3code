@@ -211,3 +211,31 @@ it("tells the parent when its child's trigger is skipped", () => {
     },
   });
 });
+
+it("matches a param's pattern against the whole value", () => {
+  const base = input();
+  if (base.current._tag !== "Ready") throw new Error("fixture");
+  const compiledWithRef = (() => {
+    const r = compileWorkflow(
+      {
+        ...base.current.version.compiled.definition,
+        params: { ref: { type: "string", pattern: "[a-z]+" } },
+      },
+      DEFAULT_HOST_LIMITS,
+    );
+    if (Result.isFailure(r)) throw new Error(JSON.stringify(r.failure));
+    return r.success;
+  })();
+  const fired = trigger(1);
+  if (fired.fact._tag !== "TriggerFired") throw new Error("fixture");
+  const result = decideWorkflow({
+    ...base,
+    facts: [{ ...fired, fact: { ...fired.fact, params: { ref: "main --upload-pack=evil" } } }],
+    current: { ...base.current, version: { ...base.current.version, compiled: compiledWithRef } },
+  });
+  expect(result.map((x) => x.fact)).toContainEqual({
+    _tag: "TriggerSkipped",
+    occurrence: "manual:1",
+    reason: "invalid",
+  });
+});

@@ -145,7 +145,9 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
         return yield* new WorkflowUnitError({ message: result.stderr || result.stdout });
     }),
     observe: Effect.fn("WorkflowUnits.observe")(function* (input) {
-      while (true) {
+      // exit.json is read every second; systemd is asked every ten, since a heavy unit can wait
+      // on the lock for hours.
+      for (let tick = 0; ; tick++) {
         if (exists(input.receiptDir, "exit.json")) {
           const result = yield* Effect.try({
             try: () =>
@@ -166,7 +168,7 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
             lost: false,
           };
         }
-        if (!(yield* active(input.unit))) {
+        if (tick % 10 === 0 && !(yield* active(input.unit))) {
           if (exists(input.receiptDir, "exit.json")) continue;
           return {
             exit: null,

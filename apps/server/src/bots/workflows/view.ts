@@ -21,40 +21,45 @@ import {
   type WorkflowStepCost,
 } from "@t3tools/contracts";
 import { runIdFor } from "./ids.ts";
+import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import type { StoredFact } from "./facts.ts";
-import type { RunState } from "./state.ts";
+import type { RunState, StepAttempt } from "./state.ts";
+
+/** Costs added up: usage is complete or unavailable only when every part is; USD only when every part has one. */
+const sumCosts = (
+  parts: ReadonlyArray<WorkflowStepCost | null | undefined>,
+): WorkflowStepCost | null => {
+  const costs = parts.filter((c): c is WorkflowStepCost => c != null);
+  if (costs.length === 0) return null;
+  return {
+    billable: costs.reduce((n, c) => n + c.billable, 0),
+    input: costs.reduce((n, c) => n + c.input, 0),
+    output: costs.reduce((n, c) => n + c.output, 0),
+    cacheRead: costs.reduce((n, c) => n + c.cacheRead, 0),
+    usage: costs.every((c) => c.usage === "complete")
+      ? "complete"
+      : costs.every((c) => c.usage === "unavailable")
+        ? "unavailable"
+        : "partial",
+    usdEstimate: costs.every((c) => c.usdEstimate !== null)
+      ? costs.reduce((n, c) => n + (c.usdEstimate ?? 0), 0)
+      : null,
+  };
+};
 
 /** The summary of a run that started (its stream has RunStarted). */
 export const runSummary = (state: RunState): WorkflowRunSummary => {
   const started = state.started;
   if (!started) throw new Error("RunStarted required");
-  const costs = [...state.attempts.values()]
-    .flat()
-    .flatMap((a) =>
-      [a.settled?.cost, a.nudge?.cost].filter((c): c is WorkflowStepCost => c !== undefined),
-    );
-  const cost: WorkflowStepCost = {
+  const total = sumCosts(
+    [...state.attempts.values()].flat().flatMap((a) => [a.settled?.cost, a.nudge?.cost]),
+  ) ?? {
     billable: 0,
     input: 0,
     output: 0,
     cacheRead: 0,
-    usage:
-      costs.length === 0
-        ? "unavailable"
-        : costs.every((c) => c.usage === "complete")
-          ? "complete"
-          : "partial",
-    usdEstimate:
-      costs.length && costs.every((c) => c.usdEstimate !== null)
-        ? costs.reduce((n, c) => n + (c.usdEstimate ?? 0), 0)
-        : null,
-  };
-  const total = {
-    ...cost,
-    billable: costs.reduce((n, c) => n + c.billable, 0),
-    input: costs.reduce((n, c) => n + c.input, 0),
-    output: costs.reduce((n, c) => n + c.output, 0),
-    cacheRead: costs.reduce((n, c) => n + c.cacheRead, 0),
+    usage: "unavailable",
+    usdEstimate: null,
   };
   const intents = [...state.intents.values()].map((e) => e.intent);
   return {
@@ -83,7 +88,10 @@ export const runSummary = (state: RunState): WorkflowRunSummary => {
           : 0),
       0,
     ),
-    openGates: [...state.gates.values()].filter((g) => g.decision === null).length,
+    openGates:
+      state.ended === null
+        ? [...state.gates.values()].filter((g) => g.decision === null).length
+        : 0,
     pullRequest: null,
   };
 };
@@ -136,15 +144,31 @@ export const pendingSummary = (
   return null;
 };
 
+/**
+ * An accept command or judge turn is never resolved itself (its step is): it reads as what it did,
+ * or `cancelled` when the run ended before it finished.
+ */
+const subStepStatus = (a: StepAttempt, state: RunState): WorkflowStepAttemptView["status"] => {
+  // Stopped by the run's end: its exit or settle is the interrupt's, not what it would have done.
+  const intentKey = `${a.step.endsWith("/accept") ? "accept" : "judge"}:${a.step.replace(/\/(accept|judge)$/, "")}@${a.attempt}`;
+  if (state.ended !== null && state.keys.has(`interrupt:${intentKey}`)) return "cancelled";
+  if (a.exited !== null) {
+    return a.exited.exit === 0 && !a.exited.lost && a.exited.signal === null
+      ? "succeeded"
+      : "failed";
+  }
+  if (a.settled !== null) return a.settled.status === "completed" ? "succeeded" : "failed";
+  if (state.ended !== null) return "cancelled";
+  return a.threadId || a.unit ? "running" : "dispatched";
+};
+
 /** One view per attempt of every step, in the order the attempts started (`firstSeq`). */
 export const stepViews = (
   compiled: CompiledWorkflow,
   state: RunState,
 ): ReadonlyArray<WorkflowStepAttemptView> => {
   const nodeInfo = (step: string) => {
-    const parts = step.split("/");
-    if (parts.at(-1) === "accept" || parts.at(-1) === "judge") parts.pop();
-    const id = (parts.at(-1) ?? step).replace(/\[\d+\]$/, "");
+    const id = nodeIdOfStep(step);
     const find = (graph: CompiledWorkflow["root"]): string | undefined => {
       for (const node of graph.nodes.values()) {
         if (node.id === id) return node.node.kind;
@@ -166,11 +190,13 @@ export const stepViews = (
       attempt: a.attempt,
       status:
         a.resolved?.status ??
-        ([...state.gates.values()].some((g) => g.intent.step === a.step && !g.decision)
-          ? "waiting_gate"
-          : a.threadId || a.unit
-            ? "running"
-            : "dispatched"),
+        (isSubStep(a.step)
+          ? subStepStatus(a, state)
+          : [...state.gates.values()].some((g) => g.intent.step === a.step && !g.decision)
+            ? "waiting_gate"
+            : a.threadId || a.unit
+              ? "running"
+              : "dispatched"),
       threadId: a.threadId ? ThreadId.make(a.threadId) : null,
       startedAt: a.startedAt,
       endedAt: a.resolved?.at ?? null,
@@ -179,7 +205,7 @@ export const stepViews = (
       summary:
         (a.resolved?.error ?? a.nudge?.text ?? a.settled?.text ?? a.exited?.tail)?.slice(0, 500) ??
         null,
-      cost: a.nudge?.cost ?? a.settled?.cost ?? null,
+      cost: sumCosts([a.settled?.cost, a.nudge?.cost]),
       evidence: null,
     }));
   for (const step of [...state.skipped.keys()].sort())
@@ -197,8 +223,9 @@ export const stepViews = (
       cost: null,
       evidence: null,
     });
-  // A gate step, or a command waiting for approval, has no attempt yet: it waits on its gate.
-  for (const gate of state.gates.values()) {
+  // A gate step, or a command waiting for approval, has no attempt yet: it waits on its gate,
+  // unless the run ended without a decision.
+  for (const gate of state.ended === null ? state.gates.values() : []) {
     const step = gate.intent.step;
     if (gate.decision !== null || (state.attempts.get(step)?.length ?? 0) > 0) continue;
     if (views.some((v) => v.key === step)) continue;

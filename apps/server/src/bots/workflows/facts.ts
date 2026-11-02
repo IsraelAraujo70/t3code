@@ -221,6 +221,8 @@ export const RunFact = Schema.TaggedUnion({
     cost: WorkflowStepCost,
     /** HEAD of the step's worktree after the turn, read by the engine, never taken from the agent. */
     headSha: Schema.optional(NullableText),
+    /** The engine could not observe the turn's end: its outcome is unknown and Israel decides. */
+    unobserved: Schema.optional(Schema.Boolean),
   },
   /** Key `exited:<step>@<attempt>`. `started` false: the argv never ran. `lost`: no exit receipt. */
   UnitExited: {

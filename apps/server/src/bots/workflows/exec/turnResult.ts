@@ -1,6 +1,8 @@
-/** What a settled turn produced: its structured output and its token cost. Pure. */
+/** What a settled turn produced: its structured output and its token cost, or that it was lost. Pure. */
 import type { Json } from "effect/Schema";
 
+import type { Intent, NewFact } from "../facts.ts";
+import { runStream } from "../facts.ts";
 import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
@@ -75,3 +77,37 @@ export const turnCost = (
     usdEstimate: null,
   };
 };
+
+/**
+ * A turn settled without its run's outcome. `lost` (status cancelled) is replayed by the engine, so
+ * it is only for a turn that never ran (no run for its message); `unknown` pauses the run for Israel,
+ * because the original may still be running.
+ */
+export const unobservedTurn = (
+  runId: string,
+  intent: Extract<Intent, { readonly _tag: "StartTurn" }>,
+  outcome: "lost" | "unknown",
+  text: string,
+): NewFact => ({
+  stream: runStream(runId),
+  key: `settled:${intent.step}@${intent.attempt}${intent.key.startsWith("nudge:") ? ":nudge" : ""}`,
+  fact: {
+    _tag: "TurnSettled",
+    step: intent.step,
+    attempt: intent.attempt,
+    status: outcome === "lost" ? "cancelled" : "failed",
+    text,
+    output: null,
+    outputError: null,
+    cost: {
+      billable: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      usage: "unavailable",
+      usdEstimate: null,
+    },
+    headSha: null,
+    ...(outcome === "unknown" ? { unobserved: true } : {}),
+  },
+});
