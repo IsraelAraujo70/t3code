@@ -7,6 +7,8 @@ import { LazyWorkflowCanvas as WorkflowCanvas } from "./LazyWorkflowCanvas";
 
 function fixture(): CanvasModel {
   return {
+    triggers: [],
+    entries: [],
     nodes: [0, 1, 2].map((n) => ({
       id: `n${n}`,
       kind: "agent",
