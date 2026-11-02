@@ -19,7 +19,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import type { BotsError } from "@t3tools/contracts";
+import { type BotPushDevice, BotsStore } from "../BotsStore.ts";
 
 export const FCM_SERVICE_ACCOUNT_ENV = "T3CODE_FCM_SERVICE_ACCOUNT_FILE";
 
@@ -32,18 +32,6 @@ const TOKEN_EXPIRY_MARGIN_MS = 60_000;
 
 /** FCM data values must be strings. */
 export type BotPushData = Readonly<Record<string, string>>;
-
-/** Devices and token cleanup belong to the same recipient. */
-export interface BotPushAudience {
-  readonly devices: Effect.Effect<
-    ReadonlyArray<{ readonly token: string; readonly label: string | null }>,
-    BotsError
-  >;
-  /** Forgets a token FCM no longer accepts. */
-  readonly drop: (token: string) => Effect.Effect<void, BotsError>;
-  /** Also sent as FCM notification for apps without a data-push handler. */
-  readonly notification?: { readonly title: string; readonly body: string };
-}
 
 const ServiceAccount = Schema.Struct({
   project_id: Schema.String,
@@ -113,8 +101,8 @@ export class BotPushDelivery extends Context.Service<
   {
     /** False when no service account is configured; then `deliver` does nothing. */
     readonly enabled: boolean;
-    /** Sends to the audience devices. Never fails; failures are logged. */
-    readonly deliver: (data: BotPushData, audience: BotPushAudience) => Effect.Effect<void>;
+    /** Sends to every registered device. Never fails; failures are logged. */
+    readonly deliver: (data: BotPushData) => Effect.Effect<void>;
   }
 >()("t3/bots/push/BotPushDelivery") {}
 
@@ -152,6 +140,7 @@ const make = Effect.gen(function* () {
   }
   const account = loaded.value;
   const httpClient = yield* HttpClient.HttpClient;
+  const store = yield* BotsStore;
   const sends = yield* Semaphore.make(MAX_CONCURRENT_SENDS);
   const accessToken = yield* SynchronizedRef.make(
     Option.none<{ readonly token: string; readonly expiresAt: number }>(),
@@ -209,25 +198,12 @@ const make = Effect.gen(function* () {
   );
 
   const sendTo = Effect.fn("BotPushDelivery.sendTo")(
-    function* (
-      device: { readonly token: string; readonly label: string | null },
-      data: BotPushData,
-      audience: BotPushAudience,
-    ) {
+    function* (device: BotPushDevice, data: BotPushData) {
       const token = yield* currentAccessToken;
       const response = yield* HttpClientRequest.post(sendUrl).pipe(
         HttpClientRequest.bearerToken(token),
         HttpClientRequest.bodyJson({
-          message: {
-            token: device.token,
-            data,
-            ...(audience.notification ? { notification: audience.notification } : {}),
-            android: {
-              priority: "HIGH",
-              ttl: "600s",
-              ...(audience.notification ? { notification: { channel_id: "respostas" } } : {}),
-            },
-          },
+          message: { token: device.token, data, android: { priority: "HIGH", ttl: "600s" } },
         }),
         Effect.flatMap((request) => httpClient.execute(request)),
         Effect.timeout("15 seconds"),
@@ -238,7 +214,7 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => null),
       );
       if (isFcmTokenGone(response.status, body)) {
-        yield* audience.drop(device.token);
+        yield* store.deletePushDevice(device.token);
         yield* Effect.logInfo("Dropped a bot push device FCM no longer accepts", {
           label: device.label,
           status: response.status,
@@ -258,10 +234,10 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const deliver: BotPushDelivery["Service"]["deliver"] = (data, audience) =>
-    audience.devices.pipe(
+  const deliver: BotPushDelivery["Service"]["deliver"] = (data) =>
+    store.listPushDevices.pipe(
       Effect.flatMap((devices) =>
-        Effect.forEach(devices, (device) => sendTo(device, data, audience), {
+        Effect.forEach(devices, (device) => sendTo(device, data), {
           concurrency: "unbounded",
           discard: true,
         }),
@@ -273,5 +249,5 @@ const make = Effect.gen(function* () {
   return BotPushDelivery.of({ enabled: true, deliver });
 });
 
-/** Needs an HttpClient and the FileSystem. */
+/** Needs BotsStore, an HttpClient and the FileSystem. */
 export const layer = Layer.effect(BotPushDelivery, make);

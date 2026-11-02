@@ -81,18 +81,12 @@ const make = Effect.gen(function* () {
       const notice = botPushNotice(event.threadId, bot, change);
       if (notice === null || bot === undefined || sent.has(notice.key)) return;
       remember(notice.key);
-      const ownerData = botPushData(notice, {
+      const data = botPushData(notice, {
         botName: bot.name,
         environmentId,
         sentAt: yield* Clock.currentTimeMillis,
       });
-      yield* Effect.forkIn(
-        delivery.deliver(ownerData, {
-          devices: store.listPushDevices,
-          drop: store.deletePushDevice,
-        }),
-        scope,
-      );
+      yield* Effect.forkIn(delivery.deliver(data), scope);
     },
     (effect, event) =>
       effect.pipe(

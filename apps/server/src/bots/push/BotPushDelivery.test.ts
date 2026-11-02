@@ -90,11 +90,6 @@ const register = (token: string) =>
     });
   });
 
-const ownerAudience = Effect.map(BotsStore.BotsStore, (store) => ({
-  devices: store.listPushDevices,
-  drop: store.deletePushDevice,
-}));
-
 const DATA = { t3_kind: "bot_message", alert_id: "bot-push:run:run-1", alert_body: "Done." };
 
 describe("BotPushDelivery", () => {
@@ -106,8 +101,8 @@ describe("BotPushDelivery", () => {
       yield* register("device-1");
       yield* register("device-2");
 
-      yield* delivery.deliver(DATA, yield* ownerAudience);
-      yield* delivery.deliver(DATA, yield* ownerAudience);
+      yield* delivery.deliver(DATA);
+      yield* delivery.deliver(DATA);
 
       const tokenRequests = requests.filter((request) => request.url === TOKEN_URI);
       assert.strictEqual(tokenRequests.length, 1, "the access token is cached");
@@ -172,7 +167,7 @@ describe("BotPushDelivery", () => {
       yield* register("device-2");
       yield* register("device-3");
 
-      yield* delivery.deliver(DATA, yield* ownerAudience);
+      yield* delivery.deliver(DATA);
 
       assert.deepStrictEqual(
         (yield* store.listPushDevices).map((device) => device.token),
@@ -207,7 +202,7 @@ describe("BotPushDelivery", () => {
       const delivery = yield* BotPushDelivery.BotPushDelivery;
       yield* register("device-1");
 
-      yield* delivery.deliver(DATA, yield* ownerAudience);
+      yield* delivery.deliver(DATA);
 
       assert.isFalse(delivery.enabled);
       assert.deepStrictEqual(requests, []);
