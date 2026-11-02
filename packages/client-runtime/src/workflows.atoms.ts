@@ -65,6 +65,21 @@ export function createWorkflowsEnvironmentAtoms<R, E>(
       label: "environment-data:workflows:step",
       tag: M.workflowsRunStep,
     }),
+    /** Captured payload for a run's trigger. */
+    runTrigger: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workflows:run-trigger",
+      tag: M.workflowsRunTrigger,
+    }),
+    /** Most recent sample captured for a trigger. */
+    triggerSample: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workflows:trigger-sample",
+      tag: M.workflowsTriggerSample,
+    }),
+    /** Listen for one trigger sample and its capture lifecycle. */
+    triggerListen: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:workflows:trigger-listen",
+      tag: M.workflowsTriggerListen,
+    }),
     metrics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:workflows:metrics",
       tag: M.workflowsMetrics,

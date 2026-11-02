@@ -267,9 +267,10 @@ it("round trips trigger entries, positions and namespace changes", () => {
   );
   expect(renamed.triggers?.start).toEqual(d.triggers.manual);
   expect(renamed.canvas?.positions.start).toEqual({ x: 1, y: 2 });
-  expect(
-    withTriggerStates(model, { enabled: new Map([["cron", false]]), fired: "manual" }).triggers[0]
-      ?.fired,
-  ).toBe(true);
+  const states = withTriggerStates(model, { enabled: new Map([["cron", false]]), fired: "manual" });
+  expect(states.triggers.map((t) => [t.id, t.fired, t.enabled])).toEqual(
+    model.triggers.map((t) => [t.id, t.id === "manual", t.id === "cron" ? false : undefined]),
+  );
+  expect(withTriggerStates(model, {}).triggers.every((t) => t.fired === undefined)).toBe(true);
   expect(autoLayout(fixture())).toEqual(autoLayout({ ...fixture(), triggers: {} }));
 });

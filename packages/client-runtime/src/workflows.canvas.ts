@@ -74,7 +74,7 @@ export interface CanvasTrigger {
   readonly h: number;
   /** Set by the editor: the trigger's own switch (a manual trigger has none). */
   readonly enabled?: boolean;
-  /** Set on the run screen: the trigger that started this run. */
+  /** Set on the run screen: true for the trigger that started this run, false for the others. */
   readonly fired?: boolean;
 }
 /** A dashed edge from a trigger to a top-level node without incoming edges; never edited. */
@@ -209,7 +209,8 @@ export const withTriggerStates: WorkflowCanvasApi["withTriggerStates"] = (model,
     return {
       ...trigger,
       ...(enabled === undefined ? {} : { enabled }),
-      ...(trigger.id === states.fired ? { fired: true } : {}),
+      // On a run screen every trigger is marked: the one that started it, or not.
+      ...(states.fired === undefined ? {} : { fired: trigger.id === states.fired }),
     };
   }),
 });

@@ -46,7 +46,15 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
       ),
     [id, shape, fill, width, height],
   );
-  const mark = model?.status ? canvasStatusMark(model.status) : undefined;
+  const mark = trigger
+    ? trigger.fired === true
+      ? "ok"
+      : trigger.fired === false
+        ? "dim"
+        : undefined
+    : model?.status
+      ? canvasStatusMark(model.status)
+      : undefined;
   const status = mark ? CANVAS_STATUS_MARKS[mark] : undefined;
   const tone = status
     ? `var(--${status.tone === "danger" ? "destructive" : status.tone === "muted" ? "muted-foreground" : status.tone})`
@@ -121,6 +129,11 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
               <div className="wf-subtitle" title={content.subtitle}>
                 {content.subtitle}
               </div>
+              {trigger?.enabled === false && (
+                <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground">
+                  Off
+                </span>
+              )}
             </div>
           </>
         ) : (
@@ -136,6 +149,14 @@ export function Box({ id, data, width = 200, height = 64 }: NodeProps<WorkflowFl
         >
           <Badge size={13} color="white" />
         </span>
+      )}
+      {trigger && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          isConnectable={false}
+          style={{ background: "var(--background)", borderColor: stroke, width: 8, height: 8 }}
+        />
       )}
       {model && (
         <>
