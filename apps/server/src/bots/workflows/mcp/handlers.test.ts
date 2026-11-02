@@ -43,6 +43,7 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
   canManageBots = false,
   message?: OrchestrationV2ConversationMessage,
   readFails = false,
+  hasEntry = true,
 ) {
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
   const record = (value: unknown) => Ref.update(calls, (values) => [...values, value]);
@@ -139,6 +140,21 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
     }),
     Layer.mock(Definitions.WorkflowDefinitions)({
       repoPath: "/home/user/.t3/workflows/definitions",
+      botEntries: () =>
+        Effect.succeed(
+          hasEntry
+            ? [
+                {
+                  workflowId: WorkflowId.make("example"),
+                  triggerId: "assistant",
+                  description: "Run",
+                  params: { count: { type: "number", default: 1 } },
+                  on: true,
+                },
+              ]
+            : [],
+        ),
+      document: () => Effect.die("No document fixture"),
       validate: () =>
         record("validate").pipe(
           Effect.as({ diagnostics: [], normalizedSource: null, semanticHash: null }),
@@ -221,11 +237,12 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
     calls,
     save: (dryRun = false) =>
       run(toolkit.handle("workflow_save", { source: "source", message: "Save", dryRun })),
-    run: () =>
+    run: (params = {}) =>
       run(
         toolkit.handle("workflow_run", {
           workflowId: WorkflowId.make("example"),
           clientRequestId: "test-run",
+          params,
         }),
       ),
     cancel: () =>
@@ -290,12 +307,12 @@ it.effect("starts bot runs with their occurrence and refuses unprivileged mutati
       "botForThread",
       {
         workflowId: "example",
-        triggerId: "bot",
+        triggerId: "assistant",
         kind: "bot",
         occurrence: "bot:b_test:test-run",
         label: "Run by Test (bot)",
-        params: {},
-        payload: null,
+        params: { count: 1 },
+        payload: { bot: { id: "b_test", name: "Test" }, threadId: "bot:test:1" },
         causalDepth: 0,
         parent: null,
       },
@@ -346,5 +363,12 @@ it.effect("refuses relayed scheduled server and unreadable turns", () =>
     }
     const t = yield* setup("bot:test:1", true, false, ownerMessage, true);
     expect(yield* t.run()).toMatchObject({ code: "capability_denied" });
+  }),
+);
+
+it.effect("rejects missing bot triggers and invalid parameters", () =>
+  Effect.gen(function* () {
+    const invalid = yield* setup("bot:test:1", true, true);
+    expect(yield* invalid.run({ count: "wrong" })).toMatchObject({ code: "invalid_request" });
   }),
 );
