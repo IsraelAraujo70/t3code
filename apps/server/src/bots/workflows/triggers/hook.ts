@@ -7,6 +7,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import type { WebhookRequest } from "../../../scheduledTasks/webhookTemplate.ts";
+
 export const WORKFLOW_HOOK_TASK_PREFIX = "wf-hook:";
 
 export const isWorkflowHookTaskId = (taskId: string): boolean =>
@@ -28,13 +30,14 @@ export class WorkflowTriggerHook extends Context.Service<
   WorkflowTriggerHook,
   {
     /**
-     * Records the delivery as the trigger's TriggerFired (occurrence `webhook:<deliveryId>`).
+     * Records the structured request and rendered prompt as the trigger's TriggerFired (occurrence `webhook:<deliveryId>`).
      * Idempotent by deliveryId: a delivery replayed after a crash fires once.
      */
     readonly fire: (input: {
       readonly taskId: string;
       readonly deliveryId: string;
       readonly prompt: string;
+      readonly request: WebhookRequest;
     }) => Effect.Effect<void, WorkflowTriggerHookError>;
   }
 >()("t3/bots/workflows/triggers/hook/WorkflowTriggerHook") {}

@@ -1,3 +1,4 @@
+import { webhookPayload } from "./webhookPayload.ts";
 // @effect-diagnostics preferSchemaOverJson:off - Fixtures store the definition JSON as the store does.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -25,6 +26,8 @@ import { Journal, layerFromDb } from "../Journal.ts";
 import { type TriggerRequest, WorkflowEngine } from "../WorkflowEngine.ts";
 import { WorkflowEngineCaller, WorkflowTriggerHook } from "./hook.ts";
 import { layerBindHook, layerHook, makeReconciler } from "./webhook.ts";
+
+const request = { method: "POST", path: "/", query: "", headers: {}, bodyText: '{"ref":"main"}' };
 
 const HOOK = "wf-hook:inbox:push";
 const runId = WorkflowRunId.make("wfr_00000000000000000000");
@@ -97,9 +100,11 @@ it.effect("a delivery becomes the trigger's TriggerFired once the engine is boun
     const requests: Array<TriggerRequest> = [];
     yield* Effect.gen(function* () {
       const hook = yield* WorkflowTriggerHook;
-      yield* hook.fire({ taskId: HOOK, deliveryId: "d1", prompt: '{"ref":"main"}' });
+      yield* hook.fire({ request, taskId: HOOK, deliveryId: "d1", prompt: '{"ref":"main"}' });
       for (const taskId of ["wf-hook:inbox", "wf-hook:inbox:gone", "wf-hook:other:push"]) {
-        const exit = yield* Effect.exit(hook.fire({ taskId, deliveryId: "d2", prompt: "x" }));
+        const exit = yield* Effect.exit(
+          hook.fire({ request, taskId, deliveryId: "d2", prompt: "x" }),
+        );
         assert.isTrue(Exit.isFailure(exit));
       }
     }).pipe(
@@ -113,7 +118,7 @@ it.effect("a delivery becomes the trigger's TriggerFired once the engine is boun
       triggerId: "push",
       kind: "webhook",
       occurrence: "webhook:d1",
-      payload: { text: '{"ref":"main"}' },
+      payload: webhookPayload(request, '{"ref":"main"}'),
     });
   }).pipe(Effect.provide(db)),
 );
@@ -126,7 +131,7 @@ it.effect("a delivery before the engine waits for it, and fails after 60 s witho
     const hook = Context.get(context, WorkflowTriggerHook);
     // Waits, then completes once the engine side binds the hook.
     const waiting = yield* hook
-      .fire({ taskId: HOOK, deliveryId: "early", prompt: "x" })
+      .fire({ request, taskId: HOOK, deliveryId: "early", prompt: "x" })
       .pipe(Effect.forkChild);
     yield* Layer.build(layerBindHook.pipe(Layer.provide(recordingEngine(requests)))).pipe(
       Effect.provideContext(context),
@@ -136,7 +141,7 @@ it.effect("a delivery before the engine waits for it, and fails after 60 s witho
 
     const unbound = Context.get(yield* Layer.build(layerHook), WorkflowTriggerHook);
     const late = yield* unbound
-      .fire({ taskId: HOOK, deliveryId: "late", prompt: "x" })
+      .fire({ request, taskId: HOOK, deliveryId: "late", prompt: "x" })
       .pipe(Effect.exit, Effect.forkChild);
     yield* TestClock.adjust("60 seconds");
     assert.isTrue(Exit.isFailure(yield* Fiber.join(late)));
