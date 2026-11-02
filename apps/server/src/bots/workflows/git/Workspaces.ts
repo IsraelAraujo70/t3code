@@ -58,6 +58,8 @@ export class WorkflowGit extends Context.Service<
     }) => Effect.Effect<string, WorkflowGitError>;
     /** HEAD of a worktree, as a full sha. */
     readonly head: (path: string) => Effect.Effect<string, WorkflowGitError>;
+    // wf-engine slice 7: the ledger refuses a tree it already measured.
+    readonly tree: (path: string) => Effect.Effect<string, WorkflowGitError>;
     /**
      * Moves `refs/heads/<branch>` from `from` to `to` (`git update-ref`, compare-and-swap). A ref
      * already at `to` counts as done; any other value fails with `conflict: true`. Returns `to`.
@@ -131,10 +133,14 @@ const deleteDirectory = (path: string) =>
   });
 
 const head = Effect.fn("WorkflowGit.head")((path: string) => git(path, ["rev-parse", "HEAD"]));
+const tree = Effect.fn("WorkflowGit.tree")((path: string) =>
+  git(path, ["rev-parse", "HEAD^{tree}"]),
+);
 
 const make = Effect.sync(() =>
   WorkflowGit.of({
     head,
+    tree,
     prepare: Effect.fn("WorkflowGit.prepare")(function* (input) {
       const { repoRoot, path, branch, baseRef } = input;
       yield* git(repoRoot, ["worktree", "prune"]);

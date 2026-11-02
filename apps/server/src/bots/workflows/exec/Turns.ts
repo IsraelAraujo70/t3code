@@ -3,7 +3,9 @@
  * `commandId` and a `messageId` derived from the run and the intent key, so a replay after a crash
  * gets upstream's receipt back; the observed run is the one whose user message is ours.
  */
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,6 +34,7 @@ import { commandIdFor, messageIdFor } from "../ids.ts";
 import { projectByRef } from "./projects.ts";
 import { type RequestItem, requestResponse, requestText } from "./requests.ts";
 import { lastJsonBlock, stepRuns, turnCost, unobservedTurn } from "./turnResult.ts";
+import { continuationChain, usageReport } from "../budget/budget.ts";
 
 type StartTurn = Extract<Intent, { readonly _tag: "StartTurn" }>;
 type AnswerRequest = Extract<Intent, { readonly _tag: "AnswerRequest" }>;
@@ -204,6 +207,8 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
     const { text } = subagentResultForRun(thread, resultRun);
     const { output, error } = lastJsonBlock(text);
     const headSha = yield* git.head(intent.workspace.path).pipe(Effect.option);
+    // wf-engine slice 7.
+    const treeHash = yield* git.tree(intent.workspace.path).pipe(Effect.option);
     const nudge = intent.key.startsWith("nudge:");
     const fact: NewFact = {
       stream: runStream(runId),
@@ -223,6 +228,7 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
           thread.providerTurns,
         ),
         headSha: headSha._tag === "Some" ? headSha.value : null,
+        treeHash: treeHash._tag === "Some" ? treeHash.value : null,
       },
     };
     return fact;
@@ -288,8 +294,20 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
             if (!waited.timedOut && ended !== null && TERMINAL.has(ended.status)) {
               return Stream.fromEffect(settledFact(runId, intent, run, waited.resultRun ?? ended));
             }
+            // wf-engine slice 8: usage the provider reported so far feeds the decider's watchdog.
+            const live = yield* projection(intent.threadId);
+            const usage = usageReport(
+              runId,
+              intent,
+              turnCost(continuationChain(live.runs, run), live.attempts, live.providerTurns)
+                .billable,
+              DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+            );
             return Stream.concat(
-              Stream.fromIterable(yield* pendingRequests(runId, intent)),
+              Stream.fromIterable([
+                ...(yield* pendingRequests(runId, intent)),
+                ...(usage === null ? [] : [usage]),
+              ]),
               Stream.suspend(() => chunk),
             );
           }),

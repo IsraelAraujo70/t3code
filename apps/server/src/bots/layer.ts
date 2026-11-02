@@ -35,6 +35,7 @@ import * as ThreadWatchReactor from "./threadWatch/ThreadWatchReactor.ts";
 import * as ThreadWatchStore from "./threadWatch/ThreadWatchStore.ts";
 import * as VoiceSession from "./voice/VoiceSession.ts";
 import * as Workflows from "./workflows/layer.ts";
+import * as WorkflowNotices from "./workflows/notices/WorkflowNotices.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 import * as WorkflowDefinitions from "./workflows/definitions/WorkflowDefinitions.ts";
@@ -319,8 +320,10 @@ export const layerService = Layer.unwrap(
             Layer.provideMerge(BotRotation.layer),
             Layer.provideMerge(BotsService.layer),
             Layer.provideMerge(ThreadWatchStore.layer),
+            // wf-engine slice 8: the host interpreter reads notices, run cards (over the kanban
+            // service, so it comes after) and pull requests from this context.
+            Layer.provideMerge(layerWorkflows.pipe(Layer.provide(WorkflowNotices.deliveryLayer))),
             Layer.provideMerge(KanbanService.layer),
-            Layer.provideMerge(layerWorkflows),
           )
         : Layer.mergeAll(
             layerServiceOff,

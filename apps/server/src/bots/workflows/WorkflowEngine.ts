@@ -42,15 +42,19 @@ import {
   type WorkflowRunStepInput,
   parseWorkflowStepThreadId,
 } from "@t3tools/contracts";
-import type { CompiledWorkflow } from "@t3tools/shared/workflows";
+import { type CompiledWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 
 import { forkParked } from "../../serverActivation.ts";
+// wf-engine slices 7-8: ledgers, budget context and block views.
+import { foldLedger, ledgerIdsOf } from "./blocks/ledger.ts";
+import { blockViews } from "./blocks/registry.ts";
+import { budgetContext, calledWorkflowsOf } from "./budget/context.ts";
 import { WorkflowCatalog } from "./Catalog.ts";
 import { decide, nextDeadline, retryRefusal } from "./decide.ts";
 import { decideWorkflow } from "./decideWorkflow.ts";
-import { type Intent, type NewFact, runStream, workflowStream } from "./facts.ts";
+import { type Intent, ledgerStream, type NewFact, runStream, workflowStream } from "./facts.ts";
 import { canonicalParams } from "./params.ts";
-import { applyRunFact, foldRun, liveTarget } from "./fold.ts";
+import { applyRunFact, emptyRunState, foldRun, liveTarget } from "./fold.ts";
 import { runIdFor } from "./ids.ts";
 import { isSubStep } from "./steps.ts";
 import { WorkflowInterpreter } from "./Interpreter.ts";
@@ -168,6 +172,10 @@ const nowIso = Clock.currentTimeMillis.pipe(
   Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
 );
 
+/** Earlier runs of a workflow that teach its nodes' reservations. */
+const HISTORY_RUNS = 10;
+const CONTEXT_TTL_MS = 5_000;
+
 const isStart = (intent: Intent) =>
   intent._tag === "StartTurn" || intent._tag === "StartUnit" || intent._tag === "StartChildRun";
 
@@ -180,6 +188,9 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
   /** Actors start and stop under this gate; `running` holds every run with a live actor. */
   const actorGate = yield* Semaphore.make(1);
   const running = new Set<string>();
+  // wf-engine slice 8: every run's fold for the daily cap, advanced by the facts appended since.
+  const foldedRuns = new Map<string, RunState>();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   /**
    * Under the gate, an actor with nothing left re-reads its stream and exits only if nothing new
    * arrived; `ensureActor` starts one unless one runs. A fact written before `ensureActor` (a
@@ -248,6 +259,56 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     const version = yield* catalog.pinned(started.workflowId, started.commit);
     const failureSubscribers = yield* catalog.failureSubscribers(started.workflowId);
     const runDir = `${options.runsDir}/${runId}`;
+    // wf-engine slices 7-8: the ledgers the definition reads, earlier runs for reservations, the host's day.
+    const ledgerIds = ledgerIdsOf(version.compiled);
+    const history = yield* Effect.forEach(
+      (yield* journal.createdRuns(started.workflowId))
+        .filter((run) => run.runId !== runId)
+        .slice(0, HISTORY_RUNS),
+      (run) => journal.read(runStream(run.runId)).pipe(Effect.map((f) => foldRun(run.runId, f))),
+    );
+    const childTokens = new Map<string, number>();
+    for (const id of calledWorkflowsOf(version.compiled)) {
+      const current = yield* catalog.current(id);
+      if (current._tag === "Ready")
+        childTokens.set(id, current.version.compiled.definition.budget.tokens);
+    }
+    const contextAt = Effect.fn("WorkflowEngine.contextAt")(function* (now: number) {
+      const ledgers = new Map(
+        yield* Effect.forEach(ledgerIds, (id) =>
+          journal.read(ledgerStream(id)).pipe(Effect.map((f) => [id, foldLedger(id, f)] as const)),
+        ),
+      );
+      // Every run, summed by when each charge settled; each run's fold is kept and advanced by the
+      // facts appended since, so a reopening or a late settlement is never missed.
+      const runs: Array<RunState> = [];
+      for (const { runId: id } of yield* journal.createdRuns(null)) {
+        const known = foldedRuns.get(id) ?? emptyRunState(id);
+        const state = (yield* journal.read(runStream(id), known.lastSeq)).reduce(
+          applyRunFact,
+          known,
+        );
+        foldedRuns.set(id, state);
+        runs.push(state);
+      }
+      const budget = {
+        ...budgetContext({
+          now,
+          timeZone,
+          dayStartsAtHour: DEFAULT_HOST_LIMITS.dayStartsAtHour,
+          cap: DEFAULT_HOST_LIMITS.workflowTokensPerDay,
+          runs,
+          history,
+        }),
+        childTokens: (workflowId: string) => childTokens.get(workflowId),
+      };
+      return { ledgers, budget };
+    });
+    // Reread at most every CONTEXT_TTL_MS, at once after a pass wrote to a ledger, and when the day turned.
+    let context: {
+      readonly at: number;
+      readonly value: Effect.Success<ReturnType<typeof contextAt>>;
+    } | null = null;
 
     // Work that fails is logged and relaunched by the next pass only after `retryEvery`, so a
     // failure that repeats (an append that cannot succeed) never spins.
@@ -280,9 +341,25 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       // down ends the run first, so a stale start is abandoned instead of executed.
       // One instant for the decision and the next deadline, so none falls between two reads.
       const now = yield* Clock.currentTimeMillis;
-      const decided = decide(version.compiled, state, { now, runDir, failureSubscribers });
+      if (
+        context === null ||
+        now - context.at >= CONTEXT_TTL_MS ||
+        now >= (context.value.budget.day?.endsAt ?? Infinity)
+      )
+        context = { at: now, value: yield* contextAt(now) };
+      const decided = decide(version.compiled, state, {
+        now,
+        runDir,
+        failureSubscribers,
+        ...context.value,
+      });
+      const wroteLedger = decided.some((f) => f.stream.startsWith("ledger:"));
+      if (wroteLedger) context = null;
       // Only a pass that stored something moves the run; a pass of duplicates must not spin.
-      if (decided.length > 0 && (yield* journal.append(decided)).some((r) => r.inserted)) continue;
+      // A ledger key another run won is a change too: decide again against the winner.
+      const appended = decided.length > 0 ? yield* journal.append(decided) : [];
+      if (appended.some((r) => r.inserted || (wroteLedger && r.fact.stream.startsWith("ledger:"))))
+        continue;
       for (const [key, entry] of state.intents) {
         if (entry.result === null && state.ended !== null && isStart(entry.intent)) {
           // A start still executing (or retrying) when the run ended is stopped; abandon settles it.
@@ -310,7 +387,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         if (yield* tryExit(runId, state.lastSeq)) return;
         continue;
       }
-      const deadline = nextDeadline(version.compiled, state, now);
+      const deadline = nextDeadline(version.compiled, state, now, context?.value.budget);
       const waitFrom = yield* Clock.currentTimeMillis;
       const mine = PubSub.take(subscription).pipe(
         Effect.repeat({ until: (fact) => fact.stream === stream }),
@@ -386,11 +463,17 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         for (const { fact } of facts) if (fact._tag === "RunCreated") created.add(fact.runId);
         // The journal's live runs count a reopened run, which already has an outcome.
         const live = new Set(yield* journal.liveRuns);
+        // wf-engine slice 8: an ended run still delivering its end notice or card is not busy.
+        const running = yield* Effect.filter(
+          [...created].filter((id) => live.has(id)),
+          (id) =>
+            journal.read(runStream(id)).pipe(Effect.map((f) => foldRun(id, f).ended === null)),
+        );
         const decided = decideWorkflow({
           workflowId,
           facts,
           current: yield* catalog.current(workflowId),
-          liveRuns: [...created].filter((id) => live.has(id)).length,
+          liveRuns: running.length,
           now: yield* Clock.currentTimeMillis,
         });
         return yield* journal.append(decided);
@@ -527,7 +610,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         seq: state.lastSeq,
         steps: steps.page,
         nextStepsCursor: steps.next,
-        blocks: [],
+        blocks: blockViews(compiled, state),
         gates: gateViews(state),
       };
     }),

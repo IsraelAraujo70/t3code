@@ -70,6 +70,7 @@ describe("observe", () => {
           WorkflowGit.of({
             prepare: unused,
             head: unused,
+            tree: unused,
             advance: unused,
             mergeLocal: unused,
             remove: unused,
@@ -171,6 +172,7 @@ describe("prepare", () => {
                 ? Effect.fail(ownedBy("wfr_00000000000000000777"))
                 : Effect.succeed({ path: input.path, branch: input.branch, headSha: "fresh" }),
             head: unused,
+            tree: unused,
             advance: unused,
             mergeLocal: unused,
             remove: unused,
