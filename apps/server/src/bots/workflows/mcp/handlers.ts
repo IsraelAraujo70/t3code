@@ -265,7 +265,7 @@ const handlers = (
       if (!decoded.ok)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: decoded.errors.map((error) => `${error.param}: ${error.message}`).join("; "),
+          message: decoded.errors.map((error) => error.message).join("; "),
         });
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const engine = yield* engineAvailable;

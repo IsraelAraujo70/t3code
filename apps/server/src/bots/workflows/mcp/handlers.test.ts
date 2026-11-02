@@ -6,7 +6,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   WorkflowId,
+  WorkflowNodeId,
   WorkflowDocRevision,
+  type WorkflowDefinition,
   WorkflowRunId,
   WorkflowRunView,
   WorkflowsError,
@@ -36,6 +38,38 @@ import { WorkflowEngine } from "../WorkflowEngine.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 
 const decodeView = Schema.decodeSync(WorkflowRunView);
+const conflictDocument = {
+  workflowId: WorkflowId.make("example"),
+  source: "current",
+  revision: WorkflowDocRevision.make("a".repeat(40)),
+  headCommit: null,
+  definition: null,
+  hash: null,
+  valid: false,
+  dirty: true,
+  diagnostics: [],
+  enabled: false,
+  suspended: false,
+  triggers: [],
+  updatedBy: null,
+  updatedAt: null,
+};
+const summary = {
+  workflowId: WorkflowId.make("example"),
+  title: "Example",
+  description: null,
+  path: "example.yaml",
+  valid: true,
+  dirty: false,
+  enabled: true,
+  suspended: false,
+  diagnostics: 0,
+  triggers: [],
+  headCommit: null,
+  revision: null,
+  updatedAt: null,
+  lastRun: null,
+};
 
 const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
   thread: string,
@@ -44,6 +78,7 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
   message?: OrchestrationV2ConversationMessage,
   readFails = false,
   hasEntry = true,
+  documentTriggers: WorkflowDefinition["triggers"] = {},
 ) {
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
   const record = (value: unknown) => Ref.update(calls, (values) => [...values, value]);
@@ -154,7 +189,22 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
               ]
             : [],
         ),
-      document: () => Effect.die("No document fixture"),
+      document: () =>
+        Effect.succeed({
+          ...conflictDocument,
+          definition: {
+            schema: "t3.workflow/v1" as const,
+            id: "example",
+            title: "Example",
+            home: { project: "app" },
+            budget: { steps: 1, wall: "1h", tokens: 1 },
+            fatigue: { consecutiveFailures: 1 },
+            triggers: documentTriggers,
+            nodes: {},
+            edges: [],
+          },
+        }),
+      list: Effect.succeed([summary, { ...summary, workflowId: WorkflowId.make("other") }]),
       validate: () =>
         record("validate").pipe(
           Effect.as({ diagnostics: [], normalizedSource: null, semanticHash: null }),
@@ -165,42 +215,12 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
             _tag: "Conflict" as const,
             workflowId: WorkflowId.make("example"),
             base: null,
-            current: {
-              workflowId: WorkflowId.make("example"),
-              source: "current",
-              revision: WorkflowDocRevision.make("a".repeat(40)),
-              headCommit: null,
-              definition: null,
-              hash: null,
-              valid: false,
-              dirty: true,
-              diagnostics: [],
-              enabled: false,
-              suspended: false,
-              triggers: [],
-              updatedBy: null,
-              updatedAt: null,
-            },
+            current: conflictDocument,
           }),
         ),
-      setEnabled: (_input, author) =>
+      setEnabled: (input, author) =>
         author.kind === "user" || author.canManageBots
-          ? Effect.succeed({
-              workflowId: WorkflowId.make("example"),
-              title: "Example",
-              description: null,
-              path: "example.yaml",
-              valid: true,
-              dirty: false,
-              enabled: true,
-              suspended: false,
-              diagnostics: 0,
-              triggers: [],
-              headCommit: null,
-              revision: null,
-              updatedAt: null,
-              lastRun: null,
-            })
+          ? record({ setEnabled: input.triggerId ?? null }).pipe(Effect.as(summary))
           : Effect.fail(new WorkflowsError({ code: "permission", message: "Denied" })),
     }),
   );
@@ -251,13 +271,15 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
           runId: WorkflowRunId.make("wfr_0123456789abcdef0123"),
         }),
       ),
-    enable: () =>
+    enable: (triggerId?: string) =>
       run(
         toolkit.handle("workflow_set_enabled", {
           workflowId: WorkflowId.make("example"),
           enabled: true,
+          ...(triggerId === undefined ? {} : { triggerId: WorkflowNodeId.make(triggerId) }),
         }),
       ),
+    list: () => run(toolkit.handle("workflow_list", {})),
   };
 });
 it.effect("rejects workflow steps before consulting services", () =>
@@ -369,6 +391,47 @@ it.effect("refuses relayed scheduled server and unreadable turns", () =>
 it.effect("rejects missing bot triggers and invalid parameters", () =>
   Effect.gen(function* () {
     const invalid = yield* setup("bot:test:1", true, true);
-    expect(yield* invalid.run({ count: "wrong" })).toMatchObject({ code: "invalid_request" });
+    expect(yield* invalid.run({ count: "wrong" })).toMatchObject({
+      code: "invalid_request",
+      message: "count: expected number",
+    });
+    // A manager bot is still refused: without a bot trigger no bot runs the workflow.
+    const none = yield* setup("bot:test:1", true, true, undefined, false, false, {
+      run: { kind: "manual" },
+    });
+    expect(yield* none.run()).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("has no bot trigger"),
+    });
+    const other = yield* setup("bot:test:1", true, true, undefined, false, false, {
+      ask: { kind: "bot", description: "Ask", bots: ["b_other"] },
+    });
+    expect(yield* other.run()).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("does not allow this bot"),
+    });
+  }),
+);
+
+it.effect("lists a bot entry only for runnable workflows and forwards trigger switches", () =>
+  Effect.gen(function* () {
+    const t = yield* setup("bot:test:1", true, true);
+    const listed = yield* t.list();
+    expect(listed).toMatchObject({
+      workflows: [
+        {
+          id: "example",
+          bot: {
+            trigger: "assistant",
+            description: "Run",
+            on: true,
+            params: { count: { type: "number", default: 1, required: false } },
+          },
+        },
+        { id: "other", bot: null },
+      ],
+    });
+    expect(yield* t.enable("push")).toEqual({ enabled: true });
+    expect((yield* Ref.get(t.calls)).at(-1)).toEqual({ setEnabled: "push" });
   }),
 );
