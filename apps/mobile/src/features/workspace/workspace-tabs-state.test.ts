@@ -218,6 +218,12 @@ vi.mock("./AndroidWorkspaceNavigation", () => ({
   FloatingWorkspaceTabs: () => null,
 }));
 vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+// Fork (friend): the Bots and Kanban tab screens load React Native.
+vi.mock("../../bots/BotsTabScreen", () => ({
+  BotsTabScreen: () => null,
+  BotsTabDetailPlaceholder: () => null,
+}));
+vi.mock("../../bots/KanbanTabScreen", () => ({ KanbanTabScreen: () => null }));
 
 function setup(split: boolean, floating: boolean) {
   mocks.split = split;
