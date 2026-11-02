@@ -41,6 +41,7 @@ import { layer as WorkflowCatalogLayer } from "./workflows/definitions/catalog.t
 import { layer as WatcherLayer } from "./workflows/definitions/watcher.ts";
 import * as Journal from "./workflows/Journal.ts";
 import { layer as WorkflowTriggersLayer } from "./workflows/triggers/WorkflowTriggers.ts";
+import * as WorkflowWebhooks from "./workflows/triggers/webhook.ts";
 
 /** Definitions, catalog and journal; the engine joins here when it is registered. */
 const layerWorkflowsCore = WorkflowCatalogLayer.pipe(
@@ -53,10 +54,11 @@ const layerWorkflowsCore = WorkflowCatalogLayer.pipe(
  * on top of it, so they see the engine. Their tables live in bots.sqlite, so BotsDb is provided
  * here: the server's own SqlClient must never reach them.
  */
-export const layerWorkflows = Layer.mergeAll(WatcherLayer, WorkflowTriggersLayer).pipe(
-  Layer.provideMerge(layerWorkflowsCore),
-  Layer.provide(BotsDb.layer),
-);
+export const layerWorkflows = Layer.mergeAll(
+  WatcherLayer,
+  WorkflowTriggersLayer,
+  WorkflowWebhooks.layerBindHook,
+).pipe(Layer.provideMerge(layerWorkflowsCore), Layer.provide(BotsDb.layer));
 const workflowsNotHost = () =>
   Effect.fail(new WorkflowsError({ code: "unavailable", message: NOT_BOTS_HOST_MESSAGE }));
 const layerWorkflowsOff = Layer.succeed(
@@ -269,7 +271,13 @@ export const layerCore = Layer.unwrap(
   isBotsHost.pipe(
     Effect.map((host) =>
       host
-        ? Layer.mergeAll(BotsInstructions.layer, GuestModelPin.layer, GuestTools.layer).pipe(
+        ? Layer.mergeAll(
+            BotsInstructions.layer,
+            GuestModelPin.layer,
+            GuestTools.layer,
+            // The scheduled-task service, below the runtime, reads the workflow webhook hook here.
+            WorkflowWebhooks.layerHook,
+          ).pipe(
             Layer.provide(HostMcpForward.layer),
             Layer.provideMerge(GuestArtifacts.layer),
             Layer.provide(CodexImages.layer),

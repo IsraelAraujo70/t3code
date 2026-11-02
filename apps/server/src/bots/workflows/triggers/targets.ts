@@ -12,6 +12,8 @@ const decodeDefinition = Schema.decodeEffect(Schema.fromJsonString(WorkflowDefin
 export interface TriggerTarget {
   readonly workflowId: string;
   readonly enabled: boolean;
+  /** The workflow's `home.project` reference, as the definition names it. */
+  readonly home: string;
   readonly trigger: WorkflowTrigger;
 }
 export const listTriggerTargets = Effect.gen(function* () {
@@ -24,7 +26,12 @@ export const listTriggerTargets = Effect.gen(function* () {
     const definition = yield* decodeDefinition(version.definition_json);
     const status = workflowStatus(yield* journal.read(workflowStream(row.workflow_id)));
     for (const trigger of definition.triggers ?? [])
-      targets.push({ workflowId: row.workflow_id, enabled: status.enabled, trigger });
+      targets.push({
+        workflowId: row.workflow_id,
+        enabled: status.enabled,
+        home: definition.home.project,
+        trigger,
+      });
   }
   return targets;
 });
