@@ -2,8 +2,8 @@
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
-import { EventSinkV2 } from "../../../orchestration-v2/EventSink.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import * as OrchestrationEventStore from "../../../persistence/OrchestrationEventStore.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -54,7 +54,8 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
   } = {},
 ) {
   const orchestrator = yield* Effect.serviceOption(OrchestratorV2);
-  const eventSink = yield* Effect.serviceOption(EventSinkV2);
+  // The production runtime exposes the event store (not the sink): it sets where a follower starts.
+  const eventStore = yield* Effect.serviceOption(OrchestrationEventStore.OrchestrationEventStore);
   const provided = yield* Effect.serviceOption(WorkflowEngine);
   const engine = options.engine ? Option.some(options.engine) : provided;
   const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
@@ -124,8 +125,14 @@ export const make = Effect.fn("WorkflowTriggers.make")(function* (
     let after: number;
     if (Option.isSome(stored)) after = Number(stored.value);
     else {
-      // Nothing from before the sources first started fires: begin at the newest event.
-      after = Option.isSome(eventSink) ? yield* eventSink.value.latestSequence() : 0;
+      // Nothing from before the sources first started fires: begin at the newest event, and
+      // never at 0 for want of a way to find it.
+      if (Option.isNone(eventStore)) {
+        return yield* Effect.logWarning("workflow event triggers: no event store, not following", {
+          eventType,
+        });
+      }
+      after = yield* eventStore.value.latestAgentSequence();
       yield* setCursor(source, String(after));
     }
     yield* orchestrator.value

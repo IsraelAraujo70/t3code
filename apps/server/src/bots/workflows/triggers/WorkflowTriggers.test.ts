@@ -13,7 +13,7 @@ import { workflowStream } from "../facts.ts";
 import type { TriggerRequest } from "../WorkflowEngine.ts";
 import * as Stream from "effect/Stream";
 import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
-import { EventSinkV2 } from "../../../orchestration-v2/EventSink.ts";
+import * as OrchestrationEventStore from "../../../persistence/OrchestrationEventStore.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { make } from "./WorkflowTriggers.ts";
 import { getCursor } from "./cursors.ts";
@@ -199,8 +199,9 @@ it.effect("baselines repository merges and limits queries to ten minutes", () =>
  */
 const orchestratorWith = (events: Array<{ sequence: number; event: unknown }>) =>
   Layer.merge(
-    Layer.mock(EventSinkV2)({
-      latestSequence: () => Effect.sync(() => Math.max(0, ...events.map((e) => e.sequence))),
+    Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+      latestAgentSequence: () =>
+        Effect.sync(() => Math.max(0, ...events.map((stored) => stored.sequence))),
     }),
     Layer.mock(OrchestratorV2)({
       streamStoredEventsFrom: (input) =>
@@ -298,5 +299,34 @@ it.effect("fires once per merged linked PR, with or without a watched head", () 
       "pr:acme/app#8:merged",
     ]);
     expect(requests[1]?.payload).toMatchObject({ number: 8, mergeSha: null });
+  }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
+);
+
+it.effect("without a way to find the newest event, no follower starts and nothing old fires", () =>
+  Effect.gen(function* () {
+    yield* seed({ id: "done", kind: "threadSettled" });
+    yield* toggle(true, "on");
+    const requests: TriggerRequest[] = [];
+    const service = yield* make({
+      engine: {
+        start: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return { runId };
+          }),
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(OrchestratorV2)({
+          streamStoredEventsFrom: () =>
+            Stream.fromIterable([
+              settled(1, "old", "Review old"),
+            ]) as unknown as Stream.Stream<OrchestrationV2StoredEvent>,
+        }),
+      ),
+    );
+    yield* service.followEvents("thread.settled");
+    expect(requests).toEqual([]);
+    expect(yield* getCursor("events:thread.settled")).toEqual(Option.none());
   }).pipe(Effect.provide(Layer.merge(services, NodeServices.layer))),
 );

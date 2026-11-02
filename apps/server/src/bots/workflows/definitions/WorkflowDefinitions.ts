@@ -529,13 +529,11 @@ const make = Effect.gen(function* () {
         }
         return { repoPath: repo.root, workflows, deleted, templates };
       }).pipe(Effect.mapError(internal));
-      // A webhook task appears after the save that asked for it, so its URL arrives as a change too.
+      // A webhook task appears after the save that asked for it, so its URL arrives as a change
+      // too. The list's first emission is kept: it covers a task added during the first read.
       const taskChanges = Option.isNone(scheduledTasks)
         ? Stream.empty
-        : scheduledTasks.value.subscribeList().pipe(
-            Stream.drop(1),
-            Stream.orElseSucceed(() => undefined),
-          );
+        : scheduledTasks.value.subscribeList().pipe(Stream.orElseSucceed(() => undefined));
       return Stream.concat(
         Stream.fromEffect(read),
         Stream.merge(Stream.fromSubscription(subscription), taskChanges).pipe(
