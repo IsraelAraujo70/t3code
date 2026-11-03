@@ -24,6 +24,7 @@ import {
   stepStatusTone,
   toCanvasModel,
   withNodeStatuses,
+  gateReasonOf,
 } from "@t3tools/client-runtime/workflows";
 import * as Schema from "effect/Schema";
 import * as Crypto from "expo-crypto";
@@ -37,6 +38,8 @@ import { Notice } from "../../components/ui/Notice";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useOpenLinkedThread } from "../../features/threads/useOpenLinkedThread";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { gateReason } from "@t3tools/shared/workflows";
+import { GateAsk } from "./GateAsk";
 import { WorkflowGraph } from "./WorkflowGraph";
 import { WorkflowGateSheet, WorkflowStepSheet } from "./WorkflowRunSheets";
 import { WorkflowStatus } from "./WorkflowStatus";
@@ -197,7 +200,7 @@ function RunContent({
                 key={g.key}
                 className="gap-2 rounded-xl border border-warning-border bg-warning p-4"
               >
-                <Text>{g.ask}</Text>
+                <GateAsk gate={g} />
                 <ControlPill
                   label="Needs you"
                   variant="primary"
@@ -240,7 +243,13 @@ function RunContent({
                     {latest.cost ? formatTokens(latest.cost.billable) : "unknown"} tokens ·{" "}
                     {formatUsd(latest.cost?.usdEstimate ?? null)}
                   </Text>
-                  {latest.summary && <Text selectable>{latest.summary}</Text>}
+                  {latest.summary && (
+                    <Text selectable>
+                      {latest.status === "waiting_gate"
+                        ? gateReason(latest.summary)
+                        : latest.summary}
+                    </Text>
+                  )}
                   <View className="flex-row flex-wrap gap-2">
                     {threadId && (
                       <ControlPill
@@ -327,7 +336,7 @@ function RunContent({
                 <ListSection key={g.key} title="Decided gate">
                   <View className="p-3">
                     <Text>
-                      {g.ask}
+                      {gateReasonOf(g)}
                       {"\n"}
                       {g.decision?.option} · {g.decision?.at}
                       {"\n"}
@@ -353,7 +362,10 @@ function RunContent({
           environmentId={environmentId}
           runId={runId}
           gate={gate}
-          summary={rows.find((row) => row.key === gate.step)?.latest.summary ?? null}
+          summary={
+            rows.find((row) => row.key === gate.step && row.latest.status !== "waiting_gate")
+              ?.latest.summary ?? null
+          }
           pullRequest={run?.summary.pullRequest ?? null}
           onClose={() => setSheet(null)}
         />

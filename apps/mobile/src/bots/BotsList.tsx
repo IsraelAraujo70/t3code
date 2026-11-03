@@ -34,6 +34,7 @@ import { BotAvatar } from "./BotAvatar";
 import { botsTabGroups, toggleCollapsedKey } from "./bots.logic";
 import { BOTS_TAB_AVAILABLE } from "./botsTab";
 import { useBotDirectory } from "./state";
+import { useActiveWorkflowRuns } from "./workflows/activeRuns";
 
 const COMPUTER_SYMBOL: AppSymbolName = { ios: "desktopcomputer", android: "desktop_windows" };
 const KANBAN_SYMBOL: AppSymbolName = "square.split.2x1";
@@ -345,6 +346,7 @@ export function BotsList(props: {
   const { environmentId } = props;
   const { directory, error } = useBotDirectory(environmentId);
   const navigation = useNavigation();
+  const workflows = useActiveWorkflowRuns(props.visible);
   return (
     <View>
       {directory === null ? (
@@ -409,7 +411,11 @@ export function BotsList(props: {
           />
         )}
         <BotsListRow
-          accessibilityLabel="Workflows"
+          accessibilityLabel={
+            workflows.needsYou === 0
+              ? "Workflows"
+              : `Workflows, ${workflows.needsYou} ${workflows.needsYou === 1 ? "needs" : "need"} you`
+          }
           accessibilityHint="Opens workflows and recent runs"
           leading={
             <View className="size-10 items-center justify-center rounded-full bg-subtle">
@@ -419,10 +425,27 @@ export function BotsList(props: {
                 tintColorClassName="accent-foreground-muted"
                 type="monochrome"
               />
+              {workflows.needsYou > 0 ? (
+                <View className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-screen bg-warning" />
+              ) : null}
             </View>
           }
           title="Workflows"
-          subtitle={null}
+          subtitle={
+            workflows.runs.length === 0 ? null : (
+              <Text
+                className={cn(
+                  "mt-0.5 text-xs font-t3-medium",
+                  workflows.needsYou > 0 ? "text-warning-foreground" : "text-foreground-muted",
+                )}
+                numberOfLines={1}
+              >
+                {workflows.needsYou > 0
+                  ? `${workflows.needsYou} ${workflows.needsYou === 1 ? "needs" : "need"} you`
+                  : `${workflows.runs.length} running`}
+              </Text>
+            )
+          }
           trailing={
             <SymbolView
               name="chevron.right"

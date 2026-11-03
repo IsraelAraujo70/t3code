@@ -13,6 +13,8 @@ import { Notice } from "../../components/ui/Notice";
 import { Sheet } from "../../components/ui/Sheet";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { gateReasonOf } from "@t3tools/client-runtime/workflows";
+import { GateAskMarkdown } from "./GateAsk";
 import { WorkflowEditField } from "./WorkflowEditField";
 import { workflowsEnvironment } from "./state";
 
@@ -97,7 +99,8 @@ export function WorkflowGateSheet({
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-3 p-4 pb-10"
       >
-        <Text selectable>{gate.ask}</Text>
+        <Text selectable>{gateReasonOf(gate)}</Text>
+        <GateAskMarkdown ask={gate.ask} />
         {summary && <Text selectable>{summary}</Text>}
         {pullRequest && (
           <ControlPill

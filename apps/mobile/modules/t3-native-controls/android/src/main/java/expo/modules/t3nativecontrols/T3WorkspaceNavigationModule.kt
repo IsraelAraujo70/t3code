@@ -23,10 +23,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-// Fork (friend): the More menu.
+// Fork (friend): the More menu and the "needs you" dot.
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -77,6 +80,10 @@ class T3WorkspaceNavigationModule : Module() {
       // Fork (friend): what the phone bar's More item lists.
       Prop("moreTabs") { view: T3WorkspaceNavigationView, value: List<String> ->
         view.moreTabs = value
+      }
+      // Fork (friend): tabs that carry the "needs you" dot.
+      Prop("badgedTabs") { view: T3WorkspaceNavigationView, value: List<String> ->
+        view.badgedTabs = value
       }
       Prop("selectedTab") { view: T3WorkspaceNavigationView, value: String ->
         view.selectedTab = value
@@ -138,6 +145,7 @@ class T3WorkspaceNavigationView(
   var tabs by mutableStateOf(listOf("threads", "pullRequests", "usage", "settings"))
   // Fork (friend): the phone bar's More menu.
   var moreTabs by mutableStateOf(listOf<String>())
+  var badgedTabs by mutableStateOf(listOf<String>()) // Fork (friend)
   var selectedTab by mutableStateOf("threads")
   var rail by mutableStateOf(false)
   var floating by mutableStateOf(false)
@@ -205,7 +213,7 @@ class T3WorkspaceNavigationView(
                   NavigationBarItem(
                     selected = selectedTab == tab,
                     onClick = { onTabSelected(mapOf("tab" to tab)) },
-                    icon = { Icon(tabIconPainter(tab), contentDescription = null) },
+                    icon = { tabIcon(tab) }, // Fork (friend)
                     label = { Text(tabTitle(tab), fontSize = (12 * textScale).sp) },
                     colors = NavigationBarItemDefaults.colors(
                       selectedIconColor = Color(selectedColor),
@@ -234,7 +242,7 @@ class T3WorkspaceNavigationView(
       onClick = { open = true },
       icon = {
         Box {
-          Icon(tabIconPainter("more"), contentDescription = null)
+          tabIcon("more")
           moreMenu(open) { open = false }
         }
       },
@@ -256,7 +264,7 @@ class T3WorkspaceNavigationView(
       moreTabs.forEach { tab ->
         DropdownMenuItem(
           text = { Text(expandedTabTitle(tab), fontSize = (14 * textScale).sp) },
-          leadingIcon = { Icon(tabIconPainter(tab), contentDescription = null) },
+          leadingIcon = { tabIcon(tab) },
           onClick = {
             onDismiss()
             onTabSelected(mapOf("tab" to tab))
@@ -300,12 +308,7 @@ class T3WorkspaceNavigationView(
               .background(if (selected) Color(indicatorColor) else Color.Transparent, CircleShape),
             contentAlignment = Alignment.Center,
           ) {
-            Icon(
-              tabIconPainter(tab),
-              contentDescription = null,
-              modifier = Modifier.size((24 * textScale).dp),
-              tint = tint,
-            )
+            tabIcon(tab, Modifier.size((24 * textScale).dp), tint) // Fork (friend)
             if (tab == "more") moreMenu(moreOpen) { moreOpen = false } // Fork (friend)
           }
         }
@@ -460,7 +463,7 @@ class T3WorkspaceNavigationView(
         Modifier.fillMaxHeight().padding(start = (ITEM_HEIGHT - ICON_SIZE) / 2).clipToBounds(),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Icon(tabIconPainter(tab), contentDescription = null, tint = tint)
+        tabIcon(tab, tint = tint) // Fork (friend)
         Text(
           title,
           Modifier.padding(start = 12.dp).alpha(labelAlpha(fraction)).clearAndSetSemantics {},
@@ -471,6 +474,17 @@ class T3WorkspaceNavigationView(
           softWrap = false,
         )
       }
+    }
+  }
+
+  /** Fork (friend): a tab's icon, with an amber dot while the tab needs the user. */
+  @Composable
+  private fun tabIcon(tab: String, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) {
+    BadgedBox(
+      badge = { if (tab in badgedTabs) Badge(containerColor = Color(NEEDS_YOU_COLOR)) },
+      modifier = modifier,
+    ) {
+      Icon(tabIconPainter(tab), contentDescription = null, tint = tint)
     }
   }
 
@@ -512,6 +526,7 @@ class T3WorkspaceNavigationView(
     val ICON_SIZE = 24.dp
     val RAIL_SHADOW = 6.dp
     const val DISABLED_ALPHA = 0.4f
+    const val NEEDS_YOU_COLOR = 0xFFF59E0B // Fork (friend): amber, like web's warning dot.
 
     // Labels fade in over the second half of the widening, once there is room for them, and
     // fade out over the first half of the narrowing, before the surface clips them.

@@ -2,6 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import * as Schema from "effect/Schema";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
+  activeWorkflowRuns,
   describeTrigger,
   runHistoryKey,
   runStatusLabel,
@@ -41,6 +42,7 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
   const runs = useWorkflowRuns(env, { limit: 20 });
   const navigation = useNavigation();
   const lastRuns = query.data === null ? null : runHistoryKey(query.data);
+  const active = query.data === null ? [] : activeWorkflowRuns(query.data);
   const seenLastRuns = useRef<string | null>(null);
   const refreshRuns = runs.refresh;
   const runsPending = runs.isPending;
@@ -55,6 +57,44 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
     <View className="flex-1 bg-screen">
       <AppBar title="Workflows" />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+        {active.length > 0 ? (
+          <ListSection title="Active">
+            <View className="gap-3 p-3">
+              {active.map(({ run, workflow, needsYou, since }) => (
+                <View
+                  key={run.runId}
+                  className={needsYou ? "gap-1.5 rounded-xl bg-warning p-3" : "gap-1.5"}
+                >
+                  <View className="flex-row items-center gap-1.5">
+                    {workflow?.bot ? <BotAvatar botId={workflow.bot.id} size={14} /> : null}
+                    <Text className="flex-1 font-t3-medium" numberOfLines={1}>
+                      {run.title}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted">{relativeTime(since)}</Text>
+                  </View>
+                  {needsYou ? (
+                    <Text className="text-sm text-warning-foreground" numberOfLines={2}>
+                      {run.gate?.reason ?? "Needs you"}
+                    </Text>
+                  ) : (
+                    <WorkflowStatus
+                      label={runStatusLabel(run.status)}
+                      tone={runStatusTone(run.status)}
+                    />
+                  )}
+                  <View className="flex-row">
+                    <Chip
+                      label={needsYou ? "Answer" : "Open run"}
+                      onPress={() =>
+                        navigation.navigate("BotsWorkflowRun", { environmentId, runId: run.runId })
+                      }
+                    />
+                  </View>
+                </View>
+              ))}
+            </View>
+          </ListSection>
+        ) : null}
         {query.error ? (
           <Notice tone="danger" message={query.error} />
         ) : !query.data ? (
