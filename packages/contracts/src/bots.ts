@@ -185,6 +185,8 @@ export const BotDirectory = Schema.Struct({
   ),
   /** Absent from servers built before it. */
   host: Schema.optionalKey(BotsHostStatus),
+  /** Side threads the sidebars leave out; they still run, take messages and show in search. */
+  hiddenThreadIds: Schema.Array(ThreadId).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type BotDirectory = typeof BotDirectory.Type;
 
@@ -240,6 +242,8 @@ export const BotThreadOpenInput = Schema.Struct({
   botId: BotId,
   title: BotThreadTitle,
   message: Schema.optionalKey(boundedText(20_000)),
+  /** Opens it hidden from the sidebars, as `bots.thread.setHidden` does. */
+  hidden: Schema.optionalKey(Schema.Boolean),
 });
 export type BotThreadOpenInput = typeof BotThreadOpenInput.Type;
 
@@ -249,8 +253,17 @@ export const BotThreadEntry = Schema.Struct({
   title: Schema.String,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** Left out of the sidebars; absent from servers built before hiding. */
+  hidden: Schema.optionalKey(Schema.Boolean),
 });
 export type BotThreadEntry = typeof BotThreadEntry.Type;
+
+/** Hides a side thread from the sidebars or shows it again. Nothing else about it changes. */
+export const BotThreadSetHiddenInput = Schema.Struct({
+  threadId: ThreadId,
+  hidden: Schema.Boolean,
+});
+export type BotThreadSetHiddenInput = typeof BotThreadSetHiddenInput.Type;
 
 /** A bot's open side threads, most recently active first. Archived ones live in the T3 archive. */
 export const BotThreadList = Schema.Struct({
@@ -365,6 +378,7 @@ export const BOTS_WS_METHODS = {
   botLinkedEnvironments: "bots.bot.linkedEnvironments",
   threadOpen: "bots.thread.open",
   threadList: "bots.thread.list",
+  threadSetHidden: "bots.thread.setHidden",
   memoryCreate: "bots.memory.create",
   memoryUpdate: "bots.memory.update",
   memoryDelete: "bots.memory.delete",
@@ -445,6 +459,12 @@ export const BotThreadOpenRpc = Rpc.make(BOTS_WS_METHODS.threadOpen, {
 export const BotThreadListRpc = Rpc.make(BOTS_WS_METHODS.threadList, {
   payload: BotRef,
   success: BotThreadList,
+  error: BotsRpcError,
+});
+
+export const BotThreadSetHiddenRpc = Rpc.make(BOTS_WS_METHODS.threadSetHidden, {
+  payload: BotThreadSetHiddenInput,
+  success: BotThreadSetHiddenInput,
   error: BotsRpcError,
 });
 
@@ -678,6 +698,7 @@ export const BOTS_RPCS = [
   BotLinkedEnvironmentsRpc,
   BotThreadOpenRpc,
   BotThreadListRpc,
+  BotThreadSetHiddenRpc,
   BotMemoryCreateRpc,
   BotMemoryUpdateRpc,
   BotMemoryDeleteRpc,
@@ -707,6 +728,7 @@ export const BOTS_GUARDED_RPC_SCOPES = {
   // Lets a bot act on the user's other machines: the user's session only, never a tool.
   [BOTS_WS_METHODS.botLinkedEnvironments]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.threadOpen]: AuthOrchestrationOperateScope,
+  [BOTS_WS_METHODS.threadSetHidden]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryCreate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryUpdate]: AuthOrchestrationOperateScope,
   [BOTS_WS_METHODS.memoryDelete]: AuthOrchestrationOperateScope,

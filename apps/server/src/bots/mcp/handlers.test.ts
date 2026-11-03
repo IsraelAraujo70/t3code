@@ -3,6 +3,7 @@ import {
   type Bot,
   type BotCreateInput,
   type BotThreadOpenInput,
+  type BotThreadSetHiddenInput,
   BotId,
   type BotMemory,
   BotMemoryId,
@@ -80,7 +81,13 @@ const makeBots = () => {
   const updatedBots: Array<BotUpdateInput> = [];
   const deletedBots: Array<BotId> = [];
   const linkedEnvironmentSwitches: Array<unknown> = [];
+  const hiddenSwitches: Array<BotThreadSetHiddenInput> = [];
   const layer = Layer.mock(BotsService.BotsService)({
+    setThreadHidden: (input) =>
+      Effect.sync(() => {
+        hiddenSwitches.push(input);
+        return input;
+      }),
     openThread: (input, opener) =>
       Effect.sync(() => {
         opened.push({ input, opener });
@@ -103,6 +110,7 @@ const makeBots = () => {
         })),
         aboutMe: "",
         linkedEnvironmentBotIds: [],
+        hiddenThreadIds: [],
       }),
     ),
     createBot: (input) =>
@@ -152,6 +160,7 @@ const makeBots = () => {
   return {
     layer,
     opened,
+    hiddenSwitches,
     sideThread,
     created,
     deleted,
@@ -219,6 +228,8 @@ const memoryTools = (
           }),
         ),
       listThreads: () => run(toolkit.handle("bot_thread_list", {})),
+      hideThread: (threadId: ThreadId, hidden = true) =>
+        run(toolkit.handle("bot_thread_hide", { threadId, hidden })),
       list: () => run(toolkit.handle("memory_list", {})),
       save: (text: string) => run(toolkit.handle("memory_save", { text })),
       forget: (memoryId: string) =>
@@ -231,6 +242,10 @@ type MemoryTools = Effect.Success<ReturnType<typeof memoryTools>>;
 const everyTool = [
   { name: "bot_thread_open", call: (tools: MemoryTools) => tools.openThread() },
   { name: "bot_thread_list", call: (tools: MemoryTools) => tools.listThreads() },
+  {
+    name: "bot_thread_hide",
+    call: (tools: MemoryTools) => tools.hideThread(ThreadId.make("bot:b_alice:t-0000abcd")),
+  },
   { name: "memory_list", call: (tools: MemoryTools) => tools.list() },
   { name: "memory_save", call: (tools: MemoryTools) => tools.save("Lives in Lisbon.") },
   { name: "memory_forget", call: (tools: MemoryTools) => tools.forget("mem_alice") },
@@ -248,6 +263,7 @@ it.effect.each(everyTool)("$name refuses a thread that is not a bot's", ({ call 
     expect(bots.created).toEqual([]);
     expect(bots.deleted).toEqual([]);
     expect(bots.opened).toEqual([]);
+    expect(bots.hiddenSwitches).toEqual([]);
   }),
 );
 
@@ -262,6 +278,26 @@ it.effect.each(everyTool)("$name refuses an outside client", ({ call }) =>
     expect(bots.created).toEqual([]);
     expect(bots.deleted).toEqual([]);
     expect(bots.opened).toEqual([]);
+  }),
+);
+
+it.effect("bot_thread_hide hides and shows only the calling bot's own side threads", () =>
+  Effect.gen(function* () {
+    const bots = makeBots();
+    const tools = yield* memoryTools(bots.layer, threadScope(botThreadId(alice, 1)));
+    const own = ThreadId.make("bot:b_alice:t-0000abcd");
+    expect(yield* tools.hideThread(own)).toEqual({ threadId: own, hidden: true });
+    expect(yield* tools.hideThread(own, false)).toEqual({ threadId: own, hidden: false });
+    for (const refused of [ThreadId.make("bot:b_bob:t-0000abcd"), botThreadId(alice, 1)]) {
+      expect(yield* tools.hideThread(refused)).toMatchObject({
+        _tag: "OrchestratorMcpFailure",
+        code: "invalid_request",
+      });
+    }
+    expect(bots.hiddenSwitches).toEqual([
+      { threadId: own, hidden: true },
+      { threadId: own, hidden: false },
+    ]);
   }),
 );
 

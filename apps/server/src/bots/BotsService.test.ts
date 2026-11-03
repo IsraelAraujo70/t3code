@@ -460,6 +460,61 @@ describe("BotsService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "a hidden side thread leaves the directory's sidebar list but keeps taking messages until shown",
+    () =>
+      Effect.gen(function* () {
+        const { orchestration, startService } = yield* setup();
+        const service = yield* startService;
+        const bot = yield* service.createBot(input);
+        // A fresh subscription starts with a read of the committed state.
+        const latest = service.directory.pipe(
+          Stream.runHead,
+          Effect.map((head) => Option.getOrThrow(head)),
+        );
+
+        const relay = yield* service.openThread({
+          botId: bot.id,
+          title: "Família · Lurian",
+          message: "Oi",
+          hidden: true,
+        });
+        const shown = yield* service.openThread({ botId: bot.id, title: "Taxes" });
+        assert.isTrue(relay.hidden);
+        assert.deepStrictEqual((yield* latest).hiddenThreadIds, [relay.threadId]);
+        const launch = orchestration.launches.find((each) => each.threadId === relay.threadId)!;
+        assert.strictEqual(launch.initialMessage?.text, "Oi");
+        assert.deepStrictEqual(
+          (yield* service.listThreads({ botId: bot.id })).threads
+            .map((entry) => [entry.title, entry.hidden])
+            .toSorted(),
+          [
+            ["Família · Lurian", true],
+            ["Taxes", false],
+          ],
+        );
+
+        // Hiding only touches bots.sqlite: the thread is never archived, settled or snoozed.
+        assert.isFalse(orchestration.threads.get(relay.threadId)!.archived);
+        assert.deepStrictEqual(
+          orchestration.commands.filter(
+            (command) => "threadId" in command && command.threadId === relay.threadId,
+          ),
+          [],
+        );
+        assert.isTrue(Option.isSome(yield* service.botForThread(relay.threadId)));
+
+        yield* service.setThreadHidden({ threadId: relay.threadId, hidden: false });
+        yield* service.setThreadHidden({ threadId: shown.threadId, hidden: true });
+        assert.deepStrictEqual((yield* latest).hiddenThreadIds, [shown.threadId]);
+
+        const refused = yield* service
+          .setThreadHidden({ threadId: botThreadId(bot.id, 1), hidden: true })
+          .pipe(Effect.flip);
+        assert.include(refused.message, "only side threads can be hidden");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("a bot opening its own side thread sends its first message and caps its modes", () =>
     Effect.gen(function* () {
       const { orchestration, startService } = yield* setup();
@@ -662,6 +717,7 @@ describe("BotsService", () => {
         bots: [],
         aboutMe: "",
         linkedEnvironmentBotIds: [],
+        hiddenThreadIds: [],
       });
       // hostStatus.test.ts covers the values; the directory only has to carry them.
       assert.deepStrictEqual(host?.hostMcp, []);

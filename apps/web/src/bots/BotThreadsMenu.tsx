@@ -44,6 +44,10 @@ export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId
     label: "bot thread",
     reportFailure: false,
   });
+  const setHidden = useAtomCommand(botsEnvironment.setThreadHidden, {
+    label: "bot thread visibility",
+    reportFailure: false,
+  });
   const [threads, setThreads] = useState<ReadonlyArray<BotThreadEntry> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -51,6 +55,8 @@ export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId
   const [busy, setBusy] = useState(false);
   const bot = directory?.bots.find((entry) => entry.id === props.botId);
   if (environmentId === null || bot === undefined) return null;
+  const hiddenIds = new Set<string>(directory?.hiddenThreadIds ?? []);
+  const currentHidden = hiddenIds.has(props.threadId);
   const go = (threadId: ThreadId) =>
     void navigate({
       to: "/$environmentId/$threadId",
@@ -106,7 +112,10 @@ export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId
                 disabled={thread.threadId === props.threadId}
                 onClick={() => go(thread.threadId)}
               >
-                {thread.title}
+                <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+                {hiddenIds.has(thread.threadId) ? (
+                  <span className="shrink-0 text-muted-foreground text-xs">Hidden</span>
+                ) : null}
               </MenuItem>
             ))
           )}
@@ -120,6 +129,28 @@ export function BotThreadsMenu(props: { readonly botId: BotId; readonly threadId
           >
             New thread…
           </MenuItem>
+          {parseBotThreadOwner(props.threadId)?.kind === "side" ? (
+            <MenuItem
+              disabled={!canOperate}
+              onClick={() => {
+                void setHidden({
+                  environmentId,
+                  input: { threadId: props.threadId, hidden: !currentHidden },
+                }).then((result) => {
+                  if (result._tag === "Failure")
+                    toastManager.add({
+                      type: "error",
+                      title: currentHidden
+                        ? "Could not show this thread in the sidebar."
+                        : "Could not hide this thread from the sidebar.",
+                      description: commandFailureMessage(result) ?? undefined,
+                    });
+                });
+              }}
+            >
+              {currentHidden ? "Show in sidebar" : "Hide from sidebar"}
+            </MenuItem>
+          ) : null}
           {parseBotThreadOwner(props.threadId)?.kind === "side" ? (
             <MenuItem
               disabled={!canOperate}

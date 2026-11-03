@@ -5,6 +5,7 @@ import {
   type BotsError,
   botThreadId,
   OrchestratorMcpFailure,
+  parseBotThreadOwner,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -72,6 +73,19 @@ export const layer = McpToolAccess.toLayer(BotMemoryToolkit, {
         .listThreads({ botId: bot.id })
         .pipe(Effect.mapError(botsFailure));
       return { threads };
+    }),
+  ),
+  bot_thread_hide: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { bot, bots } = yield* callerBot;
+      const owner = parseBotThreadOwner(input.threadId);
+      if (owner?.kind !== "side" || owner.botId !== bot.id) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `${input.threadId} is not one of your side threads.`,
+        });
+      }
+      return yield* bots.setThreadHidden(input).pipe(Effect.mapError(botsFailure));
     }),
   ),
   memory_list: McpToolAccess.readsAsCaller(() =>

@@ -197,7 +197,15 @@ name in place of "No project". Mobile lists them under their bot in the Bots tab
 on iOS) and leaves them out of the home list; the wide-screen sidebar keeps every bot thread and
 shows its bot's face in place of the project icon.
 
-A side thread has no row in `bots.sqlite`: the id names its bot. `parseBotThreadId` still matches
+A side thread can be hidden from every sidebar without changing anything else about it: it keeps
+taking messages, running turns and accepting subscriptions, and it stays in search, in the bot's
+Threads menu (marked Hidden) and in `bot_thread_list`. Hide or show it from the Threads menu
+("Hide from sidebar" / "Show in sidebar"), with the bot's `bot_thread_hide` tool, with
+`bots.thread.setHidden`, or open it hidden with `hidden: true` on `bots.thread.open`. Hidden ids
+live in `bots.sqlite` (`hidden_bot_threads`) and reach clients in the directory's
+`hiddenThreadIds`. A hidden thread lights no sidebar badge, since it has no row.
+
+A side thread has no row of its own in `bots.sqlite`: the id names its bot. `parseBotThreadId` still matches
 only the main conversation, so rotation, compaction, push, voice, history and the mobile
 thread screen ignore side threads; code where a thread acts as its bot (instructions, memory and bot tools, the bot
 sender mark, link access, host MCP tools, queue resume) uses `parseBotThreadOwner`.

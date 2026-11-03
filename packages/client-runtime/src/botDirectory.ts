@@ -174,17 +174,20 @@ export function resolveBotRows(
 
 /**
  * Each bot's side threads (`bot:<botId>:t-<key>`) in `environmentId`, most recently updated first,
- * for listing them under their bot. Main conversations and other threads are left out.
+ * for listing them under their bot. Main conversations, hidden side threads and other threads are
+ * left out.
  */
 export function sideThreadsByBot<
   T extends Pick<EnvironmentThreadShell, "environmentId" | "id" | "updatedAt">,
 >(
   threads: ReadonlyArray<T>,
   environmentId: EnvironmentId | null,
+  hiddenThreadIds: ReadonlyArray<string> = [],
 ): ReadonlyMap<string, ReadonlyArray<T>> {
+  const hidden = new Set(hiddenThreadIds);
   const byBot = new Map<string, T[]>();
   for (const thread of threads) {
-    if (thread.environmentId !== environmentId) continue;
+    if (thread.environmentId !== environmentId || hidden.has(thread.id)) continue;
     const owner = parseBotThreadOwner(thread.id);
     if (owner?.kind !== "side") continue;
     const list = byBot.get(owner.botId);
@@ -193,6 +196,27 @@ export function sideThreadsByBot<
   }
   for (const list of byBot.values()) list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return byBot;
+}
+
+/**
+ * `threads` without the side threads the bots host (`environmentId`) keeps out of the sidebars.
+ * Returns the input array when nothing is removed so memoized consumers keep their identity.
+ */
+export function withoutHiddenThreads<
+  T extends Pick<EnvironmentThreadShell, "environmentId" | "id">,
+>(
+  threads: ReadonlyArray<T>,
+  environmentId: EnvironmentId | null,
+  hiddenThreadIds: ReadonlyArray<string> | undefined,
+): ReadonlyArray<T> {
+  if (environmentId === null || hiddenThreadIds === undefined || hiddenThreadIds.length === 0) {
+    return threads;
+  }
+  const hidden = new Set(hiddenThreadIds);
+  const kept = threads.filter(
+    (thread) => thread.environmentId !== environmentId || !hidden.has(thread.id),
+  );
+  return kept.length === threads.length ? threads : kept;
 }
 
 const STATUS_RANK = { "needs-you": 0, working: 1, settled: 2 } as const;

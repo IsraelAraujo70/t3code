@@ -97,6 +97,7 @@ export function createBotsEnvironmentAtoms<R, E>(
       label: "environment-command:bots:list-threads",
       tag: BOTS_WS_METHODS.threadList,
     }),
+    setThreadHidden: command("set-thread-hidden", BOTS_WS_METHODS.threadSetHidden),
     restartSession: command("restart-session", BOTS_WS_METHODS.botRestartSession),
     setLinkedEnvironments: command("linked-environments", BOTS_WS_METHODS.botLinkedEnvironments),
     createMemory: command("create-memory", BOTS_WS_METHODS.memoryCreate),

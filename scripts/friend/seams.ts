@@ -301,7 +301,7 @@ export const SEAMS: readonly Seam[] = [
   {
     file: "apps/web/src/components/Sidebar.tsx",
     markers: 3,
-    why: "Bots block, tabs, the bots rail, bot threads kept out of the thread list",
+    why: "Bots block, tabs, the bots rail, bot threads and hidden side threads kept out of the thread list",
   },
   {
     file: "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
@@ -502,6 +502,11 @@ export const SEAMS: readonly Seam[] = [
     file: "apps/mobile/src/features/settings/SettingsNavigationRouteScreen.tsx",
     markers: 3,
     why: "Navigation tabs settings describe the phone bar's More menu",
+  },
+  {
+    file: "apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx",
+    markers: 1,
+    why: "hidden bot side threads stay out of the wide-screen sidebar",
   },
   {
     file: "apps/mobile/src/features/workspace/AndroidWorkspaceSidebar.android.tsx",
