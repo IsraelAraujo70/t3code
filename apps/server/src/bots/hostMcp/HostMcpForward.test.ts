@@ -2,7 +2,15 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { BotId, botSideThreadId, botThreadId, ThreadId } from "@t3tools/contracts";
+import {
+  type Bot,
+  BotId,
+  botSideThreadId,
+  botThreadId,
+  ProviderInstanceId,
+  ThreadId,
+  workflowStepThreadId,
+} from "@t3tools/contracts";
 import type { AppTools } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
@@ -14,6 +22,11 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 
+import * as BotsDb from "../BotsDb.ts";
+import * as BotsStore from "../BotsStore.ts";
+import type { Intent } from "../workflows/facts.ts";
+import * as Journal from "../workflows/Journal.ts";
+import * as StepBots from "../workflows/stepBot.ts";
 import { withClaudeAppTools } from "./claudeAppTools.ts";
 import {
   HOST_MCP_FILE_ENV,
@@ -165,6 +178,7 @@ const withForward = <A, E>(
     readonly raw?: string | null;
     /** What the env names as the config file, when not the file written here. */
     readonly configEnv?: string;
+    readonly stepBots?: StepBots.WorkflowStepBots["Service"];
   },
   body: (fixture: Fixture) => Effect.Effect<A, E, FileSystem.FileSystem>,
 ) =>
@@ -192,7 +206,17 @@ const withForward = <A, E>(
     }).pipe(
       Effect.provide(
         // The layer captures its services for tool calls, so it gets the logger as well.
-        Layer.mergeAll(layer.pipe(Layer.provide(captured)), captured).pipe(
+        Layer.mergeAll(
+          layer.pipe(
+            Layer.provide(captured),
+            Layer.provide(
+              options.stepBots === undefined
+                ? Layer.empty
+                : Layer.succeed(StepBots.WorkflowStepBots, options.stepBots),
+            ),
+          ),
+          captured,
+        ).pipe(
           Layer.provide(
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
@@ -274,6 +298,83 @@ describe("HostMcpForward", () => {
       );
       assert.lengthOf(fake.authorizations, 0);
     }),
+  );
+
+  it.live(
+    "gives an agent step of a workflow bound to a bot that bot's servers, and nothing else",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* fakeServer();
+        const runId = "wfr_0123456789abcdef0123";
+        const step = (hash: string, bot: string | undefined): Intent => ({
+          _tag: "StartTurn",
+          key: `turn:${hash}@1`,
+          step: hash,
+          attempt: 1,
+          threadId: workflowStepThreadId(runId, hash),
+          mode: "new",
+          projectRef: "t3code",
+          title: "Routine",
+          workspace: { name: "ws", path: "/runs/ws" },
+          prompt: "Look",
+          model: { provider: "claude", model: "claude-haiku-5-5" },
+          access: "read",
+          reservation: 1,
+          ...(bot === undefined ? {} : { bot }),
+        });
+        const bound = step("a".repeat(16), financeBot);
+        const unbound = step("b".repeat(16), undefined);
+        const deleted = step("c".repeat(16), "b_deleted");
+        const bot: Bot = {
+          id: financeBot,
+          name: "Finance",
+          role: "Watches money.",
+          model: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-haiku-5-5" },
+          homeGeneration: 1,
+          sectionId: null,
+          position: 0,
+          canManageBots: false,
+          rotation: "daily",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        // The journal and the store live only while this layer does, so the forward runs inside it.
+        yield* Effect.gen(function* () {
+          yield* (yield* BotsStore.BotsStore).insertBot(bot);
+          yield* (yield* Journal.Journal).append(
+            [bound, unbound, deleted].map((intent) => ({
+              stream: `run:${runId}`,
+              key: intent.key,
+              fact: { _tag: "IntentRecorded" as const, intent },
+            })),
+          );
+          const stepBots = yield* StepBots.WorkflowStepBots;
+          yield* withForward({ url: fake.url, token: TOKEN, stepBots }, ({ service }) =>
+            Effect.gen(function* () {
+              const threadOf = (intent: Intent) =>
+                ThreadId.make(intent._tag === "StartTurn" ? intent.threadId : "");
+              const servers = yield* service.forThread(threadOf(bound));
+              assert.deepStrictEqual(
+                servers?.map((server) => [server.server, server.tools.map((tool) => tool.name)]),
+                [["pluggy", ["balance"]]],
+              );
+              assert.isUndefined(yield* service.forThread(threadOf(unbound)));
+              assert.isUndefined(yield* service.forThread(threadOf(deleted)));
+              // A step thread id the journal never recorded is nobody's.
+              assert.isUndefined(
+                yield* service.forThread(workflowStepThreadId(runId, "d".repeat(16))),
+              );
+            }),
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Journal.layerFromDb,
+              StepBots.layerFromDb.pipe(Layer.provideMerge(BotsStore.layerFromDb)),
+            ).pipe(Layer.provide(BotsDb.layerMemory)),
+          ),
+        );
+      }),
   );
 
   it.live("fails closed when the server is down", () =>

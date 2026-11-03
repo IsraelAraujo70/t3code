@@ -2,6 +2,9 @@
 import { workflowStream } from "../facts.ts";
 import * as Context from "effect/Context";
 import {
+  type Bot,
+  BotId,
+  ProviderInstanceId,
   WorkflowSetEnabledInput,
   WorkflowId,
   WorkflowRunId,
@@ -25,6 +28,8 @@ import type { ScheduledTask } from "@t3tools/contracts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { ServerConfig } from "../../../config.ts";
 import * as BotsDb from "../../BotsDb.ts";
+import * as BotsStore from "../../BotsStore.ts";
+import * as Option from "effect/Option";
 import * as Journal from "../Journal.ts";
 import { layer, WorkflowDefinitions } from "./WorkflowDefinitions.ts";
 
@@ -134,7 +139,12 @@ it.live("checks toggle permission and paginates committed history", () =>
       const input = decodeToggle({ workflowId: id, enabled: true, clientRequestId: "toggle-test" });
       expect(
         yield* definitions
-          .setEnabled(input, { kind: "bot", name: "Bot", canManageBots: false })
+          .setEnabled(input, {
+            kind: "bot",
+            id: "b_00000000000000000000000000000001",
+            name: "Bot",
+            canManageBots: false,
+          })
           .pipe(Effect.flip),
       ).toMatchObject({ code: "permission" });
       expect(yield* definitions.setEnabled(input, { kind: "user" })).toMatchObject({
@@ -157,7 +167,12 @@ it.live("checks toggle permission and paginates committed history", () =>
           baseRevision: active.revision,
           message: "Bot edit",
         },
-        { kind: "bot", name: "Bot", canManageBots: false },
+        {
+          kind: "bot",
+          id: "b_00000000000000000000000000000001",
+          name: "Bot",
+          canManageBots: false,
+        },
       );
       expect(botSaved).toMatchObject({ _tag: "Saved", enabled: false });
       // Turned back on, the same content saved again by the bot (same commit) turns it off again.
@@ -175,7 +190,12 @@ it.live("checks toggle permission and paginates committed history", () =>
             baseRevision: unchanged.revision,
             message: "Bot edit again",
           },
-          { kind: "bot", name: "Bot", canManageBots: false },
+          {
+            kind: "bot",
+            id: "b_00000000000000000000000000000001",
+            name: "Bot",
+            canManageBots: false,
+          },
         ),
       ).toMatchObject({ _tag: "Saved", enabled: false });
       for (const title of ["Second", "Third"]) {
@@ -230,7 +250,12 @@ it.live("disables bot edits before a failed version index", () =>
             baseRevision: doc.revision,
             message: "Bot version",
           },
-          { kind: "bot", name: "Bot", canManageBots: false },
+          {
+            kind: "bot",
+            id: "b_00000000000000000000000000000001",
+            name: "Bot",
+            canManageBots: false,
+          },
         )
         .pipe(Effect.flip);
       const journal = yield* Journal.Journal;
@@ -428,7 +453,12 @@ it.live("creates bot workflows disabled", () =>
       ).toBe(doc.source);
       const bot = yield* definitions.save(
         { source: source.replaceAll("mcp-token-cut", "bot-copy"), message: "Bot" },
-        { kind: "bot", name: "Ralph", canManageBots: false },
+        {
+          kind: "bot",
+          id: "b_00000000000000000000000000000001",
+          name: "Ralph",
+          canManageBots: false,
+        },
       );
       expect(bot).toMatchObject({ _tag: "Saved", enabled: false });
     }),
@@ -782,5 +812,69 @@ it.live("switches individual triggers and exposes bot entries", () =>
       expect(yield* definitions.botEntries("mine")).toEqual([]);
       expect(yield* definitions.botEntries("someone")).toMatchObject([{ triggerId: "first" }]);
     }),
+  ),
+);
+
+const OWN = "b_trader";
+const OTHER = "b_other";
+const botNamed = (id: string): Bot => ({
+  id: BotId.make(id),
+  name: id,
+  role: "Trades.",
+  model: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-haiku-5-5" },
+  homeGeneration: 1,
+  sectionId: null,
+  position: 0,
+  canManageBots: false,
+  rotation: "daily",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
+const existingBots = Layer.mock(BotsStore.BotsStore)({
+  getBot: (id) =>
+    Effect.succeed(id === OWN || id === OTHER ? Option.some(botNamed(id)) : Option.none()),
+});
+const asBot = (id: string) => ({ kind: "bot" as const, id, name: id, canManageBots: false });
+const boundTo = (bot: string | null) =>
+  librarySource("routine").pipe(
+    Effect.map((source) => (bot === null ? source : `${source.trimEnd()}\nbot: ${bot}\n`)),
+  );
+
+it.live("a bot binds a workflow only to itself and never takes another bot's", () =>
+  withDefinitions(
+    (definitions) =>
+      Effect.gen(function* () {
+        const save = (bot: string | null, author: Parameters<Definitions["save"]>[1]) =>
+          Effect.gen(function* () {
+            const current = yield* definitions.document("routine").pipe(Effect.option);
+            return yield* definitions.save(
+              {
+                source: yield* boundTo(bot),
+                message: "bind",
+                ...(Option.isSome(current) ? { baseRevision: current.value.revision } : {}),
+              },
+              author,
+            );
+          });
+        const refused = { _tag: "Invalid", diagnostics: [{ path: "bot", code: "bot" }] };
+        expect(yield* save(OTHER, asBot(OWN))).toMatchObject(refused);
+        expect(
+          yield* definitions.validate({ source: yield* boundTo(OTHER) }, asBot(OWN)),
+        ).toMatchObject({ diagnostics: [{ path: "bot", code: "bot" }] });
+        expect((yield* save(OWN, asBot(OWN)))._tag).toBe("Saved");
+        // The owner may move it to any bot that exists, and then the first bot cannot take it back
+        // or drop the binding.
+        expect((yield* save(OTHER, { kind: "user" }))._tag).toBe("Saved");
+        expect(yield* save(OWN, asBot(OWN))).toMatchObject(refused);
+        expect(yield* save(null, asBot(OWN))).toMatchObject(refused);
+        // Keeping the other bot's binding while rewriting its prompts is refused too.
+        expect(yield* save(OTHER, asBot(OWN))).toMatchObject(refused);
+        expect((yield* save(OTHER, asBot(OTHER)))._tag).toBe("Saved");
+        expect(yield* save("b_missing", { kind: "user" })).toMatchObject({
+          _tag: "Invalid",
+          diagnostics: [{ path: "bot", code: "bot", message: "There is no bot b_missing." }],
+        });
+      }),
+    existingBots,
   ),
 );

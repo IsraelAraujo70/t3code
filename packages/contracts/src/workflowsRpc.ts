@@ -361,6 +361,8 @@ export const WorkflowRunView = Schema.Struct({
   nextStepsCursor: Schema.NullOr(Cursor),
   blocks: Schema.Array(WorkflowBlockView),
   gates: Schema.Array(WorkflowGateView),
+  /** What the run could not do as written, such as a bound bot that no longer exists. */
+  warnings: Schema.optional(Schema.Array(Schema.String)),
 });
 export type WorkflowRunView = typeof WorkflowRunView.Type;
 
@@ -378,6 +380,8 @@ export const WorkflowRunDelta = Schema.Struct({
   steps: Schema.Array(WorkflowStepAttemptView),
   blocks: Schema.Array(WorkflowBlockView),
   gates: Schema.Array(WorkflowGateView),
+  /** Every warning of the run, not only new ones. */
+  warnings: Schema.optional(Schema.Array(Schema.String)),
 });
 export type WorkflowRunDelta = typeof WorkflowRunDelta.Type;
 

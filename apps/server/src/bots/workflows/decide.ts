@@ -841,6 +841,8 @@ export const decide = (
       access,
       // wf-engine slice 8: the node's own reservation, else its history, else the host default.
       reservation: node.tokenReservation ?? turnEstimate(step),
+      // Only agent turns work for the bound bot; continues and nudges copy it from here.
+      ...(definition.bot === undefined ? {} : { bot: definition.bot }),
     });
   };
 
@@ -1026,8 +1028,9 @@ export const decide = (
       const criterion = render(accept.criterion, envFor(level));
       if (Result.isFailure(criterion))
         return resolve(step, a.attempt, "failed", "fail", output, criterion.failure);
+      const { bot: _judgeWorksForNoBot, ...judgeBase } = turnIntent;
       record({
-        ...turnIntent,
+        ...judgeBase,
         key: judgeKey,
         step: `${step}/judge`,
         threadId: stepThreadId(runId, judgeKey),
@@ -1332,6 +1335,29 @@ export const decide = (
           if (result?._tag === "IntentFailed" && !result.retryable)
             return resolve(step, attempt, "failed", "fail", null, result.error);
           if (result?._tag !== "PullRequestOpened") return;
+        }
+        // The report goes to the bound bot's conversation once per run; an empty one is no news.
+        const posted = report?.success.trim() ?? "";
+        if (
+          node.postToBot === true &&
+          definition.bot !== undefined &&
+          level.parent === null &&
+          posted !== ""
+        ) {
+          const post = `post:${step}`;
+          record({
+            _tag: "PostToBot",
+            key: post,
+            step,
+            botId: definition.bot,
+            workflowTitle: definition.title,
+            report: posted,
+          });
+          const delivered = resultOf(post);
+          if (delivered === null) return;
+          // A report that never reached the bot is not a quiet success: the run fails and says so.
+          if (delivered._tag === "IntentFailed")
+            return resolve(step, attempt, "failed", "fail", null, delivered.error);
         }
         // wf-engine slice 7: `promote` marks the kept ledger entry of that sha as validated.
         if (node.promote !== undefined) {
@@ -1893,8 +1919,12 @@ export const decide = (
               notify: node.notify === true,
               report: reached?._tag === "OutputSet" ? reached.report : null,
             });
+      // A report posted to the bot's conversation is the notice: the bot's reply pushes.
+      const postedToBot = [...state.intents.values()].some(
+        (entry) => entry.result?._tag === "BotPosted" && entry.result.threadId !== null,
+      );
       // A reopened run ends again under its generation's key.
-      if (finished !== null) record({ ...finished, key: once(finished.key) });
+      if (finished !== null && !postedToBot) record({ ...finished, key: once(finished.key) });
       return;
     }
     const failed = failedNotice(definition.title, runId, status);

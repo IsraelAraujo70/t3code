@@ -66,6 +66,15 @@ export function botChatRows(
       case "event":
         if (showsInBotChat(row.projectedItem.item)) return true;
         break;
+      case "work":
+        if (
+          row.groupedEntries.some(
+            (entry) =>
+              entry.projectedItem !== undefined && showsInBotChat(entry.projectedItem.item),
+          )
+        )
+          return true;
+        break;
       default:
         break;
     }

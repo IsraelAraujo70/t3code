@@ -312,7 +312,7 @@ it.effect("preserves author permissions and returns conflicts", () =>
     });
     expect(yield* Ref.get(t.calls)).toEqual([
       "botForThread",
-      { kind: "bot", name: "Test", canManageBots: false },
+      { kind: "bot", id: "b_test", name: "Test", canManageBots: false },
     ]);
     expect(yield* t.enable()).toMatchObject({ code: "capability_denied" });
   }),
@@ -368,6 +368,7 @@ it.effect("allows owner turns to run and enable workflows", () =>
     yield* t.save();
     expect((yield* Ref.get(t.calls)).at(-1)).toEqual({
       kind: "bot",
+      id: "b_test",
       name: "Test",
       canManageBots: true,
     });

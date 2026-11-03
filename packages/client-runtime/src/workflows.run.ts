@@ -169,6 +169,8 @@ export const foldRunDelta: WorkflowRunApi["foldRunDelta"] = (view, delta) =>
         steps: upsert(view.steps, delta.steps, attemptKey),
         blocks: upsert(view.blocks, delta.blocks, (b) => b.step),
         gates: upsert(view.gates, delta.gates, (g) => g.key),
+        // A delta carries the whole warning list, and only when it changed.
+        ...(delta.warnings === undefined ? {} : { warnings: delta.warnings }),
       };
 export const joinRunPages: WorkflowRunApi["joinRunPages"] = ([first, ...rest]) => ({
   ...first,

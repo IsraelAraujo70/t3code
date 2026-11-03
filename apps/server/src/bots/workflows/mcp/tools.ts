@@ -46,6 +46,8 @@ const OWNER_ONLY =
 const GATES =
   "A gate waits for the owner: only they approve or reject it, in the run view of the T3 app, and no tool can. When a run waits at a gate, tell the user it needs their approval there; do not edit, cancel, or rerun the workflow to get past it.";
 
+const BOUND =
+  "To make a workflow work for you, such as one of your routines, set the top-level `bot` to your id (`you` in workflow_list); you cannot set another bot's id or change a workflow that works for another bot. Its `agent` steps then get your host MCP tools, and an `output` node with `postToBot: true` and a `report` posts the report in your conversation, which wakes you to tell the user; an empty report or a false `when` posts nothing, so render the report only when there is news.";
 const RUNNABLE =
   "Only a workflow whose `bot` entry is set can be run by you: it has a bot trigger that allows you. `description` says when to run it and `params` what to pass; `on: false` means the run would be skipped until the workflow and that trigger are on.";
 
@@ -70,9 +72,10 @@ const BotEntry = Schema.Struct({
 
 const WorkflowListTool = Tool.make("workflow_list", {
   ...shared,
-  description: `List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. ${RUNNABLE} \`includeTemplates\` adds the ready-made workflows; read one with workflow_template to see the YAML format.`,
+  description: `List the workflows on the bots host: whether each one is valid and on, its triggers and its last run. ${RUNNABLE} \`includeTemplates\` adds the ready-made workflows; read one with workflow_template to see the YAML format. \`you\` is your bot id, the value of a workflow's top-level \`bot\` field when it works for you.`,
   parameters: Schema.Struct({ includeTemplates: Schema.optional(Schema.Boolean) }),
   success: Schema.Struct({
+    you: Schema.String,
     workflows: Schema.Array(
       Schema.Struct({
         id: WorkflowId,
@@ -122,7 +125,7 @@ const WorkflowTemplateTool = Tool.make("workflow_template", {
 
 const WorkflowSaveTool = Tool.make("workflow_save", {
   ...shared,
-  description: `Create or replace a workflow from its YAML source (\`schema: t3.workflow/v1\`). Validate first: call with \`dryRun: true\`, fix every diagnostic, then save the same source with a commit \`message\`; a save without \`dryRun\` is a commit in the workflows repository. To replace a workflow, pass the \`revision\` from workflow_get as \`baseRevision\`; if the file changed since, nothing is written and \`conflict\` holds the current text to merge. ${OWNER_ONLY} Never remove or weaken a \`gate\` node to get a waiting run through.`,
+  description: `Create or replace a workflow from its YAML source (\`schema: t3.workflow/v1\`). Validate first: call with \`dryRun: true\`, fix every diagnostic, then save the same source with a commit \`message\`; a save without \`dryRun\` is a commit in the workflows repository. ${BOUND} To replace a workflow, pass the \`revision\` from workflow_get as \`baseRevision\`; if the file changed since, nothing is written and \`conflict\` holds the current text to merge. ${OWNER_ONLY} Never remove or weaken a \`gate\` node to get a waiting run through.`,
   parameters: Schema.Struct({
     workflowId: Schema.optional(WorkflowId),
     source: Schema.String,

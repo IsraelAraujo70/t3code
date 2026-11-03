@@ -17,6 +17,7 @@ import { ProjectId, type Project } from "@t3tools/contracts";
 import { type Fact, type Intent, runStream } from "../facts.ts";
 import { WorkflowGit, WorkflowGitError } from "../git/Workspaces.ts";
 import { WorkflowInterpreter } from "../Interpreter.ts";
+import { WorkflowBotPosts } from "../publish/BotPosts.ts";
 import * as Journal from "../Journal.ts";
 import { RUN_ID, runStarted } from "../testkit/decideHarness.ts";
 import { layer, retryable } from "./HostInterpreter.ts";
@@ -271,5 +272,100 @@ describe("prepare", () => {
       expect(calls).toEqual([]);
       expect(facts[0]?.fact).toMatchObject({ _tag: "IntentFailed", retryable: false });
     }),
+  );
+});
+
+describe("bot binding", () => {
+  itEffect.effect("a deleted bot leaves the step without its tools and warns the run once", () =>
+    Effect.gen(function* () {
+      const unused = () => Effect.die("not used by bot binding");
+      const posts: string[] = [];
+      const executors = Layer.mergeAll(
+        Layer.succeed(
+          WorkflowTurns,
+          WorkflowTurns.of({
+            start: (_runId, intent) => Effect.succeed(intent.threadId),
+            observe: () => Stream.die("not used by bot binding"),
+            interrupt: unused,
+            answer: unused,
+          }),
+        ),
+        Layer.succeed(
+          WorkflowUnits,
+          WorkflowUnits.of({ start: unused, observe: unused, stop: unused }),
+        ),
+        Layer.succeed(
+          WorkflowGit,
+          WorkflowGit.of({
+            prepare: unused,
+            head: unused,
+            tree: unused,
+            advance: unused,
+            mergeLocal: unused,
+            remove: unused,
+            release: unused,
+            resolveRef: unused,
+          }),
+        ),
+        Layer.succeed(ProjectService, ProjectService.of({} as ProjectService["Service"])),
+        Layer.succeed(
+          WorkflowBotPosts,
+          WorkflowBotPosts.of({
+            exists: (botId) => Effect.succeed(botId === "b_live"),
+            post: (input) =>
+              Effect.sync(() => {
+                if (input.botId !== "b_live") return null;
+                posts.push(input.report);
+                return "bot:b_live:3";
+              }),
+          }),
+        ),
+        Journal.layerMemory,
+      );
+      const turn = (bot: string): Intent => ({
+        _tag: "StartTurn",
+        key: `turn:${bot}@1`,
+        step: bot,
+        attempt: 1,
+        threadId: `wf:${bot}`,
+        mode: "new",
+        projectRef: "t3code",
+        title: "look",
+        workspace: { name: "integ", path: "/runs/integ" },
+        prompt: "Look",
+        model: { provider: "claude", model: "claude-haiku-5-5" },
+        access: "read",
+        reservation: 0,
+        bot,
+      });
+      const post = (botId: string): Intent => ({
+        _tag: "PostToBot",
+        key: `post:${botId}`,
+        step: "done",
+        botId,
+        workflowTitle: "Heartbeat",
+        report: "BTC -8%",
+      });
+      yield* Effect.gen(function* () {
+        const interpreter = yield* WorkflowInterpreter;
+        const tags = (facts: ReadonlyArray<{ readonly key: string; readonly fact: Fact }>) =>
+          facts.map((f) => [f.key, f.fact._tag === "BotPosted" ? f.fact.threadId : f.fact._tag]);
+        expect(tags(yield* interpreter.execute(RUN_ID, turn("b_live")))).toEqual([
+          ["result:turn:b_live@1", "TurnStarted"],
+        ]);
+        expect(tags(yield* interpreter.execute(RUN_ID, turn("b_gone")))).toEqual([
+          ["warn:bot-missing:b_gone", "RunWarned"],
+          ["result:turn:b_gone@1", "TurnStarted"],
+        ]);
+        expect(tags(yield* interpreter.execute(RUN_ID, post("b_gone")))).toEqual([
+          ["warn:bot-missing:b_gone", "RunWarned"],
+          ["result:post:b_gone", null],
+        ]);
+        expect(tags(yield* interpreter.execute(RUN_ID, post("b_live")))).toEqual([
+          ["result:post:b_live", "bot:b_live:3"],
+        ]);
+        expect(posts).toEqual(["BTC -8%"]);
+      }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provideMerge(executors))));
+    }).pipe(Effect.scoped),
   );
 });

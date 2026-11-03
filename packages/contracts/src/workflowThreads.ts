@@ -9,6 +9,9 @@ import { ThreadId } from "./baseSchemas.ts";
 
 export const WORKFLOW_STEP_THREAD_PREFIX = "wf:";
 
+/** Opens the id of every message a workflow posts in its bot's conversation (`postToBot`). */
+export const WORKFLOW_POST_MESSAGE_PREFIX = "message:workflow-post:";
+
 const WORKFLOW_STEP_THREAD_ID = /^wf:(wfr_[0-9a-f]{20}):([0-9a-f]{16,64})$/;
 
 /** True for any `wf:` id; use `parseWorkflowStepThreadId` when the parts matter. */

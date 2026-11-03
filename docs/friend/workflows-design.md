@@ -1171,17 +1171,17 @@ Contaminação: valores de webhook, título de PR e texto de thread são **não 
 
 Toolkit do fork `WorkflowToolkit` (`apps/server/src/bots/workflows/mcp/tools.ts` e `handlers.ts`), registrado no hunk do fork que já existe em `McpHttpServer.ts:1174`.
 
-| Ferramenta             | Parâmetros                                                 | Saída                                                                    | Anotação                              |
-| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
-| `workflow_list`        | `{ includeTemplates? }`                                    | `{ workflows: [{ id, title, valid, enabled, triggers, bot, lastRun }] }` | leitura                               |
-| `workflow_get`         | `{ workflowId }`                                           | `{ source, revision, hash, diagnostics, enabled }`                       | leitura                               |
-| `workflow_save`        | `{ workflowId?, source, baseRevision?, message, dryRun? }` | `{ ok, workflowId?, revision?, commit?, diagnostics, webhooks? }`        | escrita; `dryRun: true` é a validação |
-| `workflow_set_enabled` | `{ workflowId, triggerId?, enabled }`                      | `{ enabled }`                                                            | escrita                               |
-| `workflow_run`         | `{ workflowId, params?, clientRequestId? }`                | `{ runId, status, link }`                                                | escrita                               |
-| `workflow_runs`        | `{ workflowId?, status?, limit? }`                         | execuções recentes, resumidas                                            | leitura                               |
-| `workflow_run_status`  | `{ runId }`                                                | `RunSummary` mais passos e blocos com texto truncado                     | leitura                               |
-| `workflow_run_cancel`  | `{ runId }`                                                | `{ status }`                                                             | escrita, destrutiva                   |
-| `workflow_ledger`      | `{ ledger?, workflowId?, limit? }`                         | entradas com veredito e números                                          | leitura                               |
+| Ferramenta             | Parâmetros                                                 | Saída                                                                         | Anotação                              |
+| ---------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------- |
+| `workflow_list`        | `{ includeTemplates? }`                                    | `{ you, workflows: [{ id, title, valid, enabled, triggers, bot, lastRun }] }` | leitura                               |
+| `workflow_get`         | `{ workflowId }`                                           | `{ source, revision, hash, diagnostics, enabled }`                            | leitura                               |
+| `workflow_save`        | `{ workflowId?, source, baseRevision?, message, dryRun? }` | `{ ok, workflowId?, revision?, commit?, diagnostics, webhooks? }`             | escrita; `dryRun: true` é a validação |
+| `workflow_set_enabled` | `{ workflowId, triggerId?, enabled }`                      | `{ enabled }`                                                                 | escrita                               |
+| `workflow_run`         | `{ workflowId, params?, clientRequestId? }`                | `{ runId, status, link }`                                                     | escrita                               |
+| `workflow_runs`        | `{ workflowId?, status?, limit? }`                         | execuções recentes, resumidas                                                 | leitura                               |
+| `workflow_run_status`  | `{ runId }`                                                | `RunSummary` mais passos e blocos com texto truncado                          | leitura                               |
+| `workflow_run_cancel`  | `{ runId }`                                                | `{ status }`                                                                  | escrita, destrutiva                   |
+| `workflow_ledger`      | `{ ledger?, workflowId?, limit? }`                         | entradas com veredito e números                                               | leitura                               |
 
 Regras:
 
@@ -1190,6 +1190,57 @@ Regras:
 - **Sem portão.** Nenhuma ferramenta decide portão. Só a RPC `gate.decide`, com sessão de usuário, decide.
 - **Sem autoedição.** Os handlers recusam quem chama de dentro de uma thread de passo (`isWorkflowStepThreadId`). Um workflow não edita, roda nem cancela workflows.
 - **Eval.** O texto das ferramentas fala com modelos e precisa de caso em `evals/mcp-tool-use` antes de ir ao ar (AGENTS.md, "Evals"). Hoje o catálogo da eval não inclui toolkits do fork (`evals/mcp-tool-use/run.ts:303`). A fatia 9 inclui os toolkits do fork e casos para "valida com dryRun antes de salvar" e "não tenta aprovar portão".
+
+### 6.1 Workflow que trabalha para um bot
+
+Uma rotina de bot (o heartbeat de hora em hora do Trader, o resumo das 21:00) vira workflow com dois campos:
+
+- `bot: <botId>` no nível de cima diz para quem o workflow trabalha. Os passos `agent` recebem os MCPs de host desse bot pelo mesmo encaminhamento in-process que o bot usa (`HostMcpForward`); o token nunca chega ao passo. Só `agent` recebe: o juiz de `accept`, `hillclimb`, `arena`, `graph` e `interrogate` fazem trabalho de código e não precisam da carteira de ninguém. Um `continue:` e o nudge do JSON herdam o vínculo, porque é a mesma thread.
+- `postToBot: true` num `output` de nível de cima posta o `report` renderizado na thread principal atual do bot.
+
+Decisões:
+
+1. **O vínculo vem do journal, nunca de quem chama.** O decisor grava `bot` no intent `StartTurn` dos nós `agent`, a partir da definição fixada na execução. `HostMcpForward.forThread` lê `wf:<runId>:<hash>`, procura o `StartTurn` com essa thread no stream da execução e confere que o bot ainda existe (`apps/server/src/bots/workflows/stepBot.ts`). Thread de passo → execução → versão → bot. Ids de thread `wf:` seguem o mesmo modelo de confiança dos ids `bot:` (só o dono cria thread com id escolhido).
+2. **Quem vincula.** Pelo `workflow_save`, um bot só põe o próprio id e não troca nem tira o vínculo de outro bot; o dono, pela UI ou RPC, vincula a qualquer bot que exista. Bot inexistente é diagnóstico `bot` no save e no `dryRun`. O `workflow_list` devolve `you`, o id do bot que chama. Edição à mão não passa por essa regra (é do dono).
+3. **Bot apagado.** O passo roda sem MCP de host e a execução grava `RunWarned` (`warn:bot-missing:<id>`), que a tela da execução mostra. O post também vira aviso e não acontece.
+4. **O post acorda o bot.** O orquestrador não tem mensagem sem turno: criar uma seria mexer no `Orchestrator` do upstream e nos dois clientes. O post é um `message.dispatch` na fila (`queue_after_active`), com `notification` de sistema, e o bot repassa o report na própria voz, como as rotinas de hoje. Por isso não existe opção "não acordar".
+5. **Uma vez por execução e nó.** O intent `PostToBot` tem chave `post:<nó>` e o commandId é `server:workflow-post:<keyHash(runId, chave)>`. Um restart que reexecuta o intent cai no recibo do comando; uma execução reaberta não posta de novo. A thread é resolvida na hora do post (`bot:<id>:<homeGeneration>`), então a rotação de conversa não perde o report.
+6. **Sem novidade, sem post.** Report vazio (depois de `trim`) ou `when` falso não postam. Só `output` de nível de cima posta; dentro de `map` ou `loop` seria um post por item, e o compilador recusa.
+7. **Sem notificação dupla.** Quando o post acontece, o push "finished" da execução não sai: a resposta do bot já notifica. Sem post (report vazio, bot apagado, falha), o push segue as regras de antes.
+
+Exemplo, o heartbeat do Trader:
+
+```yaml
+schema: t3.workflow/v1
+id: trader-heartbeat
+title: Heartbeat da carteira
+home: { project: scratch }
+bot: b_0123456789abcdef0123456789abcdef # o id do Trader (`you` no workflow_list)
+triggers:
+  hourly: { kind: cron, expr: "0 * * * *", tz: America/Sao_Paulo }
+budget: { steps: 4, wall: 20m, tokens: 150000 }
+fatigue: { consecutiveFailures: 3 }
+models:
+  lead: { provider: claude, model: claude-haiku-5-5 }
+nodes:
+  look:
+    kind: agent
+    model: $lead
+    workspace: { project: scratch, readOnly: true }
+    prompt: >-
+      Leia a carteira com as tools do MCP trader e compare com a última hora.
+      Responda em JSON: news é vazio quando nada mudou; senão, de 1 a 3 linhas.
+    output: { news: { type: string } }
+  done:
+    kind: output
+    status: no_change
+    value: {}
+    report: "{{ nodes.look.output.news }}"
+    postToBot: true
+edges: [look -> done]
+```
+
+Os MCPs de host só valem para passos em instância Claude, como para os bots (`docs/friend/bot-host-mcp.md`).
 
 ---
 

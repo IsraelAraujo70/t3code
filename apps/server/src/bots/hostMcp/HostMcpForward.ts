@@ -23,7 +23,10 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { WorkflowStepBots } from "../workflows/stepBot.ts";
 
 export const HOST_MCP_FILE_ENV = "T3CODE_BOT_HOST_MCP_FILE";
 const CONFIG_TIMEOUT_MS = 1_000;
@@ -472,10 +475,18 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const stepBots = yield* Effect.serviceOption(WorkflowStepBots);
+  /** A bot's own thread, or an agent step of a workflow bound to that bot. */
+  const botOfThread = (threadId: ThreadId) => {
+    const owner = parseBotThreadOwner(threadId);
+    if (owner !== null) return Effect.succeedSome(owner.botId);
+    return Option.isNone(stepBots) ? Effect.succeedNone : stepBots.value.botOf(threadId);
+  };
+
   const forThread = Effect.fn("HostMcpForward.forThread")(function* (threadId: ThreadId) {
-    const parsed = parseBotThreadOwner(threadId);
-    if (parsed === null) return undefined;
-    const servers = yield* forBot(parsed.botId);
+    const botId = yield* botOfThread(threadId);
+    if (Option.isNone(botId)) return undefined;
+    const servers = yield* forBot(botId.value);
     return servers.length === 0 ? undefined : servers;
   });
 

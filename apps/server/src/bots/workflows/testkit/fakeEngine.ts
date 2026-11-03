@@ -74,6 +74,12 @@ export interface FakeInterpreter {
   readonly abandoned: Set<string>;
   /** Executions of these keys fail with a retryable IntentFailed. */
   readonly failRetryable: Set<string>;
+  /**
+   * Messages posted to bot threads, by command id, like the orchestrator's receipts: a replayed
+   * post finds its receipt and adds nothing. `missingBots` posts nothing.
+   */
+  readonly posts: Map<string, { readonly botId: string; readonly report: string }>;
+  readonly missingBots: Set<string>;
 }
 
 /**
@@ -91,6 +97,8 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
   const stall = new Set<string>();
   const abandoned = new Set<string>();
   const failRetryable = new Set<string>();
+  const posts = new Map<string, { readonly botId: string; readonly report: string }>();
+  const missingBots = new Set<string>();
   const at = Clock.currentTimeMillis.pipe(
     Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
   );
@@ -161,6 +169,14 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
           return [
             result(runId, intent, { _tag: "ChildRunStarted", childRunId: `child-${intent.key}` }),
           ];
+        case "PostToBot": {
+          if (missingBots.has(intent.botId))
+            return [result(runId, intent, { _tag: "BotPosted", threadId: null })];
+          const commandId = `${runId}:${intent.key}`;
+          if (!posts.has(commandId))
+            posts.set(commandId, { botId: intent.botId, report: intent.report });
+          return [result(runId, intent, { _tag: "BotPosted", threadId: `bot:${intent.botId}:1` })];
+        }
       }
     });
 
@@ -228,6 +244,8 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
     stall,
     abandoned,
     failRetryable,
+    posts,
+    missingBots,
   };
   const layer = Layer.succeed(
     WorkflowInterpreter,

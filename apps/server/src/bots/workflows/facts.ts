@@ -34,6 +34,11 @@ export const Intent = Schema.TaggedUnion({
     reservation: Schema.Number,
     // wf-engine slice 7: a block child carries its own timeout; graph nodes read theirs from the definition.
     timeoutMs: Schema.optional(Schema.Number),
+    /**
+     * The workflow's bound bot, set only on an `agent` node's turns: HostMcpForward gives this
+     * thread that bot's host MCP servers. Judges and block children never carry it.
+     */
+    bot: Schema.optional(Text),
   },
   /** One command in its own systemd unit; `heavy` takes the heavy.sh lock inside the unit. */
   StartUnit: {
@@ -121,6 +126,14 @@ export const Intent = Schema.TaggedUnion({
     base: Text,
     title: Text,
     body: Text,
+  },
+  /** Key `post:<step>`: the output's report as a message in the bot's current main thread. */
+  PostToBot: {
+    key: Text,
+    step: Text,
+    botId: Text,
+    workflowTitle: Text,
+    report: Text,
   },
   StartChildRun: {
     key: Text,
@@ -231,6 +244,8 @@ export const RunFact = Schema.TaggedUnion({
   CardUpserted: { ticketId: Schema.optionalKey(KanbanTicketId) },
   PullRequestOpened: { url: Text, branch: Text },
   ChildRunStarted: { childRunId: Text },
+  /** `threadId` null: the bot no longer exists and nothing was posted. */
+  BotPosted: { threadId: NullableText },
   /** The intent cannot be done; `retryable` lets the actor try the same key again later. */
   IntentFailed: { error: Text, retryable: Schema.Boolean },
 
@@ -299,6 +314,8 @@ export const RunFact = Schema.TaggedUnion({
     by: Text,
     at: Text,
   },
+  /** Key `warn:<reason>`: something the run could not do as written; it goes on regardless. */
+  RunWarned: { message: Text, at: Text },
   /** Key `child:<childRunId>`. */
   ChildRunEnded: {
     childRunId: Text,

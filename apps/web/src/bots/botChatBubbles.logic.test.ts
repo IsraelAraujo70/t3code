@@ -119,6 +119,34 @@ describe("botChatRows", () => {
     ];
     expect(ids(botChatRows(BOT_THREAD, rows))).toEqual(["u1", "failed", "stopped", "secret"]);
   });
+
+  it("keeps a workflow's report to the bot, and hides other notifications", () => {
+    // Notification rows carry their turn item; its id names the message that brought it.
+    const notice = (id: string, itemId: string): MessagesTimelineRow =>
+      ({
+        kind: "work",
+        id,
+        createdAt: at,
+        isExpandedToolGroup: false,
+        groupedEntries: [
+          {
+            id: `${id}:entry`,
+            createdAt: at,
+            runId: run1,
+            label: id,
+            tone: "info",
+            itemType: "notification",
+            projectedItem: { item: { id: itemId, type: "notification", status: "completed" } },
+          },
+        ],
+      }) as unknown as MessagesTimelineRow;
+    const rows = [
+      notice("report", "turn-item:message:message%3Aworkflow-post%3Aabc"),
+      notice("watch", "turn-item:message:message%3Athread-watch%3Aabc"),
+      message("a1", "assistant", run1),
+    ];
+    expect(ids(botChatRows(BOT_THREAD, rows))).toEqual(["report", "a1"]);
+  });
 });
 
 describe("botBubbleLayout", () => {

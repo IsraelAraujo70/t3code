@@ -4,6 +4,15 @@ import * as Schema from "effect/Schema";
 import { InspectorField, type InspectorFieldSpec } from "./NodeConfigForms";
 import { applyFieldEdit, fieldText, fieldValue } from "./inspectorEdits";
 
+import { useBotDirectory, useBotsEnvironmentId } from "../../../state/bots";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectPopup,
+  SelectItem,
+} from "../../../components/ui/select";
+
 const decodeDefinition = Schema.decodeUnknownOption(WorkflowDefinition);
 
 const fields: readonly InspectorFieldSpec[] = [
@@ -28,9 +37,46 @@ export function WorkflowSettingsForm(props: {
   readonly readOnly: boolean;
   readonly onChange: (definition: WorkflowDefinition) => void;
 }) {
+  const { directory } = useBotDirectory(useBotsEnvironmentId());
+  const bots = directory?.bots ?? [];
+  const selectedBot = props.definition.bot;
   return (
     <div className="space-y-3">
       <h3 className="font-medium">Workflow settings</h3>
+      <div className="space-y-1">
+        <label htmlFor="workflow-bot">Bot</label>
+        <Select
+          value={selectedBot ?? ""}
+          disabled={props.readOnly}
+          onValueChange={(value) => {
+            if (props.readOnly || value === null) return;
+            const { bot: _bot, ...definition } = props.definition;
+            const decoded = decodeDefinition(
+              value === "" ? definition : { ...definition, bot: value },
+            );
+            if (Option.isSome(decoded)) props.onChange(decoded.value);
+          }}
+        >
+          <SelectTrigger id="workflow-bot">
+            <SelectValue>
+              {selectedBot
+                ? (bots.find((bot) => bot.id === selectedBot)?.name ?? selectedBot)
+                : "None"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            <SelectItem value="">None</SelectItem>
+            {bots.map((bot) => (
+              <SelectItem key={bot.id} value={bot.id}>
+                {bot.name}
+              </SelectItem>
+            ))}
+            {selectedBot && !bots.some((bot) => bot.id === selectedBot) ? (
+              <SelectItem value={selectedBot}>{selectedBot}</SelectItem>
+            ) : null}
+          </SelectPopup>
+        </Select>
+      </div>
       {fields.map((spec) => {
         const value = fieldValue(props.definition, spec.path);
         return (

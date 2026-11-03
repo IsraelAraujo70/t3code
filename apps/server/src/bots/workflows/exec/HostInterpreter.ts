@@ -23,6 +23,7 @@ import { WorkflowCards } from "../card/WorkflowCards.ts";
 import { workflowRunWebPath } from "../notices/notices.ts";
 import { WorkflowNotices } from "../notices/WorkflowNotices.ts";
 import { WorkflowPullRequests } from "../publish/PullRequests.ts";
+import { WorkflowBotPosts } from "../publish/BotPosts.ts";
 import { type Intent, type NewFact, type RunFact, runStream, workflowStream } from "../facts.ts";
 import { WorkflowGit, WorkflowGitError } from "../git/Workspaces.ts";
 import { keyHash, runIdFor } from "../ids.ts";
@@ -88,6 +89,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
   const notices = yield* Effect.serviceOption(WorkflowNotices);
   const cards = yield* Effect.serviceOption(WorkflowCards);
   const pullRequests = yield* Effect.serviceOption(WorkflowPullRequests);
+  const botPosts = yield* Effect.serviceOption(WorkflowBotPosts);
   const environment = yield* Effect.serviceOption(ServerEnvironment);
 
   const runDir = (runId: string) => NodePath.join(options.runsDir, runId);
@@ -114,6 +116,16 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     error: string,
     retryable = false,
   ): ReadonlyArray<NewFact> => [result(runId, intent, { _tag: "IntentFailed", error, retryable })];
+
+  const botMissing = (runId: string, botId: string, at: string): NewFact => ({
+    stream: runStream(runId),
+    key: `warn:bot-missing:${botId}`,
+    fact: {
+      _tag: "RunWarned",
+      message: `Bot ${botId}, which this workflow works for, no longer exists: agent steps run without its host MCP servers and nothing is posted to it.`,
+      at,
+    },
+  });
 
   /** A `wf/…` branch an ended run left behind is released to this run; a live run's is not. */
   const takeOver = Effect.fn("HostInterpreter.takeOver")(function* (
@@ -240,7 +252,13 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     switch (intent._tag) {
       case "StartTurn": {
         const threadId = yield* turns.start(runId, intent);
-        return [result(runId, intent, { _tag: "TurnStarted", threadId })];
+        const started = result(runId, intent, { _tag: "TurnStarted", threadId });
+        if (intent.bot === undefined || Option.isNone(botPosts)) return [started];
+        // HostMcpForward finds no bot either, so the turn runs without the bot's servers.
+        const exists = yield* botPosts.value
+          .exists(intent.bot)
+          .pipe(Effect.orElseSucceed(() => true));
+        return exists ? [started] : [botMissing(runId, intent.bot, yield* nowIso), started];
       }
       case "StartUnit": {
         const { unit, receiptDir } = unitOf(runId, intent.key);
@@ -350,6 +368,19 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
               Effect.succeed(failed(runId, intent, error.message, error.retryable)),
             ),
           );
+      }
+      case "PostToBot": {
+        if (Option.isNone(botPosts))
+          return failed(runId, intent, "Bot posts are not available on this host.");
+        return yield* botPosts.value.post({ runId, ...intent }).pipe(
+          Effect.flatMap((threadId) =>
+            Effect.map(nowIso, (at) => {
+              const posted = result(runId, intent, { _tag: "BotPosted", threadId });
+              return threadId === null ? [botMissing(runId, intent.botId, at), posted] : [posted];
+            }),
+          ),
+          Effect.catch((error) => Effect.succeed(failed(runId, intent, error.message, true))),
+        );
       }
       case "StartChildRun":
         return yield* startChild(runId, intent);

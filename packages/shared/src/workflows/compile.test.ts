@@ -406,6 +406,42 @@ const FAILING: ReadonlyArray<FailingCase> = [
       d.edges.push("test:fail -> fixup");
     },
   },
+  {
+    name: "a post to the bot in a workflow that works for no bot",
+    code: "bot",
+    path: "nodes.done.postToBot",
+    change: (d) => {
+      d.nodes.done.report = "{{nodes.plan.output.notes}}";
+      d.nodes.done.postToBot = true;
+    },
+  },
+  {
+    name: "a post to the bot from a map body, once per item",
+    code: "bot",
+    path: "nodes.each.body.nodes.say.postToBot",
+    change: (d) => {
+      d.bot = "b_trader";
+      d.nodes.each = {
+        kind: "map",
+        items: "[1, 2]",
+        maxItems: 2,
+        concurrency: 1,
+        body: {
+          nodes: {
+            say: {
+              kind: "output",
+              status: "no_change",
+              value: {},
+              report: "item",
+              postToBot: true,
+            },
+          },
+          edges: [],
+        },
+      };
+      d.edges.push("test:fail -> each");
+    },
+  },
 ];
 
 describe("compileWorkflow", () => {

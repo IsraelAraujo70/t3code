@@ -11,6 +11,7 @@ import {
   type BotId,
   type OrchestrationV2TurnItem,
   type ThreadId,
+  WORKFLOW_POST_MESSAGE_PREFIX,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -46,14 +47,19 @@ export const isBotChatThread = (threadId: string | null | undefined): boolean =>
 export const isBotConversationThread = (threadId: string | null | undefined): boolean =>
   threadId != null && parseBotThreadOwner(threadId) !== null;
 
+// A message's turn item id is `turn-item:message:<encoded message id>`.
+const WORKFLOW_POST_ITEM_PREFIX = `turn-item:message:${encodeURIComponent(WORKFLOW_POST_MESSAGE_PREFIX)}`;
+
 /**
  * Turn items a bot conversation shows even though it hides tool calls: a failed or interrupted run
- * is news the user needs, and a secret request waits on them.
+ * is news the user needs, a secret request waits on them, and a workflow's report is why the bot
+ * speaks next.
  */
-export const showsInBotChat = (item: Pick<OrchestrationV2TurnItem, "type" | "status">) =>
+export const showsInBotChat = (item: Pick<OrchestrationV2TurnItem, "id" | "type" | "status">) =>
   (item.type === "error" && item.status !== "completed") ||
   item.type === "run_interrupt_result" ||
-  item.type === "secret_request";
+  item.type === "secret_request" ||
+  (item.type === "notification" && item.id.startsWith(WORKFLOW_POST_ITEM_PREFIX));
 
 const code = (side: BubbleSide, joinsPrevious: boolean, joinsNext: boolean) =>
   `${side === "user" ? "u" : "b"}${joinsPrevious ? 1 : 0}${joinsNext ? 1 : 0}`;
