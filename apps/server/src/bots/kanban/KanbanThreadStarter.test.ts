@@ -17,10 +17,13 @@ import {
   ProviderInstanceId,
   type OrchestrationV2ServerCommand,
   type Project as ProjectRecord,
+  type ServerSettings as ServerSettingsShape,
   type ThreadId,
+  type VcsRef,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../../config.ts";
+import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as Project from "../../project/ProjectService.ts";
@@ -116,7 +119,11 @@ const bot = Schema.decodeSync(Bot)({
 
 const projectModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus" };
 
-const harness = (options: { readonly projectModel: typeof projectModel | null }) => {
+const harness = (options: {
+  readonly projectModel: typeof projectModel | null;
+  readonly settings?: Partial<ServerSettingsShape>;
+  readonly refs?: ReadonlyArray<VcsRef>;
+}) => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
   const linked: Array<ThreadId> = [];
@@ -152,10 +159,21 @@ const harness = (options: { readonly projectModel: typeof projectModel | null })
           getById: (id) =>
             Effect.succeedSome({
               id,
+              workspaceRoot: "/nonexistent/kanban-project",
               defaultModelSelection: options.projectModel,
             } as unknown as ProjectRecord),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest(options.settings),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          listRefs: () =>
+            Effect.succeed({
+              refs: options.refs ?? [],
+              isRepo: true,
+              hasPrimaryRemote: true,
+              nextCursor: null,
+              totalCount: options.refs?.length ?? 0,
+            }),
+        }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           dispatch: (command) =>
             Effect.sync(() => {
@@ -226,6 +244,47 @@ describe("KanbanThreadStarter", () => {
         "Kanban ticket T-1 (local ticket)\nT-1: Fix it\n\nPlan only",
       );
       assert.deepStrictEqual(linked, [result.threadId]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("starts a project thread in a new worktree off the default branch", () => {
+    const projectHigh = {
+      ...projectModel,
+      options: [{ id: "effort", value: "high" }],
+    } as const;
+    const ref = (name: string, flags: Partial<VcsRef> = {}): VcsRef => ({
+      name,
+      current: false,
+      isDefault: false,
+      worktreePath: null,
+      ...flags,
+    });
+    const { layer, launched } = harness({
+      projectModel: null,
+      settings: {
+        projectSettingsFolded: true,
+        projectSettingsOverrides: {
+          [ticket.projectId]: {
+            defaultThreadEnvMode: "worktree",
+            defaultModelSelection: projectHigh,
+          },
+        },
+      },
+      refs: [ref("fix/back-221", { current: true }), ref("main", { isDefault: true })],
+    });
+    return Effect.gen(function* () {
+      const starter = yield* KanbanThreadStarter;
+      // The client's fallback model (its latest thread's) loses to the project's default.
+      yield* starter.startThread({
+        ticketId: ticket.id,
+        target: { kind: "project", modelSelection: { ...projectModel, model: "claude-haiku" } },
+      });
+      assert.deepStrictEqual(launched[0]?.workspaceStrategy, {
+        type: "worktree",
+        baseRef: "main",
+        startFromOrigin: true,
+      });
+      assert.deepStrictEqual(launched[0]?.modelSelection, projectHigh);
     }).pipe(Effect.provide(layer));
   });
 
