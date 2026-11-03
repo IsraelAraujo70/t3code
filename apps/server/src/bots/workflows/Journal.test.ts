@@ -252,6 +252,61 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(layerMemory)),
 );
 
+it.effect("filters the run list by workflow, list state, trigger, start and text", () =>
+  Effect.gen(function* () {
+    const journal = yield* Journal;
+    const gated = summary("wfr_00000000000000000011", "2026-11-02T03:00:00.000Z", {
+      openGates: 1,
+      title: "Deploy staging",
+    });
+    const tired = summary("wfr_00000000000000000012", "2026-11-02T02:00:00.000Z", {
+      status: "paused",
+      pausedFor: "fatigue",
+    });
+    const cron = summary("wfr_00000000000000000013", "2026-11-02T01:00:00.000Z", {
+      workflowId: WorkflowId.make("other"),
+      status: "failed",
+      trigger: { id: "hourly", kind: "cron", label: "Every hour" },
+    });
+    const done = summary("wfr_00000000000000000014", "2026-11-01T00:00:00.000Z", {
+      status: "succeeded",
+    });
+    for (const [index, run] of [gated, tired, cron, done].entries())
+      yield* journal.putRun(row(run, index + 1));
+    const ids = (page: { readonly runs: ReadonlyArray<WorkflowRunSummary> }) =>
+      page.runs.map((run) => run.runId);
+    const list = (filters: Omit<Parameters<typeof journal.runs>[0], "offset" | "limit">) =>
+      journal.runs({ offset: 0, limit: 10, ...filters }).pipe(Effect.map(ids));
+    const all = { workflowId: null, status: null } as const;
+    assert.deepEqual(yield* list({ ...all, states: ["needs_you"] }), [gated.runId, tired.runId]);
+    // A run waiting for the user is no longer listed as running or paused.
+    assert.deepEqual(yield* list({ ...all, states: ["running", "paused"] }), []);
+    assert.deepEqual(yield* list({ ...all, states: ["failed", "succeeded"] }), [
+      cron.runId,
+      done.runId,
+    ]);
+    assert.deepEqual(yield* list({ ...all, workflowIds: [WorkflowId.make("other")] }), [
+      cron.runId,
+    ]);
+    assert.deepEqual(yield* list({ ...all, workflowIds: [] }), []);
+    assert.deepEqual(yield* list({ ...all, triggerKinds: ["cron"] }), [cron.runId]);
+    assert.deepEqual(yield* list({ ...all, startedAfter: "2026-11-02T01:30:00.000Z" }), [
+      gated.runId,
+      tired.runId,
+    ]);
+    assert.deepEqual(yield* list({ ...all, query: "STAGING" }), [gated.runId]);
+    assert.deepEqual(yield* list({ ...all, query: "every hour" }), [cron.runId]);
+    assert.deepEqual(
+      yield* list({
+        ...all,
+        workflowIds: [WorkflowId.make("example")],
+        states: ["succeeded", "needs_you"],
+      }),
+      [gated.runId, tired.runId, done.runId],
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerMemory)),
+);
+
 it.effect("stores the summary's active time in the run row", () =>
   Effect.gen(function* () {
     const journal = yield* Journal;

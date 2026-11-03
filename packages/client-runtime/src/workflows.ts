@@ -4,6 +4,7 @@
  */
 export * from "./workflows.canvas.ts";
 export * from "./workflows.canvasStyle.ts";
+export * from "./workflows.filters.ts";
 export * from "./workflows.merge.ts";
 export * from "./workflows.run.ts";
 export * from "./workflows.triggerText.ts";

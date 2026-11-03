@@ -954,11 +954,13 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       );
     }),
     listRuns: Effect.fn("WorkflowEngine.listRuns")(function* (input: WorkflowRunsListInput) {
-      const offset = input.cursor === undefined ? 0 : Number(input.cursor);
-      const limit = input.limit ?? 50;
+      const { workflowId, status, cursor, limit: pageLimit, ...filters } = input;
+      const offset = cursor === undefined ? 0 : Number(cursor);
+      const limit = pageLimit ?? 50;
       const page = yield* journal.runs({
-        workflowId: input.workflowId ?? null,
-        status: input.status ?? null,
+        ...filters,
+        workflowId: workflowId ?? null,
+        status: status ?? null,
         offset,
         limit,
       });

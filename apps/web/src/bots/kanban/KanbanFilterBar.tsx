@@ -34,25 +34,20 @@ import {
   MilestoneIcon,
   NetworkIcon,
   RefreshCcwIcon,
-  SearchIcon,
   SignalHighIcon,
   SparklesIcon,
   TagIcon,
   TextSearchIcon,
   UserRoundIcon,
   UserRoundPenIcon,
-  XIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Calendar } from "~/components/ui/calendar";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import { Kbd } from "~/components/ui/kbd";
 import {
   Menu,
-  MenuCheckboxItem,
   MenuItem,
   MenuPopup,
   MenuSearchInput,
@@ -64,7 +59,6 @@ import {
 } from "~/components/ui/menu";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { isEditableFocused } from "~/lib/editableFocus";
 import { weekStartsOn } from "~/timestampFormat";
 
 import {
@@ -82,6 +76,7 @@ import {
   toggleSetValue,
   type KanbanDateOp,
 } from "./kanbanFilterEdit";
+import { FILTER_CHIP_PART, FilterChip, FilterOptionItem, FilterSearch } from "../FilterBarParts";
 import { KanbanGroupIconView } from "./KanbanPrimitives";
 
 export type KanbanAiFilterOutcome =
@@ -237,18 +232,14 @@ function OptionCheckbox(props: {
   readonly prefix?: string;
 }) {
   return (
-    <MenuCheckboxItem checked={props.checked} onCheckedChange={props.onToggle}>
-      <span className="flex min-w-0 items-center gap-2">
-        <KanbanGroupIconView icon={props.option.icon} lookups={props.lookups} size={14} />
-        <span className="min-w-0 flex-1 truncate">
-          {props.prefix ? <span className="text-muted-foreground">{props.prefix} </span> : null}
-          {props.option.label}
-        </span>
-        <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-          {props.option.count}
-        </span>
-      </span>
-    </MenuCheckboxItem>
+    <FilterOptionItem
+      icon={<KanbanGroupIconView icon={props.option.icon} lookups={props.lookups} size={14} />}
+      label={props.option.label}
+      count={props.option.count}
+      checked={props.checked}
+      onToggle={props.onToggle}
+      {...(props.prefix ? { prefix: props.prefix } : {})}
+    />
   );
 }
 
@@ -603,9 +594,6 @@ function SectionItems(props: { readonly children: ReactNode }) {
   );
 }
 
-const CHIP_PART =
-  "flex h-full min-w-0 items-center gap-1 border-input border-s px-1.5 outline-none hover:bg-accent focus-visible:bg-accent";
-
 /** The chip's value: reopens the field's value menu (set and date clauses). */
 function ChipValueMenu(
   props: OptionScope & {
@@ -623,18 +611,20 @@ function ChipValueMenu(
     return (
       <button
         type="button"
-        className={CHIP_PART}
+        className={FILTER_CHIP_PART}
         onClick={() => onChange(setFlag(filters, clause.field, !clause.value))}
       >
         {value}
       </button>
     );
   if (clause.kind === "text")
-    return props.value ? <span className={CHIP_PART}>{value}</span> : null;
+    return props.value ? <span className={FILTER_CHIP_PART}>{value}</span> : null;
   if (clause.kind === "date" && props.value === "") return null;
   return (
     <Menu open={open} onOpenChange={setOpen}>
-      <MenuTrigger render={<button type="button" className={CHIP_PART} />}>{value}</MenuTrigger>
+      <MenuTrigger render={<button type="button" className={FILTER_CHIP_PART} />}>
+        {value}
+      </MenuTrigger>
       <MenuPopup align="start">
         {clause.kind === "set" ? (
           <SetOptionItems
@@ -660,7 +650,7 @@ function ChipValueMenu(
 const flipDateOp = (op: KanbanDateOp): KanbanDateOp | null =>
   op === "before" ? "after" : op === "after" ? "before" : null;
 
-function FilterChip(
+function KanbanFilterChip(
   props: OptionScope & {
     readonly clause: KanbanFilterClause;
     readonly index: number;
@@ -687,79 +677,14 @@ function FilterChip(
   };
   const flipped = flipOp();
   return (
-    <div className="flex h-6 min-w-0 items-center overflow-hidden rounded-md border border-input text-xs">
-      <span className="flex items-center gap-1 px-1.5 [&_svg]:size-3 [&_svg]:text-muted-foreground">
-        {icon}
-        {described.field}
-      </span>
-      {flipped === null ? (
-        <span className="flex h-full items-center border-input border-s px-1.5 text-muted-foreground">
-          {described.op}
-        </span>
-      ) : (
-        <button
-          type="button"
-          className={`${CHIP_PART} text-muted-foreground`}
-          onClick={() => onChange(flipped)}
-        >
-          {described.op}
-        </button>
-      )}
-      <ChipValueMenu {...props} value={described.value} />
-      <button
-        type="button"
-        aria-label={`Remove ${described.field} filter`}
-        className={`${CHIP_PART} text-muted-foreground hover:text-foreground`}
-        onClick={() => onChange(removeClause(filters, index))}
-      >
-        <XIcon aria-hidden className="size-3" />
-      </button>
-    </div>
-  );
-}
-
-function IssueSearch(props: { readonly value: string; readonly onChange: (text: string) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- "/" focuses the search from anywhere on the page (a window key listener).
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.defaultPrevented || event.isComposing || isEditableFocused(event.target)) return;
-      if (event.target instanceof Element && event.target.closest('[data-slot$="popup"]')) return;
-      event.preventDefault();
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-  return (
-    <InputGroup className="w-52">
-      <InputGroupAddon>
-        <SearchIcon aria-hidden />
-      </InputGroupAddon>
-      <InputGroupInput
-        ref={inputRef}
-        type="search"
-        size="sm"
-        value={props.value}
-        maxLength={200}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            if (props.value) props.onChange("");
-            else event.currentTarget.blur();
-          }
-        }}
-        placeholder="Search issues…"
-        aria-label="Search issues"
-      />
-      {props.value ? null : (
-        <InputGroupAddon align="inline-end">
-          <Kbd>/</Kbd>
-        </InputGroupAddon>
-      )}
-    </InputGroup>
+    <FilterChip
+      icon={icon}
+      field={described.field}
+      op={described.op}
+      {...(flipped === null ? {} : { onFlipOp: () => onChange(flipped) })}
+      value={<ChipValueMenu {...props} value={described.value} />}
+      onRemove={() => onChange(removeClause(filters, index))}
+    />
   );
 }
 
@@ -771,7 +696,7 @@ export function KanbanFilterBar(props: KanbanFilterBarProps) {
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <AddFilterMenu {...props} optionsFor={optionsFor} />
       {props.filters.map((clause, index) => (
-        <FilterChip
+        <KanbanFilterChip
           // oxlint-disable-next-line react/no-array-index-key -- a clause has no id; its index is what every edit addresses.
           key={index}
           {...scope}
@@ -786,7 +711,7 @@ export function KanbanFilterBar(props: KanbanFilterBarProps) {
           Clear
         </Button>
       ) : null}
-      <IssueSearch value={props.search} onChange={props.onSearch} />
+      <FilterSearch value={props.search} onChange={props.onSearch} placeholder="Search issues…" />
     </div>
   );
 }

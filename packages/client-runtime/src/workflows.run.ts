@@ -306,7 +306,7 @@ export const runHistoryKey = (snapshot: Pick<WorkflowsSnapshot, "workflows" | "r
   ].join();
 
 /** A gate or a pause the user has to lift: a pause they asked for, or the daily cap, waits alone. */
-const runNeedsYou = (run: WorkflowRunSummary): boolean =>
+export const runNeedsYou = (run: WorkflowRunSummary): boolean =>
   isRunActive(run.status) &&
   (run.openGates > 0 ||
     (run.status === "paused" && (run.pausedFor === "fatigue" || run.pausedFor === "ambiguous")));

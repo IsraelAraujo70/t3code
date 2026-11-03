@@ -307,11 +307,30 @@ export const WorkflowRunStartInput = Schema.Struct({
 });
 export type WorkflowRunStartInput = typeof WorkflowRunStartInput.Type;
 
+/** A run as the list filters it: its status, or `needs_you` while it waits for the user. */
+export const WorkflowRunListState = Schema.Literals([...WorkflowRunStatus.literals, "needs_you"]);
+export type WorkflowRunListState = typeof WorkflowRunListState.Type;
+
+const FilterValues = <S extends Schema.Top>(item: S) =>
+  Schema.Array(item).check(Schema.isMaxLength(200));
+
+/**
+ * The filters after `status` are absent from older clients, and older hosts ignore them, so a
+ * client re-applies them to the page it gets (`runMatchesListInput`). Lists combine with AND;
+ * values inside one list with OR, and an empty list matches no run.
+ */
 export const WorkflowRunsListInput = Schema.Struct({
   workflowId: Schema.optional(WorkflowId),
   status: Schema.optional(WorkflowRunStatus),
   cursor: Schema.optional(Cursor),
   limit: Schema.optional(PageLimit),
+  workflowIds: Schema.optional(FilterValues(WorkflowId)),
+  states: Schema.optional(FilterValues(WorkflowRunListState)),
+  triggerKinds: Schema.optional(FilterValues(Schema.String.check(Schema.isMaxLength(64)))),
+  /** Runs started at or after this instant. */
+  startedAfter: Schema.optional(IsoDateTime),
+  /** Title or trigger label contains this text, ignoring ASCII case. */
+  query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
 });
 export type WorkflowRunsListInput = typeof WorkflowRunsListInput.Type;
 
