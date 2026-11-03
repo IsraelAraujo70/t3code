@@ -4,7 +4,13 @@
  * T3 has no message without a turn, and the bot relays the report in its own voice. The command id
  * is fixed per run and output, so a replay after a restart finds the first post's receipt.
  */
-import { BotId, botThreadId, CommandId, MessageId } from "@t3tools/contracts";
+import {
+  BotId,
+  botThreadId,
+  CommandId,
+  MessageId,
+  WORKFLOW_POST_MESSAGE_PREFIX,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -20,8 +26,6 @@ export class WorkflowBotPostError extends Data.TaggedError("WorkflowBotPostError
   readonly message: string;
 }> {}
 
-/** Opens the id of every workflow report message. */
-export const WORKFLOW_POST_MESSAGE_PREFIX = "message:workflow-post:";
 const MAX_SUMMARY = 80;
 
 const isBotId = Schema.is(BotId);
