@@ -294,6 +294,7 @@ function BotGroups(props: {
   const sideThreads = sideThreadsByBot(
     useBotSideThreadShells(environmentId, props.visible),
     environmentId,
+    directory.hiddenThreadIds,
   );
   const { collapsed, toggle } = useCollapsedBotGroups();
   const selectDetail = useSelectWorkspaceDetail();

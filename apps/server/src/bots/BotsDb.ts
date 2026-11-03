@@ -25,6 +25,7 @@ import Migration0011 from "./migrations/011_KanbanViewAuthorsAndAllWorkspaces.ts
 import Migration0012 from "./migrations/012_LinkedEnvironmentBots.ts";
 import Migration0013 from "./migrations/013_BotRotation.ts";
 import Migration0014 from "./migrations/014_Workflows.ts";
+import Migration0015 from "./migrations/015_HiddenBotThreads.ts";
 
 const runMigrations = Migrator.make({})({
   loader: Migrator.fromRecord({
@@ -44,6 +45,7 @@ const runMigrations = Migrator.make({})({
     "12_LinkedEnvironmentBots": Migration0012,
     "13_BotRotation": Migration0013,
     "14_Workflows": Migration0014,
+    "15_HiddenBotThreads": Migration0015,
   }),
 });
 

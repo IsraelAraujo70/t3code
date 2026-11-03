@@ -84,12 +84,23 @@ const BotThreadListTool = Tool.make("bot_thread_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+const BotThreadHideTool = Tool.make("bot_thread_hide", {
+  ...shared,
+  description:
+    "Hide one of your side threads from the user's sidebars, or show it again with hidden false. Use it only when the user asks. A hidden thread still takes messages and runs turns, and stays in search and bot_thread_list.",
+  parameters: Schema.Struct({ threadId: ThreadId, hidden: Schema.Boolean }),
+  success: Schema.Struct({ threadId: ThreadId, hidden: Schema.Boolean }),
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false);
+
 export const BotMemoryToolkit = Toolkit.make(
   MemoryListTool,
   MemorySaveTool,
   MemoryForgetTool,
   BotThreadOpenTool,
   BotThreadListTool,
+  BotThreadHideTool,
 );
 
 const ONLY_MANAGERS =

@@ -44,6 +44,7 @@ import {
   type BotThreadEntry,
   type BotThreadList,
   type BotThreadOpenInput,
+  type BotThreadSetHiddenInput,
   type BotsArrangeInput,
   type BotsOwnerUpdateInput,
   type BotUpdateInput,
@@ -132,6 +133,13 @@ export class BotsService extends Context.Service<
     ) => Effect.Effect<BotThreadEntry, BotsError>;
     /** The bot's open side threads, most recently active first. */
     readonly listThreads: (input: BotRef) => Effect.Effect<BotThreadList, BotsError>;
+    /**
+     * Keeps a side thread out of the sidebars, or shows it again. Only the directory changes: the
+     * thread keeps taking messages, running turns and showing in search.
+     */
+    readonly setThreadHidden: (
+      input: BotThreadSetHiddenInput,
+    ) => Effect.Effect<BotThreadSetHiddenInput, BotsError>;
     /** The bot a thread belongs to (main conversation or side thread); none for every other thread. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
     /** Idempotent: the app repeats it on every connect and token rotation. */
@@ -288,6 +296,7 @@ const make = Effect.gen(function* () {
     const memories = yield* store.listMemories();
     const aboutMe = yield* store.getAboutMe;
     const linkedEnvironmentBotIds = yield* store.listLinkedEnvironmentBots;
+    const hiddenThreadIds = yield* store.listHiddenThreads;
     const memoriesByBot = new Map<BotId, Array<BotMemory>>();
     for (const memory of memories) {
       const list = memoriesByBot.get(memory.botId);
@@ -303,6 +312,7 @@ const make = Effect.gen(function* () {
       })),
       aboutMe,
       linkedEnvironmentBotIds,
+      hiddenThreadIds,
       host: {
         ...hostStatic,
         hostMcp: yield* readHostMcpServers(hostMcpFile).pipe(
@@ -609,6 +619,11 @@ const make = Effect.gen(function* () {
     const projectId = yield* scratchProjectId;
     const threadId = botSideThreadId(bot.id, (yield* randomHex).slice(0, 16));
     const commandId = CommandId.make(`bots:open-thread:${threadId}`);
+    // Hidden before it exists, so no sidebar ever lists it.
+    if (input.hidden === true) {
+      yield* store.setThreadHidden(bot.id, threadId, true);
+      yield* publish;
+    }
     yield* launches
       .launch({
         commandId,
@@ -640,12 +655,14 @@ const make = Effect.gen(function* () {
       title: input.title,
       createdAt: now,
       updatedAt: now,
+      ...(input.hidden === true ? { hidden: true } : {}),
     } satisfies BotThreadEntry;
   });
 
   const listThreads = Effect.fn("BotsService.listThreads")(function* (input: BotRef) {
     const bot = yield* requireBot(input.botId);
     const shells = yield* openSideThreads(bot);
+    const hidden = new Set<string>(yield* store.listHiddenThreads);
     return {
       botId: bot.id,
       threads: shells.map((shell) => ({
@@ -653,8 +670,24 @@ const make = Effect.gen(function* () {
         title: shell.title,
         createdAt: DateTime.formatIso(shell.createdAt),
         updatedAt: DateTime.formatIso(shell.updatedAt),
+        hidden: hidden.has(shell.id),
       })),
     } satisfies BotThreadList;
+  });
+
+  const setThreadHidden = Effect.fn("BotsService.setThreadHidden")(function* (
+    input: BotThreadSetHiddenInput,
+  ) {
+    const owner = parseBotThreadOwner(input.threadId);
+    if (owner?.kind !== "side") {
+      return yield* new BotsError({
+        message: `${input.threadId} is not a bot's side thread; only side threads can be hidden.`,
+      });
+    }
+    const bot = yield* requireBot(owner.botId);
+    yield* store.setThreadHidden(bot.id, input.threadId, input.hidden);
+    yield* publish;
+    return input;
   });
 
   const registerPushDevice = Effect.fn("BotsService.registerPushDevice")(function* (
@@ -724,6 +757,7 @@ const make = Effect.gen(function* () {
     setBotLinkedEnvironments,
     openThread,
     listThreads,
+    setThreadHidden,
     botForThread,
     registerPushDevice,
     unregisterPushDevice,

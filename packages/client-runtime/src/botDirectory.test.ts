@@ -23,6 +23,7 @@ import {
   moveSection,
   resolveBotRows,
   sideThreadsByBot,
+  withoutHiddenThreads,
   type BotRowModel,
   type BotStatus,
   type BotThreadShell,
@@ -246,6 +247,28 @@ describe("sideThreadsByBot", () => {
     expect([...byBot.keys()]).toEqual(["b_1", "b_2"]);
     expect(byBot.get("b_1")).toEqual([newer, older]);
     expect(byBot.get("b_2")).toEqual([other]);
+  });
+
+  it("leaves out hidden side threads, and lists them again once shown", () => {
+    const hidden = shell({ id: ThreadId.make("bot:b_1:t-0000aaaa") });
+    const kept = shell({ id: ThreadId.make("bot:b_1:t-0000bbbb") });
+    expect(sideThreadsByBot([hidden, kept], environmentId, [hidden.id]).get("b_1")).toEqual([kept]);
+    expect(sideThreadsByBot([hidden, kept], environmentId, []).get("b_1")).toHaveLength(2);
+  });
+});
+
+describe("withoutHiddenThreads", () => {
+  it("drops only the bots host's hidden threads and keeps the array when nothing is hidden", () => {
+    const hidden = shell({ id: ThreadId.make("bot:b_1:t-0000aaaa") });
+    const sameIdElsewhere = shell({ environmentId: otherEnvironmentId, id: hidden.id });
+    const other = shell({ id: ThreadId.make("thread-a") });
+    const threads = [hidden, sameIdElsewhere, other];
+    expect(withoutHiddenThreads(threads, environmentId, [hidden.id])).toEqual([
+      sameIdElsewhere,
+      other,
+    ]);
+    expect(withoutHiddenThreads(threads, environmentId, [])).toBe(threads);
+    expect(withoutHiddenThreads(threads, null, [hidden.id])).toBe(threads);
   });
 });
 

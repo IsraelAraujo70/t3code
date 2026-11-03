@@ -136,10 +136,10 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import {
   BotsSidebarSection,
-  isBotsBlockThread,
   SidebarBotsTabs,
   SidebarThreadsHeading,
   useSidebarBotsTab,
+  useSidebarListedThreads,
 } from "../bots/BotsSidebarSection";
 import { BotsRail } from "../bots/BotsRail";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -1095,13 +1095,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ),
         );
-  // Fork (friend): bot conversations live in the Bots block unless the layout mixes them in.
+  // Fork (friend): bot threads live in the Bots block unless mixed in; hidden ones only in search.
   const botsLayout = useClientSettings((s) => s.sidebarBotsLayout);
   const allThreads = useQuietThreadShells();
-  const threads =
-    botsLayout === "mixed"
-      ? allThreads
-      : allThreads.filter((thread) => !isBotsBlockThread(thread.id, botsLayout));
+  const threads = useSidebarListedThreads(
+    allThreads,
+    botsLayout,
+    threadSearchQuery.trim().length > 0,
+  );
   const routeRowThreadKey =
     routeThreadRef === null
       ? null

@@ -5,6 +5,8 @@ import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "./aut
 import {
   BOTS_GUARDED_RPC_SCOPES,
   BOTS_RPC_SCOPES,
+  BOTS_WS_METHODS,
+  BotDirectory,
   BotId,
   botSideThreadId,
   isCalendarDay,
@@ -18,6 +20,7 @@ import { ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeBotDirectory = Schema.decodeUnknownSync(BotDirectory);
 
 describe("voiceReaderVoice", () => {
   it("accepts a known voice, or null to defer to the env voice", () => {
@@ -39,6 +42,20 @@ describe("voiceReaderVoice", () => {
     expect(decodeServerSettings({}).voiceReaderVoice).toBeNull();
     expect(decodeServerSettings({ voiceReaderVoice: "rio" }).voiceReaderVoice).toBeNull();
     expect(decodeServerSettings({ voiceReaderVoice: "maple" }).voiceReaderVoice).toBe("maple");
+  });
+});
+
+describe("hidden side threads", () => {
+  it("only the operate scope hides a thread, and an older server's directory hides none", () => {
+    expect(BOTS_GUARDED_RPC_SCOPES[BOTS_WS_METHODS.threadSetHidden]).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    const directory = decodeBotDirectory({
+      sections: [],
+      bots: [],
+      aboutMe: "",
+    });
+    expect(directory.hiddenThreadIds).toEqual([]);
   });
 });
 

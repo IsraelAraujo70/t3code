@@ -18,7 +18,7 @@ import {
   type BotMemoryId,
   type BotsArrangeInput,
   type BotSectionId,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import * as BotsDb from "./BotsDb.ts";
@@ -108,6 +108,14 @@ export class BotsStore extends Context.Service<
       botId: BotId,
       linkedEnvironments: boolean,
     ) => Effect.Effect<void, BotsError>;
+    /** Side threads left out of the sidebars, oldest hide first. */
+    readonly listHiddenThreads: Effect.Effect<ReadonlyArray<ThreadId>, BotsError>;
+    /** Idempotent either way. */
+    readonly setThreadHidden: (
+      botId: BotId,
+      threadId: ThreadId,
+      hidden: boolean,
+    ) => Effect.Effect<void, BotsError>;
   }
 >()("t3/bots/BotsStore") {}
 
@@ -138,6 +146,9 @@ const decodeAboutMe = Schema.decodeUnknownEffect(Schema.Array(AboutMeRow));
 const decodePushDevices = Schema.decodeUnknownEffect(Schema.Array(PushDeviceRow));
 const decodeHandoffs = Schema.decodeUnknownEffect(Schema.Array(HandoffRow));
 const decodeBotIds = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ botId: BotId })));
+const decodeThreadIds = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ threadId: ThreadId })),
+);
 const encodeBot = Schema.encodeEffect(BotRow);
 const encodeMemory = Schema.encodeEffect(MemoryRow);
 
@@ -494,6 +505,18 @@ const make = Effect.gen(function* () {
           Effect.asVoid,
           Effect.mapError(failWith("Could not change the bot's linked environments")),
         ),
+    ),
+    listHiddenThreads:
+      sql`SELECT thread_id AS "threadId" FROM hidden_bot_threads ORDER BY rowid`.pipe(
+        Effect.flatMap(decodeThreadIds),
+        Effect.map((rows) => rows.map((row) => row.threadId)),
+        Effect.mapError(failWith("Could not read the hidden bot threads")),
+      ),
+    setThreadHidden: Effect.fn("BotsStore.setThreadHidden")((botId, threadId, hidden) =>
+      (hidden
+        ? sql`INSERT INTO hidden_bot_threads (thread_id, bot_id) VALUES (${threadId}, ${botId}) ON CONFLICT DO NOTHING`
+        : sql`DELETE FROM hidden_bot_threads WHERE thread_id = ${threadId}`
+      ).pipe(Effect.asVoid, Effect.mapError(failWith("Could not hide or show the bot thread"))),
     ),
   });
 });

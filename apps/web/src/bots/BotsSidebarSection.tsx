@@ -54,7 +54,7 @@ import {
 } from "@t3tools/client-runtime/bot-directory";
 import { confirmDestructive, useRestartBotSession } from "./botsSettingsShared";
 
-export { isBotsBlockThread } from "./BotThreadIdentity";
+export { useSidebarListedThreads } from "./hiddenThreads";
 
 const BOTS_SECTION_EXPANDED_KEY = "t3code:bots:bots-section-expanded";
 const BOTS_TAB_KEY = "t3code:bots:sidebar-tab";
@@ -474,7 +474,8 @@ export function BotsSidebarSection(props: {
     CollapsedGroups,
   );
   const view = useBotsArrangement(props.threads);
-  const { environmentId, error, liveRows, shown, rows, applyMove, baseArrangement } = view;
+  const { environmentId, directory, error, liveRows, shown, rows, applyMove, baseArrangement } =
+    view;
   const openBotsSettings = useOpenBotsSettings();
   const createSection = useAtomCommand(botsEnvironment.createSection, {
     label: "bot section create",
@@ -499,7 +500,7 @@ export function BotsSidebarSection(props: {
   const needsYou = countRowsNeedingYou(liveRows);
   const expanded = !props.collapsible || storedExpanded;
   const activeThreadRef = props.activeThreadRef;
-  const sideThreads = sideThreadsByBot(props.threads, environmentId);
+  const sideThreads = sideThreadsByBot(props.threads, environmentId, directory?.hiddenThreadIds);
   const selectedThreadId =
     activeThreadRef !== null && activeThreadRef.environmentId === environmentId
       ? activeThreadRef.threadId
