@@ -1,8 +1,15 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Schema from "effect/Schema";
 import { EnvironmentId } from "@t3tools/contracts";
-import { runStatusLabel, runStatusTone } from "@t3tools/client-runtime/workflows";
+import {
+  describeTrigger,
+  lastRunsKey,
+  runStatusLabel,
+  runStatusTone,
+} from "@t3tools/client-runtime/workflows";
+import { useEffect, useRef } from "react";
 import { ScrollView, View } from "react-native";
+import { BotAvatar } from "../BotAvatar";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Chip } from "../../components/ui/Chip";
@@ -13,6 +20,7 @@ import { relativeTime } from "../../lib/time";
 import { useWorkflowRuns, useWorkflowsSnapshot } from "./state";
 
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
+const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** Workflow directory and latest runs on the selected host. */
 export function WorkflowsListScreen({ route }: StaticScreenProps<{ environmentId: string }>) {
@@ -32,6 +40,17 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
   const query = useWorkflowsSnapshot(env);
   const runs = useWorkflowRuns(env, { limit: 20 });
   const navigation = useNavigation();
+  const lastRuns =
+    query.data === null ? null : lastRunsKey(query.data.workflows.map((w) => w.lastRun));
+  const seenLastRuns = useRef<string | null>(null);
+  const refreshRuns = runs.refresh;
+  const runsPending = runs.isPending;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the one-shot run list when the snapshot stream reports a run that started, stopped at a gate or ended
+  useEffect(() => {
+    if (lastRuns === null || seenLastRuns.current === lastRuns) return;
+    seenLastRuns.current = lastRuns;
+    if (!runsPending) refreshRuns();
+  }, [lastRuns, refreshRuns, runsPending]);
   return (
     <View className="flex-1 bg-screen">
       <AppBar title="Workflows" />
@@ -55,6 +74,14 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
                     })
                   }
                 />
+                {workflow.bot ? (
+                  <View className="flex-row items-center gap-1.5">
+                    <BotAvatar botId={workflow.bot.id} size={14} />
+                    <Text className="text-xs text-foreground-muted">
+                      {workflow.bot.name ?? `${workflow.bot.id} (deleted)`}
+                    </Text>
+                  </View>
+                ) : null}
                 <Text>
                   {workflow.enabled ? "Enabled" : "Disabled"} ·{" "}
                   {workflow.suspended
@@ -68,7 +95,7 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
                 </Text>
                 {workflow.triggers.map((trigger) => (
                   <Text key={trigger.id}>
-                    {trigger.label}
+                    {describeTrigger(trigger, LOCAL_TIME_ZONE).text}
                     {trigger.enabled === false ? " (off)" : ""}
                   </Text>
                 ))}

@@ -6,6 +6,7 @@ import type {
   WorkflowSummary,
   WorkflowTemplateSummary,
 } from "@t3tools/contracts";
+import { lastRunsKey } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
@@ -63,11 +64,7 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
 
   // The run list is a one-shot query; the snapshot stream moves each workflow's last run.
   const lastRuns =
-    snapshot.data === null
-      ? null
-      : workflows
-          .map((workflow) => `${workflow.lastRun?.runId}:${workflow.lastRun?.status}`)
-          .join();
+    snapshot.data === null ? null : lastRunsKey(workflows.map((workflow) => workflow.lastRun));
   const seenLastRuns = useRef<string | null>(null);
   const refreshRuns = runs.refresh;
   const runsPending = runs.isPending;
@@ -78,7 +75,7 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
     if (!runsPending) refreshRuns();
   }, [lastRuns, refreshRuns, runsPending]);
 
-  // The snapshot stream does not move on run events, so a freshly fetched run list can be newer.
+  // An older host's snapshot does not move on run events, so a freshly fetched run list can be newer.
   const listedLastRun = new Map<string, WorkflowRunSummary>();
   for (const run of runs.data?.runs ?? []) {
     listedLastRun.set(run.workflowId, newerRun(listedLastRun.get(run.workflowId), run) ?? run);

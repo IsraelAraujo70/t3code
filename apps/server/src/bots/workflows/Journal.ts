@@ -145,6 +145,11 @@ export class Journal extends Context.Service<
      * order. Subscribe before reading a stream so no fact lands between the read and the wait.
      */
     readonly subscribe: Effect.Effect<PubSub.Subscription<StoredFact>, never, Scope.Scope>;
+    /**
+     * The workflow id of each run whose row `putRun` created or moved in what a run list shows:
+     * status, open gates or end. Published after the row is written.
+     */
+    readonly subscribeRunChanges: Effect.Effect<PubSub.Subscription<string>, never, Scope.Scope>;
   }
 >()("t3/bots/workflows/Journal") {}
 
@@ -173,6 +178,7 @@ const decode = Effect.fn("Journal.decode")(function* (row: Row) {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const pubsub = yield* PubSub.unbounded<StoredFact>();
+  const runChanges = yield* PubSub.unbounded<string>();
   const liveRuns = sql<{
     readonly id: string;
   }>`SELECT substr(stream, 5) AS id FROM workflow_facts f WHERE stream LIKE 'run:%' AND
@@ -267,7 +273,20 @@ const make = Effect.gen(function* () {
         pull_request_url: s.pullRequest,
         summary_json: summary,
       };
-      yield* sql`INSERT INTO workflow_runs ${sql.insert(values)} ON CONFLICT(run_id) DO UPDATE SET ${sql.update(values)} WHERE excluded.last_seq >= workflow_runs.last_seq`;
+      const listed = (row: {
+        readonly status: string;
+        readonly open_gates: number;
+        readonly ended_at: string | null;
+      }) => `${row.status}|${row.open_gates}|${row.ended_at}`;
+      const before = yield* sql<{
+        readonly status: string;
+        readonly open_gates: number;
+        readonly ended_at: string | null;
+      }>`SELECT status, open_gates, ended_at FROM workflow_runs WHERE run_id = ${s.runId}`;
+      const written =
+        yield* sql`INSERT INTO workflow_runs ${sql.insert(values)} ON CONFLICT(run_id) DO UPDATE SET ${sql.update(values)} WHERE excluded.last_seq >= workflow_runs.last_seq RETURNING run_id`;
+      if (written.length > 0 && (before[0] === undefined || listed(before[0]) !== listed(values)))
+        yield* PubSub.publish(runChanges, s.workflowId);
     }, Effect.mapError(fail)),
     runs: Effect.fn("Journal.runs")(function* (query) {
       const rows = yield* sql<{
@@ -445,6 +464,7 @@ const make = Effect.gen(function* () {
       });
     }, Effect.mapError(fail)),
     subscribe: PubSub.subscribe(pubsub),
+    subscribeRunChanges: PubSub.subscribe(runChanges),
   });
 });
 export const layer = Layer.effect(Journal, make).pipe(Layer.provide(BotsDb.layer));

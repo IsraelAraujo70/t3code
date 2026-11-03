@@ -621,6 +621,7 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
             kind: "webhook",
             title: null,
             label: "webhook",
+            webhook: { filters: 0 },
             webhookUrl: "https://hooks.example.com/api/hooks/wf-hook%3Ainbox%3Apush/token",
             enabled: true,
             lastFiredAt: null,
@@ -646,7 +647,7 @@ it.live("a webhook trigger shows the URL of its scheduled task", () =>
   ),
 );
 
-it.live("shows each workflow's newest projected run as its last run", () =>
+it.live("shows each workflow's newest projected run as its last run, live in the snapshot", () =>
   withDefinitions((definitions) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -684,9 +685,21 @@ it.live("shows each workflow's newest projected run as its last run", () =>
         activeMs: null,
         activeSince: null,
       } satisfies WorkflowRunSummary;
+      const ready = yield* Deferred.make<void>();
+      const snapshots = yield* definitions.snapshot.pipe(
+        Stream.tap(() => Deferred.succeed(ready, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(ready);
       yield* journal.putRun({ summary: run, lastSeq: 9, pendingIntents: 0, parentRunId: null });
       const listed = (yield* definitions.list).find((d) => d.workflowId === saved.workflowId);
       expect(listed?.lastRun).toEqual(run);
+      // An open list hears of the run without any definition changing.
+      const [before, after] = yield* Fiber.join(snapshots);
+      expect(before?.workflows[0]?.lastRun).toBeNull();
+      expect(after?.workflows[0]?.lastRun).toEqual(run);
     }),
   ),
 );
@@ -833,6 +846,7 @@ const botNamed = (id: string): Bot => ({
 const existingBots = Layer.mock(BotsStore.BotsStore)({
   getBot: (id) =>
     Effect.succeed(id === OWN || id === OTHER ? Option.some(botNamed(id)) : Option.none()),
+  listBots: Effect.succeed([botNamed(OWN), botNamed(OTHER)]),
 });
 const asBot = (id: string) => ({ kind: "bot" as const, id, name: id, canManageBots: false });
 const boundTo = (bot: string | null) =>
@@ -870,6 +884,7 @@ it.live("a bot binds a workflow only to itself and never takes another bot's", (
         // Keeping the other bot's binding while rewriting its prompts is refused too.
         expect(yield* save(OTHER, asBot(OWN))).toMatchObject(refused);
         expect((yield* save(OTHER, asBot(OTHER)))._tag).toBe("Saved");
+        expect((yield* definitions.list)[0]?.bot).toEqual({ id: OTHER, name: OTHER });
         expect(yield* save("b_missing", { kind: "user" })).toMatchObject({
           _tag: "Invalid",
           diagnostics: [{ path: "bot", code: "bot", message: "There is no bot b_missing." }],

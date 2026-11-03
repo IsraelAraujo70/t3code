@@ -2,6 +2,7 @@
 import {
   WORKFLOW_ON_DEMAND_TRIGGER_KINDS,
   type WorkflowTrigger,
+  type WorkflowTriggerParts,
   type WorkflowParamSpec,
 } from "@t3tools/contracts";
 import { matchesWhole } from "./output.ts";
@@ -35,6 +36,28 @@ export const triggerLabel = (trigger: WorkflowTrigger): string => {
       return trigger.from === undefined
         ? "called by any workflow"
         : `called by ${trigger.from.join(", ")}`;
+  }
+};
+/** The trigger's definition as the summary's structured parts; clients word triggers from it. */
+export const triggerParts = (trigger: WorkflowTrigger): WorkflowTriggerParts => {
+  switch (trigger.kind) {
+    case "cron":
+      return { cron: { expr: trigger.expr, tz: trigger.tz } };
+    case "webhook":
+      return { webhook: { filters: trigger.filters?.length ?? 0 } };
+    case "upstreamTag":
+      return { upstreamTag: { remote: trigger.remote, pattern: trigger.pattern } };
+    case "prMerged":
+      return { prMerged: { repo: trigger.repo } };
+    case "workflowFailed":
+      return { workflowFailed: { workflow: trigger.workflow ?? null } };
+    case "bot":
+      return { bot: { bots: trigger.bots ?? null } };
+    case "call":
+      return { call: { from: trigger.from ?? null } };
+    case "threadSettled":
+    case "manual":
+      return {};
   }
 };
 export type DecodeRunParamsResult =

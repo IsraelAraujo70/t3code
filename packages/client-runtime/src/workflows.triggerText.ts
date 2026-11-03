@@ -1,17 +1,16 @@
 /**
- * Workflow triggers in words for lists (friend fork). The client only receives the server's
- * `label` (`40 * * * * (America/Sao_Paulo)`, `tag ^v\d+$ on https://…`), so this reads that text
- * back; anything it does not recognise falls back to the label itself.
+ * Workflow triggers in words for lists (friend fork). Hosts send each trigger's definition as
+ * structured parts (`cron`, `upstreamTag`, …); run summaries and older hosts send only `label`
+ * (`40 * * * * (America/Sao_Paulo)`, `tag ^v\d+$ on https://…`), which is read back into the same
+ * parts. Anything neither covers falls back to the label itself.
  */
+import type { WorkflowTriggerParts, WorkflowTriggerSummary } from "@t3tools/contracts";
 
-export interface TriggerTextInput {
-  readonly kind: string;
-  readonly title: string | null;
-  readonly label: string;
-}
+export type TriggerTextInput = Pick<WorkflowTriggerSummary, "kind" | "title" | "label"> &
+  WorkflowTriggerParts;
 
 export interface TriggerText {
-  /** What a list shows: the trigger's title, else the label in plain words. */
+  /** What a list shows: the trigger's title, else its definition in plain words. */
   readonly text: string;
   /** The raw definition, for a tooltip: `40 * * * * · America/Sao_Paulo`. */
   readonly detail: string;
@@ -76,73 +75,134 @@ const isStableReleasePattern = (pattern: string) =>
 const zoneCity = (timeZone: string) =>
   (timeZone.split("/").at(-1) ?? timeZone).replaceAll("_", " ");
 
-function describeLabel(kind: string, label: string, localTimeZone: string | undefined): string {
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** The parts a host's `label` (`triggerLabel` on the server) still carries, for hosts without parts. */
+function triggerPartsFromLabel(kind: string, label: string): WorkflowTriggerParts {
   switch (kind) {
     case "cron": {
       const match = /^(.*) \(([^()]+)\)$/.exec(label);
-      if (match === null) return label;
-      const [, expr = "", timeZone = ""] = match;
-      const words = describeCron(expr);
-      if (words === null) return `Cron ${expr}`;
-      return localTimeZone === undefined || localTimeZone === timeZone
-        ? words
-        : `${words} (${zoneCity(timeZone)})`;
+      return match === null ? {} : { cron: { expr: match[1] ?? "", tz: match[2] ?? "" } };
     }
     case "upstreamTag": {
       const match = /^tag (.+) on (\S+)$/.exec(label);
-      if (match === null) return label;
-      const [, pattern = "", remote = ""] = match;
+      return match === null
+        ? {}
+        : { upstreamTag: { pattern: match[1] ?? "", remote: match[2] ?? "" } };
+    }
+    case "prMerged": {
+      const repo = /^PR merged in (\S+)$/.exec(label)?.[1];
+      return repo === undefined ? {} : { prMerged: { repo } };
+    }
+    case "webhook": {
+      const filters = /^webhook · (\d+) filters?$/.exec(label)?.[1];
+      return { webhook: { filters: filters === undefined ? 0 : Number(filters) } };
+    }
+    case "workflowFailed": {
+      const workflow = /^(\S+) failed$/.exec(label)?.[1];
+      return {
+        workflowFailed: {
+          workflow: workflow === undefined || workflow === "any" ? null : workflow,
+        },
+      };
+    }
+    case "bot":
+      // `bot · 2 bots` gives a count, not the ids; such a label is shown as written.
+      return label === "bot · any bot" ? { bot: { bots: null } } : {};
+    case "call":
+      return label === "called by any workflow"
+        ? { call: { from: null } }
+        : label.startsWith("called by ")
+          ? { call: { from: label.slice("called by ".length).split(", ") } }
+          : {};
+    default:
+      return {};
+  }
+}
+
+/** The trigger in words from its parts; null when the part its kind needs is missing. */
+function describeParts(
+  kind: string,
+  parts: WorkflowTriggerParts,
+  localTimeZone: string | undefined,
+): string | null {
+  switch (kind) {
+    case "cron": {
+      if (parts.cron === undefined) return null;
+      const { expr, tz } = parts.cron;
+      const words = describeCron(expr);
+      if (words === null) return `Cron ${expr}`;
+      return localTimeZone === undefined || localTimeZone === tz
+        ? words
+        : `${words} (${zoneCity(tz)})`;
+    }
+    case "upstreamTag": {
+      if (parts.upstreamTag === undefined) return null;
+      const { pattern, remote } = parts.upstreamTag;
       return isStableReleasePattern(pattern)
         ? `New stable release of ${shortRepo(remote)}`
         : `New tag ${pattern} on ${shortRepo(remote)}`;
     }
-    case "prMerged": {
-      const repo = /^PR merged in (\S+)$/.exec(label)?.[1];
-      return repo === undefined ? label : `PR merged in ${shortRepo(repo)}`;
-    }
-    case "webhook": {
-      const filters = /^webhook · (\d+) filters?$/.exec(label)?.[1];
-      return filters === undefined
-        ? "Incoming webhook"
-        : `Incoming webhook, ${filters} filter${filters === "1" ? "" : "s"}`;
-    }
+    case "prMerged":
+      return parts.prMerged === undefined ? null : `PR merged in ${shortRepo(parts.prMerged.repo)}`;
+    case "webhook":
+      return parts.webhook === undefined
+        ? null
+        : parts.webhook.filters === 0
+          ? "Incoming webhook"
+          : `Incoming webhook, ${plural(parts.webhook.filters, "filter")}`;
     case "threadSettled":
       return "When a thread settles";
-    case "workflowFailed": {
-      const workflow = /^(\S+) failed$/.exec(label)?.[1];
-      return workflow === undefined || workflow === "any"
-        ? "When any workflow fails"
-        : `When ${workflow} fails`;
-    }
+    case "workflowFailed":
+      return parts.workflowFailed === undefined
+        ? null
+        : parts.workflowFailed.workflow === null
+          ? "When any workflow fails"
+          : `When ${parts.workflowFailed.workflow} fails`;
     case "manual":
       return "Run now";
-    case "bot": {
-      const count = /^bot · (\d+) bots?$/.exec(label)?.[1];
-      return count === undefined
-        ? "Any bot can run it"
-        : `${count} bot${count === "1" ? "" : "s"} can run it`;
-    }
+    case "bot":
+      return parts.bot === undefined
+        ? null
+        : parts.bot.bots === null
+          ? "Any bot can run it"
+          : `${plural(parts.bot.bots.length, "bot")} can run it`;
     case "call":
-      return label === "called by any workflow"
-        ? "Any workflow can call it"
-        : label.replace(/^called by /, "Called by ");
+      return parts.call === undefined
+        ? null
+        : parts.call.from === null
+          ? "Any workflow can call it"
+          : `Called by ${parts.call.from.join(", ")}`;
     default:
-      return label;
+      return null;
   }
 }
 
-/** Kinds whose label carries a definition worth showing as is: an expression, a pattern, a repo. */
-const TECHNICAL_LABEL_KINDS = new Set(["cron", "upstreamTag", "prMerged", "webhook"]);
+/** Kinds whose definition is worth showing as is: an expression, a pattern, a repo. */
+const TECHNICAL_KINDS = new Set(["cron", "upstreamTag", "prMerged", "webhook"]);
+
+/** The parts the host sent, else the ones its label carries. */
+const partsOf = (trigger: TriggerTextInput): WorkflowTriggerParts =>
+  (trigger.cron ??
+    trigger.upstreamTag ??
+    trigger.prMerged ??
+    trigger.webhook ??
+    trigger.workflowFailed ??
+    trigger.bot ??
+    trigger.call) === undefined
+    ? triggerPartsFromLabel(trigger.kind, trigger.label)
+    : trigger;
 
 /**
- * A trigger for a list line: its title when it has one, else its label in words. `localTimeZone`
- * (the viewer's IANA zone) adds the trigger's zone to a schedule only when the two differ.
+ * A trigger for a list line: its title when it has one, else its definition in words.
+ * `localTimeZone` (the viewer's IANA zone) adds the trigger's zone to a schedule only when the two
+ * differ.
  */
 export function describeTrigger(trigger: TriggerTextInput, localTimeZone?: string): TriggerText {
-  const words = describeLabel(trigger.kind, trigger.label, localTimeZone);
-  const cron = trigger.kind === "cron" ? /^(.*) \(([^()]+)\)$/.exec(trigger.label) : null;
-  const raw = cron === null ? trigger.label : `${cron[1]} · ${cron[2]}`;
-  const technical = TECHNICAL_LABEL_KINDS.has(trigger.kind) && raw !== words;
+  const parts = partsOf(trigger);
+  const words = describeParts(trigger.kind, parts, localTimeZone) ?? trigger.label;
+  const raw = parts.cron === undefined ? trigger.label : `${parts.cron.expr} · ${parts.cron.tz}`;
+  const technical = TECHNICAL_KINDS.has(trigger.kind) && raw !== words;
   return {
     text: trigger.title ?? words,
     detail: [trigger.title === null ? null : words, technical ? raw : null]

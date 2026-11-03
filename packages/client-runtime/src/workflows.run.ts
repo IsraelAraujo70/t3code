@@ -289,3 +289,10 @@ export const workflowRunHref: WorkflowRunApi["workflowRunHref"] = (env, id) =>
   `/workflows/${encodeURIComponent(env)}/runs/${id}`;
 export const workflowRunAlertPath: WorkflowRunApi["workflowRunAlertPath"] = (env, id) =>
   `/bots${workflowRunHref(env, id)}`;
+
+/**
+ * Moves when a workflow's last run starts, changes status, opens or closes a gate, or ends. Run
+ * history is a one-shot query, so the lists refetch it when this moves.
+ */
+export const lastRunsKey = (lastRuns: ReadonlyArray<WorkflowRunSummary | null>): string =>
+  lastRuns.map((run) => (run === null ? "" : `${run.runId}:${run.status}:${run.openGates}`)).join();
