@@ -395,10 +395,11 @@ run view or by direct link.
 
 Open Workflows from the sidebar footer, next to Kanban (web and desktop), or from the Workflows row
 of the Android Bots tab. It lists the bots host's workflows with the bot each one works for and
-their last run, which follows a run as it starts, stops at a gate and ends. On web and desktop the
-Runs tab lists every run, newest first; its count is the runs waiting for you. Both tabs filter by
-bot, trigger and text, Workflows also by its switch, Runs also by workflow, status and start. The
-tab and filters live in the URL, so a link opens the same view.
+their last run, which follows a run as it starts, stops at a gate and ends. The Runs tab lists every
+run, newest first; on web and desktop its count is the runs waiting for you, and Android lists those
+runs above both tabs with an Answer button. Both tabs filter by bot, trigger and text, Workflows also
+by its switch, Runs also by workflow, status and start. On web the tab and filters live in the URL,
+so a link opens the same view.
 
 - **Create one.** "From template" copies a ready routine under a new name; "New workflow" starts
   blank. A new workflow starts turned off.

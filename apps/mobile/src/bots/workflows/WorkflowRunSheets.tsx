@@ -1,132 +1,150 @@
-import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  WorkflowGateView,
-  WorkflowRunId,
-  WorkflowStepAttemptView,
-} from "@t3tools/contracts";
+import type { WorkflowStepRow } from "@t3tools/client-runtime/workflows";
+import { formatUsd, stepStatusTone } from "@t3tools/client-runtime/workflows";
+import type { EnvironmentId, WorkflowRunId } from "@t3tools/contracts";
 import { useState } from "react";
-import { Linking, ScrollView } from "react-native";
+import { ScrollView, View } from "react-native";
+
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
-import { ControlPill } from "../../components/ui/ControlPill";
+import { Button } from "../../components/ui/Button";
+import { Chip } from "../../components/ui/Chip";
 import { Notice } from "../../components/ui/Notice";
 import { Sheet } from "../../components/ui/Sheet";
+import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironmentQuery } from "../../state/query";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { gateReasonOf } from "@t3tools/client-runtime/workflows";
-import { GateAskMarkdown } from "./GateAsk";
-import { WorkflowEditField } from "./WorkflowEditField";
+import { StatusLabel, stepIcon } from "./WorkflowStatus";
 import { workflowsEnvironment } from "./state";
+import { isRetryable, stepMetaLine } from "./workflowsScreen.logic";
 
-/** Read the selected attempt's output and logs only while its sheet is open. */
-export function WorkflowStepSheet({
-  environmentId,
-  runId,
-  step,
-  onClose,
-}: {
+const MONO = { fontFamily: "monospace" } as const;
+
+/**
+ * One step: status, time and cost, its thread and Retry up top, then the attempt's final text,
+ * output and log tails, read only while the sheet is open.
+ */
+export function WorkflowStepSheet(props: {
   environmentId: EnvironmentId;
   runId: WorkflowRunId;
-  step: WorkflowStepAttemptView;
+  row: WorkflowStepRow;
+  canRetry: boolean;
+  onRetry: () => void;
+  onOpenThread: (threadId: string) => void;
   onClose: () => void;
 }) {
+  const { row } = props;
+  const [attemptNumber, setAttempt] = useState(row.latest.attempt);
+  const step = row.attempts.find((a) => a.attempt === attemptNumber) ?? row.latest;
+  const nowMs = useNowMinuteMs();
   const query = useEnvironmentQuery(
     workflowsEnvironment.step({
-      environmentId,
-      input: { runId, step: step.key, attempt: step.attempt },
+      environmentId: props.environmentId,
+      input: { runId: props.runId, step: step.key, attempt: step.attempt },
     }),
   );
+  const latest = step.attempt === row.latest.attempt;
   return (
-    <Sheet title={`${step.key} · attempt ${step.attempt}`} onClose={onClose}>
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerClassName="gap-3 p-4 pb-10"
-      >
-        {query.error && <Notice tone="danger" message={query.error} />}
-        {!query.data && !query.error && <Text>Loading details…</Text>}
-        {query.data && (
+    <Sheet title={row.node} onClose={props.onClose}>
+      <ScrollView contentContainerClassName="gap-4 p-4 pb-10">
+        <View className="gap-1">
+          <StatusLabel
+            icon={stepIcon(step.status)}
+            label={stepMetaLine(step, nowMs)}
+            tone={stepStatusTone(step.status)}
+          />
+          {step.cost?.usdEstimate != null ? (
+            <Text className="text-xs text-foreground-muted">
+              About {formatUsd(step.cost.usdEstimate)}
+              {step.cost.usage === "complete" ? "" : " (usage incomplete)"}
+            </Text>
+          ) : null}
+          {step.queuedMs ? (
+            <Text className="text-xs text-foreground-muted">
+              Waited {Math.round(step.queuedMs / 1000)}s for the heavy lock
+            </Text>
+          ) : null}
+        </View>
+        {row.attempts.length > 1 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View className="flex-row gap-2">
+              {row.attempts.map((attempt) => (
+                <Chip
+                  key={attempt.attempt}
+                  label={`Attempt ${attempt.attempt}`}
+                  selected={attempt.attempt === step.attempt}
+                  onPress={() => setAttempt(attempt.attempt)}
+                />
+              ))}
+            </View>
+          </ScrollView>
+        ) : null}
+        <View className="flex-row flex-wrap gap-2">
+          {step.threadId ? (
+            <Button
+              label="Open thread"
+              icon="bubble.left"
+              tone="primary"
+              onPress={() => props.onOpenThread(step.threadId!)}
+            />
+          ) : null}
+          {latest && isRetryable(step.status) ? (
+            <Button
+              label="Retry step"
+              icon="arrow.clockwise"
+              disabled={!props.canRetry}
+              onPress={props.onRetry}
+            />
+          ) : null}
+        </View>
+        {step.summary ? (
+          <Text className="text-sm leading-5 text-foreground" selectable>
+            {step.summary}
+          </Text>
+        ) : null}
+        {query.error ? <Notice tone="danger" message={query.error} /> : null}
+        {!query.data && !query.error ? (
+          <AppActivityIndicator colorClassName="accent-icon" accessibilityLabel="Loading details" />
+        ) : null}
+        {query.data ? (
           <>
-            <Text selectable>{query.data.text ?? "No final text."}</Text>
-            <Text selectable>{JSON.stringify(query.data.output, null, 2)}</Text>
+            {query.data.text ? (
+              <View className="gap-1">
+                <Text className="text-xs font-t3-medium text-foreground-muted">Final text</Text>
+                <Text className="text-sm leading-5 text-foreground" selectable>
+                  {query.data.text}
+                </Text>
+              </View>
+            ) : null}
+            {query.data.output !== null && query.data.output !== undefined ? (
+              <View className="gap-1">
+                <Text className="text-xs font-t3-medium text-foreground-muted">Output</Text>
+                <Text
+                  className="rounded-xl bg-subtle p-3 text-xs text-foreground"
+                  style={MONO}
+                  selectable
+                >
+                  {JSON.stringify(query.data.output, null, 2)}
+                </Text>
+              </View>
+            ) : null}
             {query.data.logs.map((log) => (
-              <Text selectable key={log.name}>
-                {log.name}
-                {"\n"}
-                {log.path}
-                {"\n"}
-                {log.tail}
-              </Text>
+              <View key={log.name} className="gap-1">
+                <Text className="text-xs font-t3-medium text-foreground-muted">{log.name} log</Text>
+                <Text
+                  className="rounded-xl bg-subtle p-3 text-xs text-foreground"
+                  style={MONO}
+                  selectable
+                >
+                  {log.tail || "Empty."}
+                </Text>
+                {log.path ? (
+                  <Text className="text-2xs text-foreground-tertiary" selectable>
+                    {log.path}
+                  </Text>
+                ) : null}
+              </View>
             ))}
           </>
-        )}
-      </ScrollView>
-    </Sheet>
-  );
-}
-
-/** Only the authenticated user's guarded command can decide an open gate. */
-export function WorkflowGateSheet({
-  environmentId,
-  runId,
-  gate,
-  summary,
-  pullRequest,
-  onClose,
-}: {
-  environmentId: EnvironmentId;
-  runId: WorkflowRunId;
-  gate: WorkflowGateView;
-  summary: string | null;
-  pullRequest: string | null;
-  onClose: () => void;
-}) {
-  const decide = useAtomCommand(workflowsEnvironment.gateDecide);
-  const allowed = useAtomValue(workflowsEnvironment.gateDecide.permissionAtom(environmentId));
-  const [note, setNote] = useState("");
-  const [pending, setPending] = useState(false);
-  const submit = async (option: string) => {
-    setPending(true);
-    const result = await decide({
-      environmentId,
-      input: { runId, gateKey: gate.key, option, ...(note ? { note } : {}) },
-    });
-    setPending(false);
-    if (result._tag === "Success") onClose();
-  };
-  return (
-    <Sheet title="Needs you" onClose={onClose}>
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerClassName="gap-3 p-4 pb-10"
-      >
-        <Text selectable>{gateReasonOf(gate)}</Text>
-        <GateAskMarkdown ask={gate.ask} />
-        {summary && <Text selectable>{summary}</Text>}
-        {pullRequest && (
-          <ControlPill
-            label="Open PR evidence"
-            variant="pill"
-            onPress={() => void Linking.openURL(pullRequest)}
-          />
-        )}
-        <Text>
-          Opened {gate.openedAt}
-          {gate.expiresAt ? ` · Expires ${gate.expiresAt}` : ""}
-        </Text>
-        <WorkflowEditField label="Optional note" value={note} onChange={setNote} maxLength={4000} />
-        {gate.decision ? (
-          <Notice message={`Decided: ${gate.decision.option}`} />
-        ) : (
-          gate.options.map((option) => (
-            <ControlPill
-              key={option}
-              label={option}
-              variant="primary"
-              disabled={pending || !allowed}
-              onPress={() => void submit(option)}
-            />
-          ))
-        )}
+        ) : null}
       </ScrollView>
     </Sheet>
   );
