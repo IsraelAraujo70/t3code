@@ -15,16 +15,15 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { TriggerIcon } from "./run/TriggerIcon";
 import { runDurationMs, useNowMs } from "./WorkflowListRow";
 import { RunStatusLabel } from "./WorkflowStatusBadge";
-import { WorkflowsSection } from "./WorkflowsPageFrame";
 
 // With the workflow column, the trigger column shows from lg up; without it, it takes the free width.
 const ROW_WITH_WORKFLOW =
   "grid grid-cols-[8rem_minmax(0,1fr)_4rem_4rem_5rem] items-center gap-3 lg:grid-cols-[8rem_minmax(0,1fr)_minmax(0,14rem)_4rem_4rem_5rem]";
 const ROW_WITHOUT_WORKFLOW =
   "grid grid-cols-[8rem_minmax(0,1fr)_4rem_4rem_5rem] items-center gap-3";
-const GUTTER = "pr-(--workspace-gutter-end) pl-(--workspace-gutter-start)";
+export const RUNS_GUTTER = "pr-(--workspace-gutter-end) pl-(--workspace-gutter-start)";
 
-interface RunsLayout {
+export interface RunsLayout {
   /** Each workflow's own runs leave the workflow column out. */
   readonly showWorkflow: boolean;
   /** Page gutters on full-bleed lists; none inside an already padded panel. */
@@ -34,70 +33,51 @@ interface RunsLayout {
 const rowClass = (layout: RunsLayout) =>
   `${layout.showWorkflow ? ROW_WITH_WORKFLOW : ROW_WITHOUT_WORKFLOW} ${layout.inset}`;
 
-/** The host's latest runs as a table: status, workflow, trigger, duration, tokens and age. */
-export function WorkflowRecentRuns(props: {
-  environmentId: EnvironmentId;
-  runs: ReadonlyArray<WorkflowRunSummary> | null;
-  error: string | null;
-}) {
+/** The runs table's column headings. */
+export function WorkflowRunsHeader(props: { layout: RunsLayout }) {
+  const { layout } = props;
   return (
-    <WorkflowsSection title="Recent runs">
-      {props.runs === null ? (
-        props.error === null ? (
-          <RunsSkeleton />
-        ) : (
-          <p role="alert" className={`${GUTTER} py-3 text-destructive text-sm`}>
-            Runs unavailable: {props.error}
-          </p>
-        )
-      ) : props.runs.length === 0 ? (
-        <p className={`${GUTTER} py-3 text-muted-foreground text-sm`}>
-          No runs yet. Runs appear here when a trigger fires or you press Run now.
-        </p>
-      ) : (
-        <WorkflowRunsTable
-          environmentId={props.environmentId}
-          runs={props.runs}
-          layout={{ showWorkflow: true, inset: GUTTER }}
-        />
-      )}
-    </WorkflowsSection>
+    <div role="row" className={`${rowClass(layout)} h-8 border-b text-muted-foreground text-xs`}>
+      <span role="columnheader">Status</span>
+      {layout.showWorkflow ? <span role="columnheader">Workflow</span> : null}
+      <span role="columnheader" className={layout.showWorkflow ? "hidden lg:block" : undefined}>
+        Trigger
+      </span>
+      <span role="columnheader" className="text-right">
+        Time
+      </span>
+      <span role="columnheader" className="text-right">
+        Tokens
+      </span>
+      <span role="columnheader" className="text-right">
+        Started
+      </span>
+    </div>
   );
 }
 
-/** Runs as table rows linking to each run; shared by the list page and the editor's Runs tab. */
+/** Runs as table rows linking to each run; the editor's Runs tab. */
 export function WorkflowRunsTable(props: {
   environmentId: EnvironmentId;
   runs: ReadonlyArray<WorkflowRunSummary>;
   layout: RunsLayout;
 }) {
-  const { layout } = props;
   return (
     <div role="table" aria-label="Runs">
-      <div role="row" className={`${rowClass(layout)} h-8 border-b text-muted-foreground text-xs`}>
-        <span role="columnheader">Status</span>
-        {layout.showWorkflow ? <span role="columnheader">Workflow</span> : null}
-        <span role="columnheader" className={layout.showWorkflow ? "hidden lg:block" : undefined}>
-          Trigger
-        </span>
-        <span role="columnheader" className="text-right">
-          Time
-        </span>
-        <span role="columnheader" className="text-right">
-          Tokens
-        </span>
-        <span role="columnheader" className="text-right">
-          Started
-        </span>
-      </div>
+      <WorkflowRunsHeader layout={props.layout} />
       {props.runs.map((run) => (
-        <RunRow key={run.runId} environmentId={props.environmentId} run={run} layout={layout} />
+        <WorkflowRunRow
+          key={run.runId}
+          environmentId={props.environmentId}
+          run={run}
+          layout={props.layout}
+        />
       ))}
     </div>
   );
 }
 
-function RunRow(props: {
+export function WorkflowRunRow(props: {
   environmentId: EnvironmentId;
   run: WorkflowRunSummary;
   layout: RunsLayout;
@@ -178,11 +158,11 @@ function RunTokens(props: { run: WorkflowRunSummary }) {
   );
 }
 
-function RunsSkeleton() {
+export function WorkflowRunsSkeleton() {
   return (
     <div aria-hidden>
       {[0, 1, 2].map((index) => (
-        <div key={index} className={`${ROW_WITH_WORKFLOW} ${GUTTER} h-9 border-b`}>
+        <div key={index} className={`${ROW_WITH_WORKFLOW} ${RUNS_GUTTER} h-9 border-b`}>
           <Skeleton className="h-3 w-20" />
           <Skeleton className="h-3 w-48" />
           <Skeleton className="hidden h-3 w-32 lg:block" />

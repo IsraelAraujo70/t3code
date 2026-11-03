@@ -6,8 +6,20 @@ import type {
   WorkflowSummary,
   WorkflowTemplateSummary,
 } from "@t3tools/contracts";
-import { runHistoryKey } from "@t3tools/client-runtime/workflows";
-import { Link } from "@tanstack/react-router";
+import {
+  activeWorkflowRuns,
+  filterWorkflows,
+  hasTabFilters,
+  runHistoryKey,
+  runsFilterInput,
+  workflowsFiltersOf,
+  workflowsSearchOf,
+  workflowsTabOf,
+  type WorkflowsFilters,
+  type WorkflowsTab,
+} from "@t3tools/client-runtime/workflows";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -15,7 +27,7 @@ import {
   PlusIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -36,15 +48,17 @@ import {
   MenuTrigger,
 } from "../../components/ui/menu";
 import { Skeleton } from "../../components/ui/skeleton";
+import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { reportCommandResult } from "../botsSettingsShared";
 import { NewWorkflowDialog } from "./NewWorkflowDialog";
 import { RunNowDialog } from "./RunNowDialog";
-import { useWorkflowRuns, useWorkflowsSnapshot, workflowsEnvironment } from "./state";
-import { newerRun, WorkflowListRow } from "./WorkflowListRow";
-import { WorkflowRecentRuns } from "./WorkflowRecentRuns";
+import { useWorkflowsSnapshot, workflowsEnvironment } from "./state";
+import { newerRun, useNowMs, WorkflowListRow } from "./WorkflowListRow";
+import { useLiveWorkflowRuns, WorkflowRunsTab } from "./WorkflowRunsTab";
+import { WorkflowsFilterBar } from "./WorkflowsFilterBar";
 import { WorkflowsNotice, WorkflowsPageFrame, WorkflowsSection } from "./WorkflowsPageFrame";
 
 type Creating = { readonly template: WorkflowTemplateSummary | null } | null;
@@ -52,34 +66,28 @@ type Creating = { readonly template: WorkflowTemplateSummary | null } | null;
 const needsAttention = (workflow: WorkflowSummary) =>
   !workflow.valid || workflow.suspended || (workflow.lastRun?.openGates ?? 0) > 0;
 
-/** The bots host's workflows: definitions, recent runs and deleted files. */
+/** The bots host's workflows and their runs, as two tabs with filters kept in the URL. */
 export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const search = useSearch({ from: "/_chat/workflows/$environmentId/" });
+  const navigate = useNavigate({ from: "/workflows/$environmentId/" });
+  const tab = workflowsTabOf(search);
+  const filters = workflowsFiltersOf(search);
   const snapshot = useWorkflowsSnapshot(environmentId);
-  const runs = useWorkflowRuns(environmentId, { limit: 20 });
   const [creating, setCreating] = useState<Creating>(null);
   const [running, setRunning] = useState<WorkflowId | null>(null);
   const templates = snapshot.data?.templates ?? [];
   const workflows = snapshot.data?.workflows ?? [];
+  const historyKey = snapshot.data === null ? null : runHistoryKey(snapshot.data);
+  const needsYou =
+    snapshot.data === null ? 0 : activeWorkflowRuns(snapshot.data).filter((r) => r.needsYou).length;
+  const now = useNowMs();
+  // Typing in the search box asks the host once the text settles, not on every key.
+  const [query] = useDebouncedValue(filters.query, { wait: 250 });
+  const runsFilter = runsFilterInput({ ...filters, query }, workflows, now);
 
-  // The run list is a one-shot query; the snapshot stream moves each workflow's last run.
-  const lastRuns = snapshot.data === null ? null : runHistoryKey(snapshot.data);
-  const seenLastRuns = useRef<string | null>(null);
-  const refreshRuns = runs.refresh;
-  const runsPending = runs.isPending;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's run list when the snapshot stream reports a run started or changed state, or a cached list may be stale on return
-  useEffect(() => {
-    // A request already in flight may have read before the change, so wait and refetch after it.
-    if (lastRuns === null || seenLastRuns.current === lastRuns || runsPending) return;
-    seenLastRuns.current = lastRuns;
-    refreshRuns();
-  }, [lastRuns, refreshRuns, runsPending]);
-
-  // An older host's snapshot does not move on run events, so a freshly fetched run list can be newer.
-  const listedLastRun = new Map<string, WorkflowRunSummary>();
-  for (const run of runs.data?.runs ?? []) {
-    listedLastRun.set(run.workflowId, newerRun(listedLastRun.get(run.workflowId), run) ?? run);
-  }
+  const show = (nextTab: WorkflowsTab, next: WorkflowsFilters, replace: boolean) =>
+    void navigate({ search: workflowsSearchOf(nextTab, next), replace });
 
   const newWorkflow = (
     <Group aria-label="New workflow">
@@ -119,7 +127,33 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
 
   return (
     <WorkflowsPageFrame
-      title="Workflows"
+      title={
+        <>
+          <h1 className="shrink-0 truncate font-medium text-sm">Workflows</h1>
+          <ToggleGroup
+            className="ms-3 shrink-0"
+            variant="segmented"
+            size="segmented"
+            aria-label="Workflows tabs"
+            value={[tab]}
+            onValueChange={(next) => {
+              const picked = next[0];
+              if (picked === "workflows" || picked === "runs") show(picked, filters, false);
+            }}
+          >
+            <Toggle value="workflows">Workflows</Toggle>
+            <Toggle value="runs">
+              Runs
+              {needsYou > 0 ? (
+                <span className="text-warning tabular-nums">
+                  {needsYou}
+                  <span className="sr-only"> need you</span>
+                </span>
+              ) : null}
+            </Toggle>
+          </ToggleGroup>
+        </>
+      }
       actions={
         <div className="flex items-center gap-1.5">
           <Button
@@ -153,26 +187,38 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
           ) : null}
         </>
       ) : (
-        <div className="flex flex-col pb-8">
-          <StatusLine workflows={workflows} repoPath={snapshot.data.repoPath} />
-          <WorkflowsSection title="Workflows" count={workflows.length}>
-            {workflows.map((workflow) => (
-              <WorkflowListRow
-                key={workflow.workflowId}
-                environmentId={environmentId}
-                workflow={workflow}
-                lastRun={newerRun(workflow.lastRun, listedLastRun.get(workflow.workflowId))}
-                onRun={() => setRunning(workflow.workflowId)}
+        <div className="flex flex-col">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2 pr-(--workspace-gutter-end) pl-(--workspace-gutter-start)">
+            {tab === "workflows" ? (
+              <StatusLine workflows={workflows} repoPath={snapshot.data.repoPath} />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <WorkflowsFilterBar
+                tab={tab}
+                workflows={workflows}
+                filters={filters}
+                onChange={(next) => show(tab, next, true)}
               />
-            ))}
-          </WorkflowsSection>
-          <div className="h-6" />
-          <WorkflowRecentRuns
-            environmentId={environmentId}
-            runs={runs.data?.runs ?? null}
-            error={runs.error}
-          />
-          {snapshot.data.deleted.length > 0 ? (
+            </div>
+          </div>
+          {tab === "workflows" ? (
+            <WorkflowsTabContent
+              environmentId={environmentId}
+              workflows={workflows}
+              filters={filters}
+              historyKey={historyKey}
+              onRun={setRunning}
+            />
+          ) : (
+            <WorkflowRunsTab
+              key={JSON.stringify(runsFilter)}
+              environmentId={environmentId}
+              filter={runsFilter}
+              historyKey={historyKey}
+              filtered={hasTabFilters("runs", filters) || query.trim() !== ""}
+            />
+          )}
+          {tab === "workflows" && snapshot.data.deleted.length > 0 ? (
             <>
               <div className="h-6" />
               <DeletedSection environmentId={environmentId} deleted={snapshot.data.deleted} />
@@ -198,12 +244,48 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
   );
 }
 
+/** The Workflows tab: the filtered definitions, each with its newest known run. */
+function WorkflowsTabContent(props: {
+  environmentId: EnvironmentId;
+  workflows: ReadonlyArray<WorkflowSummary>;
+  filters: WorkflowsFilters;
+  historyKey: string | null;
+  onRun: (workflowId: WorkflowId) => void;
+}) {
+  const shown = filterWorkflows(props.workflows, props.filters);
+  const runs = useLiveWorkflowRuns(props.environmentId, { limit: 20 }, props.historyKey);
+  // An older host's snapshot does not move on run events, so a freshly fetched run list can be newer.
+  const listedLastRun = new Map<string, WorkflowRunSummary>();
+  for (const run of runs.data?.runs ?? []) {
+    listedLastRun.set(run.workflowId, newerRun(listedLastRun.get(run.workflowId), run) ?? run);
+  }
+  return (
+    <WorkflowsSection title="Workflows" count={shown.length}>
+      {shown.length === 0 ? (
+        <p className="px-(--workspace-gutter-start) py-3 text-muted-foreground text-sm">
+          No workflows match these filters.
+        </p>
+      ) : (
+        shown.map((workflow) => (
+          <WorkflowListRow
+            key={workflow.workflowId}
+            environmentId={props.environmentId}
+            workflow={workflow}
+            lastRun={newerRun(workflow.lastRun, listedLastRun.get(workflow.workflowId))}
+            onRun={() => props.onRun(workflow.workflowId)}
+          />
+        ))
+      )}
+    </WorkflowsSection>
+  );
+}
+
 /** One line of counts under the header, like the kanban's; the repository path sits in a tooltip. */
 function StatusLine(props: { workflows: ReadonlyArray<WorkflowSummary>; repoPath: string }) {
   const on = props.workflows.filter((workflow) => workflow.enabled).length;
   const attention = props.workflows.filter(needsAttention).length;
   return (
-    <p className="flex flex-wrap items-center gap-x-1.5 px-(--workspace-gutter-start) pb-2 text-muted-foreground text-xs">
+    <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground text-xs">
       <span>
         {on} of {props.workflows.length} on
       </span>

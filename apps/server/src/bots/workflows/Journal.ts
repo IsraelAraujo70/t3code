@@ -4,8 +4,13 @@
  * stream in the batch; a fact whose (stream, key) is already stored is not written again, and the
  * caller gets the stored one. One process writes (the bots host), so seq is `MAX(seq) + 1` inside it.
  */
-import { WorkflowRunSummary, type WorkflowRunStatus } from "@t3tools/contracts";
+import {
+  WorkflowRunSummary,
+  type WorkflowRunsListInput,
+  type WorkflowRunStatus,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -71,12 +76,17 @@ export class Journal extends Context.Service<
     }) => Effect.Effect<"captured" | "replayed", WorkflowJournalError>;
     readonly isTestDelivery: (deliveryId: string) => Effect.Effect<boolean, WorkflowJournalError>;
     readonly putRun: (row: RunRow) => Effect.Effect<void, WorkflowJournalError>;
-    readonly runs: (query: {
-      readonly workflowId: string | null;
-      readonly status: WorkflowRunStatus | null;
-      readonly offset: number;
-      readonly limit: number;
-    }) => Effect.Effect<
+    readonly runs: (
+      query: {
+        readonly workflowId: string | null;
+        readonly status: WorkflowRunStatus | null;
+        readonly offset: number;
+        readonly limit: number;
+      } & Pick<
+        WorkflowRunsListInput,
+        "workflowIds" | "states" | "triggerKinds" | "startedAfter" | "query"
+      >,
+    ) => Effect.Effect<
       { readonly runs: ReadonlyArray<WorkflowRunSummary>; readonly more: boolean },
       WorkflowJournalError
     >;
@@ -179,6 +189,44 @@ const decode = Effect.fn("Journal.decode")(function* (row: Row) {
   const fact = yield* decodeFact(json).pipe(Effect.mapError(fail));
   return { stream: row.stream, seq: row.seq, key: row.key, at: row.at, fact };
 });
+/** What `runNeedsYou` (client-runtime) shows as "needs you": an open gate or a pause only the user lifts. */
+const RUN_LIST_STATE = `CASE WHEN status IN ('queued', 'running', 'paused') AND (open_gates > 0
+  OR (status = 'paused' AND json_extract(summary_json, '$.pausedFor') IN ('fatigue', 'ambiguous')))
+  THEN 'needs_you' ELSE status END`;
+
+/** The run list's optional filters; `runMatchesListInput` (client-runtime) applies the same rules. */
+const runFilters = (
+  sql: SqlClient.SqlClient,
+  query: Pick<
+    WorkflowRunsListInput,
+    "workflowIds" | "states" | "triggerKinds" | "startedAfter" | "query"
+  >,
+) => {
+  const anyOf = (column: string, values: ReadonlyArray<string> | undefined) =>
+    values === undefined
+      ? []
+      : [values.length === 0 ? sql`0` : sql`${sql.literal(column)} IN ${sql.in(values)}`];
+  const text = query.query?.trim() ?? "";
+  // Stored starts are `toISOString` text, so the bound is normalized before comparing strings.
+  const after =
+    query.startedAfter === undefined ? Option.none() : DateTime.make(query.startedAfter);
+  return [
+    ...anyOf("workflow_id", query.workflowIds),
+    ...anyOf(RUN_LIST_STATE, query.states),
+    ...anyOf("trigger_kind", query.triggerKinds),
+    ...Option.match(after, {
+      onNone: () => [],
+      onSome: (start) => [sql`started_at >= ${DateTime.formatIso(start)}`],
+    }),
+    ...(text === ""
+      ? []
+      : [
+          sql`(instr(lower(json_extract(summary_json, '$.title')), lower(${text})) > 0
+            OR instr(lower(json_extract(summary_json, '$.trigger.label')), lower(${text})) > 0)`,
+        ]),
+  ];
+};
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const pubsub = yield* PubSub.unbounded<StoredFact>();
@@ -305,6 +353,7 @@ const make = Effect.gen(function* () {
       }>`SELECT summary_json FROM workflow_runs
         WHERE summary_json != '' AND (${query.workflowId} IS NULL OR workflow_id = ${query.workflowId})
         AND (${query.status} IS NULL OR status = ${query.status})
+        AND ${sql.and(runFilters(sql, query))}
         ORDER BY started_at DESC, run_id ASC LIMIT ${query.limit + 1} OFFSET ${query.offset}`;
       return {
         runs: yield* Effect.forEach(rows.slice(0, query.limit), decodeSummary),
