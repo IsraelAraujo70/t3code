@@ -174,6 +174,8 @@ describe("threadGrantRpcDenial", () => {
     { delegatedCompletion: { parentRunId: "run-1", generation: 1, taskIds: [] } },
     { notification: {} },
     { titleSeed: "a title" },
+    { text: "/compact" },
+    { text: " /LOGOUT " },
     { attachments: [{ type: "image", id: "att-1" }] },
     { dispatchMode: { type: "defer_start", workspaceStrategy: { type: "worktree" } } },
     { dispatchMode: { type: "steer_active", targetRunId: "run-1" } },

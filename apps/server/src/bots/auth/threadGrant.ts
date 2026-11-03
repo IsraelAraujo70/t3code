@@ -5,6 +5,8 @@ import {
   parseBotThreadOwner,
 } from "@t3tools/contracts";
 
+import { isNativeMaintenanceCommand } from "../../orchestration-v2/CommandPolicy.ts";
+
 /**
  * A thread grant confines a session to one thread (or every thread of one bot). The session keeps
  * its scopes, but only the RPCs below are reachable, each only for a matching thread, with only
@@ -77,6 +79,13 @@ const commandDenial = (command: Readonly<Record<string, unknown>>): string | und
   if (type !== "message.dispatch") return undefined;
   if (!Array.isArray(command.attachments) || command.attachments.length > 0) {
     return "attachments are not allowed";
+  }
+  // `/logout` reaches the host's provider login, and a maintenance-only history triggers titling.
+  if (
+    typeof command.text !== "string" ||
+    isNativeMaintenanceCommand({ text: command.text, attachments: [] })
+  ) {
+    return "maintenance commands are not allowed";
   }
   const mode = command.dispatchMode;
   if (
