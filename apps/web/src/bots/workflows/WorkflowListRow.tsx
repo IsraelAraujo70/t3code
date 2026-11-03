@@ -373,8 +373,14 @@ function LastRun(props: {
         )}
       </TooltipTrigger>
       <TooltipPopup>
-        Last run: {runStatusLabel(run.status)}
-        {duration === null ? "" : ` in ${formatDuration(duration)}`}
+        {props.openGates > 0 && run.gate ? (
+          <span className="block max-w-72">Needs you: {run.gate.reason}</span>
+        ) : (
+          <>
+            Last run: {runStatusLabel(run.status)}
+            {duration === null ? "" : ` in ${formatDuration(duration)}`}
+          </>
+        )}
       </TooltipPopup>
     </Tooltip>
   );

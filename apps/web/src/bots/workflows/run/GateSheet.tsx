@@ -5,6 +5,8 @@ import type { EnvironmentId, WorkflowRunId, WorkflowGateView } from "@t3tools/co
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { commandFailureMessage } from "../../botsSettingsShared";
 import { workflowsEnvironment } from "../state";
+import { gateReasonOf } from "@t3tools/client-runtime/workflows";
+import { GateAskMarkdown } from "./GateAsk";
 import { Button } from "../../../components/ui/button";
 import {
   Dialog,
@@ -53,7 +55,8 @@ export function GateSheet(props: {
           <DialogTitle>Needs you</DialogTitle>
         </DialogHeader>
         <DialogPanel>
-          <p className="text-sm font-medium">{props.gate.ask}</p>
+          <p className="text-sm font-medium">{gateReasonOf(props.gate)}</p>
+          <GateAskMarkdown environmentId={props.environmentId} ask={props.gate.ask} />
           {props.evidence ? (
             <pre className="max-h-64 overflow-auto rounded-md border bg-muted/30 p-3 text-xs whitespace-pre-wrap break-words">
               {props.evidence}

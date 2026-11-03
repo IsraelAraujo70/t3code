@@ -385,8 +385,13 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/web/src/components/chat/ThreadDetailsPanel.tsx",
-    markers: 1,
-    why: "offer VS Code in T3 for the thread",
+    markers: 3,
+    why: "offer VS Code in T3 for the thread; list the bots host's active workflow runs",
+  },
+  {
+    file: "apps/web/src/components/chat/PanelLayoutControls.tsx",
+    markers: 2,
+    why: "a dot on the thread details toggle while a workflow run needs the user",
   },
   {
     file: "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
@@ -490,8 +495,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/workspace/AndroidWorkspaceNavigation.android.tsx",
-    markers: 4,
-    why: "the phone bar and floating pill end in More, a menu of the tabs that do not fit and Settings",
+    markers: 7,
+    why: "the phone bar and floating pill end in More, a menu of the tabs that do not fit and Settings; the Bots tab's workflows dot",
   },
   {
     file: "apps/mobile/src/features/settings/SettingsNavigationRouteScreen.tsx",
@@ -505,8 +510,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
-    markers: 11,
-    why: "Bots and Kanban item titles and icons in the Android navigation bar and rail; More in the phone bar and the floating pill",
+    markers: 18,
+    why: "Bots and Kanban item titles and icons in the Android navigation bar and rail; More in the phone bar and the floating pill; the needs-you dot on tabs",
   },
   {
     file: "scripts/build-desktop-artifact.ts",

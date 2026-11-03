@@ -39,6 +39,8 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
+// Fork (friend): the bots host's active workflow runs.
+import { WorkflowsActiveSection } from "../../bots/workflows/WorkflowsActiveRuns";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -259,6 +261,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   showSideChats={visible.sideChats}
                 />
               ) : null}
+
+              {/* Fork (friend) */}
+              {density === "full" ? <WorkflowsActiveSection /> : null}
 
               {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
 

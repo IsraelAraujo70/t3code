@@ -119,9 +119,12 @@ function RunRow(props: {
     >
       <span role="cell" className="min-w-0 text-xs">
         {run.openGates > 0 ? (
-          <span className="inline-flex items-center gap-1.5 text-warning">
+          <span className="inline-flex max-w-full items-center gap-1.5 text-warning">
             <HandIcon aria-hidden className="size-3.5 shrink-0" />
-            Needs you
+            <span className="shrink-0">Needs you</span>
+            {run.gate ? (
+              <span className="truncate text-muted-foreground">{run.gate.reason}</span>
+            ) : null}
           </span>
         ) : (
           <RunStatusLabel status={run.status} />

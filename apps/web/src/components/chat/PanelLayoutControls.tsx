@@ -9,6 +9,8 @@ import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+// Fork (friend): a dot while a workflow run waits for the user.
+import { WorkflowsAttentionDot } from "../../bots/workflows/WorkflowsActiveRuns";
 
 export interface PanelLayoutControlsProps {
   showThreadPanelControl?: boolean;
@@ -59,6 +61,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       size="sm"
     >
       <SquareMenuIcon className="size-4" />
+      {/* Fork (friend) */}
+      <WorkflowsAttentionDot />
     </Toggle>
   );
   const threadPanelControl = (
