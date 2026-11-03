@@ -18,8 +18,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { derive } from "@t3tools/provider-core/server/IdAllocator";
-
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as BotsStore from "../../BotsStore.ts";
@@ -87,16 +85,18 @@ export const layer = Layer.effect(
       const hash = keyHash(input.runId, input.key);
       const messageId = MessageId.make(`${WORKFLOW_POST_MESSAGE_PREFIX}${hash}`);
       const threadId = botThreadId(bot.value.id, bot.value.homeGeneration);
-      // A replay after a crash finds the first post where it went, also when the bot rotated
-      // since: the same command id cannot be dispatched again to the new thread.
-      const itemId = derive.userTurnItem({ messageId });
+      // A replay after a crash finds the first post where it went, queued or not, also when the
+      // bot rotated since: the same command id cannot be dispatched again to the new thread.
       for (const generation of [bot.value.homeGeneration, bot.value.homeGeneration - 1]) {
         if (generation < 1) continue;
         const earlier = botThreadId(bot.value.id, generation);
-        const item = yield* projections
-          .getTurnItem({ threadId: earlier, itemId })
-          .pipe(Effect.orElseSucceed(() => null));
-        if (item !== null) return earlier as string;
+        const found = yield* projections
+          .getThreadRecords(earlier, ["messages"], { messageIds: [messageId] })
+          .pipe(
+            Effect.map((records) => records.messages.length > 0),
+            Effect.orElseSucceed(() => false),
+          );
+        if (found) return earlier as string;
       }
       const title =
         input.workflowTitle.length > MAX_SUMMARY

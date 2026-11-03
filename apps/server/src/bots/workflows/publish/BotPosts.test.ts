@@ -4,9 +4,7 @@ import {
   BotId,
   ProviderInstanceId,
   type OrchestrationV2ServerCommand,
-  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -42,27 +40,30 @@ const input = {
 it.effect("posts to the bot's current thread once, and a replay after rotation finds it", () =>
   Effect.gen(function* () {
     const dispatched: Array<OrchestrationV2ServerCommand> = [];
-    // `<thread> <turn item>` of every dispatched message, as the projection would hold them.
-    const items = new Set<string>();
+    // `<thread> <message>` of every dispatched message, queued as the projection holds it before
+    // its turn starts: a message only, no turn item yet.
+    const messages = new Set<string>();
     let generation = 4;
     const services = Layer.mergeAll(
       Layer.mock(BotsStore.BotsStore)({
         getBot: () => Effect.sync(() => Option.some(bot(generation))),
       }),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
-        getTurnItem: ({ threadId, itemId }) =>
-          Effect.succeed(
-            items.has(`${threadId} ${itemId}`)
-              ? ({ id: itemId } as unknown as OrchestrationV2TurnItem)
-              : null,
-          ),
+        getThreadRecords: <K extends ProjectionStore.ProjectionRecordField>(
+          threadId: string,
+          _fields: ReadonlyArray<K>,
+          filter?: ProjectionStore.ProjectionRecordFilter,
+        ) =>
+          Effect.succeed({
+            messages: (filter?.messageIds ?? []).filter((id) => messages.has(`${threadId} ${id}`)),
+          } as unknown as ProjectionStore.ProjectionRecords<K>),
       }),
       Layer.mock(Orchestrator.OrchestratorV2)({
         dispatch: (command) =>
           Effect.sync(() => {
             dispatched.push(command);
             if (command.type === "message.dispatch")
-              items.add(`${command.threadId} ${derive.userTurnItem(command)}`);
+              messages.add(`${command.threadId} ${command.messageId}`);
             return { sequence: 1, storedEvents: [] };
           }),
       }),
