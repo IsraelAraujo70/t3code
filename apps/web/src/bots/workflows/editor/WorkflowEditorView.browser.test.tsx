@@ -125,7 +125,10 @@ it("saves a field edit with the first Save press, before the field loses focus",
   await using screen = await render(
     <WorkflowEditorView environmentId={environmentId} document={fixture()} save={save} />,
   );
-  await userEvent.fill(screen.getByRole("textbox", { name: "description" }), "Nightly demo");
+  await userEvent.fill(
+    screen.getByRole("textbox", { name: "Description", exact: true }),
+    "Nightly demo",
+  );
   await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
   await vi.waitFor(() => {
     const input = save.mock.calls[0]?.[0];

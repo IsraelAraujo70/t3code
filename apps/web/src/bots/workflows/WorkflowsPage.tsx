@@ -1,39 +1,124 @@
-import { TriggerIcon } from "./run/TriggerIcon";
-import { formatTokens, formatUsd } from "@t3tools/client-runtime/workflows";
 import type {
   EnvironmentId,
+  WorkflowDeletedSummary,
   WorkflowId,
   WorkflowRunSummary,
   WorkflowSummary,
   WorkflowTemplateSummary,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { PlayIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  FlaskConicalIcon,
+  PlusIcon,
+  WorkflowIcon,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
-import { Switch } from "../../components/ui/switch";
-import { useNowMinute } from "../../hooks/useNowMinute";
-import { randomUUID } from "~/lib/utils";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../../components/ui/empty";
+import { Group, GroupSeparator } from "../../components/ui/group";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+} from "../../components/ui/menu";
+import { Skeleton } from "../../components/ui/skeleton";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { confirmDestructive, reportCommandResult } from "../botsSettingsShared";
+import { reportCommandResult } from "../botsSettingsShared";
 import { NewWorkflowDialog } from "./NewWorkflowDialog";
 import { RunNowDialog } from "./RunNowDialog";
 import { useWorkflowRuns, useWorkflowsSnapshot, workflowsEnvironment } from "./state";
-import { RunStatusBadge, WorkflowToneBadge } from "./WorkflowStatusBadge";
-import { WorkflowsNotice, WorkflowsPageFrame } from "./WorkflowsPageFrame";
+import { newerRun, WorkflowListRow } from "./WorkflowListRow";
+import { WorkflowRecentRuns } from "./WorkflowRecentRuns";
+import { WorkflowsNotice, WorkflowsPageFrame, WorkflowsSection } from "./WorkflowsPageFrame";
 
 type Creating = { readonly template: WorkflowTemplateSummary | null } | null;
+
+const needsAttention = (workflow: WorkflowSummary) =>
+  !workflow.valid || workflow.suspended || (workflow.lastRun?.openGates ?? 0) > 0;
 
 /** The bots host's workflows: definitions, recent runs and deleted files. */
 export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const snapshot = useWorkflowsSnapshot(environmentId);
+  const runs = useWorkflowRuns(environmentId, { limit: 20 });
   const [creating, setCreating] = useState<Creating>(null);
   const [running, setRunning] = useState<WorkflowId | null>(null);
   const templates = snapshot.data?.templates ?? [];
+  const workflows = snapshot.data?.workflows ?? [];
+
+  // The run list is a one-shot query; the snapshot stream moves each workflow's last run.
+  const lastRuns =
+    snapshot.data === null
+      ? null
+      : workflows
+          .map((workflow) => `${workflow.lastRun?.runId}:${workflow.lastRun?.status}`)
+          .join();
+  const seenLastRuns = useRef<string | null>(null);
+  const refreshRuns = runs.refresh;
+  const runsPending = runs.isPending;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's run list when the snapshot stream reports a run started or changed state, or a cached list may be stale on return
+  useEffect(() => {
+    if (lastRuns === null || seenLastRuns.current === lastRuns) return;
+    seenLastRuns.current = lastRuns;
+    if (!runsPending) refreshRuns();
+  }, [lastRuns, refreshRuns, runsPending]);
+
+  // The snapshot stream does not move on run events, so a freshly fetched run list can be newer.
+  const listedLastRun = new Map<string, WorkflowRunSummary>();
+  for (const run of runs.data?.runs ?? []) {
+    listedLastRun.set(run.workflowId, newerRun(listedLastRun.get(run.workflowId), run) ?? run);
+  }
+
+  const newWorkflow = (
+    <Group aria-label="New workflow">
+      <Button size="xs" onClick={() => setCreating({ template: null })}>
+        <PlusIcon />
+        New workflow
+      </Button>
+      {templates.length > 0 ? (
+        <>
+          <GroupSeparator />
+          <Menu>
+            <MenuTrigger render={<Button size="icon-xs" aria-label="New from a template" />}>
+              <ChevronDownIcon />
+            </MenuTrigger>
+            <MenuPopup align="end" className="max-w-80">
+              <MenuGroup>
+                <MenuGroupLabel>Start from a template</MenuGroupLabel>
+                {templates.map((template) => (
+                  <MenuItem key={template.templateId} onClick={() => setCreating({ template })}>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{template.title}</span>
+                      {template.description ? (
+                        <span className="line-clamp-2 text-muted-foreground text-xs">
+                          {template.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </MenuItem>
+                ))}
+              </MenuGroup>
+            </MenuPopup>
+          </Menu>
+        </>
+      ) : null}
+    </Group>
+  );
 
   return (
     <WorkflowsPageFrame
@@ -45,69 +130,56 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
             variant="ghost-muted"
             render={<Link to="/workflows/$environmentId/ledger" params={{ environmentId }} />}
           >
+            <FlaskConicalIcon />
             Ledger
           </Button>
-          {templates.length > 0 ? (
-            <Menu>
-              <MenuTrigger render={<Button size="xs" variant="outline" />}>
-                From template
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {templates.map((template) => (
-                  <MenuItem key={template.templateId} onClick={() => setCreating({ template })}>
-                    {template.title}
-                  </MenuItem>
-                ))}
-              </MenuPopup>
-            </Menu>
-          ) : null}
-          <Button size="xs" onClick={() => setCreating({ template: null })}>
-            <PlusIcon className="size-3.5" />
-            New workflow
-          </Button>
+          {newWorkflow}
         </div>
       }
     >
       {snapshot.data === null ? (
-        <WorkflowsNotice>
-          {snapshot.error === null
-            ? "Loading workflows…"
-            : `Workflows unavailable: ${snapshot.error}`}
-        </WorkflowsNotice>
-      ) : (
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-6">
-          <p className="text-xs text-muted-foreground">
-            Definitions live in <code>{snapshot.data.repoPath}</code> on the bots host.
-          </p>
-          <Section title="Workflows">
-            {snapshot.data.workflows.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No workflows yet. Start a blank one or copy a template.
-              </p>
-            ) : (
-              snapshot.data.workflows.map((workflow) => (
-                <WorkflowRow
-                  key={workflow.workflowId}
-                  environmentId={environmentId}
-                  workflow={workflow}
-                  onRun={() => setRunning(workflow.workflowId)}
-                />
-              ))
-            )}
-          </Section>
-          <RecentRuns environmentId={environmentId} />
+        snapshot.error === null ? (
+          <ListSkeleton />
+        ) : (
+          <div className="flex flex-col items-center gap-3 py-12">
+            <WorkflowsNotice tone="error">Workflows unavailable: {snapshot.error}</WorkflowsNotice>
+            <Button size="xs" variant="outline" onClick={snapshot.refresh}>
+              Try again
+            </Button>
+          </div>
+        )
+      ) : workflows.length === 0 ? (
+        <>
+          <EmptyWorkflows templates={templates} onCreate={setCreating} />
           {snapshot.data.deleted.length > 0 ? (
-            <Section title="Deleted">
-              {snapshot.data.deleted.map((deleted) => (
-                <DeletedRow
-                  key={deleted.workflowId}
-                  environmentId={environmentId}
-                  workflowId={deleted.workflowId}
-                  title={deleted.title}
-                  deletedAt={deleted.deletedAt}
-                />
-              ))}
-            </Section>
+            <DeletedSection environmentId={environmentId} deleted={snapshot.data.deleted} />
+          ) : null}
+        </>
+      ) : (
+        <div className="flex flex-col pb-8">
+          <StatusLine workflows={workflows} repoPath={snapshot.data.repoPath} />
+          <WorkflowsSection title="Workflows" count={workflows.length}>
+            {workflows.map((workflow) => (
+              <WorkflowListRow
+                key={workflow.workflowId}
+                environmentId={environmentId}
+                workflow={workflow}
+                lastRun={newerRun(workflow.lastRun, listedLastRun.get(workflow.workflowId))}
+                onRun={() => setRunning(workflow.workflowId)}
+              />
+            ))}
+          </WorkflowsSection>
+          <div className="h-6" />
+          <WorkflowRecentRuns
+            environmentId={environmentId}
+            runs={runs.data?.runs ?? null}
+            error={runs.error}
+          />
+          {snapshot.data.deleted.length > 0 ? (
+            <>
+              <div className="h-6" />
+              <DeletedSection environmentId={environmentId} deleted={snapshot.data.deleted} />
+            </>
           ) : null}
         </div>
       )}
@@ -129,204 +201,165 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
   );
 }
 
-function Section(props: { title: string; children: ReactNode }) {
+/** One line of counts under the header, like the kanban's; the repository path sits in a tooltip. */
+function StatusLine(props: { workflows: ReadonlyArray<WorkflowSummary>; repoPath: string }) {
+  const on = props.workflows.filter((workflow) => workflow.enabled).length;
+  const attention = props.workflows.filter(needsAttention).length;
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="font-medium text-muted-foreground text-xs">{props.title}</h2>
-      <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
-        {props.children}
-      </div>
-    </section>
+    <p className="flex flex-wrap items-center gap-x-1.5 px-(--workspace-gutter-start) pb-2 text-muted-foreground text-xs">
+      <span>
+        {on} of {props.workflows.length} on
+      </span>
+      {attention > 0 ? (
+        <>
+          <span aria-hidden>·</span>
+          <span className="text-warning">
+            {attention} need{attention === 1 ? "s" : ""} attention
+          </span>
+        </>
+      ) : null}
+      <span aria-hidden>·</span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="cursor-default underline decoration-dotted underline-offset-2" />
+          }
+        >
+          YAML files on the bots host
+        </TooltipTrigger>
+        <TooltipPopup>
+          <span className="font-mono text-xs">{props.repoPath}</span>
+        </TooltipPopup>
+      </Tooltip>
+    </p>
   );
 }
 
-function WorkflowRow(props: {
-  environmentId: EnvironmentId;
-  workflow: WorkflowSummary;
-  onRun: () => void;
+function EmptyWorkflows(props: {
+  templates: ReadonlyArray<WorkflowTemplateSummary>;
+  onCreate: (creating: Creating) => void;
 }) {
-  const { environmentId, workflow } = props;
-  const setEnabled = useAtomCommand(workflowsEnvironment.setEnabled, {
-    label: "workflow enable",
-  });
-  const remove = useAtomCommand(workflowsEnvironment.remove, { label: "workflow delete" });
-  const lastRun = workflow.lastRun;
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <Link
-            to="/workflows/$environmentId/$workflowId"
-            params={{ environmentId, workflowId: workflow.workflowId }}
-            className="truncate font-medium text-sm hover:underline"
-          >
-            {workflow.title}
-          </Link>
-          <span className="text-muted-foreground text-xs">{workflow.workflowId}</span>
-          {!workflow.valid ? (
-            <WorkflowToneBadge tone="danger">
-              {`${workflow.diagnostics} error${workflow.diagnostics === 1 ? "" : "s"}`}
-            </WorkflowToneBadge>
-          ) : null}
-          {workflow.dirty ? (
-            <WorkflowToneBadge tone="warning">Edited by hand</WorkflowToneBadge>
-          ) : null}
-          {workflow.suspended ? (
-            <WorkflowToneBadge tone="warning">Suspended</WorkflowToneBadge>
-          ) : null}
-          {lastRun !== null && lastRun.openGates > 0 ? (
-            <WorkflowToneBadge tone="warning">Needs you</WorkflowToneBadge>
-          ) : null}
-        </div>
-        {workflow.triggers.length > 0 ? (
-          <div className="flex flex-wrap gap-1 text-xs text-muted-foreground">
-            {workflow.triggers.map((trigger) => {
-              return (
-                <span
-                  key={trigger.id}
-                  className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5"
-                >
-                  <TriggerIcon kind={trigger.kind} />
-                  {trigger.title ?? trigger.label}
-                  {trigger.enabled === false ? " · off" : null}
-                </span>
-              );
-            })}
+    <Empty>
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <WorkflowIcon />
+        </EmptyMedia>
+        <EmptyTitle>No workflows yet</EmptyTitle>
+        <EmptyDescription>
+          A workflow runs agent and command steps on the bots host when a schedule, a new release, a
+          webhook or a bot starts it.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button size="sm" onClick={() => props.onCreate({ template: null })}>
+          <PlusIcon />
+          New workflow
+        </Button>
+        {props.templates.length > 0 ? (
+          <div className="flex w-full max-w-md flex-col gap-1.5 pt-2">
+            <span className="text-muted-foreground text-xs">Or start from a template</span>
+            {props.templates.map((template) => (
+              <button
+                key={template.templateId}
+                type="button"
+                className="flex cursor-pointer flex-col rounded-lg border px-3 py-2 text-left hover:bg-accent/50"
+                onClick={() => props.onCreate({ template })}
+              >
+                <span className="font-medium text-sm">{template.title}</span>
+                {template.description ? (
+                  <span className="line-clamp-2 text-muted-foreground text-xs">
+                    {template.description}
+                  </span>
+                ) : null}
+              </button>
+            ))}
           </div>
         ) : null}
-        {lastRun === null ? null : (
-          <Link
-            to="/workflows/$environmentId/runs/$runId"
-            params={{ environmentId, runId: lastRun.runId }}
-            className="flex items-center gap-1.5 text-muted-foreground text-xs hover:text-foreground"
-          >
-            <RunStatusBadge status={lastRun.status} />
-            <RelativeTime iso={lastRun.startedAt} />
-          </Link>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Switch
-          aria-label={workflow.enabled ? "Disable workflow" : "Enable workflow"}
-          checked={workflow.enabled}
-          onCheckedChange={(enabled) =>
-            void setEnabled({
-              environmentId,
-              input: {
-                workflowId: workflow.workflowId,
-                enabled,
-                clientRequestId: randomUUID(),
-              },
-            }).then((result) => reportCommandResult("Could not change the workflow", result))
-          }
-        />
-        {workflow.triggers.some((trigger) => trigger.kind === "manual") ? (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!workflow.valid}
-            onClick={props.onRun}
-            aria-label="Run now"
-          >
-            <PlayIcon className="size-3.5" />
-            Run
-          </Button>
-        ) : null}
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label="Delete workflow"
-          onClick={async () => {
-            if (
-              !(await confirmDestructive(`Delete "${workflow.title}"?\nYou can restore it later.`))
-            )
-              return;
-            reportCommandResult(
-              "Could not delete the workflow",
-              await remove({ environmentId, input: { workflowId: workflow.workflowId } }),
-            );
-          }}
-        >
-          <Trash2Icon className="size-3.5" />
-        </Button>
-      </div>
-    </div>
+      </EmptyContent>
+    </Empty>
   );
 }
 
-function RecentRuns(props: { environmentId: EnvironmentId }) {
-  const runs = useWorkflowRuns(props.environmentId, { limit: 20 });
-  return (
-    <Section title="Recent runs">
-      {runs.data === null ? (
-        <p className="px-3 py-2.5 text-muted-foreground text-sm">
-          {runs.error === null ? "Loading runs…" : `Runs unavailable: ${runs.error}`}
-        </p>
-      ) : runs.data.runs.length === 0 ? (
-        <p className="px-3 py-2.5 text-muted-foreground text-sm">No runs yet.</p>
-      ) : (
-        runs.data.runs.map((run) => (
-          <RunRow key={run.runId} environmentId={props.environmentId} run={run} />
-        ))
-      )}
-    </Section>
-  );
-}
-
-function RunRow(props: { environmentId: EnvironmentId; run: WorkflowRunSummary }) {
-  const { run } = props;
-  return (
-    <Link
-      to="/workflows/$environmentId/runs/$runId"
-      params={{ environmentId: props.environmentId, runId: run.runId }}
-      className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-accent/50"
-    >
-      <RunStatusBadge status={run.status} />
-      <span className="min-w-0 flex-1 truncate">{run.title}</span>
-      {run.openGates > 0 ? <WorkflowToneBadge tone="warning">Needs you</WorkflowToneBadge> : null}
-      <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-        {formatTokens(run.cost.billable)} tokens · {formatUsd(run.cost.usdEstimate)}
-      </span>
-      <span className="w-20 shrink-0 text-right text-muted-foreground text-xs">
-        <RelativeTime iso={run.startedAt} />
-      </span>
-    </Link>
-  );
-}
-
-function DeletedRow(props: {
+/** Deleted workflows, folded away until opened; each one restores its last committed file. */
+function DeletedSection(props: {
   environmentId: EnvironmentId;
-  workflowId: WorkflowId;
-  title: string;
-  deletedAt: string;
+  deleted: ReadonlyArray<WorkflowDeletedSummary>;
 }) {
+  const [open, setOpen] = useState(false);
   const restore = useAtomCommand(workflowsEnvironment.restore, { label: "workflow restore" });
+  const Caret = open ? ChevronDownIcon : ChevronRightIcon;
   return (
-    <div className="flex items-center gap-3 px-3 py-2 text-sm">
-      <span className="min-w-0 flex-1 truncate">{props.title}</span>
-      <span className="text-muted-foreground text-xs">
-        deleted <RelativeTime iso={props.deletedAt} />
-      </span>
-      <Button
-        size="xs"
-        variant="outline"
-        onClick={async () =>
-          reportCommandResult(
-            "Could not restore the workflow",
-            await restore({
-              environmentId: props.environmentId,
-              input: { workflowId: props.workflowId },
-            }),
-          )
-        }
-      >
-        Restore
-      </Button>
-    </div>
+    <WorkflowsSection
+      title={
+        <button
+          type="button"
+          aria-expanded={open}
+          className="flex cursor-pointer items-center gap-2"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <Caret aria-hidden className="size-3.5 text-muted-foreground" />
+          Deleted
+        </button>
+      }
+      count={props.deleted.length}
+    >
+      {open
+        ? props.deleted.map((deleted) => (
+            <div
+              key={deleted.workflowId}
+              className="flex h-10 items-center gap-3 border-b pr-(--workspace-gutter-end) pl-(--workspace-gutter-start) text-sm"
+            >
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{deleted.title}</span>
+              <span className="text-muted-foreground text-xs">
+                deleted {formatRelativeTimeLabel(deleted.deletedAt)}
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={async () =>
+                  reportCommandResult(
+                    "Could not restore the workflow",
+                    await restore({
+                      environmentId: props.environmentId,
+                      input: { workflowId: deleted.workflowId },
+                    }),
+                  )
+                }
+              >
+                Restore
+              </Button>
+            </div>
+          ))
+        : null}
+    </WorkflowsSection>
   );
 }
 
-function RelativeTime(props: { iso: string }) {
-  useNowMinute();
-  return <time dateTime={props.iso}>{formatRelativeTimeLabel(props.iso)}</time>;
+function ListSkeleton() {
+  return (
+    <div aria-busy className="flex flex-col">
+      <p className="sr-only" role="status">
+        Loading workflows…
+      </p>
+      <div className="px-(--workspace-gutter-start) pb-2">
+        <Skeleton className="h-3 w-40" />
+      </div>
+      <div className="h-9 border-b bg-muted/40" />
+      {[0, 1, 2, 3].map((index) => (
+        <div
+          key={index}
+          className="flex h-14 items-center gap-3 border-b pr-(--workspace-gutter-end) pl-(--workspace-gutter-start)"
+        >
+          <Skeleton shape="pill" className="size-2" />
+          <div className="flex flex-1 flex-col gap-2">
+            <Skeleton className="h-3 w-64" />
+            <Skeleton className="h-2.5 w-40" />
+          </div>
+          <Skeleton className="h-3 w-20" />
+          <Skeleton shape="pill" className="h-4 w-7" />
+        </div>
+      ))}
+    </div>
+  );
 }

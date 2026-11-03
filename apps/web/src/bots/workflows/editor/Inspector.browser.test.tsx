@@ -167,13 +167,13 @@ it("validates workflow settings and disables node edits in read-only mode", asyn
       onSelect={vi.fn()}
     />,
   );
-  await userEvent.fill(screen.getByRole("spinbutton", { name: "budget.steps" }), "0");
+  await userEvent.fill(screen.getByRole("spinbutton", { name: "Steps", exact: true }), "0");
   await userEvent.tab();
   await expect
     .element(screen.getByRole("alert"))
     .toHaveTextContent("Invalid value for budget.steps. Check the workflow schema.");
   expect(onChange).not.toHaveBeenCalled();
-  await userEvent.fill(screen.getByRole("textbox", { name: "home.project" }), "other");
+  await userEvent.fill(screen.getByRole("textbox", { name: "Home project", exact: true }), "other");
   await userEvent.keyboard("{Enter}");
   expect(onChange).toHaveBeenCalledWith({ ...definition, home: { project: "other" } });
   await screen.rerender(

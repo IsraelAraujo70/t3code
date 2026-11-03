@@ -15,6 +15,8 @@ import { fieldText, fieldValue, type EditFormat } from "./inspectorEdits";
 
 export interface InspectorFieldSpec {
   readonly path: string;
+  /** Words for the field; the YAML path then shows beside it. Without one the path is the label. */
+  readonly label?: string;
   readonly format?: EditFormat;
   readonly multiline?: boolean;
   readonly choices?: readonly string[];
@@ -31,6 +33,7 @@ interface FieldProps {
 /** Keeps incomplete text local until blur or Enter, including rejected edits. */
 export function InspectorField({ spec, value, readOnly, onEdit }: FieldProps) {
   const id = useId();
+  const name = spec.label ?? spec.path;
   const format = spec.format ?? "text";
   const initial = fieldText(value, format);
   const [text, setText] = useState(initial);
@@ -44,12 +47,17 @@ export function InspectorField({ spec, value, readOnly, onEdit }: FieldProps) {
   };
   return (
     <div className="space-y-1 text-sm">
-      <label htmlFor={id}>{spec.path}</label>
+      <label htmlFor={id} className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="font-medium text-muted-foreground">{name}</span>
+        {spec.label === undefined ? null : (
+          <code className="truncate text-2xs text-muted-foreground/70">{spec.path}</code>
+        )}
+      </label>
       {spec.toggle ? (
         <div>
           <Switch
             id={id}
-            aria-label={spec.path}
+            aria-label={name}
             disabled={readOnly}
             checked={value === true}
             onCheckedChange={(checked) => setError(onEdit(spec.path, String(checked), "json"))}
@@ -66,8 +74,8 @@ export function InspectorField({ spec, value, readOnly, onEdit }: FieldProps) {
             }
           }}
         >
-          <SelectTrigger id={id} aria-label={spec.path}>
-            <SelectValue />
+          <SelectTrigger id={id} aria-label={name}>
+            <SelectValue>{text === "" ? "Default" : text}</SelectValue>
           </SelectTrigger>
           <SelectPopup>
             <SelectItem value="">Default / unset</SelectItem>
@@ -82,7 +90,7 @@ export function InspectorField({ spec, value, readOnly, onEdit }: FieldProps) {
         <div className={format === "json" ? "font-mono" : undefined}>
           <Textarea
             id={id}
-            aria-label={spec.path}
+            aria-label={name}
             value={text}
             disabled={readOnly}
             aria-invalid={error !== null}
@@ -100,7 +108,7 @@ export function InspectorField({ spec, value, readOnly, onEdit }: FieldProps) {
       ) : (
         <Input
           id={id}
-          aria-label={spec.path}
+          aria-label={name}
           value={text}
           disabled={readOnly}
           type={format === "number" ? "number" : "text"}
