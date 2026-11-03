@@ -11,6 +11,7 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
+  AuthThreadGrant, // Fork (friend)
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -41,6 +42,7 @@ export const AuthSessionRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  threadGrant: Schema.NullOr(AuthThreadGrant), // Fork (friend)
 });
 export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
@@ -52,6 +54,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   client: AuthSessionClientMetadataRecord,
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
+  threadGrant: Schema.optionalKey(AuthThreadGrant), // Fork (friend)
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -137,6 +140,7 @@ const AuthSessionDbRow = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  threadGrant: Schema.NullOr(AuthThreadGrant), // Fork (friend)
 });
 
 const AuthSessionRawDbRow = Schema.Struct({
@@ -154,6 +158,7 @@ const AuthSessionRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   lastConnectedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  threadGrant: Schema.Unknown, // Fork (friend)
 });
 
 const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
@@ -176,6 +181,7 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
     expiresAt: row.expiresAt,
     lastConnectedAt: row.lastConnectedAt,
     revokedAt: row.revokedAt,
+    threadGrant: row.threadGrant, // Fork (friend)
   };
 }
 
@@ -198,6 +204,7 @@ function toPersistenceSqlOrDecodeError(
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Fork (friend): also writes thread_grant.
   const insertSessionRow = (ignoreExisting: boolean) =>
     SqlSchema.void({
       Request: CreateAuthSessionInput,
@@ -216,7 +223,8 @@ export const make = Effect.gen(function* () {
           client_browser,
           issued_at,
           expires_at,
-          revoked_at
+          revoked_at,
+          thread_grant
         )
         VALUES (
           ${input.sessionId},
@@ -231,7 +239,8 @@ export const make = Effect.gen(function* () {
           ${input.client.browser},
           ${input.issuedAt},
           ${input.expiresAt},
-          NULL
+          NULL,
+          ${input.threadGrant ?? null}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -239,6 +248,7 @@ export const make = Effect.gen(function* () {
   const createSessionRow = insertSessionRow(false);
   const createSessionRowIfAbsent = insertSessionRow(true);
 
+  // Fork (friend): both reads select thread_grant.
   const getSessionRowById = SqlSchema.findOneOption({
     Request: GetAuthSessionByIdInput,
     Result: AuthSessionRawDbRow,
@@ -258,7 +268,8 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          thread_grant AS "threadGrant"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
       `,
@@ -302,7 +313,8 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          thread_grant AS "threadGrant"
         FROM auth_sessions
         WHERE revoked_at IS NULL
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})

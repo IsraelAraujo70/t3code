@@ -8,6 +8,7 @@ import {
   ClientWebDeployment,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { AuthThreadGrant } from "./threadGrant.ts"; // Fork (friend)
 
 export const ServerAuthPolicy = Schema.Literals([
   "desktop-managed-local",
@@ -386,6 +387,8 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
+  // Fork (friend): the paired session reaches only this thread.
+  threadGrant: Schema.optionalKey(AuthThreadGrant),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 

@@ -5,6 +5,7 @@ import {
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
+  type AuthThreadGrant, // Fork (friend)
   AuthWebSocketTicketUse,
   RuntimeMode,
   type ServerAuthSessionMethod,
@@ -59,6 +60,7 @@ export interface VerifiedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
+  readonly threadGrant?: AuthThreadGrant; // Fork (friend)
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
 }
@@ -385,6 +387,7 @@ export class SessionStore extends Context.Service<
       readonly peerLink?: boolean;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
+      readonly threadGrant?: AuthThreadGrant; // Fork (friend)
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
@@ -696,6 +699,7 @@ const make = Effect.gen(function* () {
         },
         issuedAt,
         expiresAt,
+        ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
@@ -784,6 +788,7 @@ const make = Effect.gen(function* () {
           expiresAt: row.value.expiresAt,
           subject: row.value.subject,
           scopes: row.value.scopes,
+          ...(row.value.threadGrant ? { threadGrant: row.value.threadGrant } : {}), // Fork (friend)
         } satisfies VerifiedSession;
       }
       const [encodedPayload, signature] = token.split(".");
@@ -844,6 +849,7 @@ const make = Effect.gen(function* () {
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),
+        ...(row.value.threadGrant ? { threadGrant: row.value.threadGrant } : {}), // Fork (friend)
       } satisfies VerifiedSession;
     },
   );
@@ -956,6 +962,7 @@ const make = Effect.gen(function* () {
       scopes: row.value.scopes,
       ...(claims.aud ? { audience: claims.aud } : {}),
       ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+      ...(row.value.threadGrant ? { threadGrant: row.value.threadGrant } : {}), // Fork (friend)
     } satisfies VerifiedWebSocketTicket;
   });
 

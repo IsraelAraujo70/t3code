@@ -2,7 +2,11 @@
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  authScopeResponse,
+  AuthStandardClientScopes,
+  AuthThreadGrant, // Fork (friend)
+} from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
@@ -653,6 +657,89 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       } as never);
       expect(state.authenticated).toBe(false);
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web" }))),
+  );
+
+  // Fork (friend): a granted pairing link yields a granted session that only reaches its RPC socket.
+  it.effect("confines a session from a thread-granted pairing link to its RPC socket", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const threadGrant = AuthThreadGrant.make("bot:b_fin:*");
+      const request = (token: string, method: string, url: string) =>
+        ({
+          url,
+          method,
+          cookies: {},
+          headers: { host: "127.0.0.1:13773", authorization: `Bearer ${token}` },
+        }) as never;
+
+      const mcpLink = yield* serverAuth.issuePairingCredential({
+        scopes: ["orchestration:read"],
+        threadGrant,
+      });
+      expect(
+        yield* Effect.flip(serverAuth.consumeMcpApprovalCode(mcpLink.credential, "read-only")),
+      ).toMatchObject({ reason: "not_a_pairing_code" });
+
+      const link = yield* serverAuth.issuePairingCredential({
+        scopes: ["orchestration:read", "orchestration:operate"],
+        threadGrant,
+      });
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        link.credential,
+        undefined,
+        requestMetadata,
+      );
+      const ticketRequest = request(token.access_token, "POST", "/api/auth/websocket-ticket/rpc");
+      expect((yield* serverAuth.authenticateHttpRequest(ticketRequest)).threadGrant).toBe(
+        threadGrant,
+      );
+      for (const [method, url] of [
+        ["POST", "/api/auth/websocket-ticket/media"],
+        ["POST", "/api/auth/pairing-credential"],
+        ["GET", "/api/assets/x"],
+      ] as const) {
+        expect(
+          yield* Effect.flip(
+            serverAuth.authenticateHttpRequest(request(token.access_token, method, url)),
+          ),
+        ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+      }
+      const socket = request(token.access_token, "GET", "/ws");
+      expect((yield* serverAuth.authenticateWebSocketUpgrade(socket, "rpc")).threadGrant).toBe(
+        threadGrant,
+      );
+      expect(
+        yield* Effect.flip(serverAuth.authenticateWebSocketUpgrade(socket, "media")),
+      ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+
+      const sessions = yield* SessionStore.SessionStore;
+      const browserLink = yield* serverAuth.issuePairingCredential({ threadGrant });
+      const browser = yield* serverAuth.createBrowserSession(
+        browserLink.credential,
+        requestMetadata,
+      );
+      expect(
+        yield* Effect.flip(
+          serverAuth.authenticateBrowserSession(
+            makeCookieRequest(sessions.cookieName, browser.sessionToken),
+          ),
+        ),
+      ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+      const ungrantedLink = yield* serverAuth.issuePairingCredential({});
+      const ungranted = yield* serverAuth.createBrowserSession(
+        ungrantedLink.credential,
+        requestMetadata,
+      );
+      yield* serverAuth.authenticateBrowserSession(
+        makeCookieRequest(sessions.cookieName, ungranted.sessionToken),
+      );
+
+      const plain = yield* serverAuth.issueSession();
+      const plainSession = yield* serverAuth.authenticateHttpRequest(
+        request(plain.token, "GET", "/api/assets/x"),
+      );
+      expect(plainSession.threadGrant).toBeUndefined();
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
   it.effect("keeps bearer socket upgrades independent of the page origin", () =>

@@ -2,6 +2,8 @@ export * from "./baseSchemas.ts";
 // Fork (friend): bots and workflow step thread contracts.
 export * from "./bots.ts";
 export * from "./workflowThreads.ts";
+// Fork (friend): session thread grants.
+export * from "./threadGrant.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
 export * from "./composerContextClipboard.ts";

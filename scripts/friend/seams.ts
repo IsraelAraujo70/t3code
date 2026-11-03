@@ -10,6 +10,61 @@ export type Seam =
 
 export const SEAMS: readonly Seam[] = [
   {
+    file: "apps/server/src/auth/RpcAuthorization.test.ts",
+    markers: 2,
+    why: "thread grant middleware test",
+  },
+  {
+    file: "apps/server/src/auth/EnvironmentAuth.test.ts",
+    markers: 2,
+    why: "thread-granted sessions stay on their RPC socket",
+  },
+  {
+    file: "apps/server/src/auth/SessionStore.test.ts",
+    markers: 2,
+    why: "sessions carry their thread grant",
+  },
+  {
+    file: "packages/contracts/src/auth.ts",
+    markers: 2,
+    why: "a pairing credential can carry a thread grant",
+  },
+  {
+    file: "apps/server/src/persistence/AuthSessions.ts",
+    markers: 8,
+    why: "persist a session's thread grant",
+  },
+  {
+    file: "apps/server/src/persistence/AuthPairingLinks.ts",
+    markers: 5,
+    why: "persist a pairing link's thread grant",
+  },
+  {
+    file: "apps/server/src/persistence/Migrations.ts",
+    markers: 2,
+    why: "add the fork's thread_grant columns after upstream migrations",
+  },
+  {
+    file: "apps/server/src/auth/PairingGrantStore.ts",
+    markers: 5,
+    why: "a pairing link passes its thread grant to its session",
+  },
+  {
+    file: "apps/server/src/auth/SessionStore.ts",
+    markers: 7,
+    why: "issue and verify sessions with their thread grant",
+  },
+  {
+    file: "apps/server/src/auth/EnvironmentAuth.ts",
+    markers: 25,
+    why: "carry thread grants and confine granted sessions to their RPC socket",
+  },
+  {
+    file: "apps/server/src/cli/auth.ts",
+    markers: 5,
+    why: "--thread on session issue and pairing create",
+  },
+  {
     file: "evals/mcp-tool-use/run.ts",
     markers: 2,
     why: "the eval catalog lists the fork's MCP toolkits, so their text has evals",
@@ -66,8 +121,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "packages/contracts/src/index.ts",
-    markers: 1,
-    why: "export bots and workflow step thread contracts",
+    markers: 2,
+    why: "export bots, workflow step thread and session thread grant contracts",
   },
   {
     file: "packages/contracts/src/environment.ts",
@@ -156,13 +211,21 @@ export const SEAMS: readonly Seam[] = [
     why: "export the workflow compiler shared by the server, the canvas and Android",
   },
   { file: "apps/web/src/index.css", markers: 1, why: "bot face animations" },
-  { file: "apps/server/src/auth/RpcAuthorization.ts", markers: 1, why: "bots RPC scopes" },
+  {
+    file: "apps/server/src/auth/RpcAuthorization.ts",
+    markers: 5,
+    why: "bots RPC scopes; thread-granted sessions reach only their thread",
+  },
   {
     file: "apps/server/src/observability/RpcInstrumentation.ts",
     markers: 1,
     why: "bots RPC trace labels",
   },
-  { file: "apps/server/src/ws.ts", markers: 4, why: "serve the bots RPCs from their own layer" },
+  {
+    file: "apps/server/src/ws.ts",
+    markers: 5,
+    why: "serve the bots RPCs from their own layer; confine thread-granted sessions",
+  },
   {
     file: "apps/server/src/orchestration-v2/RunExecutionService.ts",
     markers: 4,
@@ -643,6 +706,7 @@ export const FORK_OWNED_PREFIXES: readonly string[] = [
   "apps/web/src/state/bots.ts",
   "apps/server/src/bots/",
   "packages/contracts/src/bots.ts",
+  "packages/contracts/src/threadGrant.",
   "packages/contracts/src/kanban.ts",
   "packages/contracts/src/workflowThreads.",
   "packages/contracts/src/workflows.",

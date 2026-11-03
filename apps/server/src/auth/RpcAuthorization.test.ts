@@ -16,6 +16,12 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  // Fork (friend): thread grant middleware test.
+  AuthThreadGrant,
+  CommandId,
+  MessageId,
+  ORCHESTRATION_V2_WS_METHODS,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -401,3 +407,94 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+// Fork (friend): a thread-granted session reaches only its own thread, before any handler runs.
+describe("thread grant authorization", () => {
+  const tested = [
+    WS_METHODS.serverProbe,
+    ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+    ORCHESTRATION_V2_WS_METHODS.getTurnItem,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const granted = ThreadId.make("bot:b_fin:t-a964d5bc484f4373");
+  const other = ThreadId.make("bot:b_fin:1");
+  const message = (threadId: ThreadId) => ({
+    type: "message.dispatch" as const,
+    commandId: CommandId.make(`cmd-${threadId}`),
+    threadId,
+    messageId: MessageId.make(`msg-${threadId}`),
+    text: "oi",
+    attachments: [],
+    dispatchMode: { type: "queue_after_active" as const },
+    createdBy: "user" as const,
+    creationSource: "server" as const,
+  });
+  const makeClient = (threadGrant: AuthThreadGrant | undefined, handled: Array<string>) =>
+    RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.serverProbe, () =>
+            Effect.sync(() => handled.push("probe")).pipe(Effect.as({})),
+          ),
+          group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, (command) =>
+            Effect.sync(() =>
+              handled.push(
+                `dispatch:${command.type === "message.dispatch" ? command.threadId : command.type}`,
+              ),
+            ).pipe(Effect.as({ sequence: 1 })),
+          ),
+          group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.getTurnItem, (input) =>
+            Effect.sync(() => handled.push(`item:${input.threadId}`)).pipe(
+              Effect.as({ item: null }),
+            ),
+          ),
+          RpcAuthorization.layer(
+            [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+            undefined,
+            threadGrant,
+          ),
+        ),
+      ),
+    );
+
+  it.effect("serves only the granted thread and only allowlisted methods", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* makeClient(AuthThreadGrant.make(granted), handled);
+      yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message(granted));
+      yield* client[ORCHESTRATION_V2_WS_METHODS.getTurnItem]({
+        threadId: granted,
+        itemId: TurnItemId.make("item-1"),
+      });
+      const denied = { _tag: "EnvironmentAuthorizationError" };
+      expect(
+        yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message(other)).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject(denied);
+      expect(
+        yield* client[ORCHESTRATION_V2_WS_METHODS.getTurnItem]({
+          threadId: other,
+          itemId: TurnItemId.make("item-1"),
+        }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(yield* client[WS_METHODS.serverProbe]({}).pipe(Effect.flip)).toMatchObject(denied);
+      expect(handled).toEqual([`dispatch:${granted}`, `item:${granted}`]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves a session without a grant as it was", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* makeClient(undefined, handled);
+      yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message(other));
+      yield* client[WS_METHODS.serverProbe]({});
+      expect(handled).toEqual([`dispatch:${other}`, "probe"]);
+    }).pipe(Effect.scoped),
+  );
+});
