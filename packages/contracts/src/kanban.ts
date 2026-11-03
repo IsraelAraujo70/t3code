@@ -799,10 +799,10 @@ export const KanbanTicketCommentRef = Schema.Struct({
 export type KanbanTicketCommentRef = typeof KanbanTicketCommentRef.Type;
 
 /**
- * Starts work on a ticket. `project`: a new thread in the ticket's T3 project (its default model
- * unless one is given, in the project root), whose first message carries the issue (identifier,
- * title, link and description). `bot`: the same message goes to that bot's conversation. Either
- * way the thread is linked to the ticket.
+ * Starts work on a ticket. `project`: a new thread in the ticket's T3 project, set up like a new
+ * thread from the app (its default model, else the given one; a new worktree or the root), whose
+ * first message carries the issue (identifier, title, link and description). `bot`: the same
+ * message goes to that bot's conversation. Either way the thread is linked to the ticket.
  */
 export const KanbanTicketStartThreadInput = Schema.Struct({
   ticketId: KanbanTicketId,
