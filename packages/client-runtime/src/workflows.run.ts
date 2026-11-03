@@ -14,8 +14,10 @@ import type {
   WorkflowRunView,
   WorkflowStepAttemptView,
   WorkflowStepStatus,
+  WorkflowSummary,
   WorkflowsSnapshot,
 } from "@t3tools/contracts";
+import { gateReason } from "@t3tools/shared/workflows";
 
 /** What a status means to the eye; each client maps a tone to its own colors. */
 export type WorkflowTone = "neutral" | "info" | "success" | "warning" | "danger" | "muted";
@@ -302,3 +304,51 @@ export const runHistoryKey = (snapshot: Pick<WorkflowsSnapshot, "workflows" | "r
       lastRun === null ? "" : `${lastRun.runId}:${lastRun.status}:${lastRun.openGates}`,
     ),
   ].join();
+
+/** A gate or a pause the user has to lift: a pause they asked for, or the daily cap, waits alone. */
+const runNeedsYou = (run: WorkflowRunSummary): boolean =>
+  isRunActive(run.status) &&
+  (run.openGates > 0 ||
+    (run.status === "paused" && (run.pausedFor === "fatigue" || run.pausedFor === "ambiguous")));
+
+export interface ActiveWorkflowRun {
+  readonly run: WorkflowRunSummary;
+  readonly workflow: WorkflowSummary | null;
+  readonly needsYou: boolean;
+  /** Since when it waits for the user, else since it started: what "for how long" counts from. */
+  readonly since: string;
+}
+
+/**
+ * The runs that have not ended: those that need the user first, longest waiting first, then the
+ * rest newest first. Older hosts send no `activeRuns`; their active `lastRun`s stand in.
+ */
+export const activeWorkflowRuns = (
+  snapshot: Pick<WorkflowsSnapshot, "workflows" | "activeRuns">,
+): ReadonlyArray<ActiveWorkflowRun> => {
+  const workflows = new Map(snapshot.workflows.map((w) => [w.workflowId as string, w]));
+  const runs =
+    snapshot.activeRuns ??
+    snapshot.workflows.flatMap(({ lastRun }) => (lastRun === null ? [] : [lastRun]));
+  return [...runs]
+    .filter((run) => isRunActive(run.status))
+    .map((run) => ({
+      run,
+      workflow: workflows.get(run.workflowId) ?? null,
+      needsYou: runNeedsYou(run),
+      since: run.gate?.openedAt ?? run.startedAt,
+    }))
+    .sort((a, b) =>
+      a.needsYou !== b.needsYou
+        ? a.needsYou
+          ? -1
+          : 1
+        : a.needsYou
+          ? a.since.localeCompare(b.since)
+          : b.since.localeCompare(a.since),
+    );
+};
+
+/** The gate's reason in a line or two; older hosts send only the full `ask`. */
+export const gateReasonOf = (gate: Pick<WorkflowGateView, "ask" | "reason">): string =>
+  gate.reason ?? gateReason(gate.ask);

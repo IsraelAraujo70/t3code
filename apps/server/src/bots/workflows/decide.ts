@@ -19,6 +19,7 @@ import {
   classifyCommand,
   evalExpr,
   evalTemplateValue,
+  gateReason,
   isTruthy,
   parseExpr,
   parseTemplate,
@@ -1295,6 +1296,7 @@ export const decide = (
           gateKey,
           reason: "gate",
           ask: ask.success,
+          short: gateReason(ask.success, { template: node.ask, title: node.title }),
           options: [...(node.options ?? ["approve", "reject"])],
           expiresAt:
             node.expires === undefined ? null : isoOf(ctx.now + durationMs(node.expires.after)),
@@ -1975,7 +1977,7 @@ export const decide = (
       needsYouNotice(definition.title, runId, {
         _tag: "gate",
         gateKey: gate.gateKey,
-        ask: gate.ask,
+        ask: gate.short ?? gateReason(gate.ask),
       }),
     );
   }

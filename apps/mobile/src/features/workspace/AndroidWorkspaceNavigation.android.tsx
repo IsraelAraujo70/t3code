@@ -1,6 +1,7 @@
 import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-order";
 // Fork (friend): a phone's bar and floating pill end in More.
-import { androidNavigationTabs } from "../../bots/androidNavigationTabs";
+import { androidNavigationTabs, badgedNavigationTabs } from "../../bots/androidNavigationTabs";
+import { useWorkflowsNeedYou } from "../../bots/workflows/activeRuns"; // Fork (friend)
 import { requireNativeView } from "expo";
 import { CommonActions, useNavigation } from "@react-navigation/native";
 import {
@@ -38,6 +39,7 @@ interface NativeNavigationProps extends ViewProps {
   readonly tabs: readonly string[];
   // Fork (friend): a phone bar ends in More, whose menu lists `moreTabs`.
   readonly moreTabs: readonly AndroidWorkspaceNavigationTab[];
+  readonly badgedTabs: readonly string[]; // Fork (friend): tabs with the "needs you" dot.
   readonly selectedTab: AndroidWorkspaceNavigationTab | "more";
   readonly dark: boolean;
   readonly textScale: number;
@@ -84,6 +86,7 @@ export function AndroidWorkspaceNavigation(props: {
   const toolbar = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const workflowsNeedYou = useWorkflowsNeedYou(); // Fork (friend)
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
@@ -139,6 +142,7 @@ export function AndroidWorkspaceNavigation(props: {
         // Fork (friend): More takes Settings' place on a phone and is selected for what it holds.
         tabs={shown.tabs}
         moreTabs={shown.moreTabs}
+        badgedTabs={badgedNavigationTabs(workflowsNeedYou, shown.moreTabs)}
         selectedTab={shown.selectedTab}
         dark={themeAppearance === "dark"}
         textScale={scale}

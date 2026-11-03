@@ -33,3 +33,15 @@ export function androidNavigationTabs(input: {
     selectedTab: input.selected === "settings" ? "more" : input.selected,
   };
 }
+
+/**
+ * Tabs that carry the "needs you" dot: Bots while a workflow run waits for the user, and More
+ * when Bots sits in its menu.
+ */
+export function badgedNavigationTabs(
+  botsNeedYou: boolean,
+  moreTabs: readonly string[],
+): readonly string[] {
+  if (!botsNeedYou) return [];
+  return moreTabs.includes("bots") ? ["bots", "more"] : ["bots"];
+}

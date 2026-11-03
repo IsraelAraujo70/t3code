@@ -628,7 +628,8 @@ const make = Effect.gen(function* () {
           });
         }
         const runsRevision = yield* journal.runsRevision;
-        return { repoPath: repo.root, workflows, deleted, templates, runsRevision };
+        const activeRuns = yield* journal.activeRuns;
+        return { repoPath: repo.root, workflows, deleted, templates, runsRevision, activeRuns };
       }).pipe(Effect.mapError(internal));
       // A webhook task appears after the save that asked for it, so its URL arrives as a change
       // too. The list's first emission is kept: it covers a task added during the first read.

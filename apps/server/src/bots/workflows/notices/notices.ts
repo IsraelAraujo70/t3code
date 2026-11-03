@@ -13,7 +13,7 @@ const clip = (text: string): string => {
 
 export type NotifyIntent = Extract<Intent, { readonly _tag: "Notify" }>;
 
-/** Why a run needs the user. */
+/** Why a run needs the user; a gate's `ask` is its short reason, the push's whole body. */
 export type NeedsYou =
   | { readonly _tag: "gate"; readonly gateKey: string; readonly ask: string }
   | { readonly _tag: "fatigue"; readonly pause: number; readonly streak: number }

@@ -221,12 +221,17 @@ describe("run views", () => {
     expect(runSummary(run.state()).reservedTokens).toBe(0);
   });
 
-  it("counts only undecided protected gates", () => {
+  it("counts only undecided protected gates and names the waiting one", () => {
     const run = protectedRun();
-    expect(runSummary(run.state()).openGates).toBe(1);
+    const [gate] = gateViews(run.state());
+    expect(runSummary(run.state())).toMatchObject({
+      openGates: 1,
+      gate: { key: "protect:c@1", reason: gate?.reason, openedAt: gate?.openedAt },
+    });
+    expect(gate?.reason).toBe(gate?.ask);
     approve(run);
     run.drive();
-    expect(runSummary(run.state()).openGates).toBe(0);
+    expect(runSummary(run.state())).toMatchObject({ openGates: 0, gate: null });
   });
 
   it("projects queued and skipped occurrences until their run is created", () => {

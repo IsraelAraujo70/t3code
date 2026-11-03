@@ -10,12 +10,15 @@ import {
   defaultRunParams,
   workflowRunHref,
   workflowRunAlertPath,
+  activeWorkflowRuns,
+  gateReasonOf,
 } from "./workflows.run.ts";
 import * as Schema from "effect/Schema";
 import {
   WorkflowRunSummary,
   type WorkflowRunView,
   type WorkflowRunDelta,
+  type WorkflowSummary,
 } from "@t3tools/contracts";
 import { foldRunDelta, joinRunPages, liveActiveMs } from "./workflows.run.ts";
 import { WorkflowStepKey, WorkflowNodeId } from "@t3tools/contracts";
@@ -268,4 +271,72 @@ it("computes live active time from the summary anchor", () => {
   const running = { ...summary, activeMs: 100, activeSince: "1970-01-01T00:00:01.000Z" };
   expect(liveActiveMs(running, 2000)).toBe(1100);
   expect(liveActiveMs(running, 500)).toBe(100);
+});
+
+it("lists active runs with those that need the user first", () => {
+  const base = decodeSummary({
+    runId: "wfr_00000000000000000000",
+    workflowId: "qa",
+    title: "QA",
+    hash: null,
+    commit: null,
+    status: "running",
+    pausedFor: null,
+    skipReason: null,
+    trigger: { id: "manual", kind: "manual", label: "Manual" },
+    startedAt: "2026-11-03T10:00:00.000Z",
+    endedAt: null,
+    outputStatus: null,
+    stepsUsed: 1,
+    cost: { billable: 0, input: 0, output: 0, cacheRead: 0, usage: "complete", usdEstimate: 0 },
+    reservedTokens: 0,
+    openGates: 0,
+    pullRequest: null,
+    activeMs: null,
+    activeSince: null,
+  });
+  const run = (id: string, patch: Partial<WorkflowRunSummary>): WorkflowRunSummary => ({
+    ...base,
+    runId: WorkflowRunId.make(`wfr_0000000000000000000${id}`),
+    ...patch,
+  });
+  const newest = run("1", { startedAt: "2026-11-03T12:00:00.000Z" });
+  // Two runs of one workflow wait at gates at once; the longer wait comes first.
+  const gateLate = run("2", {
+    openGates: 1,
+    gate: { key: "test@1", reason: "Teste no celular", openedAt: "2026-11-03T11:30:00.000Z" },
+  });
+  const gateEarly = run("3", {
+    openGates: 1,
+    gate: { key: "approve@1", reason: "Plano", openedAt: "2026-11-03T10:05:00.000Z" },
+  });
+  const userPaused = run("4", { status: "paused", pausedFor: "user" });
+  const fatigued = run("5", {
+    status: "paused",
+    pausedFor: "fatigue",
+    startedAt: "2026-11-03T09:00:00.000Z",
+  });
+  const ended = run("6", { status: "succeeded", endedAt: "2026-11-03T10:10:00.000Z" });
+  const active = activeWorkflowRuns({
+    workflows: [],
+    activeRuns: [newest, gateLate, gateEarly, userPaused, fatigued, ended],
+  });
+  expect(active.map((a) => [a.run.runId.slice(-1), a.needsYou, a.since])).toEqual([
+    ["5", true, "2026-11-03T09:00:00.000Z"],
+    ["3", true, "2026-11-03T10:05:00.000Z"],
+    ["2", true, "2026-11-03T11:30:00.000Z"],
+    ["1", false, "2026-11-03T12:00:00.000Z"],
+    ["4", false, "2026-11-03T10:00:00.000Z"],
+  ]);
+  // An older host sends no activeRuns: the active last runs stand in.
+  const workflow = (lastRun: WorkflowRunSummary) =>
+    ({ workflowId: lastRun.workflowId, lastRun }) as unknown as WorkflowSummary;
+  expect(
+    activeWorkflowRuns({ workflows: [workflow(ended), workflow(gateEarly)] }).map((a) => [
+      a.run.runId,
+      a.workflow?.lastRun?.runId,
+    ]),
+  ).toEqual([[gateEarly.runId, gateEarly.runId]]);
+  expect(gateReasonOf({ ask: "Ship?", reason: "Ship it" })).toBe("Ship it");
+  expect(gateReasonOf({ ask: "  Ship\n now? " })).toBe("Ship now?");
 });

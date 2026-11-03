@@ -23,6 +23,7 @@ import {
   withNodeStatuses,
   nodeStatuses,
   withTriggerStates,
+  gateReasonOf,
 } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
@@ -62,6 +63,8 @@ import {
 import { TriggerSheet } from "./TriggerSheet";
 import { TriggerIcon } from "./TriggerIcon";
 import { GateSheet } from "./GateSheet";
+import { GateAsk } from "./GateAsk";
+import { gateReason } from "@t3tools/shared/workflows";
 import { StepDetailSheet } from "./StepDetailSheet";
 import { WorkflowMetricsPanel } from "../metrics/WorkflowMetricsPanel";
 import { BlockViews } from "./BlockViews";
@@ -298,8 +301,8 @@ function RunContent({
                 Needs you
               </h2>
               {waitingGates.map((g) => (
-                <div key={g.key} className="flex items-center justify-between gap-4">
-                  <p className="text-sm">{g.ask}</p>
+                <div key={g.key} className="flex items-start justify-between gap-4">
+                  <GateAsk environmentId={environmentId} gate={g} />
                   <Button size="xs" onClick={() => setGate(g)}>
                     Answer
                   </Button>
@@ -400,7 +403,9 @@ function RunContent({
                           className="line-clamp-2 max-w-80 whitespace-normal text-muted-foreground"
                           title={row.latest.summary ?? undefined}
                         >
-                          {row.latest.summary}
+                          {row.latest.status === "waiting_gate" && row.latest.summary !== null
+                            ? gateReason(row.latest.summary)
+                            : row.latest.summary}
                         </p>
                         {/* oxlint-enable t3code/no-native-title-tooltip */}
                       </TableCell>
@@ -456,7 +461,8 @@ function RunContent({
                 g.decision ? (
                   <div key={g.key} className="text-muted-foreground text-xs">
                     <p>
-                      {g.ask}: <span className="text-foreground">{g.decision.option}</span>
+                      {gateReasonOf(g)}:{" "}
+                      <span className="text-foreground">{g.decision.option}</span>
                       {" · "}
                       <time dateTime={g.decision.at}>
                         {formatRelativeTimeLabel(g.decision.at, now)}
@@ -521,7 +527,7 @@ function RunContent({
             runId={summary.runId}
             gate={gate}
             evidence={view.steps
-              .filter((s) => s.key === gate.step)
+              .filter((s) => s.key === gate.step && s.status !== "waiting_gate")
               .map((s) => [s.summary, s.evidence].filter(Boolean).join("\n"))
               .join("\n")}
             pullRequest={summary.pullRequest}

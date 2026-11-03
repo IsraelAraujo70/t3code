@@ -573,6 +573,30 @@ it("expires a gate to its decision and resolves it in the same pass", () => {
   expect(resolved?._tag === "StepResolved" && resolved.port).toBe("reject");
 });
 
+it("opens a gate with its short reason and pushes it once", () => {
+  const plan = "Desativar os 6 clientes de teste antes do leilão, e reativar depois. ".repeat(6);
+  const run = TestRun.start(
+    compile({
+      params: { plan: { type: "string", default: "" } },
+      nodes: { g: { kind: "gate", ask: "Plano do leilão de QA em staging: {{params.plan}}" } },
+      edges: [],
+    }),
+    runStarted({ params: { plan } }),
+  );
+  const opened = run.drive();
+  const open = opened.find((f) => f.key === "open:g@1")?.fact;
+  expect(open?._tag === "IntentRecorded" && open.intent).toMatchObject({
+    ask: `Plano do leilão de QA em staging: ${plan}`,
+    short: "Plano do leilão de QA em staging",
+  });
+  expect(run.intent("notify:gate:g@1")).toMatchObject({
+    kind: "needs_you",
+    title: "Demo",
+    body: "Plano do leilão de QA em staging",
+  });
+  expect(keysOf(run.drive(T0 + 2_000))).not.toContain("notify:gate:g@1");
+});
+
 describe("review regressions", () => {
   const ready = (nodes: Record<string, unknown>, edges: ReadonlyArray<string>, patch = {}) => {
     const run = TestRun.start(compile({ nodes, edges, ...patch }));

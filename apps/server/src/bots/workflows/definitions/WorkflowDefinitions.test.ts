@@ -712,6 +712,20 @@ it.live("shows each workflow's newest projected run as its last run, live in the
       const parallel = yield* Queue.take(snapshots);
       expect(parallel.workflows[0]?.lastRun).toEqual(run);
       expect(parallel.runsRevision).not.toBe(after.runsRevision);
+      expect(parallel.activeRuns).toEqual([older]);
+      // Two runs of one workflow are both active; a gate opening is a change of its own.
+      const gated = {
+        ...older,
+        runId: WorkflowRunId.make("wfr_00000000000000000002"),
+        startedAt: "2026-11-01T06:00:00.000Z",
+        openGates: 1,
+        gate: { key: "approve@1", reason: "Plano do leilão", openedAt: "2026-11-01T06:05:00.000Z" },
+      } satisfies WorkflowRunSummary;
+      yield* journal.putRun({ summary: gated, lastSeq: 4, pendingIntents: 0, parentRunId: null });
+      expect((yield* Queue.take(snapshots)).activeRuns).toEqual([gated, older]);
+      const next = { ...gated, gate: { ...gated.gate, key: "test@1" } };
+      yield* journal.putRun({ summary: next, lastSeq: 5, pendingIntents: 0, parentRunId: null });
+      expect((yield* Queue.take(snapshots)).activeRuns?.[0]?.gate?.key).toBe("test@1");
     }),
   ),
 );

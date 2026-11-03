@@ -98,6 +98,8 @@ export const Intent = Schema.TaggedUnion({
     gateKey: Text,
     reason: Schema.Literals(["gate", "protected", "ambiguous", "question"]),
     ask: Text,
+    /** `ask` in a line or two; gates opened before it existed derive it from `ask`. */
+    short: Schema.optionalKey(Text),
     options: Schema.Array(Text),
     expiresAt: NullableText,
   },
