@@ -2,7 +2,7 @@ import {
   runMatchesListInput,
   type WorkflowRunsFilterInput,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId, WorkflowRunsListInput } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowRunsListInput, WorkflowRunsPage } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -16,6 +16,8 @@ import {
 } from "./WorkflowRecentRuns";
 
 const PAGE_SIZE = 50;
+/** The run list's largest page (`PageLimit` in the contract). */
+const MAX_RUNS = 200;
 const LAYOUT: RunsLayout = { showWorkflow: true, inset: RUNS_GUTTER };
 
 /**
@@ -40,61 +42,69 @@ export function useLiveWorkflowRuns(
   return runs;
 }
 
-/** The Runs tab: every run that matches the filters, newest first, a page at a time. */
+/**
+ * The Runs tab: the runs that match the filters, newest first. "Load more" grows one query by a
+ * page instead of fetching offsets, so a run that starts meanwhile never duplicates or hides a
+ * row at a page boundary. The host caps a page, so the tab lists at most `MAX_RUNS`.
+ */
 export function WorkflowRunsTab(props: {
   environmentId: EnvironmentId;
   filter: WorkflowRunsFilterInput;
   historyKey: string | null;
   filtered: boolean;
 }) {
-  const [pages, setPages] = useState(1);
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const runs = useLiveWorkflowRuns(
+    props.environmentId,
+    { ...props.filter, limit },
+    props.historyKey,
+  );
+  // The shorter list stays on screen while the longer one loads.
+  const shorter = useLiveWorkflowRuns(
+    props.environmentId,
+    { ...props.filter, limit: Math.max(PAGE_SIZE, limit - PAGE_SIZE) },
+    props.historyKey,
+  );
+  const page = runs.data ?? shorter.data;
   return (
     <div role="table" aria-label="Runs" className="pb-8">
       <WorkflowRunsHeader layout={LAYOUT} />
-      {Array.from({ length: pages }, (_, page) => (
-        <RunsPage
-          key={page}
-          {...props}
-          offset={page * PAGE_SIZE}
-          last={page === pages - 1}
-          onMore={() => setPages(pages + 1)}
+      {page === null ? (
+        runs.error === null ? (
+          <WorkflowRunsSkeleton />
+        ) : (
+          <p role="alert" className={`${RUNS_GUTTER} py-3 text-destructive text-sm`}>
+            Runs unavailable: {runs.error}
+          </p>
+        )
+      ) : (
+        <RunRows
+          environmentId={props.environmentId}
+          filter={props.filter}
+          filtered={props.filtered}
+          page={page}
+          loading={runs.data === null}
+          onMore={limit < MAX_RUNS ? () => setLimit(limit + PAGE_SIZE) : null}
         />
-      ))}
+      )}
     </div>
   );
 }
 
-function RunsPage(props: {
+function RunRows(props: {
   environmentId: EnvironmentId;
   filter: WorkflowRunsFilterInput;
-  historyKey: string | null;
   filtered: boolean;
-  offset: number;
-  last: boolean;
-  onMore: () => void;
+  page: WorkflowRunsPage;
+  loading: boolean;
+  onMore: (() => void) | null;
 }) {
-  const runs = useLiveWorkflowRuns(
-    props.environmentId,
-    {
-      ...props.filter,
-      limit: PAGE_SIZE,
-      ...(props.offset === 0 ? {} : { cursor: String(props.offset) }),
-    },
-    props.historyKey,
-  );
-  if (runs.data === null)
-    return runs.error === null ? (
-      <WorkflowRunsSkeleton />
-    ) : (
-      <p role="alert" className={`${RUNS_GUTTER} py-3 text-destructive text-sm`}>
-        Runs unavailable: {runs.error}
-      </p>
-    );
   // An older host ignores the filters it does not know.
-  const shown = runs.data.runs.filter((run) => runMatchesListInput(run, props.filter));
+  const shown = props.page.runs.filter((run) => runMatchesListInput(run, props.filter));
+  const more = props.page.nextCursor !== null;
   return (
     <>
-      {props.offset === 0 && shown.length === 0 && runs.data.nextCursor === null ? (
+      {shown.length === 0 && !more ? (
         <p className={`${RUNS_GUTTER} py-3 text-muted-foreground text-sm`}>
           {props.filtered
             ? "No runs match these filters."
@@ -109,11 +119,17 @@ function RunsPage(props: {
           layout={LAYOUT}
         />
       ))}
-      {props.last && runs.data.nextCursor !== null ? (
+      {more ? (
         <div className={`${RUNS_GUTTER} flex justify-center py-3`}>
-          <Button size="xs" variant="outline" onClick={props.onMore}>
-            Load more
-          </Button>
+          {props.onMore === null ? (
+            <p className="text-muted-foreground text-xs">
+              Showing the latest {MAX_RUNS} runs. Narrow the filters to reach older ones.
+            </p>
+          ) : (
+            <Button size="xs" variant="outline" disabled={props.loading} onClick={props.onMore}>
+              Load more
+            </Button>
+          )}
         </div>
       ) : null}
     </>

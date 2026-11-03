@@ -255,7 +255,10 @@ export function runMatchesListInput(
   run: WorkflowRunSummary,
   input: WorkflowRunsFilterInput,
 ): boolean {
-  const needle = input.query?.trim().toLowerCase() ?? "";
+  // The host folds ASCII case only (SQLite `lower`), so the client does the same.
+  const fold = (text: string) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  const needle = fold(input.query?.trim() ?? "");
+  const has = (text: string) => fold(text).includes(needle);
   return (
     (input.workflowId === undefined || run.workflowId === input.workflowId) &&
     (input.status === undefined || run.status === input.status) &&
@@ -264,7 +267,7 @@ export function runMatchesListInput(
     (input.triggerKinds === undefined || input.triggerKinds.includes(run.trigger.kind)) &&
     (input.startedAfter === undefined ||
       Date.parse(run.startedAt) >= Date.parse(input.startedAfter)) &&
-    (needle === "" || contains(run.title, needle) || contains(run.trigger.label, needle))
+    (needle === "" || has(run.title) || has(run.trigger.label))
   );
 }
 

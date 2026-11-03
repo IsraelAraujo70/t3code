@@ -169,6 +169,8 @@ describe("runs filter", () => {
     expect(pick({ triggerKinds: ["cron"] })).toEqual([failed.runId]);
     expect(pick({ startedAfter: "2026-11-02T00:00:00.000Z" })).toHaveLength(3);
     expect(pick({ query: "every HOUR" })).toEqual([failed.runId]);
+    // Like the host's SQLite `lower`, only ASCII letters fold.
+    expect(runMatchesListInput(run(5, { title: "étape" }), { query: "ÉTAPE" })).toBe(false);
     expect(pick({ workflowIds: [] })).toEqual([]);
   });
 });
