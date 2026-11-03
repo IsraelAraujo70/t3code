@@ -368,7 +368,8 @@ run view or by direct link.
 ## Using workflows
 
 Open Workflows from the sidebar footer, next to Kanban (web and desktop), or from the Workflows row
-of the Android Bots tab. It lists the bots host's workflows with their last run.
+of the Android Bots tab. It lists the bots host's workflows with the bot each one works for and
+their last run, which follows a run as it starts, stops at a gate and ends.
 
 - **Create one.** "From template" copies a ready routine under a new name; "New workflow" starts
   blank. A new workflow starts turned off.

@@ -192,6 +192,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const journal = yield* Journal;
+      const changes = yield* journal.subscribeRunChanges;
       const older = summary("wfr_00000000000000000001", "2026-11-02T00:00:00.000Z");
       const newer = summary("wfr_00000000000000000002", "2026-11-02T01:00:00.000Z", {
         status: "failed",
@@ -216,7 +217,15 @@ it.effect(
         { runs: [], more: false },
       );
       assert.deepEqual((yield* journal.lastRuns).get("example"), newer);
-    }).pipe(Effect.provide(layerMemory)),
+      // Lists hear of a new row and of a status, gate or end change, not of progress inside one.
+      yield* journal.putRun(row({ ...older, stepsUsed: 1 }, 3));
+      yield* journal.putRun(row({ ...older, stepsUsed: 1, openGates: 1 }, 4));
+      assert.deepEqual(Array.from(yield* PubSub.takeAll(changes)), [
+        "example",
+        "example",
+        "example",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layerMemory)),
 );
 
 it.effect("stores the summary's active time in the run row", () =>

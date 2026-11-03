@@ -30,6 +30,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { BotAvatar } from "../BotAvatar";
 import { confirmDestructive, reportCommandResult } from "../botsSettingsShared";
 import { TriggerIcon } from "./run/TriggerIcon";
 import { workflowsEnvironment } from "./state";
@@ -115,6 +116,7 @@ export function WorkflowListRow(props: {
           <Link {...editor} className="min-w-0 shrink truncate font-medium text-sm hover:underline">
             {workflow.title}
           </Link>
+          {workflow.bot ? <WorkflowBot bot={workflow.bot} /> : null}
           {!workflow.valid ? (
             <WorkflowToneBadge tone="danger">
               {`${workflow.diagnostics} error${workflow.diagnostics === 1 ? "" : "s"}`}
@@ -203,6 +205,33 @@ export function WorkflowListRow(props: {
         </Menu>
       </span>
     </div>
+  );
+}
+
+/** The bot the workflow works for: its face and name, or a warning when the bot is gone. */
+function WorkflowBot(props: { bot: NonNullable<WorkflowSummary["bot"]> }) {
+  const { bot } = props;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 text-xs",
+              bot.name === null ? "text-warning" : "text-muted-foreground",
+            )}
+          />
+        }
+      >
+        <BotAvatar botId={bot.id} size={14} />
+        <span className="max-w-32 truncate">{bot.name ?? bot.id}</span>
+      </TooltipTrigger>
+      <TooltipPopup>
+        {bot.name === null
+          ? `Bot ${bot.id} no longer exists; its steps run without its tools`
+          : `Works for ${bot.name}: its agent steps get the bot's tools`}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 

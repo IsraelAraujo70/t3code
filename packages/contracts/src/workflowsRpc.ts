@@ -51,13 +51,33 @@ const PageLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(200));
 
 // ── Definitions ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A trigger's definition by kind, so clients word it without parsing `label`. Only the key of the
+ * trigger's own kind is set, and hosts older than these fields send none of them.
+ */
+const WorkflowTriggerPartsFields = {
+  cron: Schema.optional(Schema.Struct({ expr: Schema.String, tz: Schema.String })),
+  upstreamTag: Schema.optional(Schema.Struct({ remote: Schema.String, pattern: Schema.String })),
+  prMerged: Schema.optional(Schema.Struct({ repo: Schema.String })),
+  webhook: Schema.optional(Schema.Struct({ filters: NonNegativeInt })),
+  /** `workflow` null: any workflow. */
+  workflowFailed: Schema.optional(Schema.Struct({ workflow: Schema.NullOr(Schema.String) })),
+  /** `bots` null: every bot may run it. */
+  bot: Schema.optional(Schema.Struct({ bots: Schema.NullOr(Schema.Array(Schema.String)) })),
+  /** `from` null: every workflow may call it. */
+  call: Schema.optional(Schema.Struct({ from: Schema.NullOr(Schema.Array(Schema.String)) })),
+};
+export const WorkflowTriggerParts = Schema.Struct(WorkflowTriggerPartsFields);
+export type WorkflowTriggerParts = typeof WorkflowTriggerParts.Type;
+
 export const WorkflowTriggerSummary = Schema.Struct({
   id: Schema.String,
   kind: Schema.String,
   /** The trigger's `title`; null when it has none. */
   title: Schema.NullOr(Schema.String),
-  /** Human text: `0 3 * * * (America/Sao_Paulo)`, `tag v* on upstream`. */
+  /** Human text: `0 3 * * * (America/Sao_Paulo)`, `tag v* on upstream`. Kept for older clients. */
   label: Schema.String,
+  ...WorkflowTriggerPartsFields,
   /** A webhook trigger's public URL once its task exists; null for other kinds. */
   webhookUrl: Schema.NullOr(Schema.String),
   /** The trigger's own switch (on until turned off); a `manual` trigger is always on. */
@@ -85,6 +105,13 @@ export const WorkflowSummary = Schema.Struct({
   revision: Schema.NullOr(WorkflowDocRevision),
   updatedAt: Schema.NullOr(IsoDateTime),
   lastRun: Schema.NullOr(WorkflowRunSummary),
+  /**
+   * The bot the workflow works for (`bot:` in the YAML); null when none, absent from older hosts.
+   * `name` is null when that bot no longer exists. The avatar is drawn from `id`.
+   */
+  bot: Schema.optional(
+    Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.NullOr(Schema.String) })),
+  ),
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
@@ -113,6 +140,11 @@ export const WorkflowsSnapshot = Schema.Struct({
   workflows: Schema.Array(WorkflowSummary),
   deleted: Schema.Array(WorkflowDeletedSummary),
   templates: Schema.Array(WorkflowTemplateSummary),
+  /**
+   * Changes when any run changes, including one that is no longer a workflow's `lastRun`: the
+   * cue to refetch run history. Absent from older hosts.
+   */
+  runsRevision: Schema.optional(Schema.String),
 });
 export type WorkflowsSnapshot = typeof WorkflowsSnapshot.Type;
 

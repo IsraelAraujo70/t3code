@@ -31,7 +31,12 @@ import {
   type WorkflowValidateInput,
   type WorkflowValidateResult,
 } from "@t3tools/contracts";
-import { compileWorkflow, DEFAULT_HOST_LIMITS, triggerLabel } from "@t3tools/shared/workflows";
+import {
+  compileWorkflow,
+  DEFAULT_HOST_LIMITS,
+  triggerLabel,
+  triggerParts,
+} from "@t3tools/shared/workflows";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -164,6 +169,7 @@ const triggerSummaries = (
     kind: trigger.kind,
     title: trigger.title ?? null,
     label: triggerLabel(trigger),
+    ...triggerParts(trigger),
     webhookUrl:
       trigger.kind === "webhook" ? (urls.get(workflowHookTaskId(workflowId, id)) ?? null) : null,
     enabled: trigger.kind === "manual" || !off.has(id),
@@ -544,6 +550,9 @@ const make = Effect.gen(function* () {
     yield* refreshGraph();
     const lastRuns = yield* journal.lastRuns;
     const fired = yield* lastFired;
+    const botNames = Option.isNone(bots)
+      ? new Map<string, string>()
+      : new Map((yield* bots.value.listBots).map((bot) => [bot.id as string, bot.name] as const));
     return yield* Effect.forEach(yield* repo.listIds, (id) =>
       document(id, fired).pipe(
         Effect.map((d) => ({
@@ -561,6 +570,10 @@ const make = Effect.gen(function* () {
           revision: d.revision,
           updatedAt: d.updatedAt,
           lastRun: lastRuns.get(id) ?? null,
+          bot:
+            d.definition?.bot === undefined
+              ? null
+              : { id: d.definition.bot, name: botNames.get(d.definition.bot) ?? null },
         })),
       ),
     );
@@ -582,6 +595,8 @@ const make = Effect.gen(function* () {
   const snapshot = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(bus);
+      // A run starting, stopping at a gate, pausing or ending moves the list's last run.
+      const runChanges = yield* journal.subscribeRunChanges;
       const read = Effect.gen(function* () {
         const workflows = yield* list;
         const deleted = yield* Effect.forEach(yield* repo.deleted, (entry) =>
@@ -612,7 +627,8 @@ const make = Effect.gen(function* () {
             triggers: triggerSummaries(definition.id, definition.triggers, new Map()),
           });
         }
-        return { repoPath: repo.root, workflows, deleted, templates };
+        const runsRevision = yield* journal.runsRevision;
+        return { repoPath: repo.root, workflows, deleted, templates, runsRevision };
       }).pipe(Effect.mapError(internal));
       // A webhook task appears after the save that asked for it, so its URL arrives as a change
       // too. The list's first emission is kept: it covers a task added during the first read.
@@ -621,7 +637,11 @@ const make = Effect.gen(function* () {
         : scheduledTasks.value.subscribeList().pipe(Stream.orElseSucceed(() => undefined));
       return Stream.concat(
         Stream.fromEffect(read),
-        Stream.merge(Stream.fromSubscription(subscription), taskChanges).pipe(
+        Stream.fromSubscription(subscription).pipe(
+          Stream.merge(Stream.fromSubscription(runChanges)),
+          Stream.merge(taskChanges),
+          // A burst of changes reads once: a read covers every change before it.
+          Stream.buffer({ capacity: 1, strategy: "sliding" }),
           Stream.mapEffect(() => read),
         ),
       );

@@ -6,6 +6,7 @@ import type {
   WorkflowSummary,
   WorkflowTemplateSummary,
 } from "@t3tools/contracts";
+import { runHistoryKey } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
@@ -62,23 +63,19 @@ export function WorkflowsPage(props: { environmentId: EnvironmentId }) {
   const workflows = snapshot.data?.workflows ?? [];
 
   // The run list is a one-shot query; the snapshot stream moves each workflow's last run.
-  const lastRuns =
-    snapshot.data === null
-      ? null
-      : workflows
-          .map((workflow) => `${workflow.lastRun?.runId}:${workflow.lastRun?.status}`)
-          .join();
+  const lastRuns = snapshot.data === null ? null : runHistoryKey(snapshot.data);
   const seenLastRuns = useRef<string | null>(null);
   const refreshRuns = runs.refresh;
   const runsPending = runs.isPending;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's run list when the snapshot stream reports a run started or changed state, or a cached list may be stale on return
   useEffect(() => {
-    if (lastRuns === null || seenLastRuns.current === lastRuns) return;
+    // A request already in flight may have read before the change, so wait and refetch after it.
+    if (lastRuns === null || seenLastRuns.current === lastRuns || runsPending) return;
     seenLastRuns.current = lastRuns;
-    if (!runsPending) refreshRuns();
+    refreshRuns();
   }, [lastRuns, refreshRuns, runsPending]);
 
-  // The snapshot stream does not move on run events, so a freshly fetched run list can be newer.
+  // An older host's snapshot does not move on run events, so a freshly fetched run list can be newer.
   const listedLastRun = new Map<string, WorkflowRunSummary>();
   for (const run of runs.data?.runs ?? []) {
     listedLastRun.set(run.workflowId, newerRun(listedLastRun.get(run.workflowId), run) ?? run);
