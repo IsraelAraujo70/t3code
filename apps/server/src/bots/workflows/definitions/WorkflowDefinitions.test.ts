@@ -867,6 +867,8 @@ it.live("a bot binds a workflow only to itself and never takes another bot's", (
         expect((yield* save(OTHER, { kind: "user" }))._tag).toBe("Saved");
         expect(yield* save(OWN, asBot(OWN))).toMatchObject(refused);
         expect(yield* save(null, asBot(OWN))).toMatchObject(refused);
+        // Keeping the other bot's binding while rewriting its prompts is refused too.
+        expect(yield* save(OTHER, asBot(OWN))).toMatchObject(refused);
         expect((yield* save(OTHER, asBot(OTHER)))._tag).toBe("Saved");
         expect(yield* save("b_missing", { kind: "user" })).toMatchObject({
           _tag: "Invalid",

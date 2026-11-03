@@ -262,8 +262,9 @@ const make = Effect.gen(function* () {
     return typeof bot === "string" ? bot : null;
   });
   /**
-   * Who may bind a workflow to which bot: the bot must exist, and a bot author may neither bind a
-   * workflow to another bot nor change or drop another bot's binding. The owner binds freely.
+   * Who may bind a workflow to which bot: the bot must exist, and a bot author never saves a
+   * workflow bound to another bot, before or after the save: keeping that binding while editing
+   * the prompts would hand the other bot's tools to its own prompts. The owner binds freely.
    */
   const bindingIssues = Effect.fn("WorkflowDefinitions.bindingIssues")(function* (
     definition: WorkflowDefinition,
@@ -274,7 +275,7 @@ const make = Effect.gen(function* () {
     if (author?.kind === "bot") {
       const before = yield* boundBot(definition.id);
       const own = (bot: string | null) => bot === null || bot === author.id;
-      if (before !== next && !(own(before) && own(next)))
+      if (!own(before) || !own(next))
         issues.push({
           path: "bot",
           code: "bot",

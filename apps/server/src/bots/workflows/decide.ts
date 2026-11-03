@@ -1353,7 +1353,11 @@ export const decide = (
             workflowTitle: definition.title,
             report: posted,
           });
-          if (resultOf(post) === null) return;
+          const delivered = resultOf(post);
+          if (delivered === null) return;
+          // A report that never reached the bot is not a quiet success: the run fails and says so.
+          if (delivered._tag === "IntentFailed")
+            return resolve(step, attempt, "failed", "fail", null, delivered.error);
         }
         // wf-engine slice 7: `promote` marks the kept ledger entry of that sha as validated.
         if (node.promote !== undefined) {

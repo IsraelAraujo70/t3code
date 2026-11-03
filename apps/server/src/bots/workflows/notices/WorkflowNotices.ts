@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as KanbanStore from "../../kanban/KanbanStore.ts";
 import * as BotPushDelivery from "../../push/BotPushDelivery.ts";
 import * as WorkflowCards from "../card/WorkflowCards.ts";
@@ -53,5 +54,5 @@ export const deliveryLayer = Layer.mergeAll(
   layer.pipe(Layer.provide(BotPushDelivery.layer)),
   WorkflowCards.layer.pipe(Layer.provide(KanbanStore.layer)),
   PullRequests.layer,
-  BotPosts.layer,
+  BotPosts.layer.pipe(Layer.provide(ProjectionStore.layer)),
 );

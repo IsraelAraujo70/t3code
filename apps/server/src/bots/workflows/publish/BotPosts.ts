@@ -18,7 +18,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
+
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as BotsStore from "../../BotsStore.ts";
 import { keyHash } from "../ids.ts";
 
@@ -64,6 +67,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* BotsStore.BotsStore;
     const engine = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const failure = (cause: { readonly message: string }) =>
       new WorkflowBotPostError({ message: cause.message });
     const find = (botId: string) =>
@@ -80,8 +84,20 @@ export const layer = Layer.effect(
     }) {
       const bot = yield* find(input.botId);
       if (Option.isNone(bot)) return null;
-      const threadId = botThreadId(bot.value.id, bot.value.homeGeneration);
       const hash = keyHash(input.runId, input.key);
+      const messageId = MessageId.make(`${WORKFLOW_POST_MESSAGE_PREFIX}${hash}`);
+      const threadId = botThreadId(bot.value.id, bot.value.homeGeneration);
+      // A replay after a crash finds the first post where it went, also when the bot rotated
+      // since: the same command id cannot be dispatched again to the new thread.
+      const itemId = derive.userTurnItem({ messageId });
+      for (const generation of [bot.value.homeGeneration, bot.value.homeGeneration - 1]) {
+        if (generation < 1) continue;
+        const earlier = botThreadId(bot.value.id, generation);
+        const item = yield* projections
+          .getTurnItem({ threadId: earlier, itemId })
+          .pipe(Effect.orElseSucceed(() => null));
+        if (item !== null) return earlier as string;
+      }
       const title =
         input.workflowTitle.length > MAX_SUMMARY
           ? `${input.workflowTitle.slice(0, MAX_SUMMARY - 1)}…`
@@ -91,7 +107,7 @@ export const layer = Layer.effect(
           type: "message.dispatch",
           commandId: CommandId.make(`server:workflow-post:${hash}`),
           threadId,
-          messageId: MessageId.make(`${WORKFLOW_POST_MESSAGE_PREFIX}${hash}`),
+          messageId,
           text: botPostText({ ...input }),
           notification: {
             source: { kind: "system" },
