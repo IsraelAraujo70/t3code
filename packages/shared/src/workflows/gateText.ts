@@ -48,11 +48,15 @@ export const gateReason = (
 
 /**
  * The full ask as markdown. An ask already written in lines stays as it is; a one-line ask with
- * inline `1) … 2) …` steps gets them as a list, so a pasted plan reads as one. `<` is escaped:
- * asks carry placeholders like `/products/<id>` that markdown would drop as HTML.
+ * inline `1) … 2) …` steps gets them as a list, so a pasted plan reads as one. `<` outside code is
+ * escaped: asks carry placeholders like `/products/<id>` that markdown would drop as HTML.
  */
 export const gateAskMarkdown = (ask: string): string => {
-  const text = ask.trim().replace(/</g, "\\<");
+  const text = ask
+    .trim()
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/</g, "\\<")))
+    .join("");
   if (text.includes("\n")) return text;
   const steps = text.match(/(?:^|\s)\d+\)\s/g) ?? [];
   if (steps.length < 2) return text;

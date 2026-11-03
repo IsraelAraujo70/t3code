@@ -220,11 +220,35 @@ it.effect(
       // Lists hear of a new row and of a status, gate or end change, not of progress inside one.
       yield* journal.putRun(row({ ...older, stepsUsed: 1 }, 3));
       yield* journal.putRun(row({ ...older, stepsUsed: 1, openGates: 1 }, 4));
+      // So do a new waiting gate at the same count, and its opening time once it is recorded.
+      const gate = { key: "a@1", reason: "Ship?", openedAt: "2026-11-02T00:00:00.000Z" };
+      const waiting = { ...older, stepsUsed: 1, openGates: 1, gate };
+      yield* journal.putRun(row(waiting, 5));
+      yield* journal.putRun(row({ ...waiting, gate: { ...gate, key: "b@1" } }, 6));
+      const opened = {
+        ...waiting,
+        gate: { ...gate, key: "b@1", openedAt: "2026-11-02T00:05:00.000Z" },
+      };
+      yield* journal.putRun(row(opened, 7));
+      yield* journal.putRun(row({ ...opened, stepsUsed: 2 }, 8));
       assert.deepEqual(Array.from(yield* PubSub.takeAll(changes)), [
         "example",
         "example",
         "example",
+        "example",
+        "example",
+        "example",
       ]);
+      // A waiting run stays listed however many newer runs are going.
+      for (let i = 0; i < 50; i++) {
+        const id = `wfr_${String(100 + i).padStart(20, "0")}`;
+        yield* journal.putRun(
+          row(summary(id, `2026-11-03T00:${String(i).padStart(2, "0")}:00.000Z`), 1),
+        );
+      }
+      const active = yield* journal.activeRuns;
+      assert.equal(active.length, 50);
+      assert.equal(active[0]?.runId, older.runId);
     }).pipe(Effect.scoped, Effect.provide(layerMemory)),
 );
 

@@ -81,7 +81,7 @@ export class Journal extends Context.Service<
       WorkflowJournalError
     >;
     readonly lastRuns: Effect.Effect<ReadonlyMap<string, WorkflowRunSummary>, WorkflowJournalError>;
-    /** Runs that have not ended, newest first. */
+    /** Runs that have not ended, newest first; waiting and paused ones are never cut by the limit. */
     readonly activeRuns: Effect.Effect<ReadonlyArray<WorkflowRunSummary>, WorkflowJournalError>;
     readonly projectionLag: Effect.Effect<
       ReadonlyArray<{
@@ -277,22 +277,25 @@ const make = Effect.gen(function* () {
         pull_request_url: s.pullRequest,
         summary_json: summary,
       };
-      // The waiting gate is listed too: one gate can close as the next opens, same count.
+      // The waiting gate is listed too: one gate can close as the next opens, same count, and
+      // its openedAt arrives after it is first projected.
       const listed = (row: {
         readonly status: string;
         readonly open_gates: number;
         readonly ended_at: string | null;
         readonly gate_key: string | null;
-      }) => `${row.status}|${row.open_gates}|${row.ended_at}|${row.gate_key}`;
+        readonly gate_at: string | null;
+      }) => `${row.status}|${row.open_gates}|${row.ended_at}|${row.gate_key}|${row.gate_at}`;
       const before = yield* sql<{
         readonly status: string;
         readonly open_gates: number;
         readonly ended_at: string | null;
         readonly gate_key: string | null;
-      }>`SELECT status, open_gates, ended_at, json_extract(summary_json, '$.gate.key') AS gate_key FROM workflow_runs WHERE run_id = ${s.runId}`;
+        readonly gate_at: string | null;
+      }>`SELECT status, open_gates, ended_at, json_extract(summary_json, '$.gate.key') AS gate_key, json_extract(summary_json, '$.gate.openedAt') AS gate_at FROM workflow_runs WHERE run_id = ${s.runId}`;
       const written =
         yield* sql`INSERT INTO workflow_runs ${sql.insert(values)} ON CONFLICT(run_id) DO UPDATE SET ${sql.update(values)} WHERE excluded.last_seq >= workflow_runs.last_seq RETURNING run_id`;
-      const after = { ...values, gate_key: s.gate?.key ?? null };
+      const after = { ...values, gate_key: s.gate?.key ?? null, gate_at: s.gate?.openedAt ?? null };
       if (written.length > 0 && (before[0] === undefined || listed(before[0]) !== listed(after)))
         yield* PubSub.publish(runChanges, s.workflowId);
     }, Effect.mapError(fail)),
@@ -322,7 +325,7 @@ const make = Effect.gen(function* () {
       const rows = yield* sql<{
         readonly summary_json: string;
       }>`SELECT summary_json FROM workflow_runs WHERE summary_json != '' AND ended_at IS NULL
-        ORDER BY started_at DESC, run_id ASC LIMIT 50`;
+        ORDER BY (open_gates > 0 OR status = 'paused') DESC, started_at DESC, run_id ASC LIMIT 50`;
       return yield* Effect.forEach(rows, decodeSummary);
     }).pipe(Effect.mapError(fail)),
     projectionLag: sql<{

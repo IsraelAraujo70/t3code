@@ -54,4 +54,7 @@ it("lists inline numbered steps and leaves written lines alone", () => {
   expect(gateAskMarkdown("Merge?\n1) a 2) b")).toBe("Merge?\n1) a 2) b");
   expect(gateAskMarkdown("Pick 1) only")).toBe("Pick 1) only");
   expect(gateAskMarkdown("DELETE /api/products/<id>")).toBe("DELETE /api/products/\\<id>");
+  expect(gateAskMarkdown("If `count < 3` then <stop>\n```\na < b\n```")).toBe(
+    "If `count < 3` then \\<stop>\n```\na < b\n```",
+  );
 });
