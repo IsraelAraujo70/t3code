@@ -106,9 +106,14 @@ function triggerPartsFromLabel(kind: string, label: string): WorkflowTriggerPart
         },
       };
     }
-    case "bot":
-      // `bot · 2 bots` gives a count, not the ids; such a label is shown as written.
-      return label === "bot · any bot" ? { bot: { bots: null } } : {};
+    case "bot": {
+      if (label === "bot · any bot") return { bot: { bots: null } };
+      // The label carries how many bots, not which: placeholders keep the count for the words.
+      const count = /^bot · (\d+) bots?$/.exec(label)?.[1];
+      return count === undefined
+        ? {}
+        : { bot: { bots: Array.from({ length: Number(count) }, () => "") } };
+    }
     case "call":
       return label === "called by any workflow"
         ? { call: { from: null } }

@@ -14,6 +14,7 @@ import type {
   WorkflowRunView,
   WorkflowStepAttemptView,
   WorkflowStepStatus,
+  WorkflowsSnapshot,
 } from "@t3tools/contracts";
 
 /** What a status means to the eye; each client maps a tone to its own colors. */
@@ -291,8 +292,13 @@ export const workflowRunAlertPath: WorkflowRunApi["workflowRunAlertPath"] = (env
   `/bots${workflowRunHref(env, id)}`;
 
 /**
- * Moves when a workflow's last run starts, changes status, opens or closes a gate, or ends. Run
- * history is a one-shot query, so the lists refetch it when this moves.
+ * Moves when any run changes (`runsRevision`) or, on older hosts that do not send it, when a
+ * workflow's last run does. Run history is a one-shot query, so the lists refetch it on a move.
  */
-export const lastRunsKey = (lastRuns: ReadonlyArray<WorkflowRunSummary | null>): string =>
-  lastRuns.map((run) => (run === null ? "" : `${run.runId}:${run.status}:${run.openGates}`)).join();
+export const runHistoryKey = (snapshot: Pick<WorkflowsSnapshot, "workflows" | "runsRevision">) =>
+  [
+    snapshot.runsRevision ?? "",
+    ...snapshot.workflows.map(({ lastRun }) =>
+      lastRun === null ? "" : `${lastRun.runId}:${lastRun.status}:${lastRun.openGates}`,
+    ),
+  ].join();

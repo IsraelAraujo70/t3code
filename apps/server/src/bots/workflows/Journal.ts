@@ -150,6 +150,8 @@ export class Journal extends Context.Service<
      * status, open gates or end. Published after the row is written.
      */
     readonly subscribeRunChanges: Effect.Effect<PubSub.Subscription<string>, never, Scope.Scope>;
+    /** Moves whenever any run row is written: a change to any run, not only a workflow's last. */
+    readonly runsRevision: Effect.Effect<string, WorkflowJournalError>;
   }
 >()("t3/bots/workflows/Journal") {}
 
@@ -465,6 +467,12 @@ const make = Effect.gen(function* () {
     }, Effect.mapError(fail)),
     subscribe: PubSub.subscribe(pubsub),
     subscribeRunChanges: PubSub.subscribe(runChanges),
+    runsRevision: sql<{
+      readonly revision: string;
+    }>`SELECT COUNT(*) || ':' || COALESCE(SUM(last_seq), 0) AS revision FROM workflow_runs`.pipe(
+      Effect.map((rows) => rows[0]?.revision ?? "0:0"),
+      Effect.mapError(fail),
+    ),
   });
 });
 export const layer = Layer.effect(Journal, make).pipe(Layer.provide(BotsDb.layer));

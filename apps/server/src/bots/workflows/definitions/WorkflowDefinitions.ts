@@ -627,7 +627,8 @@ const make = Effect.gen(function* () {
             triggers: triggerSummaries(definition.id, definition.triggers, new Map()),
           });
         }
-        return { repoPath: repo.root, workflows, deleted, templates };
+        const runsRevision = yield* journal.runsRevision;
+        return { repoPath: repo.root, workflows, deleted, templates, runsRevision };
       }).pipe(Effect.mapError(internal));
       // A webhook task appears after the save that asked for it, so its URL arrives as a change
       // too. The list's first emission is kept: it covers a task added during the first read.
@@ -639,6 +640,8 @@ const make = Effect.gen(function* () {
         Stream.fromSubscription(subscription).pipe(
           Stream.merge(Stream.fromSubscription(runChanges)),
           Stream.merge(taskChanges),
+          // A burst of changes reads once: a read covers every change before it.
+          Stream.buffer({ capacity: 1, strategy: "sliding" }),
           Stream.mapEffect(() => read),
         ),
       );

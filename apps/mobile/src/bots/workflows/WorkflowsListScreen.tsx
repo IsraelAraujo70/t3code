@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
   describeTrigger,
-  lastRunsKey,
+  runHistoryKey,
   runStatusLabel,
   runStatusTone,
 } from "@t3tools/client-runtime/workflows";
@@ -40,16 +40,16 @@ function ListContent({ environmentId }: { environmentId: EnvironmentId }) {
   const query = useWorkflowsSnapshot(env);
   const runs = useWorkflowRuns(env, { limit: 20 });
   const navigation = useNavigation();
-  const lastRuns =
-    query.data === null ? null : lastRunsKey(query.data.workflows.map((w) => w.lastRun));
+  const lastRuns = query.data === null ? null : runHistoryKey(query.data);
   const seenLastRuns = useRef<string | null>(null);
   const refreshRuns = runs.refresh;
   const runsPending = runs.isPending;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the one-shot run list when the snapshot stream reports a run that started, stopped at a gate or ended
   useEffect(() => {
-    if (lastRuns === null || seenLastRuns.current === lastRuns) return;
+    // A request already in flight may have read before the change, so wait and refetch after it.
+    if (lastRuns === null || seenLastRuns.current === lastRuns || runsPending) return;
     seenLastRuns.current = lastRuns;
-    if (!runsPending) refreshRuns();
+    refreshRuns();
   }, [lastRuns, refreshRuns, runsPending]);
   return (
     <View className="flex-1 bg-screen">

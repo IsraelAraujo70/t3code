@@ -9,6 +9,7 @@ import {
   WorkflowId,
   WorkflowRunId,
   type WorkflowRunSummary,
+  type WorkflowsSnapshot,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -17,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
@@ -685,21 +687,31 @@ it.live("shows each workflow's newest projected run as its last run, live in the
         activeMs: null,
         activeSince: null,
       } satisfies WorkflowRunSummary;
-      const ready = yield* Deferred.make<void>();
-      const snapshots = yield* definitions.snapshot.pipe(
-        Stream.tap(() => Deferred.succeed(ready, undefined)),
-        Stream.take(2),
-        Stream.runCollect,
+      const snapshots = yield* Queue.unbounded<WorkflowsSnapshot>();
+      yield* definitions.snapshot.pipe(
+        Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot)),
         Effect.forkChild,
       );
-      yield* Deferred.await(ready);
+      const before = yield* Queue.take(snapshots);
+      expect(before.workflows[0]?.lastRun).toBeNull();
       yield* journal.putRun({ summary: run, lastSeq: 9, pendingIntents: 0, parentRunId: null });
       const listed = (yield* definitions.list).find((d) => d.workflowId === saved.workflowId);
       expect(listed?.lastRun).toEqual(run);
       // An open list hears of the run without any definition changing.
-      const [before, after] = yield* Fiber.join(snapshots);
-      expect(before?.workflows[0]?.lastRun).toBeNull();
-      expect(after?.workflows[0]?.lastRun).toEqual(run);
+      const after = yield* Queue.take(snapshots);
+      expect(after.workflows[0]?.lastRun).toEqual(run);
+      // An older run of a parallel workflow is not the last run, yet run history must move.
+      const older = {
+        ...run,
+        runId: WorkflowRunId.make("wfr_00000000000000000000"),
+        status: "running",
+        startedAt: "2026-11-01T00:00:00.000Z",
+        endedAt: null,
+      } satisfies WorkflowRunSummary;
+      yield* journal.putRun({ summary: older, lastSeq: 3, pendingIntents: 0, parentRunId: null });
+      const parallel = yield* Queue.take(snapshots);
+      expect(parallel.workflows[0]?.lastRun).toEqual(run);
+      expect(parallel.runsRevision).not.toBe(after.runsRevision);
     }),
   ),
 );

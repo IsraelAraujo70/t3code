@@ -140,6 +140,11 @@ export const WorkflowsSnapshot = Schema.Struct({
   workflows: Schema.Array(WorkflowSummary),
   deleted: Schema.Array(WorkflowDeletedSummary),
   templates: Schema.Array(WorkflowTemplateSummary),
+  /**
+   * Changes when any run changes, including one that is no longer a workflow's `lastRun`: the
+   * cue to refetch run history. Absent from older hosts.
+   */
+  runsRevision: Schema.optional(Schema.String),
 });
 export type WorkflowsSnapshot = typeof WorkflowsSnapshot.Type;
 

@@ -106,7 +106,7 @@ describe("describeTrigger", () => {
     ],
     [
       { kind: "bot", title: null, label: "bot · 2 bots" },
-      { text: "bot · 2 bots", detail: "" },
+      { text: "2 bots can run it", detail: "" },
     ],
     [
       { kind: "someFutureKind", title: null, label: "something new" },
@@ -132,6 +132,7 @@ describe("describeTrigger", () => {
       { kind: "threadSettled" },
       { kind: "manual" },
       { kind: "bot", description: "Run it" },
+      { kind: "bot", description: "Run it", bots: ["b_one", "b_two"] },
       { kind: "call", from: ["release", "nightly"] },
       { kind: "call" },
     ];
