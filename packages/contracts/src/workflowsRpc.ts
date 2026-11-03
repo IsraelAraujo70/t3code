@@ -145,6 +145,11 @@ export const WorkflowsSnapshot = Schema.Struct({
    * cue to refetch run history. Absent from older hosts.
    */
   runsRevision: Schema.optional(Schema.String),
+  /**
+   * Every run that has not ended, newest first, including parallel runs of one workflow. Absent
+   * from older hosts; clients then read the active `lastRun`s.
+   */
+  activeRuns: Schema.optional(Schema.Array(WorkflowRunSummary)),
 });
 export type WorkflowsSnapshot = typeof WorkflowsSnapshot.Type;
 

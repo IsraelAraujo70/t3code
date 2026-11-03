@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type { Json } from "effect/Schema";
-import type { CompiledWorkflow } from "@t3tools/shared/workflows";
+import { gateReason, type CompiledWorkflow } from "@t3tools/shared/workflows";
 
 import {
   ThreadId,
@@ -28,7 +28,7 @@ import { activeClockRunning, activeMs } from "./budget/budget.ts";
 import { blockViews } from "./blocks/registry.ts";
 import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import type { StoredFact } from "./facts.ts";
-import type { RunState, StepAttempt } from "./state.ts";
+import type { GateState, RunState, StepAttempt } from "./state.ts";
 
 /** Costs added up: usage is complete or unavailable only when every part is; USD only when every part has one. */
 const sumCosts = (
@@ -52,6 +52,19 @@ const sumCosts = (
   };
 };
 
+const shortOf = (gate: GateState): string => gate.intent.short ?? gateReason(gate.intent.ask);
+/** Gates still waiting for the user, oldest first. */
+const waitingGates = (state: RunState): ReadonlyArray<GateState> =>
+  state.ended === null
+    ? [...state.gates.values()]
+        .filter((g) => g.decision === null)
+        .sort(
+          (a, b) =>
+            (state.intents.get(a.intent.key)?.seq ?? 0) -
+            (state.intents.get(b.intent.key)?.seq ?? 0),
+        )
+    : [];
+
 /** The summary of a run that started (its stream has RunStarted). */
 export const runSummary = (state: RunState, now?: number): WorkflowRunSummary => {
   const started = state.started;
@@ -68,6 +81,8 @@ export const runSummary = (state: RunState, now?: number): WorkflowRunSummary =>
     usdEstimate: null,
   };
   const intents = [...state.intents.values()].map((e) => e.intent);
+  const waiting = waitingGates(state);
+  const gate = waiting[0];
   return {
     runId: WorkflowRunId.make(state.runId),
     workflowId: WorkflowId.make(started.workflowId),
@@ -98,10 +113,7 @@ export const runSummary = (state: RunState, now?: number): WorkflowRunSummary =>
           : 0),
       0,
     ),
-    openGates:
-      state.ended === null
-        ? [...state.gates.values()].filter((g) => g.decision === null).length
-        : 0,
+    openGates: waiting.length,
     pullRequest:
       [...state.intents.values()]
         .reverse()
@@ -112,6 +124,14 @@ export const runSummary = (state: RunState, now?: number): WorkflowRunSummary =>
     activeSince: activeClockRunning(state, now)
       ? DateTime.formatIso(DateTime.makeUnsafe(now))
       : null,
+    gate:
+      gate === undefined
+        ? null
+        : {
+            key: gate.intent.gateKey,
+            reason: shortOf(gate),
+            openedAt: gate.openedAt ?? started.at,
+          },
   };
 };
 
@@ -277,7 +297,7 @@ export const stepViews = (
       endedAt: null,
       queuedMs: null,
       port: null,
-      summary: gate.intent.ask.slice(0, 500),
+      summary: shortOf(gate),
       cost: null,
       evidence: null,
     });
@@ -296,6 +316,7 @@ export const gateViews = (state: RunState): ReadonlyArray<WorkflowGateView> => {
       key: g.intent.gateKey,
       step: WorkflowStepKey.make(g.intent.step),
       ask: g.intent.ask,
+      reason: shortOf(g),
       options: g.intent.options,
       openedAt: g.openedAt ?? state.started?.at ?? "",
       expiresAt: g.intent.expiresAt,

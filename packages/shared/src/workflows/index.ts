@@ -11,3 +11,4 @@ export * from "./models.ts";
 export * from "./compile.ts";
 export * from "./output.ts";
 export * from "./triggers.ts";
+export * from "./gateText.ts";

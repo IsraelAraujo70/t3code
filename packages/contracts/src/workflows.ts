@@ -717,6 +717,8 @@ export const WorkflowGateView = Schema.Struct({
   key: Schema.String,
   step: WorkflowStepKey,
   ask: Schema.String,
+  /** `ask` in a line or two (`gateReason`); absent from older hosts. */
+  reason: Schema.optional(Schema.String),
   options: Schema.Array(Schema.String),
   openedAt: IsoDateTime,
   expiresAt: Schema.NullOr(IsoDateTime),
@@ -811,5 +813,14 @@ export const WorkflowRunSummary = Schema.Struct({
   activeMs: Schema.NullOr(NonNegativeInt),
   /** When `activeMs` was measured, while that clock still runs; null while paused, at a gate or ended. */
   activeSince: Schema.NullOr(IsoDateTime),
+  /**
+   * The oldest gate still waiting for the user, with its short reason; null when none. Absent
+   * from older hosts and from rows written before it existed.
+   */
+  gate: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ key: Schema.String, reason: Schema.String, openedAt: IsoDateTime }),
+    ),
+  ),
 });
 export type WorkflowRunSummary = typeof WorkflowRunSummary.Type;
