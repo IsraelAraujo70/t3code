@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
   type AuthPairingLink,
+  type AuthThreadGrant, // Fork (friend)
   type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
 import {
@@ -30,6 +31,7 @@ export interface BootstrapGrant {
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt: DateTime.DateTime;
+  readonly threadGrant?: AuthThreadGrant; // Fork (friend)
 }
 
 export class UnknownBootstrapCredentialError extends Schema.TaggedError<UnknownBootstrapCredentialError>()(
@@ -214,6 +216,7 @@ export class PairingGrantStore extends Context.Service<
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
+      readonly threadGrant?: AuthThreadGrant; // Fork (friend)
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
     readonly listActive: () => Effect.Effect<
       ReadonlyArray<AuthPairingLink>,
@@ -412,6 +415,7 @@ const make = Effect.gen(function* () {
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         createdAt: now,
         expiresAt: expiresAt,
+        ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
       })
       .pipe(
         Effect.mapError(
@@ -571,6 +575,8 @@ const make = Effect.gen(function* () {
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
             : {}),
           expiresAt: consumed.value.expiresAt,
+          // Fork (friend): the session issued from this link inherits its thread grant.
+          ...(consumed.value.threadGrant ? { threadGrant: consumed.value.threadGrant } : {}),
         } satisfies BootstrapGrant;
       }
 

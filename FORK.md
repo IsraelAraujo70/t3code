@@ -27,6 +27,24 @@ expected marker count. `check-seams` fails when a merge drops or duplicates a fo
 upstream file gains a fork edit that the list does not record. Keep each upstream edit small, and add
 behavior in fork-owned files instead.
 
+## Fork columns in upstream tables
+
+The fork never adds a numbered migration to `statev2.sqlite`. The migrator skips every id up to the
+highest one recorded, so a fork id would either collide with a later upstream id or stop upstream's
+next migrations from running. A fork column is added instead by an idempotent step that runs after
+`runMigrations` and records nothing in `effect_sql_migrations`
+([`threadGrantSchema.ts`](apps/server/src/bots/auth/threadGrantSchema.ts)).
+
+## Sessions limited to one thread
+
+`t3 auth session issue --thread <threadId|bot:<botId>:*>` (and `t3 auth pairing create --thread`)
+issues a credential confined to one thread, or to every thread of one bot. The grant is stored in
+`thread_grant` on `auth_sessions` and `auth_pairing_links` and only narrows the session's scopes.
+Over HTTP the session can only mint its RPC socket ticket; on the socket it can only send messages
+to, interrupt, subscribe to and read items of a matching thread, with a closed list of payload
+fields. Everything else, including `launchThread`, `subscribeShell`, `projectsMutate` and `bots.*`,
+is refused. See [`threadGrant.ts`](apps/server/src/bots/auth/threadGrant.ts).
+
 ## One bots host
 
 Bots run on one machine only: the server started with `T3CODE_BOTS_HOST=1`. Every other server of

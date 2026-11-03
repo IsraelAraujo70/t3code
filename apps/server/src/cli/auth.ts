@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { threadGrantFlag } from "../bots/auth/threadGrantFlag.ts"; // Fork (friend)
 
 import {
   formatIssuedPairingCredential,
@@ -93,6 +94,7 @@ const pairingCreateCommand = Command.make("create", {
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
+  thread: threadGrantFlag, // Fork (friend)
   json: jsonFlag,
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
@@ -106,6 +108,7 @@ const pairingCreateCommand = Command.make("create", {
             subject: "one-time-token",
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+            ...(Option.isSome(flags.thread) ? { threadGrant: flags.thread.value } : {}), // Fork (friend)
           });
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
@@ -172,6 +175,7 @@ const sessionIssueCommand = Command.make("issue", {
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
+  thread: threadGrantFlag, // Fork (friend)
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
 }).pipe(
@@ -186,6 +190,7 @@ const sessionIssueCommand = Command.make("issue", {
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
+            ...(Option.isSome(flags.thread) ? { threadGrant: flags.thread.value } : {}), // Fork (friend)
           });
           yield* Console.log(
             formatIssuedSession(issued, {

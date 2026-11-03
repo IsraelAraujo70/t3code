@@ -14,6 +14,7 @@ import {
   type AuthPairingCredentialResult,
   type AuthSessionId,
   type AuthSessionState,
+  type AuthThreadGrant, // Fork (friend)
   authScopeResponse,
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
@@ -45,6 +46,7 @@ import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./Reusa
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { threadGrantAllowsHttpRequest } from "../bots/auth/threadGrant.ts"; // Fork (friend)
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -57,6 +59,7 @@ export interface IssuedPairingLink {
   readonly label?: string;
   readonly createdAt: DateTime.Utc;
   readonly expiresAt: DateTime.Utc;
+  readonly threadGrant?: AuthThreadGrant; // Fork (friend)
 }
 
 export interface IssuedBearerSession {
@@ -67,6 +70,7 @@ export interface IssuedBearerSession {
   readonly subject: string;
   readonly client: AuthClientMetadata;
   readonly expiresAt: DateTime.Utc;
+  readonly threadGrant?: AuthThreadGrant; // Fork (friend)
 }
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
@@ -88,6 +92,7 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  readonly threadGrant?: AuthThreadGrant; // Fork (friend)
 }
 
 const serverAuthInternalErrorContext = {
@@ -484,6 +489,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
+      readonly threadGrant?: AuthThreadGrant; // Fork (friend)
     }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
@@ -501,6 +507,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
+      readonly threadGrant?: AuthThreadGrant; // Fork (friend)
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
@@ -734,8 +741,23 @@ export const make = Effect.gen(function* () {
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        ...(session.threadGrant ? { threadGrant: session.threadGrant } : {}), // Fork (friend)
       })),
     );
+
+  // Fork (friend): a thread-granted session reaches only its RPC socket and that socket's ticket.
+  const confineThreadGrant =
+    (allowed: () => boolean) =>
+    (
+      session: AuthenticatedSession,
+    ): Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError> =>
+      session.threadGrant === undefined || allowed()
+        ? Effect.succeed(session)
+        : Effect.fail(
+            new ServerAuthInvalidCredentialError({
+              diagnostic: "This session is limited to one thread's RPC socket.",
+            }),
+          );
 
   const resolveRequestCredential = (request: HttpServerRequest.HttpServerRequest) => {
     const selectedCredential = selectRequestCredential(
@@ -875,6 +897,7 @@ export const make = Effect.gen(function* () {
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...(grant.threadGrant ? { threadGrant: grant.threadGrant } : {}), // Fork (friend)
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -897,7 +920,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "scopes" | "subject" | "label" | "threadGrant" // Fork (friend)
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -962,6 +985,7 @@ export const make = Effect.gen(function* () {
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                ...(grant.threadGrant ? { threadGrant: grant.threadGrant } : {}), // Fork (friend)
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
@@ -1009,12 +1033,14 @@ export const make = Effect.gen(function* () {
     readonly subject: string;
     readonly label?: string;
     readonly purpose?: "startup";
+    readonly threadGrant?: AuthThreadGrant; // Fork (friend)
   }) =>
     createPairingLink({
       scopes: input.scopes,
       subject: input.subject,
       ...(input.label ? { label: input.label } : {}),
       ...(input.purpose ? { purpose: input.purpose } : {}),
+      ...(input.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
     }).pipe(
       Effect.map(
         (issued) =>
@@ -1039,6 +1065,7 @@ export const make = Effect.gen(function* () {
         ...(input?.label ? { label: input.label } : {}),
         ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         ...(input?.purpose ? { purpose: input.purpose } : {}),
+        ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
       });
       return {
         id: issued.id,
@@ -1048,6 +1075,7 @@ export const make = Effect.gen(function* () {
         ...(issued.label ? { label: issued.label } : {}),
         createdAt: DateTime.toUtc(createdAt),
         expiresAt: DateTime.toUtc(issued.expiresAt),
+        ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
       } satisfies IssuedPairingLink;
     },
     Effect.mapError((cause) => new ServerAuthPairingLinkCreationError({ cause })),
@@ -1087,6 +1115,7 @@ export const make = Effect.gen(function* () {
           deviceType: "bot",
         },
         ...(input?.ttl ? { ttl: input.ttl } : {}),
+        ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
       })
       .pipe(
         Effect.map(
@@ -1099,6 +1128,7 @@ export const make = Effect.gen(function* () {
               subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
               client: issued.client,
               expiresAt: DateTime.toUtc(issued.expiresAt),
+              ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
             }) satisfies IssuedBearerSession,
         ),
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
@@ -1129,6 +1159,7 @@ export const make = Effect.gen(function* () {
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
+      ...(input?.threadGrant ? { threadGrant: input.threadGrant } : {}), // Fork (friend)
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
@@ -1229,7 +1260,21 @@ export const make = Effect.gen(function* () {
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
   ) =>
-    authenticateRequest(request).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"));
+    authenticateRequest(request).pipe(
+      // Fork (friend): see confineThreadGrant.
+      Effect.flatMap(
+        confineThreadGrant(() =>
+          threadGrantAllowsHttpRequest(
+            request.method,
+            Option.match(HttpServerRequest.toURL(request), {
+              onNone: () => "",
+              onSome: (url) => url.pathname,
+            }),
+          ),
+        ),
+      ),
+      Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"),
+    );
 
   const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request, use) {
@@ -1269,7 +1314,8 @@ export const make = Effect.gen(function* () {
               Effect.provideService(Crypto.Crypto, crypto),
             );
           }
-          return {
+          // Fork (friend): carry the grant, and confine it to the RPC socket.
+          return yield* confineThreadGrant(() => use === "rpc")({
             sessionId: session.sessionId,
             subject: session.subject,
             method: session.method,
@@ -1278,11 +1324,14 @@ export const make = Effect.gen(function* () {
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),
             ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-          };
+            ...(session.threadGrant ? { threadGrant: session.threadGrant } : {}),
+          });
         }
       }
 
-      return yield* authenticateRequest(request);
+      return yield* authenticateRequest(request).pipe(
+        Effect.flatMap(confineThreadGrant(() => use === "rpc")), // Fork (friend)
+      );
     });
 
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
@@ -1291,7 +1340,9 @@ export const make = Effect.gen(function* () {
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
-        session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
+        session.subject === MCP_CLIENT_SUBJECT &&
+        session.method === "bearer-access-token" &&
+        session.threadGrant === undefined // Fork (friend)
           ? Effect.succeed({
               sessionId: session.sessionId,
               label: session.client.label ?? "MCP client",
@@ -1359,7 +1410,9 @@ export const make = Effect.gen(function* () {
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       }),
       Effect.flatMap((grant) =>
-        grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
+        // Fork (friend): an MCP session cannot carry a thread grant, so a granted code is refused.
+        (grant.method !== "one-time-token" && grant.method !== "reusable-dev-token") ||
+        grant.threadGrant !== undefined
           ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
           : Effect.void,
       ),

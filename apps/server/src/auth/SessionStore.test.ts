@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AuthThreadGrant, EnvironmentId } from "@t3tools/contracts"; // Fork (friend)
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -355,6 +355,20 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect((yield* sessions.verify(capped.token)).runtimeModeCeiling).toBe("auto");
       expect((yield* sessions.verify(uncapped.token)).runtimeModeCeiling).toBeUndefined();
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+  // Fork (friend): a thread grant lives on the session row and reaches both verifiers.
+  it.effect("carries a thread grant only on sessions issued with one", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const threadGrant = AuthThreadGrant.make("bot:b_fin:*");
+      const granted = yield* sessions.issue({ method: "bearer-access-token", threadGrant });
+      const plain = yield* sessions.issue({ method: "bearer-access-token" });
+      const ticket = yield* sessions.issueWebSocketToken(granted.sessionId, { audience: "rpc" });
+
+      expect((yield* sessions.verify(granted.token)).threadGrant).toBe(threadGrant);
+      expect((yield* sessions.verifyWebSocketToken(ticket.token)).threadGrant).toBe(threadGrant);
+      expect((yield* sessions.verify(plain.token)).threadGrant).toBeUndefined();
     }).pipe(Effect.provide(layerSessionStore())),
   );
   it.effect("takes scopes from the session record", () =>

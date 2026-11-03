@@ -30,11 +30,14 @@ import {
   RpcScopeAuthorization,
   WS_METHODS,
   WsRpcGroup,
+  type AuthThreadGrant, // Fork (friend)
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
+
+import { threadGrantRpcDenial } from "../bots/auth/threadGrant.ts"; // Fork (friend)
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -283,11 +286,23 @@ const requiredScopesForRpcCall = (
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+  threadGrant?: AuthThreadGrant, // Fork (friend)
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
+    // Fork (friend): a thread grant only narrows what the scopes above allow.
+    const grantDenial =
+      threadGrant === undefined ? undefined : threadGrantRpcDenial(threadGrant, rpc._tag, payload);
+    if (grantDenial !== undefined) {
+      return Effect.fail(
+        new EnvironmentAuthorizationError({
+          message: `This session is limited to ${threadGrant}: ${grantDenial}.`,
+          requiredScope: requiredScopes[0] ?? AuthOrchestrationOperateScope,
+        }),
+      );
+    }
     return onAuthorized === undefined
       ? effect
       : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));

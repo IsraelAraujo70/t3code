@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { AuthEnvironmentScopes } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, AuthThreadGrant } from "@t3tools/contracts"; // Fork (friend)
 
 import {
   type AuthPairingLinkRepositoryError,
@@ -28,6 +28,7 @@ export const AuthPairingLinkRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  threadGrant: Schema.NullOr(AuthThreadGrant), // Fork (friend)
 });
 export type AuthPairingLinkRecord = typeof AuthPairingLinkRecord.Type;
 
@@ -41,6 +42,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
+  threadGrant: Schema.optionalKey(AuthThreadGrant), // Fork (friend)
 });
 export type CreateAuthPairingLinkInput = typeof CreateAuthPairingLinkInput.Type;
 
@@ -82,6 +84,7 @@ const AuthPairingLinkRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   consumedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  threadGrant: Schema.Unknown, // Fork (friend)
 });
 
 const decodeAuthPairingLinkDbRow = Schema.decodeUnknownEffect(AuthPairingLinkRecord);
@@ -126,6 +129,7 @@ function toPersistenceSqlOrDecodeError(
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Fork (friend): every statement here also writes or returns thread_grant.
   const createPairingLinkRow = SqlSchema.void({
     Request: CreateAuthPairingLinkInput,
     execute: (input) =>
@@ -141,7 +145,8 @@ export const make = Effect.gen(function* () {
           created_at,
           expires_at,
           consumed_at,
-          revoked_at
+          revoked_at,
+          thread_grant
         )
         VALUES (
           ${input.id},
@@ -154,7 +159,8 @@ export const make = Effect.gen(function* () {
           ${input.createdAt},
           ${input.expiresAt},
           NULL,
-          NULL
+          NULL,
+          ${input.threadGrant ?? null}
         )
       `,
   });
@@ -206,7 +212,8 @@ export const make = Effect.gen(function* () {
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          thread_grant AS "threadGrant"
       `,
   });
 
@@ -226,7 +233,8 @@ export const make = Effect.gen(function* () {
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          thread_grant AS "threadGrant"
         FROM auth_pairing_links
         WHERE revoked_at IS NULL
           AND consumed_at IS NULL
@@ -265,7 +273,8 @@ export const make = Effect.gen(function* () {
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          thread_grant AS "threadGrant"
         FROM auth_pairing_links
         WHERE credential = ${credential}
       `,
