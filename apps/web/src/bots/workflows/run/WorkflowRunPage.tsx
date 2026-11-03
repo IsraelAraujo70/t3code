@@ -25,7 +25,17 @@ import {
   withTriggerStates,
 } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  HandIcon,
+  PauseIcon,
+  PencilIcon,
+  PlayIcon,
+  RotateCcwIcon,
+} from "lucide-react";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";
 import { randomUUID } from "~/lib/utils";
@@ -33,7 +43,12 @@ import { useAtomCommand } from "../../../state/use-atom-command";
 import { commandFailureMessage } from "../../botsSettingsShared";
 import { Button } from "../../../components/ui/button";
 import { useWorkflowRun, workflowsEnvironment } from "../state";
-import { WorkflowsNotice, WorkflowsPageFrame } from "../WorkflowsPageFrame";
+import {
+  WorkflowsBreadcrumb,
+  WorkflowsNotice,
+  WorkflowsPageFrame,
+  WorkflowsSection,
+} from "../WorkflowsPageFrame";
 import { RunStatusBadge, StepStatusBadge } from "../WorkflowStatusBadge";
 import { LazyWorkflowCanvas } from "../canvas/LazyWorkflowCanvas";
 import {
@@ -62,8 +77,12 @@ export function WorkflowRunPage(props: { environmentId: EnvironmentId; runId: Wo
   return run.data ? (
     <RunContent environmentId={props.environmentId} view={run.data} queryError={run.error} />
   ) : (
-    <WorkflowsPageFrame title="Workflow run">
-      <WorkflowsNotice>{run.error ?? "Loading…"}</WorkflowsNotice>
+    <WorkflowsPageFrame
+      title={<WorkflowsBreadcrumb environmentId={props.environmentId}>Run</WorkflowsBreadcrumb>}
+    >
+      <WorkflowsNotice tone={run.error ? "error" : "muted"}>
+        {run.error ?? "Loading run…"}
+      </WorkflowsNotice>
     </WorkflowsPageFrame>
   );
 }
@@ -122,30 +141,26 @@ function RunContent({
     setPending(false);
     if (result._tag === "Failure") setError(commandFailureMessage(result));
   };
+  const elapsed = summary.endedAt
+    ? formatDuration(Math.max(0, Date.parse(summary.endedAt) - Date.parse(summary.startedAt)))
+    : liveDuration(summary.startedAt, now);
+  const waitingGates = openGates(view.gates);
   return (
     <WorkflowsPageFrame
-      title={summary.title}
+      title={
+        <WorkflowsBreadcrumb environmentId={environmentId}>
+          <Link
+            to="/workflows/$environmentId/$workflowId"
+            params={{ environmentId, workflowId: summary.workflowId }}
+            className="truncate hover:underline"
+          >
+            {summary.title}
+          </Link>
+          <RunStatusBadge status={summary.status} />
+        </WorkflowsBreadcrumb>
+      }
       actions={
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            render={<Link to="/workflows/$environmentId" params={{ environmentId }} />}
-          >
-            Workflows
-          </Button>
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            render={
-              <Link
-                to="/workflows/$environmentId/$workflowId"
-                params={{ environmentId, workflowId: summary.workflowId }}
-              />
-            }
-          >
-            Edit workflow
-          </Button>
+        <div className="flex items-center gap-1.5">
           {summary.status === "running" ? (
             <Button
               size="xs"
@@ -153,6 +168,7 @@ function RunContent({
               disabled={pending || !canOperate}
               onClick={() => void submit({ _tag: "pause" })}
             >
+              <PauseIcon />
               Pause
             </Button>
           ) : null}
@@ -163,6 +179,7 @@ function RunContent({
               disabled={pending || !canOperate}
               onClick={() => void submit({ _tag: "resume" })}
             >
+              <PlayIcon />
               Resume
             </Button>
           ) : null}
@@ -173,278 +190,315 @@ function RunContent({
               disabled={pending || !canOperate}
               onClick={() => void submit({ _tag: "cancel" })}
             >
-              Cancel
+              Cancel run
             </Button>
           ) : null}
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            render={
+              <Link
+                to="/workflows/$environmentId/$workflowId"
+                params={{ environmentId, workflowId: summary.workflowId }}
+              />
+            }
+          >
+            <PencilIcon />
+            Edit workflow
+          </Button>
         </div>
       }
     >
-      <div className="space-y-6 p-6">
-        {view.warnings?.length ? (
-          <Alert variant="warning">
-            <AlertDescription>
-              {[...new Set(view.warnings)].map((warning) => (
-                <p key={warning}>{warning}</p>
-              ))}
-            </AlertDescription>
-          </Alert>
-        ) : null}
-        {queryError ? (
-          <p role="alert" className="text-sm text-destructive-foreground">
-            {queryError}
-          </p>
-        ) : null}
-        <section className="space-y-4 rounded-lg border p-4">
-          <RunStatusBadge status={summary.status} />
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-4 lg:grid-cols-8">
-            <div className="col-span-2">
-              <dt className="text-xs text-muted-foreground">Trigger</dt>
-              <dd className="mt-1">
-                <Button variant="ghost-muted" size="xs" onClick={() => setTriggerOpen(true)}>
-                  <TriggerIcon kind={view.trigger.kind} />
-                  {summary.trigger.label}
-                  {view.trigger.test ? " · test event" : null}
-                </Button>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Started</dt>
-              <dd className="mt-1">{formatRelativeTimeLabel(summary.startedAt, now)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Elapsed</dt>
-              <dd className="mt-1">
-                {summary.endedAt
-                  ? formatDuration(
-                      Math.max(0, Date.parse(summary.endedAt) - Date.parse(summary.startedAt)),
-                    )
-                  : liveDuration(summary.startedAt, now)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Active time</dt>
-              <dd className="mt-1">{activeMs === null ? "unknown" : formatDuration(activeMs)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Steps used</dt>
-              <dd className="mt-1">{summary.stepsUsed}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Tokens</dt>
-              <dd className="mt-1">
-                {formatTokens(summary.cost.billable)}
-                {summary.cost.usage !== "complete" ? (
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    partial ({summary.cost.usage})
-                  </span>
+      <div className="flex flex-col gap-6 pt-1 pb-10">
+        <div className="flex flex-col gap-3 px-(--workspace-gutter-start) pr-(--workspace-gutter-end)">
+          {view.warnings?.length ? (
+            <Alert variant="warning">
+              <AlertDescription>
+                {[...new Set(view.warnings)].map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {queryError || error ? (
+            <p role="alert" className="text-destructive text-sm">
+              {queryError ?? error}
+            </p>
+          ) : null}
+          <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
+            <Fact label="Trigger">
+              <button
+                type="button"
+                className="inline-flex max-w-72 cursor-pointer items-center gap-1.5 truncate hover:underline"
+                onClick={() => setTriggerOpen(true)}
+              >
+                <TriggerIcon kind={view.trigger.kind} />
+                <span className="truncate">{summary.trigger.label}</span>
+                {view.trigger.test ? (
+                  <span className="text-muted-foreground text-xs">test event</span>
                 ) : null}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">USD</dt>
-              <dd className="mt-1">{formatUsd(summary.cost.usdEstimate)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Open gates</dt>
-              <dd className="mt-1">{summary.openGates}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Output</dt>
-              <dd className="mt-1">{summary.outputStatus ?? "Pending"}</dd>
-            </div>
+              </button>
+            </Fact>
+            <Fact label="Started">
+              <time dateTime={summary.startedAt}>
+                {formatRelativeTimeLabel(summary.startedAt, now)}
+              </time>
+            </Fact>
+            <Fact label={summary.endedAt ? "Took" : "Running for"}>
+              {elapsed}
+              {activeMs !== null && formatDuration(activeMs) !== elapsed ? (
+                <span className="ml-1 text-muted-foreground text-xs">
+                  {formatDuration(activeMs)} active
+                </span>
+              ) : null}
+            </Fact>
+            <Fact label="Steps">{summary.stepsUsed}</Fact>
+            <Fact label="Tokens">
+              {summary.cost.billable === 0 && summary.cost.usage === "unavailable"
+                ? "-"
+                : formatTokens(summary.cost.billable)}
+              {summary.cost.usdEstimate === null ? null : (
+                <span className="ml-1 text-muted-foreground text-xs">
+                  {formatUsd(summary.cost.usdEstimate)}
+                </span>
+              )}
+              {summary.cost.usage === "partial" ? (
+                <span className="ml-1 text-muted-foreground text-xs">partial</span>
+              ) : null}
+            </Fact>
+            {summary.outputStatus ? <Fact label="Output">{summary.outputStatus}</Fact> : null}
             {summary.pullRequest ? (
-              <div>
-                <dt className="text-xs text-muted-foreground">Pull request</dt>
-                <dd className="mt-1">
-                  <a
-                    className="underline underline-offset-4"
-                    href={summary.pullRequest}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open PR
-                  </a>
-                </dd>
-              </div>
+              <Fact label="Pull request">
+                <a
+                  className="inline-flex items-center gap-1 hover:underline"
+                  href={summary.pullRequest}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open PR
+                  <ExternalLinkIcon aria-hidden className="size-3" />
+                </a>
+              </Fact>
             ) : null}
           </dl>
           {summary.pausedFor ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               Paused: {pauseReasons[summary.pausedFor]}.
             </p>
           ) : null}
           {summary.skipReason ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               Skipped: {skipReasons[summary.skipReason]}.
             </p>
           ) : null}
-        </section>
-        {error ? <p role="alert">{error}</p> : null}
-        {openGates(view.gates).length > 0 ? (
-          <section className="space-y-3 rounded-lg border border-warning/30 bg-warning/8 p-4 text-warning-foreground">
-            <h2 className="text-sm font-medium">Needs you</h2>
-            {openGates(view.gates).map((g) => (
-              <div key={g.key} className="flex items-center justify-between gap-4">
-                <p className="text-sm">{g.ask}</p>
-                <Button size="xs" variant="outline" onClick={() => setGate(g)}>
-                  Answer
-                </Button>
-              </div>
-            ))}
-          </section>
-        ) : null}
-        {view.gates.some((g) => g.decision) ? (
-          <section className="space-y-2">
-            <h2 className="text-xs font-medium text-muted-foreground">Decided gates</h2>
-            {view.gates.map((g) =>
-              g.decision ? (
-                <div key={g.key} className="text-xs text-muted-foreground">
-                  <p>
-                    {g.ask}: <span className="text-foreground">{g.decision.option}</span>
-                    {" · "}
-                    <time dateTime={g.decision.at}>
-                      {formatRelativeTimeLabel(g.decision.at, now)}
-                    </time>
-                  </p>
-                  {g.decision.note ? (
-                    <p className="mt-1 whitespace-pre-wrap">{g.decision.note}</p>
-                  ) : null}
+          {waitingGates.length > 0 ? (
+            <section className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/8 p-3">
+              <h2 className="flex items-center gap-1.5 font-medium text-sm text-warning-foreground">
+                <HandIcon aria-hidden className="size-3.5" />
+                Needs you
+              </h2>
+              {waitingGates.map((g) => (
+                <div key={g.key} className="flex items-center justify-between gap-4">
+                  <p className="text-sm">{g.ask}</p>
+                  <Button size="xs" onClick={() => setGate(g)}>
+                    Answer
+                  </Button>
                 </div>
-              ) : null,
-            )}
-          </section>
-        ) : null}
-        {model ? (
-          <div className="h-[420px] overflow-hidden rounded-lg border">
-            <LazyWorkflowCanvas
-              mode="run"
-              model={model}
-              onSelectNode={(id) => {
-                if (id === view.trigger.id) setTriggerOpen(true);
-                setSelected(id);
-                if (id)
-                  document
-                    .getElementById(`workflow-node-${id}`)
-                    ?.scrollIntoView({ block: "center" });
-              }}
-            />
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No pinned definition while this run is queued or skipped.
-          </p>
-        )}
-        <section className="space-y-2">
-          <h2 className="text-xs font-medium text-muted-foreground">Steps</h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Step</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Attempts</TableHead>
-                <TableHead>Time</TableHead>
-                <TableHead>Usage</TableHead>
-                <TableHead>Summary</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {stepRows(view.steps).map((row) => (
-                <TableRow
-                  key={row.key}
-                  id={`workflow-node-${row.node}`}
-                  data-state={selected === row.node ? "selected" : undefined}
-                >
-                  <TableCell>
-                    <p>{view.definition?.nodes[row.node]?.title ?? row.node}</p>
-                    {row.key !== row.node ? (
-                      <p className="mt-1 text-xs text-muted-foreground">{row.key}</p>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    <StepStatusBadge status={row.latest.status} />
-                  </TableCell>
-                  <TableCell>{row.attempts.length}</TableCell>
-                  <TableCell>
-                    {row.latest.startedAt === null
-                      ? "Not started"
-                      : row.latest.endedAt === null
-                        ? liveDuration(row.latest.startedAt, now)
-                        : formatDuration(stepDurationMs(row.latest, now) ?? 0)}
-                    {row.latest.queuedMs !== null ? (
-                      <p className="mt-1 text-muted-foreground">
-                        queued {formatDuration(row.latest.queuedMs)}
-                      </p>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    {row.latest.cost ? (
-                      <>
-                        {formatTokens(row.latest.cost.billable)} ·{" "}
-                        {formatUsd(row.latest.cost.usdEstimate)}
-                        {row.latest.cost.usage !== "complete" ? (
-                          <p className="mt-1 text-muted-foreground">partial</p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">unavailable</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {/* oxlint-disable t3code/no-native-title-tooltip -- The leaf brief requires the full step summary in title. */}
-                    <p
-                      className="line-clamp-2 max-w-64 whitespace-normal"
-                      title={row.latest.summary ?? undefined}
-                    >
-                      {row.latest.summary}
-                    </p>
-                    {/* oxlint-enable t3code/no-native-title-tooltip */}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {row.latest.threadId ? (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          render={
-                            <Link
-                              to="/$environmentId/$threadId"
-                              params={{ environmentId, threadId: row.latest.threadId }}
-                            />
-                          }
-                        >
-                          Open thread
-                        </Button>
-                      ) : null}
-                      <Button variant="outline" size="xs" onClick={() => setDetail(row.latest)}>
-                        Details
-                      </Button>
-                      {["failed", "lost", "timed_out", "ambiguous"].includes(row.latest.status) ? (
-                        <Button
-                          disabled={pending || !canOperate}
-                          size="xs"
-                          onClick={() => void submit({ _tag: "retry", step: row.key })}
-                        >
-                          Retry
-                        </Button>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                </TableRow>
               ))}
-            </TableBody>
-          </Table>
-          {view.steps.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No steps yet.</p>
+            </section>
           ) : null}
-        </section>
-        <BlockViews blocks={view.blocks} />
-        <Button size="xs" variant="outline" onClick={() => setShowMetrics((value) => !value)}>
-          {showMetrics ? "Hide metrics" : "Show workflow metrics"}
-        </Button>
-        {showMetrics ? (
-          <WorkflowMetricsPanel environmentId={environmentId} workflowId={summary.workflowId} />
+          {model ? (
+            <div className="h-[420px] overflow-hidden rounded-lg border">
+              <LazyWorkflowCanvas
+                mode="run"
+                model={model}
+                onSelectNode={(id) => {
+                  if (id === view.trigger.id) setTriggerOpen(true);
+                  setSelected(id);
+                  if (id)
+                    document
+                      .getElementById(`workflow-node-${id}`)
+                      ?.scrollIntoView({ block: "center" });
+                }}
+              />
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              No pinned definition while this run is queued or skipped.
+            </p>
+          )}
+        </div>
+        <WorkflowsSection title="Steps" count={stepRows(view.steps).length}>
+          {view.steps.length === 0 ? (
+            <p className="px-(--workspace-gutter-start) py-3 text-muted-foreground text-sm">
+              No steps yet.
+            </p>
+          ) : (
+            <div className="px-(--workspace-gutter-start) pr-(--workspace-gutter-end) tabular-nums">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Step</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Attempts</TableHead>
+                    <TableHead className="text-right">Time</TableHead>
+                    <TableHead className="text-right">Tokens</TableHead>
+                    <TableHead>Summary</TableHead>
+                    <TableHead className="text-right">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stepRows(view.steps).map((row) => (
+                    <TableRow
+                      key={row.key}
+                      id={`workflow-node-${row.node}`}
+                      data-state={selected === row.node ? "selected" : undefined}
+                    >
+                      <TableCell>
+                        <p className="font-medium text-sm">
+                          {view.definition?.nodes[row.node]?.title ?? row.node}
+                        </p>
+                        {row.key !== row.node ? (
+                          <p className="text-muted-foreground">{row.key}</p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        <StepStatusBadge status={row.latest.status} />
+                      </TableCell>
+                      <TableCell className="text-right">{row.attempts.length}</TableCell>
+                      <TableCell className="text-right">
+                        {row.latest.startedAt === null
+                          ? "-"
+                          : row.latest.endedAt === null
+                            ? liveDuration(row.latest.startedAt, now)
+                            : formatDuration(stepDurationMs(row.latest, now) ?? 0)}
+                        {row.latest.queuedMs !== null ? (
+                          <p className="text-muted-foreground">
+                            queued {formatDuration(row.latest.queuedMs)}
+                          </p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {row.latest.cost && row.latest.cost.usage !== "unavailable" ? (
+                          <>
+                            {formatTokens(row.latest.cost.billable)}
+                            {row.latest.cost.usdEstimate === null ? null : (
+                              <p className="text-muted-foreground">
+                                {formatUsd(row.latest.cost.usdEstimate)}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {/* oxlint-disable t3code/no-native-title-tooltip -- The leaf brief requires the full step summary in title. */}
+                        <p
+                          className="line-clamp-2 max-w-80 whitespace-normal text-muted-foreground"
+                          title={row.latest.summary ?? undefined}
+                        >
+                          {row.latest.summary}
+                        </p>
+                        {/* oxlint-enable t3code/no-native-title-tooltip */}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          {["failed", "lost", "timed_out", "ambiguous"].includes(
+                            row.latest.status,
+                          ) ? (
+                            <Button
+                              disabled={pending || !canOperate}
+                              size="xs"
+                              variant="outline"
+                              onClick={() => void submit({ _tag: "retry", step: row.key })}
+                            >
+                              <RotateCcwIcon />
+                              Retry
+                            </Button>
+                          ) : null}
+                          {row.latest.threadId ? (
+                            <Button
+                              size="xs"
+                              variant="ghost-muted"
+                              render={
+                                <Link
+                                  to="/$environmentId/$threadId"
+                                  params={{ environmentId, threadId: row.latest.threadId }}
+                                />
+                              }
+                            >
+                              Thread
+                            </Button>
+                          ) : null}
+                          <Button
+                            variant="ghost-muted"
+                            size="xs"
+                            onClick={() => setDetail(row.latest)}
+                          >
+                            Details
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </WorkflowsSection>
+        {view.gates.some((g) => g.decision) ? (
+          <WorkflowsSection title="Decided gates">
+            <div className="flex flex-col gap-2 px-(--workspace-gutter-start) py-3 pr-(--workspace-gutter-end)">
+              {view.gates.map((g) =>
+                g.decision ? (
+                  <div key={g.key} className="text-muted-foreground text-xs">
+                    <p>
+                      {g.ask}: <span className="text-foreground">{g.decision.option}</span>
+                      {" · "}
+                      <time dateTime={g.decision.at}>
+                        {formatRelativeTimeLabel(g.decision.at, now)}
+                      </time>
+                    </p>
+                    {g.decision.note ? (
+                      <p className="mt-1 whitespace-pre-wrap">{g.decision.note}</p>
+                    ) : null}
+                  </div>
+                ) : null,
+              )}
+            </div>
+          </WorkflowsSection>
         ) : null}
+        {view.blocks.length > 0 ? (
+          <div className="px-(--workspace-gutter-start) pr-(--workspace-gutter-end)">
+            <BlockViews blocks={view.blocks} />
+          </div>
+        ) : null}
+        <WorkflowsSection
+          title={
+            <button
+              type="button"
+              aria-expanded={showMetrics}
+              className="flex cursor-pointer items-center gap-2"
+              onClick={() => setShowMetrics((value) => !value)}
+            >
+              {showMetrics ? (
+                <ChevronDownIcon aria-hidden className="size-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRightIcon aria-hidden className="size-3.5 text-muted-foreground" />
+              )}
+              Workflow metrics
+            </button>
+          }
+        >
+          {showMetrics ? (
+            <div className="px-(--workspace-gutter-start) py-3 pr-(--workspace-gutter-end)">
+              <WorkflowMetricsPanel environmentId={environmentId} workflowId={summary.workflowId} />
+            </div>
+          ) : null}
+        </WorkflowsSection>
         {triggerOpen ? (
           <TriggerSheet
             environmentId={environmentId}
@@ -476,5 +530,15 @@ function RunContent({
         ) : null}
       </div>
     </WorkflowsPageFrame>
+  );
+}
+
+/** One labelled fact in the run's header strip. */
+function Fact(props: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <dt className="text-muted-foreground text-xs">{props.label}</dt>
+      <dd className="min-w-0">{props.children}</dd>
+    </div>
   );
 }

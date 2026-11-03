@@ -14,6 +14,9 @@ import type { WorkflowDefinition, WorkflowNode, WorkflowTriggerKind } from "@t3t
 import { canvasIcons } from "../canvas/canvasIcons";
 import { Button } from "../../../components/ui/button";
 
+const GROUP_LABEL =
+  "w-16 shrink-0 font-medium text-2xs text-muted-foreground uppercase tracking-wide";
+
 const kinds = Object.keys(CANVAS_NODE_STYLES).filter(
   (kind): kind is WorkflowNode["kind"] => kind !== "note" && !kind.startsWith("trigger:"),
 );
@@ -43,90 +46,94 @@ export function WorkflowPalette(props: {
     );
   };
   return (
-    <div role="toolbar" aria-label="Add workflow node" className="flex max-w-full flex-wrap gap-1">
-      <span>Nodes</span>
-      {kinds.map((kind) => {
-        const style = CANVAS_NODE_STYLES[kind];
-        const hue = CANVAS_HUES[style.hue];
-        const Icon = canvasIcons[style.icon];
-        return (
-          <Button
-            key={kind}
-            size="xs"
-            variant="outline"
-            disabled={props.disabled}
-            onClick={() => add(kind)}
-            aria-label={`Add ${kind}`}
-          >
-            <Icon
-              size={14}
-              style={{ color: `light-dark(${hue.light.stroke}, ${hue.dark.stroke})` }}
-            />
-            {kind}
-          </Button>
-        );
-      })}
-      <span>Triggers</span>
-      {(
-        [
-          "manual",
-          "bot",
-          "call",
-          "webhook",
-          "cron",
-          "upstreamTag",
-          "prMerged",
-          "threadSettled",
-          "workflowFailed",
-        ] satisfies WorkflowTriggerKind[]
-      ).map((kind) => {
-        const style = CANVAS_NODE_STYLES[canvasTriggerType(kind)];
-        const Icon = canvasIcons[style.icon];
-        const hue = CANVAS_HUES[style.hue];
-        return (
-          <Button
-            key={kind}
-            size="xs"
-            variant="outline"
-            aria-label={`Add ${kind}`}
-            disabled={
-              props.disabled ||
-              (["manual", "bot", "call"].includes(kind) &&
-                Object.values(props.definition.triggers ?? {}).some(
-                  (trigger) => trigger.kind === kind,
-                ))
-            }
-            onClick={() => {
-              const id = nextTriggerId(props.definition, kind);
-              const triggers = toCanvasModel(props.definition).triggers;
-              const y = triggers.length
-                ? Math.max(...triggers.map((trigger) => trigger.y + trigger.h)) + 40
-                : 0;
-              props.onAdd(
-                {
-                  ...props.definition,
-                  triggers: { ...props.definition.triggers, [id]: defaultTriggerConfig(kind) },
-                  canvas: {
-                    ...props.definition.canvas,
-                    annotations: props.definition.canvas?.annotations ?? [],
-                    positions: {
-                      ...props.definition.canvas?.positions,
-                      [id]: { x: 24, y, ...CANVAS_TRIGGER_SIZE },
+    <div role="toolbar" aria-label="Add workflow node" className="flex max-w-full flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1">
+        <span className={GROUP_LABEL}>Steps</span>
+        {kinds.map((kind) => {
+          const style = CANVAS_NODE_STYLES[kind];
+          const hue = CANVAS_HUES[style.hue];
+          const Icon = canvasIcons[style.icon];
+          return (
+            <Button
+              key={kind}
+              size="xs"
+              variant="outline"
+              disabled={props.disabled}
+              onClick={() => add(kind)}
+              aria-label={`Add ${kind}`}
+            >
+              <Icon
+                size={14}
+                style={{ color: `light-dark(${hue.light.stroke}, ${hue.dark.stroke})` }}
+              />
+              {kind}
+            </Button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className={GROUP_LABEL}>Triggers</span>
+        {(
+          [
+            "manual",
+            "bot",
+            "call",
+            "webhook",
+            "cron",
+            "upstreamTag",
+            "prMerged",
+            "threadSettled",
+            "workflowFailed",
+          ] satisfies WorkflowTriggerKind[]
+        ).map((kind) => {
+          const style = CANVAS_NODE_STYLES[canvasTriggerType(kind)];
+          const Icon = canvasIcons[style.icon];
+          const hue = CANVAS_HUES[style.hue];
+          return (
+            <Button
+              key={kind}
+              size="xs"
+              variant="outline"
+              aria-label={`Add ${kind}`}
+              disabled={
+                props.disabled ||
+                (["manual", "bot", "call"].includes(kind) &&
+                  Object.values(props.definition.triggers ?? {}).some(
+                    (trigger) => trigger.kind === kind,
+                  ))
+              }
+              onClick={() => {
+                const id = nextTriggerId(props.definition, kind);
+                const triggers = toCanvasModel(props.definition).triggers;
+                const y = triggers.length
+                  ? Math.max(...triggers.map((trigger) => trigger.y + trigger.h)) + 40
+                  : 0;
+                props.onAdd(
+                  {
+                    ...props.definition,
+                    triggers: { ...props.definition.triggers, [id]: defaultTriggerConfig(kind) },
+                    canvas: {
+                      ...props.definition.canvas,
+                      annotations: props.definition.canvas?.annotations ?? [],
+                      positions: {
+                        ...props.definition.canvas?.positions,
+                        [id]: { x: 24, y, ...CANVAS_TRIGGER_SIZE },
+                      },
                     },
                   },
-                },
-                id,
-              );
-            }}
-          >
-            <Icon
-              size={14}
-              style={{ color: `light-dark(${hue.light.stroke}, ${hue.dark.stroke})` }}
-            />
-            {style.label}
-          </Button>
-        );
-      })}
+                  id,
+                );
+              }}
+            >
+              <Icon
+                size={14}
+                style={{ color: `light-dark(${hue.light.stroke}, ${hue.dark.stroke})` }}
+              />
+              {style.label}
+            </Button>
+          );
+        })}
+      </div>
     </div>
   );
 }

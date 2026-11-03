@@ -29,6 +29,14 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 const isLedgerId = Schema.is(WorkflowLedgerId);
 const isVerdict = Schema.is(WorkflowLedgerVerdict);
+const VERDICT_VARIANT = {
+  kept: "success",
+  validated: "success",
+  rejected: "error",
+  invalid: "error",
+  duplicate: "secondary",
+  abandoned: "secondary",
+} as const satisfies Record<WorkflowLedgerVerdict, string>;
 
 /** Filterable, cursor-paged experiment ledger. */
 export function WorkflowLedgerPanel(props: {
@@ -39,21 +47,27 @@ export function WorkflowLedgerPanel(props: {
   const [verdict, setVerdict] = useState("");
   const validLedger = ledger === "" || isLedgerId(ledger);
   return (
-    <div className="space-y-4">
-      <h2 className="text-xs font-medium text-muted-foreground">Experiment ledger</h2>
-      <div className="grid max-w-lg gap-4 sm:grid-cols-2">
-        <label className="space-y-2 text-xs text-muted-foreground">
-          Ledger id
-          <Input value={ledger} onChange={(event) => setLedger(event.target.value)} />
-        </label>
-        <label className="space-y-2 text-xs text-muted-foreground">
-          Verdict
+    <div className="flex flex-col gap-3">
+      <p className="text-muted-foreground text-xs">
+        What hill-climb and arena steps tried, measured and kept, newest first.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="w-56">
+          <Input
+            aria-label="Ledger id"
+            placeholder="Filter by ledger id"
+            size="sm"
+            value={ledger}
+            onChange={(event) => setLedger(event.target.value)}
+          />
+        </div>
+        <div className="w-40">
           <Select value={verdict} onValueChange={(value) => setVerdict(value ?? "")}>
-            <SelectTrigger aria-label="Verdict">
-              <SelectValue />
+            <SelectTrigger aria-label="Verdict" size="sm">
+              <SelectValue>{verdict === "" ? "Any verdict" : verdict}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
-              <SelectItem value="">All</SelectItem>
+              <SelectItem value="">Any verdict</SelectItem>
               {["kept", "validated", "rejected", "invalid", "duplicate", "abandoned"].map(
                 (value) => (
                   <SelectItem key={value} value={value}>
@@ -63,7 +77,10 @@ export function WorkflowLedgerPanel(props: {
               )}
             </SelectPopup>
           </Select>
-        </label>
+        </div>
+        {!validLedger ? (
+          <span className="text-destructive text-xs">Not a valid ledger id.</span>
+        ) : null}
       </div>
       {validLedger ? (
         <LedgerRows
@@ -72,9 +89,7 @@ export function WorkflowLedgerPanel(props: {
           ledger={isLedgerId(ledger) ? ledger : undefined}
           verdict={isVerdict(verdict) ? verdict : undefined}
         />
-      ) : (
-        <p className="text-sm text-muted-foreground">Enter a valid ledger id.</p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -99,8 +114,18 @@ function LedgerRows(props: {
   );
   return (
     <>
-      {query.error ? <p role="alert">{query.error}</p> : null}
-      {query.data ? (
+      {query.error ? (
+        <p role="alert" className="text-destructive text-sm">
+          {query.error}
+        </p>
+      ) : null}
+      {query.data && query.data.entries.length === 0 && props.cursor === undefined ? (
+        <p className="rounded-lg border border-dashed px-4 py-8 text-center text-muted-foreground text-sm">
+          {props.ledger || props.verdict
+            ? "No entries match these filters."
+            : "No ledger entries yet. Hill-climb and arena steps record each attempt here."}
+        </p>
+      ) : query.data ? (
         <>
           <Table>
             <TableHeader>
@@ -121,18 +146,27 @@ function LedgerRows(props: {
                     <p className="mt-1 text-xs text-muted-foreground">{entry.barHash}</p>
                   </TableCell>
                   <TableCell>
-                    {entry.before === null ? "unknown" : JSON.stringify(entry.before)} →{" "}
-                    {entry.after === null ? "unknown" : JSON.stringify(entry.after)}
+                    <span className="tabular-nums">
+                      {entry.before === null ? "-" : JSON.stringify(entry.before)} →{" "}
+                      {entry.after === null ? "-" : JSON.stringify(entry.after)}
+                    </span>
                   </TableCell>
-                  <TableCell>{entry.sha?.slice(0, 8)}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{entry.verdict ?? "Pending"}</Badge>
+                    <code>{entry.sha?.slice(0, 8)}</code>
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      size="sm"
+                      variant={entry.verdict ? VERDICT_VARIANT[entry.verdict] : "outline"}
+                    >
+                      {entry.verdict ?? "Pending"}
+                    </Badge>
                   </TableCell>
                   <TableCell>{entry.note}</TableCell>
                   <TableCell>
                     <Button
                       size="xs"
-                      variant="outline"
+                      variant="ghost-muted"
                       render={
                         <Link
                           to="/workflows/$environmentId/runs/$runId"
@@ -156,12 +190,11 @@ function LedgerRows(props: {
               </Button>
             )
           ) : null}
-          {query.data.entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No ledger entries.</p>
-          ) : null}
         </>
       ) : (
-        <p className="text-sm text-muted-foreground">Loading ledger…</p>
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading ledger…
+        </p>
       )}
     </>
   );

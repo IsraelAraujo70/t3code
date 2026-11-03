@@ -15,20 +15,40 @@ import {
 
 const decodeDefinition = Schema.decodeUnknownOption(WorkflowDefinition);
 
-const fields: readonly InspectorFieldSpec[] = [
-  { path: "title" },
-  { path: "description", multiline: true },
-  { path: "home.project" },
-  { path: "concurrency", choices: ["single", "queue", "parallel"] },
-  { path: "budget.steps", format: "number" },
-  { path: "budget.wall" },
-  { path: "budget.tokens", format: "number" },
-  { path: "budget.usd", format: "number" },
-  { path: "fatigue.consecutiveFailures", format: "number" },
-  ...["params", "triggers", "models", "workspaces", "card", "protect"].map((path) => ({
-    path,
-    format: "json" as const,
-  })),
+const sections: ReadonlyArray<{
+  readonly title: string;
+  readonly fields: readonly InspectorFieldSpec[];
+}> = [
+  {
+    title: "General",
+    fields: [
+      { path: "title", label: "Title" },
+      { path: "description", label: "Description", multiline: true },
+      { path: "home.project", label: "Home project" },
+      { path: "concurrency", label: "Overlapping runs", choices: ["single", "queue", "parallel"] },
+    ],
+  },
+  {
+    title: "Limits per run",
+    fields: [
+      { path: "budget.steps", label: "Steps", format: "number" },
+      { path: "budget.wall", label: "Active time" },
+      { path: "budget.tokens", label: "Tokens", format: "number" },
+      { path: "budget.usd", label: "Cost (USD)", format: "number" },
+      { path: "fatigue.consecutiveFailures", label: "Suspend after failures", format: "number" },
+    ],
+  },
+  {
+    title: "Advanced",
+    fields: [
+      { path: "params", label: "Parameters", format: "json" },
+      { path: "triggers", label: "Triggers", format: "json" },
+      { path: "models", label: "Model aliases", format: "json" },
+      { path: "workspaces", label: "Workspaces", format: "json" },
+      { path: "card", label: "Kanban card", format: "json" },
+      { path: "protect", label: "Protected refs", format: "json" },
+    ],
+  },
 ];
 
 /** Validates the whole workflow before publishing a settings change. */
@@ -41,10 +61,15 @@ export function WorkflowSettingsForm(props: {
   const bots = directory?.bots ?? [];
   const selectedBot = props.definition.bot;
   return (
-    <div className="space-y-3">
-      <h3 className="font-medium">Workflow settings</h3>
+    <div className="space-y-5">
+      <h3 className="font-medium text-sm">Workflow settings</h3>
       <div className="space-y-1">
-        <label htmlFor="workflow-bot">Bot</label>
+        <label htmlFor="workflow-bot" className="flex flex-col gap-0.5 text-xs">
+          <span className="font-medium text-muted-foreground">Works for bot</span>
+          <span className="text-muted-foreground/70">
+            Agent steps get the bot's tools; reports post in its chat.
+          </span>
+        </label>
         <Select
           value={selectedBot ?? ""}
           disabled={props.readOnly}
@@ -77,31 +102,38 @@ export function WorkflowSettingsForm(props: {
           </SelectPopup>
         </Select>
       </div>
-      {fields.map((spec) => {
-        const value = fieldValue(props.definition, spec.path);
-        return (
-          <InspectorField
-            key={`${spec.path}:${fieldText(value, spec.format ?? "text")}`}
-            spec={spec}
-            value={value}
-            readOnly={props.readOnly}
-            onEdit={(path, text, format) => {
-              if (props.readOnly) return null;
-              try {
-                const decoded = decodeDefinition(
-                  applyFieldEdit(props.definition, path, text, format),
-                );
-                if (Option.isNone(decoded))
-                  return `Invalid value for ${path}. Check the workflow schema.`;
-                props.onChange(decoded.value);
-                return null;
-              } catch {
-                return `Invalid JSON for ${path}.`;
-              }
-            }}
-          />
-        );
-      })}
+      {sections.map((section) => (
+        <fieldset key={section.title} className="space-y-3">
+          <legend className="mb-2 font-medium text-muted-foreground/80 text-2xs uppercase tracking-wide">
+            {section.title}
+          </legend>
+          {section.fields.map((spec) => {
+            const value = fieldValue(props.definition, spec.path);
+            return (
+              <InspectorField
+                key={`${spec.path}:${fieldText(value, spec.format ?? "text")}`}
+                spec={spec}
+                value={value}
+                readOnly={props.readOnly}
+                onEdit={(path, text, format) => {
+                  if (props.readOnly) return null;
+                  try {
+                    const decoded = decodeDefinition(
+                      applyFieldEdit(props.definition, path, text, format),
+                    );
+                    if (Option.isNone(decoded))
+                      return `Invalid value for ${path}. Check the workflow schema.`;
+                    props.onChange(decoded.value);
+                    return null;
+                  } catch {
+                    return `Invalid JSON for ${path}.`;
+                  }
+                }}
+              />
+            );
+          })}
+        </fieldset>
+      ))}
     </div>
   );
 }

@@ -113,37 +113,37 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
   return (
     // A definite height on wide screens; with only min-h-full the canvas row sizes to the inspector.
     <div className={cn("flex min-h-full flex-col gap-3 p-4", tab === "Canvas" && "lg:h-full")}>
-      <header className="flex flex-wrap items-center gap-2">
-        <h2 className="font-medium">{current?.title ?? state.base.workflowId}</h2>
-        <WorkflowToneBadge
-          tone={
-            diagnostics.length === 0 && (state.draft !== null || state.base.valid)
-              ? "success"
-              : "danger"
-          }
-        >
-          {diagnostics.length === 0 && (state.draft !== null || state.base.valid)
-            ? "Valid"
-            : "Invalid"}
-        </WorkflowToneBadge>
-        {state.draft !== null ? (
-          <WorkflowToneBadge tone="warning">Unsaved</WorkflowToneBadge>
-        ) : null}
-        {state.base.dirty ? (
-          <WorkflowToneBadge tone="warning">Edited by hand</WorkflowToneBadge>
-        ) : null}
-        <WorkflowToneBadge tone={state.base.enabled ? "info" : "muted"}>
-          {state.base.enabled ? "Enabled" : "Disabled"}
-        </WorkflowToneBadge>
-        <div className="ml-auto flex items-center gap-2">
-          <Input
-            aria-label="Commit message"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            disabled={saving}
-          />
+      {/* Badges follow Save in the DOM: one appearing on blur must not move Save under the pointer. */}
+      <header className="flex items-center gap-2">
+        <div className="min-w-0 shrink overflow-x-auto">
+          <ToggleGroup
+            value={[tab]}
+            onValueChange={(values) => {
+              const next = tabs.find((item) => item === values[0]);
+              if (next) setTab(next);
+            }}
+            aria-label="Workflow tabs"
+          >
+            {tabs.map((item) => (
+              <Toggle key={item} value={item}>
+                {item}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        </div>
+        <div className="order-2 ml-auto flex shrink-0 items-center gap-2">
+          <div className="hidden w-56 md:block">
+            <Input
+              aria-label="Commit message"
+              placeholder="Describe the change"
+              size="sm"
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              disabled={saving}
+            />
+          </div>
           <Button
-            size="sm"
+            size="xs"
             // A focused inspector field commits on blur, which pressing Save causes; keep the
             // button live so that same press saves the committed draft.
             disabled={(state.draft === null && !inspectorFocused) || saving}
@@ -161,23 +161,20 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
             {saving ? "Saving…" : "Save"}
           </Button>
         </div>
+        <div className="order-1 flex shrink-0 items-center gap-2">
+          {!(diagnostics.length === 0 && (state.draft !== null || state.base.valid)) ? (
+            <WorkflowToneBadge tone="danger">
+              {`${diagnostics.length || 1} error${diagnostics.length > 1 ? "s" : ""}`}
+            </WorkflowToneBadge>
+          ) : null}
+          {state.draft !== null ? (
+            <WorkflowToneBadge tone="warning">Unsaved</WorkflowToneBadge>
+          ) : null}
+          {state.base.dirty ? (
+            <WorkflowToneBadge tone="warning">Edited by hand</WorkflowToneBadge>
+          ) : null}
+        </div>
       </header>
-      <div className="overflow-x-auto">
-        <ToggleGroup
-          value={[tab]}
-          onValueChange={(values) => {
-            const next = tabs.find((item) => item === values[0]);
-            if (next) setTab(next);
-          }}
-          aria-label="Workflow tabs"
-        >
-          {tabs.map((item) => (
-            <Toggle key={item} value={item}>
-              {item}
-            </Toggle>
-          ))}
-        </ToggleGroup>
-      </div>
       <ConflictBanner
         state={state}
         disabled={saving}
@@ -205,7 +202,10 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
         </p>
       ) : null}
       {diagnostics.length > 0 ? (
-        <ul aria-label="Diagnostics" className="space-y-1 text-sm text-destructive">
+        <ul
+          aria-label="Diagnostics"
+          className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive text-sm"
+        >
           {diagnostics.map((diagnostic) => {
             const node = /^nodes\.([^.]+)/.exec(diagnostic.path)?.[1];
             return (
@@ -225,7 +225,9 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
       ) : null}
       {tab === "Canvas" ? (
         current === null || model === null ? (
-          <p>This file does not compile. Fix it in the Source tab.</p>
+          <p className="rounded-lg border border-dashed px-4 py-8 text-center text-muted-foreground text-sm">
+            This file does not compile. Fix it in the Source tab.
+          </p>
         ) : (
           <div className="flex min-h-96 flex-1 flex-col gap-3 lg:flex-row">
             <div className="flex min-h-96 min-w-0 flex-1 flex-col gap-2">
@@ -251,7 +253,7 @@ export function WorkflowEditorView(props: WorkflowEditorViewProps) {
               </div>
             </div>
             <aside
-              className="w-full shrink-0 border-border lg:w-72 lg:overflow-y-auto lg:border-l lg:pl-3"
+              className="w-full shrink-0 border-border lg:w-80 lg:overflow-y-auto lg:border-l lg:pl-4"
               onFocus={() => setInspectorFocused(true)}
               onBlur={() => setInspectorFocused(false)}
             >
