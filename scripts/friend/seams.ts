@@ -56,7 +56,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/auth/EnvironmentAuth.ts",
-    markers: 24,
+    markers: 25,
     why: "carry thread grants and confine granted sessions to their RPC socket",
   },
   {

@@ -38,9 +38,9 @@ const RPC_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
 };
 
 /**
- * `createdBy` is overwritten by the server. Left out on purpose: attachments with content, message
- * context, model selection, guest/scheduled/sender/plan/continuation references and deferred
- * starts, since each can reach files, other threads, or another provider.
+ * Left out on purpose: context, model selection, guest/scheduled/sender/plan/continuation refs,
+ * deferred starts, `titleSeed` (runs another model) and `holdQueue` (stops child threads). Each
+ * reaches files, other threads or another provider. `createdBy` is overwritten by the server.
  */
 const COMMAND_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
   "message.dispatch": new Set([
@@ -51,11 +51,10 @@ const COMMAND_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
     "text",
     "attachments",
     "dispatchMode",
-    "titleSeed",
     "createdBy",
     "creationSource",
   ]),
-  "run.interrupt": new Set(["type", "commandId", "threadId", "runId", "reason", "holdQueue"]),
+  "run.interrupt": new Set(["type", "commandId", "threadId", "runId", "reason"]),
 };
 
 const DISPATCH_MODES = new Set(["queue_after_active", "start_immediately"]);

@@ -111,9 +111,18 @@ describe("threadGrantRpcDenial", () => {
         commandId: "cmd-2",
         threadId: SIDE,
         runId: "run-1",
-        holdQueue: true,
+        reason: "relay",
       }),
     ).toBeUndefined();
+    expect(
+      threadGrantRpcDenial(exact, ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
+        type: "run.interrupt",
+        commandId: "cmd-2",
+        threadId: SIDE,
+        runId: "run-1",
+        holdQueue: true,
+      }),
+    ).toBe("field holdQueue is not allowed on run.interrupt");
   });
 
   it("denies every allowed method on another thread", () => {
@@ -164,6 +173,7 @@ describe("threadGrantRpcDenial", () => {
     { context: { version: 1, records: [] } },
     { delegatedCompletion: { parentRunId: "run-1", generation: 1, taskIds: [] } },
     { notification: {} },
+    { titleSeed: "a title" },
     { attachments: [{ type: "image", id: "att-1" }] },
     { dispatchMode: { type: "defer_start", workspaceStrategy: { type: "worktree" } } },
     { dispatchMode: { type: "steer_active", targetRunId: "run-1" } },

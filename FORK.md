@@ -41,7 +41,7 @@ next migrations from running. A fork column is added instead by an idempotent st
 issues a credential confined to one thread, or to every thread of one bot. The grant is stored in
 `thread_grant` on `auth_sessions` and `auth_pairing_links` and only narrows the session's scopes.
 Over HTTP the session can only mint its RPC socket ticket; on the socket it can only send messages
-to, interrupt, subscribe to and read items of a matching thread, with a closed list of payload
+to, interrupt (without holding the queue), subscribe to and read items of a matching thread, with a closed list of payload
 fields. Everything else, including `launchThread`, `subscribeShell`, `projectsMutate` and `bots.*`,
 is refused. See [`threadGrant.ts`](apps/server/src/bots/auth/threadGrant.ts).
 

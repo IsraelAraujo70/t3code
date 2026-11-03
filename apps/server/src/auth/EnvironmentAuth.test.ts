@@ -712,6 +712,28 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         yield* Effect.flip(serverAuth.authenticateWebSocketUpgrade(socket, "media")),
       ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
 
+      const sessions = yield* SessionStore.SessionStore;
+      const browserLink = yield* serverAuth.issuePairingCredential({ threadGrant });
+      const browser = yield* serverAuth.createBrowserSession(
+        browserLink.credential,
+        requestMetadata,
+      );
+      expect(
+        yield* Effect.flip(
+          serverAuth.authenticateBrowserSession(
+            makeCookieRequest(sessions.cookieName, browser.sessionToken),
+          ),
+        ),
+      ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+      const ungrantedLink = yield* serverAuth.issuePairingCredential({});
+      const ungranted = yield* serverAuth.createBrowserSession(
+        ungrantedLink.credential,
+        requestMetadata,
+      );
+      yield* serverAuth.authenticateBrowserSession(
+        makeCookieRequest(sessions.cookieName, ungranted.sessionToken),
+      );
+
       const plain = yield* serverAuth.issueSession();
       const plainSession = yield* serverAuth.authenticateHttpRequest(
         request(plain.token, "GET", "/api/assets/x"),

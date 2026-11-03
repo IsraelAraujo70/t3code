@@ -1394,6 +1394,8 @@ export const make = Effect.gen(function* () {
         (session) => session.method === "browser-session-cookie",
         () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
       ),
+      // Fork (friend): MCP OAuth approval would issue an ungranted session.
+      Effect.flatMap(confineThreadGrant(() => false)),
       Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
     );
   };
