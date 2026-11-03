@@ -1025,7 +1025,7 @@ packages/client-runtime/src/state/bots.ts     + átomos de workflows (comandos e
 apps/web/src/bots/workflows/                  WorkflowsPage, WorkflowEditor (CanvasHost, Inspector, SourceTab, MergeDialog),
                                               RunView, MetricsPanel, LedgerView, canvas/reactFlowAdapter.tsx, canvas/roughSkin.tsx
 apps/web/src/routes/_chat.workflows*.tsx      lista, editor, execução (declarados do fork)
-apps/mobile/src/bots/workflows/               WorkflowsScreen, WorkflowScreen, RunScreen (grafo em react-native-svg), GateSheet, LightEditScreen
+apps/mobile/src/bots/workflows/               WorkflowsListScreen, WorkflowDetailScreen, WorkflowRunScreen (grafo em react-native-svg), GatePanel, WorkflowEditSheet
 scripts/friend/wf/                            CLIs JSON das rotinas (§11)
 ````
 
@@ -1360,10 +1360,10 @@ Só `apps/web/src/bots/workflows/canvas/reactFlowAdapter.tsx` conhece o React Fl
 
 Entrada por uma linha "Workflows" na tela de Bots, que já é do fork. Não há aba nova, então não mexe nas uniões de abas do upstream. As rotas ficam em `apps/mobile/src/Stack.tsx` (seam existente): `bots/workflows/:environmentId`, `…/:workflowId` e `…/runs/:runId`.
 
-- **Ver.** Lista de workflows com status, próximo disparo e última execução. O detalhe desenha o grafo da versão fixada com `react-native-svg` e o gerador do roughjs (o mesmo `CanvasModel`, posições do `canvas` ou `autoLayout`) e mostra gatilhos e histórico.
+- **Ver.** As execuções que esperam o usuário ficam no topo, acima de duas abas, Workflows e Runs, com os filtros da web (`workflows.filters.ts`) e o RPC de runs filtrado, recarregado quando o snapshot muda. O detalhe põe a chave e "Rodar agora" no alto, depois gatilhos e execuções; o grafo da versão fixada (`react-native-svg` e o gerador do roughjs, o mesmo `CanvasModel`), métricas e histórico ficam recolhidos.
 - **Disparar.** "Rodar agora" com formulário de parâmetros gerado do `ParamSpec`.
 - **Acompanhar.** Tela da execução com o grafo colorido por status, lista de passos (status, duração, tokens, custo estimado, link para a thread do passo, que abre na tela de thread que já existe e mostra um link de volta para a execução), visão de cada bloco (rodada do hillclimb e melhor resultado; notas da arena; folhas do graph; achados do interrogate) e controles de pausar, retomar, cancelar e repetir passo. Lê `run.subscribe` com deltas.
-- **Aprovar portão.** Folha com a pergunta, a evidência (relatório, link do PR, números), aprovar ou rejeitar e nota. O push de portão aberto chega como `bot_message` e toca na tela da execução: `alert_path: /bots/workflows/<env>/runs/<runId>`, com uma linha a mais no seam do `AgentNotifications.kt:362`, que hoje só aceita `/threads/`. Não há botão de aprovar dentro da notificação, porque isso pediria código nativo novo e outro caminho de autenticação. Abrir e aprovar leva dois toques.
+- **Aprovar portão.** O portão aberto aparece no corpo da tela da execução, e o botão "Answer" da lista abre o mesmo painel numa folha: motivo curto, a pergunta inteira, a evidência (resumo do passo, link do PR), um botão por opção e nota. O push de portão aberto chega como `bot_message` e toca na tela da execução: `alert_path: /bots/workflows/<env>/runs/<runId>`, com uma linha a mais no seam do `AgentNotifications.kt:362`, que hoje só aceita `/threads/`. Não há botão de aprovar dentro da notificação, porque isso pediria código nativo novo e outro caminho de autenticação. Abrir e aprovar leva dois toques.
 - **Edição leve.** Formulários para o que é seguro no celular: ativar ou desativar, valores padrão de parâmetros, cron e fuso, `model`, `prompt` e `timeout` de um nó, e orçamento. O celular edita a definição decodificada, roda `compileWorkflow` localmente para erro na hora e salva com `baseRevision`. Topologia (nós e arestas) só no desktop.
 - **Métricas e ledger.** Resumo por workflow (execuções por status, custo por noite) e a lista do ledger.
 

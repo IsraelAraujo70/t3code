@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -59,8 +60,30 @@ export function useWorkflowRun(environmentId: EnvironmentId | null, runId: Workf
 }
 
 /** Query the host's run history. */
-export function useWorkflowRuns(environmentId: EnvironmentId | null, input: WorkflowRunsListInput) {
+function useWorkflowRuns(environmentId: EnvironmentId | null, input: WorkflowRunsListInput) {
   return useEnvironmentQuery(
     environmentId === null ? null : workflowsEnvironment.runs({ environmentId, input }),
   );
+}
+
+/**
+ * The host's run list, refetched when `historyKey` (the snapshot stream's run history) moves: the
+ * list is a one-shot query and would go stale while the screen stays open. No polling.
+ */
+export function useLiveWorkflowRuns(
+  environmentId: EnvironmentId | null,
+  input: WorkflowRunsListInput,
+  historyKey: string | null,
+) {
+  const runs = useWorkflowRuns(environmentId, input);
+  const seen = useRef<string | null>(null);
+  const { refresh, isPending } = runs;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the run list when the snapshot stream reports a run that started, stopped at a gate or ended
+  useEffect(() => {
+    // A request already in flight may have read before the change, so wait and refetch after it.
+    if (historyKey === null || seen.current === historyKey || isPending) return;
+    seen.current = historyKey;
+    refresh();
+  }, [historyKey, refresh, isPending]);
+  return runs;
 }
