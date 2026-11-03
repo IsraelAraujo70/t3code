@@ -285,7 +285,7 @@ describe("bot binding", () => {
           WorkflowTurns,
           WorkflowTurns.of({
             start: (_runId, intent) => Effect.succeed(intent.threadId),
-            observe: unused,
+            observe: () => Stream.die("not used by bot binding"),
             interrupt: unused,
             answer: unused,
           }),
