@@ -49,6 +49,8 @@ export interface WorkflowRunApi {
   readonly runStatusLabel: (status: WorkflowRunStatus) => string;
   /** Queued, running or paused: the run still takes controls and deltas. */
   readonly isRunActive: (status: WorkflowRunStatus) => boolean;
+  /** Whether a step's attempt failed in a way the user may retry, a check that did not pass included. */
+  readonly canRetryStep: (step: WorkflowStepAttemptView) => boolean;
   /**
    * Applies one `run.subscribe` delta: steps replace by `key`+`attempt`, blocks by `step`, gates by
    * `key`, and the summary and `seq` move forward. A delta at or below `view.seq` changes nothing.
@@ -252,6 +254,9 @@ export const stepDurationMs: WorkflowRunApi["stepDurationMs"] = (step, nowMs) =>
         0,
         (step.endedAt === null ? nowMs : Date.parse(step.endedAt)) - Date.parse(step.startedAt),
       );
+const RETRYABLE: ReadonlyArray<WorkflowStepStatus> = ["failed", "lost", "timed_out", "ambiguous"];
+export const canRetryStep: WorkflowRunApi["canRetryStep"] = (step) =>
+  RETRYABLE.includes(step.status) || (step.status === "succeeded" && step.port === "fail");
 export const stepWaitLine: WorkflowRunApi["stepWaitLine"] = (step) => {
   if (step.waitingFor) return `Waiting for a slot in ${step.waitingFor}`;
   if (!step.queuedMs) return null;

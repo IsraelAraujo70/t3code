@@ -1,5 +1,10 @@
 import type { WorkflowStepRow } from "@t3tools/client-runtime/workflows";
-import { formatUsd, stepStatusTone, stepWaitLine } from "@t3tools/client-runtime/workflows";
+import {
+  canRetryStep,
+  formatUsd,
+  stepStatusTone,
+  stepWaitLine,
+} from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId, WorkflowRunId } from "@t3tools/contracts";
 import { useState } from "react";
 import { ScrollView, View } from "react-native";
@@ -14,7 +19,7 @@ import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironmentQuery } from "../../state/query";
 import { StatusLabel, stepIcon } from "./WorkflowStatus";
 import { workflowsEnvironment } from "./state";
-import { isRetryable, stepMetaLine } from "./workflowsScreen.logic";
+import { stepMetaLine } from "./workflowsScreen.logic";
 
 const MONO = { fontFamily: "monospace" } as const;
 
@@ -84,7 +89,7 @@ export function WorkflowStepSheet(props: {
               onPress={() => props.onOpenThread(step.threadId!)}
             />
           ) : null}
-          {latest && isRetryable(step.status) ? (
+          {latest && canRetryStep(step) ? (
             <Button
               label="Retry step"
               icon="arrow.clockwise"

@@ -468,6 +468,14 @@ export const WorkflowInterrogateNode = Schema.Struct({
   checks: Schema.Array(WorkflowCommandSpec),
   /** 3; 5 only when declared. */
   rounds: PositiveInt,
+  /**
+   * A reviewer turn that fails because its model is briefly out of reach runs again in the same
+   * round, `max` more times, `backoff` after the failure and doubling each time. Default
+   * `{ max: 3, backoff: "5m" }`; `max: 0` turns it off.
+   */
+  reviewerRetry: Schema.optional(
+    Schema.Struct({ max: NonNegativeInt, backoff: Schema.optional(WorkflowDuration) }),
+  ),
 });
 export type WorkflowInterrogateNode = typeof WorkflowInterrogateNode.Type;
 

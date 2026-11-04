@@ -396,6 +396,30 @@ const handlers = (
         return { status: summary.status };
       }),
     ),
+    workflow_run_retry: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { bot } = yield* callerBot;
+        yield* manage(bot.canManageBots || (yield* ownerTurn));
+        const engine = yield* engineAvailable;
+        const summary = yield* engine
+          .controlRun(
+            {
+              runId: input.runId,
+              control: { _tag: "retry", step: input.step },
+              clientRequestId: yield* requestId,
+            },
+            `${bot.name} (bot)`,
+          )
+          // The refusal says what to do instead (`retry the step that contains …`).
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+            ),
+          );
+        return { status: summary.status };
+      }),
+    ),
     workflow_gate_decide: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const { bot } = yield* callerBot;

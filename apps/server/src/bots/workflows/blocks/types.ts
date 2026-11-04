@@ -209,10 +209,11 @@ export interface BlockIO extends BlockReader {
   /**
    * Overrides how a settled child shows in the run (default: ok → succeeded, otherwise failed,
    * lost or timed_out). A measurement that ran but is incomplete is `failed`: it counts for fatigue.
+   * A try the block runs again is `cancelled`: it neither counts nor resets the streak.
    */
   readonly settleChild: (
     child: string,
-    status: "succeeded" | "failed",
+    status: "succeeded" | "failed" | "cancelled",
     error: string | null,
   ) => void;
   /** Pins a decision under `block:<step>:<id>`; recording the same id twice keeps the first. */

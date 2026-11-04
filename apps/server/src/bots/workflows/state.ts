@@ -35,6 +35,7 @@ export type IntentResult = Exclude<
       | "RunResumed"
       | "RunEnded"
       | "RunReopened"
+      | "RetryApplied"
       | "BranchReleased"
       | "TurnSettled"
       | "UnitExited"
@@ -84,6 +85,10 @@ export interface StepAttempt {
   readonly nudgeSettledAt?: string | null;
   /** Resolved by the run's end, not by its own outcome: a reopening runs it again. */
   readonly stoppedByEnd: boolean;
+  /** A retry before it started over: the step's next start is a new attempt. */
+  readonly superseded?: boolean;
+  /** How often a retry inside this map attempt made it resolve again; its key carries it. */
+  readonly reopens?: number;
 }
 
 export interface GateState {
@@ -146,6 +151,10 @@ export interface RunState {
   readonly usage: ReadonlyMap<string, number>;
   /** Branches of this run that a newer run took over after it ended. */
   readonly releasedBranches: ReadonlySet<string>;
+  /** Seq of the latest RetryApplied of each step: its attempts that began before it run again. */
+  readonly retried: ReadonlyMap<string, number>;
+  /** How often a retry started each step over: a new skip of it is keyed `skip:<step>:<n>`. */
+  readonly skipResets: ReadonlyMap<string, number>;
 }
 
 /** A `BlockAdvanced` fact of one block step, in journal order. */

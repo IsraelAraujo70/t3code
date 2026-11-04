@@ -6,6 +6,7 @@ import { compileWorkflow, DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows"
 import { decide, retryRefusal } from "./decide.ts";
 import type { Fact, NewFact, StoredFact } from "./facts.ts";
 import { foldRun } from "./fold.ts";
+import { stepViews } from "./view.ts";
 import {
   compile,
   TestRun,
@@ -760,6 +761,8 @@ describe("review regressions", () => {
     expect(out).toEqual(
       expect.arrayContaining(["resolved:l@1", "iter:l/r2:0", "unit:l/r2[0]/w@1"]),
     );
+    // Its first attempt failed, but its second runs: a retry now would be lost.
+    expect(retryRefusal(run.compiled, run.state(), "l")).toBe("l is still running");
   });
 
   it("finds a retried loop body's step even when the body has a node named like the scope", () => {
@@ -1347,10 +1350,78 @@ describe("retry, reopening and cleanup", () => {
     expect(keysOf(run.drive())).toContain("skip:b");
     expect(run.state().ended).toBeNull();
     run.add("control:r1", retry("a"));
+    // The retry is a pass of its own; the next one runs the step again.
+    expect(keysOf(run.drive())).toEqual(["retry:control:r1"]);
     expect(keysOf(run.drive())).toContain("unit:a@2");
     spawned(run, "a", 2);
     run.add("exited:a@2", unitExited("a", 2, 0));
     expect(keysOf(run.drive())).toContain("unit:b@1");
+    // A retry the run can no longer take when it applies is refused in the run's warnings.
+    run.add("control:r2", retry("slow"));
+    expect(keysOf(run.drive())).toEqual(["retry:control:r2"]);
+    expect(run.state().warnings.at(-1)?.message).toBe(
+      "The retry of slow was refused: slow is still running.",
+    );
+    expect(keysOf(run.drive())).not.toContain("retry:control:r2");
+  });
+
+  it("shows a successor the retry started over as skipped once it is cut off again", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: { a: commandNode, b: commandNode, slow: commandNode, done },
+          edges: ["a:fail -> b", "b -> done", "a -> done", "slow -> done"],
+        }),
+      ),
+    );
+    run.add("result:unit:slow@1", { _tag: "UnitSpawned", unit: "s", at: iso(T0) });
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    run.drive();
+    spawned(run, "b");
+    run.add("exited:b@1", unitExited("b", 1, 0));
+    run.drive();
+    run.add("control:r1", retry("a"));
+    run.drive();
+    expect(
+      stepViews(run.compiled, run.state()).find((v) => v.key === "b" && v.attempt === 2),
+    ).toMatchObject({ status: "pending" });
+    run.drive();
+    spawned(run, "a", 2);
+    run.add("exited:a@2", unitExited("a", 2, 0));
+    expect(keysOf(run.drive())).toContain("skip:b:1");
+    expect(stepViews(run.compiled, run.state()).filter((v) => v.key === "b")).toEqual([
+      expect.objectContaining({ attempt: 1, status: "succeeded" }),
+      expect.objectContaining({ attempt: 2, status: "skipped" }),
+    ]);
+  });
+
+  it("skips the successor again when the retried step fails again", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: {
+            a: { ...commandNode, continueOnFail: true },
+            b: commandNode,
+            slow: commandNode,
+            done,
+          },
+          edges: ["a -> b", "b -> done", "slow -> done"],
+        }),
+      ),
+    );
+    run.add("result:unit:slow@1", { _tag: "UnitSpawned", unit: "s", at: iso(T0) });
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    expect(keysOf(run.drive())).toContain("skip:b");
+    run.add("control:r1", retry("a"));
+    run.drive();
+    expect(run.state().skipped.has("b")).toBe(false);
+    run.drive();
+    spawned(run, "a", 2);
+    run.add("exited:a@2", unitExited("a", 2, 1));
+    expect(keysOf(run.drive())).toContain("skip:b:1");
+    expect(run.state().skipped.get("b")).toBe("dead-path");
   });
 
   it("refuses a retry the run cannot take", () => {
@@ -1365,7 +1436,9 @@ describe("retry, reopening and cleanup", () => {
     spawned(consumed, "a");
     consumed.add("exited:a@1", unitExited("a", 1, 1));
     consumed.drive();
-    expect(retryRefusal(consumed.compiled, consumed.state(), "a")).toBe("fix already ran after a");
+    expect(retryRefusal(consumed.compiled, consumed.state(), "a")).toBe(
+      "fix is still running after a",
+    );
 
     const child = prepare(
       TestRun.start(
@@ -1387,7 +1460,9 @@ describe("retry, reopening and cleanup", () => {
     );
 
     const cancelled = failedRun();
-    expect(retryRefusal(cancelled.compiled, cancelled.state(), "each[0]/w")).toMatch(/contains/);
+    expect(retryRefusal(cancelled.compiled, cancelled.state(), "each[0]/w")).toBe(
+      "each[0]/w has not run",
+    );
     expect(retryRefusal(cancelled.compiled, cancelled.state(), "b")).toBe("b has not run");
   });
 
@@ -1614,4 +1689,316 @@ it("starts a per-item worktree from another per-item worktree of the same item",
   run.drive();
   expect(run.state().attempts.get("each[0]/b")?.[0]?.resolved ?? null).toBeNull();
   expect(run.intent("ws:dst#each[0]")).toMatchObject({ baseRef: "s2", branch: "wf/dst-A-1" });
+});
+
+describe("a retry inside a map item", () => {
+  const MODEL_ACCESS = "stream disconnected before completion: Unable to verify model access";
+  /** The shape of ticket-fleet: per-item worktree, an interrogate review, a gate and two outputs. */
+  const fleet = compile({
+    bot: "b_pm",
+    budget: { steps: 200, wall: "8h", tokens: 30_000_000 },
+    fatigue: { consecutiveFailures: 50 },
+    params: { tickets: { type: "string[]", pattern: "[A-Z]+-\\d+" } },
+    workspaces: {
+      ticket: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
+    },
+    nodes: {
+      fleet: {
+        kind: "map",
+        items: "params.tickets",
+        maxItems: 2,
+        concurrency: 2,
+        body: {
+          nodes: {
+            impl: { ...agentNode, workspace: "ticket", access: "write" },
+            review: {
+              kind: "interrogate",
+              target: { workspace: "ticket", baseRef: "friend/main" },
+              intent: "Review {{ item }}",
+              mode: "loop",
+              reviewers: ["$sol"],
+              lead: "$lead",
+              checks: [],
+              rounds: 1,
+              // The outage outlasts the reviewer's own tries; the user's retry comes after.
+              reviewerRetry: { max: 0 },
+            },
+            gate: { ...commandNode, cwd: "ticket", check: "exit == 0" },
+            done: {
+              kind: "output",
+              status: "ready_for_review",
+              value: { ticket: "{{ item }}", status: "done" },
+              report: "{{ item }} ok",
+              postToBot: true,
+            },
+            failed: {
+              kind: "output",
+              join: "any",
+              status: "checks_failed",
+              value: { ticket: "{{ item }}", status: "failed" },
+              report: "{{ item }} failed: {{ nodes.review.error }}",
+              postToBot: true,
+            },
+          },
+          edges: [
+            "impl -> review",
+            "impl:fail -> failed",
+            "review -> gate",
+            "review:fail -> failed",
+            "gate:pass -> done",
+            "gate:fail -> failed",
+          ],
+        },
+      },
+      report: {
+        kind: "output",
+        status: "ready_for_review",
+        value: {},
+        report: "fleet",
+        postToBot: true,
+      },
+    },
+    edges: ["fleet -> report"],
+  });
+
+  /** Answers every pending intent until a pass changes nothing; `reviewer` scripts the reviews. */
+  const play = (
+    run: TestRun,
+    reviewer: (step: string) => "approve" | "unavailable",
+    hold: (key: string) => boolean = () => false,
+  ) => {
+    for (let pass = 0; pass < 200; pass++) {
+      const out = run.drive();
+      let answered = 0;
+      for (const [key, entry] of run.state().intents) {
+        if (entry.result !== null || hold(key)) continue;
+        const intent = entry.intent;
+        answered++;
+        switch (intent._tag) {
+          case "PrepareWorkspace":
+            run.result(key, {
+              _tag: "WorkspaceReady",
+              name: intent.name,
+              path: `/w/${intent.name}`,
+              branch: intent.branch,
+              headSha: "h1",
+            });
+            break;
+          case "StartTurn": {
+            run.result(key, { _tag: "TurnStarted", threadId: intent.threadId });
+            const review = /\/rev\d+$/.test(intent.step) ? reviewer(intent.step) : null;
+            const settled = turnSettled(
+              intent.step,
+              intent.attempt,
+              review === "unavailable" ? "failed" : "completed",
+              review === "approve" ? { verdict: "APPROVE", findings: [] } : null,
+            );
+            if (settled._tag !== "TurnSettled") throw new Error("fixture");
+            run.add(`settled:${intent.step}@${intent.attempt}`, {
+              ...settled,
+              text: review === "unavailable" ? MODEL_ACCESS : "done",
+            });
+            break;
+          }
+          case "StartUnit":
+            run.result(key, { _tag: "UnitSpawned", unit: key, at: iso(T0) });
+            run.add(
+              `exited:${intent.step}@${intent.attempt}`,
+              unitExited(intent.step, intent.attempt, 0),
+            );
+            break;
+          case "PostToBot":
+            run.result(key, { _tag: "BotPosted", threadId: "bot:b_pm:1" });
+            break;
+          case "RemoveWorkspace":
+            run.result(key, { _tag: "WorkspaceRemoved" });
+            break;
+          case "Notify":
+            run.result(key, { _tag: "Notified" });
+            break;
+          default:
+            throw new Error(`unexpected intent ${intent._tag}`);
+        }
+      }
+      if (out.length === 0 && answered === 0) return run;
+    }
+    throw new Error("the run never settled");
+  };
+  const started = (...tickets: ReadonlyArray<string>) =>
+    runStarted({
+      params: { tickets: [...tickets] },
+      budget: { steps: 200, wallMs: 28_800_000, tokens: 30_000_000, usd: null },
+    });
+  const resolvedOf = (run: TestRun, step: string) =>
+    run.state().attempts.get(step)?.at(-1)?.resolved ?? null;
+
+  it("runs a failed review again in an ended run, and the item's steps after it", () => {
+    const run = play(TestRun.start(fleet, started("A-1", "A-2")), (step) =>
+      step.startsWith("fleet[1]/") ? "unavailable" : "approve",
+    );
+    expect(run.state().ended?.status).toBe("succeeded");
+    expect(resolvedOf(run, "fleet[1]/review")).toMatchObject({ status: "failed", port: "fail" });
+    expect(resolvedOf(run, "fleet[1]/failed")?.status).toBe("succeeded");
+    expect(run.intent("rm:ticket#fleet[0]")).toBeDefined();
+    expect(run.intent("rm:ticket#fleet[1]")).toBeUndefined();
+    expect(retryRefusal(run.compiled, run.state(), "fleet[1]/review")).toBeNull();
+    expect(retryRefusal(run.compiled, run.state(), "fleet[0]/review")).toBe(
+      "fleet[0]/review succeeded",
+    );
+    expect(retryRefusal(run.compiled, run.state(), "fleet[1]/review/r1/rev0")).toBe(
+      "retry the step that contains fleet[1]/review/r1/rev0",
+    );
+
+    run.add("control:retry", {
+      _tag: "ControlRequested",
+      control: "retry",
+      step: "fleet[1]/review",
+      by: "user",
+      at: iso(T0),
+    });
+    play(run, () => "approve");
+
+    const state = run.state();
+    expect(state.keys.has("reopen:control:retry")).toBe(true);
+    expect(state.ended?.status).toBe("succeeded");
+    // implement ran once; the review ran again, then the gate and `done` for the first time.
+    expect(state.attempts.get("fleet[1]/impl")?.length).toBe(1);
+    expect(resolvedOf(run, "fleet[1]/review")).toMatchObject({ attempt: 2, port: "approve" });
+    expect(resolvedOf(run, "fleet[1]/gate")).toMatchObject({ attempt: 1, port: "pass" });
+    expect(resolvedOf(run, "fleet[1]/done")?.status).toBe("succeeded");
+    expect(state.attempts.get("fleet[1]/failed")?.at(-1)?.superseded).toBe(true);
+    expect(resolvedOf(run, "fleet")).toMatchObject({
+      output: [
+        { ticket: "A-1", status: "done" },
+        { ticket: "A-2", status: "done" },
+      ],
+    });
+    expect(run.intent("post:done:fleet[1]")).toBeDefined();
+    expect(run.intent("post:report@2")).toBeDefined();
+    expect(run.intent("rm:ticket#fleet[1]")).toBeDefined();
+    // The failure output the retry superseded shows as not run again.
+    expect(stepViews(run.compiled, state).filter((v) => v.key === "fleet[1]/failed")).toEqual([
+      expect.objectContaining({ attempt: 1, status: "succeeded" }),
+      expect.objectContaining({ attempt: 2, status: "skipped" }),
+    ]);
+  });
+
+  it("runs a failed review again while another item still runs, without a reopening", () => {
+    const run = TestRun.start(fleet, started("A-1", "A-2"));
+    const busy = (key: string) => key === "turn:fleet[0]/impl@1";
+    play(run, () => "unavailable", busy);
+    expect(run.state().ended).toBeNull();
+    expect(resolvedOf(run, "fleet[1]/failed")?.status).toBe("succeeded");
+    expect(run.intent("post:failed:fleet[1]")).toMatchObject({
+      report: expect.stringContaining(MODEL_ACCESS),
+    });
+    // The step after the review that failed is still running elsewhere: that is no refusal.
+    expect(retryRefusal(run.compiled, run.state(), "fleet[1]/review")).toBeNull();
+
+    run.add("control:retry", {
+      _tag: "ControlRequested",
+      control: "retry",
+      step: "fleet[1]/review",
+      by: "user",
+      at: iso(T0),
+    });
+    play(run, () => "approve", busy);
+    const state = run.state();
+    expect(state.keys.has("reopen:control:retry")).toBe(false);
+    expect(state.ended).toBeNull();
+    expect(resolvedOf(run, "fleet[1]/done")?.status).toBe("succeeded");
+    expect(resolvedOf(run, "fleet")).toBeNull();
+
+    play(run, () => "approve");
+    expect(run.state().ended?.status).toBe("succeeded");
+    expect(resolvedOf(run, "fleet")).toMatchObject({ attempt: 1, port: "ok" });
+  });
+
+  // The loop is named like a retry scope: only `<loop>/r2[i]` is one.
+  it("posts again from a loop the retry ran afresh inside the item", () => {
+    const run = TestRun.start(
+      compile({
+        bot: "b_pm",
+        params: { tickets: { type: "string[]", pattern: "[A-Z]+-\\d+" } },
+        nodes: {
+          each: {
+            kind: "map",
+            items: "params.tickets",
+            maxItems: 1,
+            concurrency: 1,
+            body: {
+              nodes: {
+                a: { ...commandNode, check: "exit == 0" },
+                r2: {
+                  kind: "loop",
+                  max: 1,
+                  until: "true",
+                  body: {
+                    nodes: {
+                      out: {
+                        kind: "output",
+                        status: "checks_failed",
+                        value: {},
+                        report: "{{ item }} needs a look",
+                        postToBot: true,
+                      },
+                    },
+                    edges: [],
+                  },
+                },
+              },
+              edges: ["a:fail -> r2"],
+            },
+          },
+        },
+        edges: [],
+      }),
+      started("A-1"),
+    );
+    run.drive();
+    run.result("ws:integ", {
+      _tag: "WorkspaceReady",
+      name: "integ",
+      path: "/w/integ",
+      branch: "wf/demo",
+      headSha: "h1",
+    });
+    const fail = (attempt: number) => {
+      run.drive();
+      run.result(`unit:each[0]/a@${attempt}`, { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add(`exited:each[0]/a@${attempt}`, unitExited("each[0]/a", attempt, 1));
+      run.drive();
+    };
+    fail(1);
+    run.result("post:out:each[0]", { _tag: "BotPosted", threadId: "bot:b_pm:1" });
+    run.drive();
+    expect(run.state().ended?.status).toBe("succeeded");
+
+    run.add("control:retry", {
+      _tag: "ControlRequested",
+      control: "retry",
+      step: "each[0]/a",
+      by: "user",
+      at: iso(T0),
+    });
+    run.drive();
+    run.drive();
+    fail(2);
+    expect(run.intent("post:out:each[0]/r2")).toMatchObject({ report: "A-1 needs a look" });
+  });
+
+  it.each([
+    ["fleet[0]/review", "fleet[0]/review is still running"],
+    ["fleet[1]/impl", "fleet[1]/impl succeeded"],
+    ["fleet/r2[1]/review", "fleet/r2[1]/review belongs to an earlier attempt of fleet"],
+    ["fleet[1]/review/a2", "retry the step that contains fleet[1]/review/a2"],
+  ])("refuses to retry %s", (step, why) => {
+    const run = TestRun.start(fleet, started("A-1", "A-2"));
+    play(
+      run,
+      (s) => (s.startsWith("fleet[1]/") ? "unavailable" : "approve"),
+      (key) => key.startsWith("turn:fleet[0]/review/"),
+    );
+    expect(retryRefusal(run.compiled, run.state(), step)).toBe(why);
+  });
 });
