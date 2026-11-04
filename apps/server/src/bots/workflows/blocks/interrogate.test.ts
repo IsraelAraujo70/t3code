@@ -122,6 +122,9 @@ const answer = (run: TestRun, intent: Intent, reply: Exclude<Reply, "hold">) => 
         path: `/w/${intent.name}`,
         branch: intent.branch,
         headSha: intent.baseRef === "friend/main" ? "base0" : intent.baseRef,
+        ...(intent.baseRef === "friend/main"
+          ? { base: { ref: "refs/remotes/origin/friend/main", sha: "base0" } }
+          : {}),
       });
       return;
     case "StartTurn": {
@@ -194,7 +197,7 @@ describe("interrogate block", () => {
       access: "read",
       workspace: { name: "review/r1/rev0/ws" },
     });
-    expect(turnIntent(run, "r1/rev0")?.prompt).toContain("git diff friend/main..HEAD");
+    expect(turnIntent(run, "r1/rev0")?.prompt).toContain("git diff base0..HEAD");
     expect(run.intent("rm:review/r1/rev0/ws")).toBeDefined();
     expect(turnIntent(run, "r1/lead")).toBeUndefined();
     expect(resolution(run)).toMatchObject({

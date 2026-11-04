@@ -266,7 +266,14 @@ export const RunFact = Schema.TaggedUnion({
   // Results of intents, key `result:<intent key>`.
   TurnStarted: { threadId: Text },
   UnitSpawned: { unit: Text, at: Text },
-  WorkspaceReady: { name: Text, path: Text, branch: NullableText, headSha: Text },
+  WorkspaceReady: {
+    name: Text,
+    path: Text,
+    branch: NullableText,
+    headSha: Text,
+    /** The ref and sha a new worktree started from (a fetched remote tip, or the local ref). */
+    base: Schema.optional(Schema.Struct({ ref: Text, sha: Text })),
+  },
   GitOpDone: { sha: Text },
   WorkspaceRemoved: {},
   RefResolved: { sha: Text },

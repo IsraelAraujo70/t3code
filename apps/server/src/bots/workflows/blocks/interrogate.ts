@@ -409,8 +409,11 @@ const decide = (node: Node, state: State, io: BlockIO): void => {
   if (Result.isFailure(intent)) return fail(intent.failure);
 
   if (round.reviews === null) {
-    const baseRef = io.render(node.target.baseRef);
-    if (Result.isFailure(baseRef)) return fail(baseRef.failure);
+    const rendered = io.render(node.target.baseRef);
+    if (Result.isFailure(rendered)) return fail(rendered.failure);
+    // The worktree started from a fetched remote tip; the same name in a reviewer's checkout is
+    // the local branch, which may be behind it.
+    const baseRef = target.base?.ref === rendered.success ? target.base.sha : rendered.success;
     const prior = state.rounds.at(-2);
     const entries: Json[] = [];
     let waiting = false;
@@ -448,7 +451,7 @@ const decide = (node: Node, state: State, io: BlockIO): void => {
             };
       const turn = io.turn(child, {
         model: model.success,
-        prompt: reviewerPrompt(intent.success, baseRef.success, round, previous),
+        prompt: reviewerPrompt(intent.success, baseRef, round, previous),
         workspace: ws.workspace,
         access: "read",
         output: REVIEW_OUTPUT,
