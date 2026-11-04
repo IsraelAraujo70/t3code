@@ -761,6 +761,35 @@ describe("review regressions", () => {
       expect.arrayContaining(["resolved:l@1", "iter:l/r2:0", "unit:l/r2[0]/w@1"]),
     );
   });
+
+  it("finds a retried loop body's step even when the body has a node named like the scope", () => {
+    const run = ready(
+      {
+        l: {
+          kind: "loop",
+          max: 1,
+          until: "false",
+          retry: { max: 1, on: ["failed"] },
+          body: {
+            nodes: {
+              r2: commandNode,
+              w: { ...commandNode, retry: { max: 1, on: ["failed"], backoff: "10m" } },
+            },
+            edges: ["r2 -> w"],
+          },
+        },
+      },
+      [],
+    );
+    for (const step of ["l[0]/r2", "l[0]/w", "l/r2[0]/r2", "l/r2[0]/w"]) {
+      run.drive();
+      run.add(`result:unit:${step}@1`, { _tag: "UnitSpawned", unit: `u-${step}`, at: iso(T0) });
+      run.add(`exited:${step}@1`, unitExited(step, 1, step === "l/r2[0]/w" ? 1 : 0));
+    }
+    run.drive();
+    expect(run.state().attempts.get("l/r2[0]/w")?.[0]?.resolved?.status).toBe("failed");
+    expect(run.deadline(T0 + 1_000)).toBe(T0 + 601_000);
+  });
   it("counts an accept command against the step budget", () => {
     const run = ready(
       {
@@ -1416,6 +1445,53 @@ describe("retry, reopening and cleanup", () => {
     expect(ended(undefined, 0)).toEqual(["rm:r@1", "rm:integ"]);
     expect(ended("always", 0)).toEqual(["rm:r@1"]);
     expect(ended("never", 1)).toEqual(["rm:r@1", "rm:integ"]);
+  });
+
+  it("keeps an item's worktree when its failure went to an output and the run succeeded", () => {
+    const run = TestRun.start(
+      compile({
+        params: { tickets: { type: "string[]", pattern: "[A-Z]+-\\d+" } },
+        workspaces: {
+          ticket: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
+        },
+        nodes: {
+          each: {
+            kind: "map",
+            items: "params.tickets",
+            maxItems: 2,
+            concurrency: 2,
+            body: {
+              nodes: {
+                gate: { ...commandNode, cwd: "ticket", check: "exit == 0" },
+                ok: { kind: "output", status: "ready_for_review", value: { ok: "yes" } },
+                failed: { kind: "output", status: "checks_failed", value: { ok: "no" } },
+              },
+              edges: ["gate:pass -> ok", "gate:fail -> failed"],
+            },
+          },
+          report: done,
+        },
+        edges: ["each -> report"],
+      }),
+      runStarted({ params: { tickets: ["A-1", "A-2"] } }),
+    );
+    run.drive();
+    for (const [i, exit] of [1, 0].entries()) {
+      const name = `ticket#each[${i}]`;
+      run.result(`ws:${name}`, {
+        _tag: "WorkspaceReady",
+        name,
+        path: `/runs/x/${i}`,
+        branch: null,
+        headSha: "s1",
+      });
+      run.drive();
+      spawned(run, `each[${i}]/gate`);
+      run.add(`exited:each[${i}]/gate@1`, unitExited(`each[${i}]/gate`, 1, exit));
+    }
+    run.drive();
+    expect(run.state().ended?.status).toBe("succeeded");
+    expect(keysOf(run.drive()).filter((k) => k.startsWith("rm:"))).toEqual(["rm:ticket#each[1]"]);
   });
 });
 

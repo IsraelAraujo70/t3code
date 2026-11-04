@@ -93,14 +93,18 @@ const MAX_LOST_REPLAYS = 2;
 /** How much of a failed acceptance command's output its reason quotes. */
 const ACCEPT_TAIL_CHARS = 1_500;
 
-/** `exited 1:` and the ends of stderr and stdout, which say why a command failed. */
+/** Terminal colour and cursor codes, which a report would show as noise. */
+const ANSI_ESCAPE = /\u001b\[[0-9;?]*[A-Za-z]/g;
+
+/** `exited 1:` and the ends of stderr and stdout (already redacted), which say why a command failed. */
 const exitReason = (exited: {
   readonly exit: number | null;
   readonly tail: string;
   readonly stderr?: string | undefined;
 }): string => {
-  const stderr = (exited.stderr ?? "").trim().slice(-ACCEPT_TAIL_CHARS);
-  const stdout = exited.tail.trim().slice(-ACCEPT_TAIL_CHARS);
+  const plain = (text: string) => text.replace(ANSI_ESCAPE, "").trim().slice(-ACCEPT_TAIL_CHARS);
+  const stderr = plain(exited.stderr ?? "");
+  const stdout = plain(exited.tail);
   const parts = [stderr, stdout === "" ? "" : stderr === "" ? stdout : `stdout:\n${stdout}`];
   const text = parts.filter((part) => part !== "").join("\n");
   return `exited ${exited.exit ?? "without a code"}${text === "" ? "" : `:\n${text}`}`;
@@ -268,9 +272,24 @@ export const retryRefusal = (
 };
 
 /**
+ * The graph steps whose latest attempt ended in failure, a failed check included. A map item that
+ * routed its failure to an output still lets the run succeed, so this is what `on_failure` reads.
+ */
+const failedStepsOf = (compiled: CompiledWorkflow, state: RunState): ReadonlyArray<string> =>
+  [...state.attempts].flatMap(([step, attempts]) => {
+    // A block's children and an agent's accept or judge are not graph steps.
+    if (isSubStep(step) || nodeAt(compiled, step) === undefined) return [];
+    const r = attempts.at(-1)?.resolved;
+    const failed =
+      r != null && (r.port === "fail" || (r.status !== "succeeded" && r.status !== "cancelled"));
+    return failed ? [step] : [];
+  });
+
+/**
  * After the end: stop what is still live, reopen for a retry once nothing is, or remove the
  * worktrees `retain` lets go. A disposable read-only checkout always goes; a declared worktree stays
- * when `retain` is `always`, or `on_failure` (the default) and the run did not succeed.
+ * when `retain` is `always`, or `on_failure` (the default) and the run did not succeed or a step
+ * failed in it (in its own item, for a per-item worktree).
  */
 const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
   const interrupts = interruptsAfterEnd(state);
@@ -302,12 +321,18 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
     };
     return [reopened];
   }
+  const failedSteps = failedStepsOf(compiled, state);
   return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
     const decl = declarationOf(compiled.definition, name);
     const retain = decl?.retain ?? "on_failure";
+    // A per-item instance is `<name>#<item>`: only its item's steps failing keep it.
+    const hash = name.indexOf("#");
+    const scope = hash < 0 ? "" : `${name.slice(hash + 1)}/`;
+    const failedHere = failedSteps.some((step) => step.startsWith(scope));
     const keep =
       decl !== undefined &&
-      (retain === "always" || (retain === "on_failure" && ended.status !== "succeeded"));
+      (retain === "always" ||
+        (retain === "on_failure" && (ended.status !== "succeeded" || failedHere)));
     const key = `rm:${name}`;
     if (keep || state.keys.has(key)) return [];
     const intent: Intent = { _tag: "RemoveWorkspace", key, name };
@@ -1483,7 +1508,9 @@ export const decide = (
       );
       if (Result.isFailure(check))
         return resolve(step, a.attempt, "failed", "fail", out, check.failure);
-      return resolve(step, a.attempt, "succeeded", isTruthy(check.success) ? "pass" : "fail", out);
+      if (isTruthy(check.success)) return resolve(step, a.attempt, "succeeded", "pass", out);
+      const why = `the check \`${node.check}\` did not pass: ${exitReason(exited)}`;
+      return resolve(step, a.attempt, "succeeded", "fail", out, why);
     }
     return exited.exit === 0
       ? resolve(step, a.attempt, "succeeded", "ok", out)
@@ -2331,17 +2358,22 @@ const nodeAt = (compiled: CompiledWorkflow, step: string): WorkflowNode | undefi
   let found: WorkflowNode | undefined;
   // An agent's `accept`/`judge` sub-step belongs to the agent's node.
   const path = isSubStep(step) ? step.slice(0, step.lastIndexOf("/")) : step;
+  /** The last segment was a container without an item index: a retry scope `r<n>[i]` follows. */
+  let scoped = false;
   for (const segment of path.split("/")) {
     if (graph === null) return undefined;
+    // A retried container's fresh body is scoped `<step>/r<n>`; it stays on the same body, even
+    // when the body has a node named `r<n>` too.
+    if (scoped) {
+      scoped = false;
+      if (/^r\d+\[\d+\]$/.test(segment)) continue;
+    }
     const id = segment.replace(/\[\d+\]$/, "");
     const node = graph.nodes.get(id);
-    if (node === undefined) {
-      // A retried container's fresh body is scoped `<step>/r<n>`; it stays on the same body.
-      if (found !== undefined && /^r\d+$/.test(id)) continue;
-      return undefined;
-    }
+    if (node === undefined) return undefined;
     found = node.node;
     graph = node.body;
+    scoped = node.body !== null && id === segment;
   }
   return found;
 };

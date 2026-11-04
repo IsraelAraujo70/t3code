@@ -86,6 +86,28 @@ describe("run decider primitives", () => {
     expect(resolved(run, "resolved:c@1")).toMatchObject({ status: "failed", error: why });
   });
 
+  it.each([
+    [0, null],
+    [
+      1,
+      "the check `exit == 0` did not pass: exited 1:\nType error: x is not a number\nstdout:\nnx run-many",
+    ],
+  ])("explains a command whose check failed, exit %i", (exit, why) => {
+    const run = ready({ c: { ...command, check: "exit == 0" } });
+    run.add(
+      "exited:c@1",
+      unitExited("c", 1, exit, {
+        tail: "\u001b[1mnx run-many\u001b[22m\n",
+        stderr: "\u001b[31mType error:\u001b[39m x is not a number\n",
+      }),
+    );
+    expect(resolved(run, "resolved:c@1")).toMatchObject({
+      status: "succeeded",
+      port: exit === 0 ? "pass" : "fail",
+      error: why,
+    });
+  });
+
   it("gives an agent's turns, a command and an accept check the slot of the resource they use", () => {
     const run = TestRun.start(
       compile({

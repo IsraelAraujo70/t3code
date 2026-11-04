@@ -62,7 +62,8 @@ type Reply =
   | "hold"
   | {
       readonly fail?: string;
-      readonly status?: "completed" | "interrupted";
+      readonly status?: "completed" | "failed" | "interrupted";
+      readonly text?: string;
       readonly head?: string | null;
       readonly output?: Json;
       readonly exit?: number;
@@ -132,7 +133,11 @@ const answer = (run: TestRun, intent: Intent, reply: Exclude<Reply, "hold">) => 
       const nudge = intent.key.startsWith("nudge:") ? ":nudge" : "";
       const settled = turnSettled(intent.step, 1, reply.status ?? "completed", reply.output ?? {});
       if (settled._tag !== "TurnSettled") throw new Error("turnSettled built another fact");
-      run.add(`settled:${intent.step}@1${nudge}`, { ...settled, headSha: reply.head ?? null });
+      run.add(`settled:${intent.step}@1${nudge}`, {
+        ...settled,
+        headSha: reply.head ?? null,
+        text: reply.text ?? settled.text,
+      });
       return;
     }
     case "StartUnit":
@@ -316,6 +321,19 @@ describe("interrogate block", () => {
       port: "stuck",
       output: { reason: expect.stringContaining("check 0") },
     });
+  });
+
+  it("fails, not stuck, when no reviewer answered the last round", () => {
+    const error = "stream disconnected before completion: Unable to verify model access right now.";
+    const run = play(start(), world({ review: () => ({ status: "failed", text: error }) }));
+
+    expect(turnIntent(run, "r3/rev0")).toBeDefined();
+    expect(resolution(run)).toMatchObject({
+      status: "failed",
+      port: "fail",
+      error: expect.stringContaining(`no reviewer answered in round 3:\nreviewer 0: ${error}`),
+    });
+    expect(run.state().attempts.get("broke")?.at(-1)?.resolved?.status).toBe("succeeded");
   });
 
   it("is stuck when the lead disputes the same finding in two rounds", () => {
