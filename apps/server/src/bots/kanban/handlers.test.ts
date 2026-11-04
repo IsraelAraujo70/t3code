@@ -729,7 +729,7 @@ describe("kanban tools", () => {
       Effect.gen(function* () {
         const { layer } = setup();
         const server = McpHttpServer.toolkitRegistration(KanbanToolkit, KanbanHandlers.layer).pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(Layer.merge(layer, McpToolAccessTestkit.liveThreadsLayer)),
         );
         const { names, listed } = yield* Effect.gen(function* () {

@@ -301,7 +301,7 @@ const layerTools = Layer.mergeAll(
   McpHttpServer.layerProjectRegistration,
 ).pipe(
   Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(layerPeers),
   Layer.provide(layerPeerLinks),
   Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
@@ -618,22 +618,20 @@ it.effect("/mcp turns links off for a caller BotLinkAccess refuses, and only for
           dependencies: [McpInvocationContext.McpInvocationContext],
         }),
       );
-      const serverLayer = McpHttpServer.toolkitRegistration(
-        ProbeToolkit,
-        McpToolAccess.toLayer(ProbeToolkit, {
-          probe: McpToolAccess.reads(() =>
-            McpInvocationContext.McpInvocationContext.pipe(
-              Effect.tap((scope) => Effect.sync(() => seen.push(scope.linkedEnvironments))),
-              Effect.as({ ok: true }),
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          ProbeToolkit,
+          McpToolAccess.toLayer(ProbeToolkit, {
+            probe: McpToolAccess.reads(() =>
+              McpInvocationContext.McpInvocationContext.pipe(
+                Effect.tap((scope) => Effect.sync(() => seen.push(scope.linkedEnvironments))),
+                Effect.as({ ok: true }),
+              ),
             ),
-          ),
-        }),
-      ).pipe(
-        Layer.provideMerge(
-          McpHttpServer.layerMcpTransport.pipe(
-            Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
-          ),
+          }),
         ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(tokens[token]),

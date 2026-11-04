@@ -23,6 +23,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as RelayDeliveryProof from "../scheduledTasks/RelayDeliveryProof.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as WebhookRoute from "../scheduledTasks/webhookRoute.ts";
@@ -115,6 +116,7 @@ it.effect("starts the task's run when its public webhook URL is posted on a real
                 Effect.as({ threadId: "thread-1", resumed: false } as never),
               ),
           }),
+          ManagedPolicy.layerTest(),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),

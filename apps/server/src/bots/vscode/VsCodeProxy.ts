@@ -16,6 +16,7 @@ import {
   Cookies,
   HttpClient,
   HttpClientRequest,
+  HttpMethod,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
@@ -251,6 +252,9 @@ const proxyHttp = Effect.fn("VsCodeProxy.proxyHttp")(function* (
 ) {
   const httpClient = HttpClient.withScope(upstream.http);
   const method = request.method;
+  if (!HttpMethod.isHttpMethod(method)) {
+    return HttpServerResponse.text("Method Not Allowed", { status: 405 });
+  }
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
     HttpClientRequest.setHeaders(upstreamRequestHeaders(request)),
     method === "GET" || method === "HEAD"
