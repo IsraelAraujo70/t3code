@@ -344,10 +344,9 @@ export const planRetry = (
       return { refused: `${step} belongs to an earlier attempt of ${container}` };
   }
   const latest = latestOf(step);
-  if (latest === undefined)
-    return {
-      refused: runningUnresolved(step) ? `${step} is still running` : `${step} has not run`,
-    };
+  // A map, loop or block keeps its last outcome while its next attempt runs.
+  if (runningUnresolved(step)) return { refused: `${step} is still running` };
+  if (latest === undefined) return { refused: `${step} has not run` };
   if (latest.resolved === null) return { refused: `${step} is still running` };
   if (latest.resolved.status === "succeeded" && latest.resolved.port !== "fail")
     return { refused: `${step} succeeded` };
@@ -630,7 +629,9 @@ export const decide = (
   };
   const skip = (step: string, reason: "guard" | "dead-path" | "once") => {
     skippedNow.add(step);
-    emit(`skip:${step}`, { _tag: "StepSkipped", step, reason });
+    // A retry cleared the step's earlier skip: skipping it again needs a key of its own.
+    const resets = state.skipResets.get(step) ?? 0;
+    emit(`skip:${step}${resets === 0 ? "" : `:${resets}`}`, { _tag: "StepSkipped", step, reason });
   };
 
   const markedFailed = (step: string, attempt: number) =>
@@ -1813,9 +1814,17 @@ export const decide = (
         if (node.postToBot === true && definition.bot !== undefined && posted !== "") {
           // Once per run at the top (`post:<node>`), once per item in a body (`post:<node>:<item>`).
           const item = level.parent === null ? null : itemKeyOf(level);
-          // An output a retry ran again posts its new report under its attempt.
+          // An output a retry ran again posts its new report: its attempt, and the retried loop
+          // scopes (`loop/r2[0]`) between it and its item, keep the key apart from the first post.
+          const scopes =
+            item === null
+              ? ""
+              : [...step.slice(item.length + 1).matchAll(/(?:^|\/)(r\d+)\[/g)]
+                  .map((m) => `/${m[1]}`)
+                  .join("");
           const post =
             (item === null ? `post:${step}` : `post:${step.slice(level.prefix.length)}:${item}`) +
+            scopes +
             (attempt === 1 ? "" : `@${attempt}`);
           record({
             _tag: "PostToBot",

@@ -153,6 +153,8 @@ export interface RunState {
   readonly releasedBranches: ReadonlySet<string>;
   /** Seq of the latest RetryApplied of each step: its attempts that began before it run again. */
   readonly retried: ReadonlyMap<string, number>;
+  /** How often a retry started each step over: a new skip of it is keyed `skip:<step>:<n>`. */
+  readonly skipResets: ReadonlyMap<string, number>;
 }
 
 /** A `BlockAdvanced` fact of one block step, in journal order. */

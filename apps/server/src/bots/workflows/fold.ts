@@ -33,6 +33,7 @@ export const emptyRunState = (runId: string): RunState => ({
   usage: new Map(),
   releasedBranches: new Set(),
   retried: new Map(),
+  skipResets: new Map(),
 });
 
 /**
@@ -158,6 +159,9 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       }
       // A step after the retried one is decided again, whatever skipped it.
       const reset = new Set(fact.superseded);
+      const resets = new Map(next.skipResets);
+      for (const step of reset) resets.set(step, (resets.get(step) ?? 0) + 1);
+      next.skipResets = resets;
       next.skipped = new Map([...next.skipped].filter(([step]) => !reset.has(step)));
       next.skippedSeq = new Map([...next.skippedSeq].filter(([step]) => !reset.has(step)));
       break;

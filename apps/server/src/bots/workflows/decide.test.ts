@@ -761,6 +761,8 @@ describe("review regressions", () => {
     expect(out).toEqual(
       expect.arrayContaining(["resolved:l@1", "iter:l/r2:0", "unit:l/r2[0]/w@1"]),
     );
+    // Its first attempt failed, but its second runs: a retry now would be lost.
+    expect(retryRefusal(run.compiled, run.state(), "l")).toBe("l is still running");
   });
 
   it("finds a retried loop body's step even when the body has a node named like the scope", () => {
@@ -1363,6 +1365,34 @@ describe("retry, reopening and cleanup", () => {
     expect(keysOf(run.drive())).not.toContain("retry:control:r2");
   });
 
+  it("skips the successor again when the retried step fails again", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: {
+            a: { ...commandNode, continueOnFail: true },
+            b: commandNode,
+            slow: commandNode,
+            done,
+          },
+          edges: ["a -> b", "b -> done", "slow -> done"],
+        }),
+      ),
+    );
+    run.add("result:unit:slow@1", { _tag: "UnitSpawned", unit: "s", at: iso(T0) });
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    expect(keysOf(run.drive())).toContain("skip:b");
+    run.add("control:r1", retry("a"));
+    run.drive();
+    expect(run.state().skipped.has("b")).toBe(false);
+    run.drive();
+    spawned(run, "a", 2);
+    run.add("exited:a@2", unitExited("a", 2, 1));
+    expect(keysOf(run.drive())).toContain("skip:b:1");
+    expect(run.state().skipped.get("b")).toBe("dead-path");
+  });
+
   it("refuses a retry the run cannot take", () => {
     const consumed = prepare(
       TestRun.start(
@@ -1851,6 +1881,78 @@ describe("a retry inside a map item", () => {
     play(run, () => "approve");
     expect(run.state().ended?.status).toBe("succeeded");
     expect(resolvedOf(run, "fleet")).toMatchObject({ attempt: 1, port: "ok" });
+  });
+
+  it("posts again from a loop the retry ran afresh inside the item", () => {
+    const run = TestRun.start(
+      compile({
+        bot: "b_pm",
+        params: { tickets: { type: "string[]", pattern: "[A-Z]+-\\d+" } },
+        nodes: {
+          each: {
+            kind: "map",
+            items: "params.tickets",
+            maxItems: 1,
+            concurrency: 1,
+            body: {
+              nodes: {
+                a: { ...commandNode, check: "exit == 0" },
+                l: {
+                  kind: "loop",
+                  max: 1,
+                  until: "true",
+                  body: {
+                    nodes: {
+                      out: {
+                        kind: "output",
+                        status: "checks_failed",
+                        value: {},
+                        report: "{{ item }} needs a look",
+                        postToBot: true,
+                      },
+                    },
+                    edges: [],
+                  },
+                },
+              },
+              edges: ["a:fail -> l"],
+            },
+          },
+        },
+        edges: [],
+      }),
+      started("A-1"),
+    );
+    run.drive();
+    run.result("ws:integ", {
+      _tag: "WorkspaceReady",
+      name: "integ",
+      path: "/w/integ",
+      branch: "wf/demo",
+      headSha: "h1",
+    });
+    const fail = (attempt: number) => {
+      run.drive();
+      run.result(`unit:each[0]/a@${attempt}`, { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+      run.add(`exited:each[0]/a@${attempt}`, unitExited("each[0]/a", attempt, 1));
+      run.drive();
+    };
+    fail(1);
+    run.result("post:out:each[0]", { _tag: "BotPosted", threadId: "bot:b_pm:1" });
+    run.drive();
+    expect(run.state().ended?.status).toBe("succeeded");
+
+    run.add("control:retry", {
+      _tag: "ControlRequested",
+      control: "retry",
+      step: "each[0]/a",
+      by: "user",
+      at: iso(T0),
+    });
+    run.drive();
+    run.drive();
+    fail(2);
+    expect(run.intent("post:out:each[0]/r2")).toMatchObject({ report: "A-1 needs a look" });
   });
 
   it.each([
