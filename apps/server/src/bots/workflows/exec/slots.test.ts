@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - real flock files and processes in a temporary directory.
 /**
- * Resource slots with real flock and real processes: wfUnit (the command inside a unit, run here
- * without systemd) and wfSlot (the holder of an agent turn). Every lock lives in a temporary
+ * Resource slots with real flock and real processes: wfUnit (the command inside a unit) and
+ * wfSlot (the holder unit of an agent turn), both run without systemd. Every lock lives in a temporary
  * directory, never in ~/.cache/t3-testdata/slots.
  */
 import * as NodeChildProcess from "node:child_process";
@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { expect } from "vite-plus/test";
 
+import { fakeSystemd } from "../testkit/fakeSystemd.ts";
 import { make } from "./Slots.ts";
 import { slotFile, tryLock } from "./slotLock.ts";
 
@@ -202,53 +203,96 @@ setTimeout(() => fs.appendFileSync(process.argv[2], "manual end\\n"), 1500);
   }),
 );
 
-it.live("a holder that is killed, or whose server died, frees its slot", () =>
-  Effect.promise(async () => {
-    using tmp = tempDir();
-    const hold = () => {
-      const child = NodeChildProcess.spawn(
-        process.execPath,
-        [WF_SLOT, "--slot-dir", tmp.dir, "--resource", "r", "--slots", "1"],
-        { stdio: ["pipe", "pipe", "ignore"] },
-      );
-      const held = new Promise<string>((resolve) =>
-        child.stdout.once("data", (data: Buffer) => resolve(data.toString().trim())),
-      );
-      return { child, held };
-    };
-    const killed = hold();
-    expect(await killed.held).toBe('{"slot":0}');
-    expect(allFree(tmp.dir, "r", 1)).toBe(false);
-    killed.child.kill("SIGKILL");
-    await exited(killed.child);
-    expect(allFree(tmp.dir, "r", 1)).toBe(true);
+/** A fake user systemd for the test's scope; its units stop when the test ends. */
+const systemdUnits = Effect.acquireDisposable(Effect.sync(fakeSystemd));
 
-    // The server's end of the holder's stdin closes when the server dies, a restart included.
-    const orphaned = hold();
-    await orphaned.held;
-    orphaned.child.stdin.end();
-    expect(await exited(orphaned.child)).toBe(0);
+/** A holder unit's hold for slot tests: unit and receipts named after `name`. */
+const holdOf = (dir: string, name: string, slots: number, slot?: number) => ({
+  unit: `wf-slot-${name}`,
+  receiptDir: NodePath.join(dir, "receipts", name),
+  resource: "r",
+  slots,
+  slot,
+  maxSec: 3600,
+});
+
+it.live("a holder unit that is stopped or killed frees its slot", () =>
+  Effect.gen(function* () {
+    using tmp = tempDir();
+    const systemd = yield* systemdUnits;
+    const slots = make({
+      node: process.execPath,
+      wfSlotPath: WF_SLOT,
+      slotsDir: tmp.dir,
+      run: systemd.run,
+    });
+    expect(yield* slots.acquire(holdOf(tmp.dir, "a", 1))).toBe(0);
+    expect(allFree(tmp.dir, "r", 1)).toBe(false);
+    yield* slots.release("wf-slot-a");
     expect(allFree(tmp.dir, "r", 1)).toBe(true);
-  }),
+    expect(yield* slots.acquire(holdOf(tmp.dir, "b", 1))).toBe(0);
+    yield* Effect.promise(() => systemd.kill("wf-slot-b"));
+    expect(allFree(tmp.dir, "r", 1)).toBe(true);
+  }).pipe(Effect.scoped),
 );
 
 it.live("an agent's slot waits while both are taken, and a cancelled wait takes none", () =>
   Effect.gen(function* () {
     using tmp = tempDir();
-    const slots = make({ node: process.execPath, wfSlotPath: WF_SLOT, slotsDir: tmp.dir });
-    const first = yield* slots.acquire({ resource: "r", slots: 2 });
-    const second = yield* slots.acquire({ resource: "r", slots: 2 });
-    expect([first.slot, second.slot].sort()).toEqual([0, 1]);
-    const waiting = yield* Effect.forkChild(slots.acquire({ resource: "r", slots: 2 }));
-    yield* first.release;
-    const third = yield* Fiber.join(waiting);
-    expect(third.slot).toBe(first.slot);
+    const systemd = yield* systemdUnits;
+    const slots = make({
+      node: process.execPath,
+      wfSlotPath: WF_SLOT,
+      slotsDir: tmp.dir,
+      run: systemd.run,
+    });
+    const first = yield* slots.acquire(holdOf(tmp.dir, "a", 2));
+    const second = yield* slots.acquire(holdOf(tmp.dir, "b", 2));
+    expect([first, second].sort()).toEqual([0, 1]);
+    // Adopting a live holder returns the slot it holds, without a second unit.
+    expect(yield* slots.acquire(holdOf(tmp.dir, "a", 2))).toBe(first);
+    const waiting = yield* Effect.forkChild(slots.acquire(holdOf(tmp.dir, "c", 2)));
+    yield* slots.release("wf-slot-a");
+    expect(yield* Fiber.join(waiting)).toBe(first);
 
-    const cancelled = yield* Effect.forkChild(slots.acquire({ resource: "r", slots: 2 }));
+    const cancelled = yield* Effect.forkChild(slots.acquire(holdOf(tmp.dir, "d", 2)));
     yield* Fiber.interrupt(cancelled);
-    yield* second.release;
-    yield* third.release;
-    yield* second.release;
+    expect(systemd.live()).toEqual(["wf-slot-b", "wf-slot-c"]);
+    yield* slots.release("wf-slot-b");
+    yield* slots.release("wf-slot-c");
     expect(allFree(tmp.dir, "r", 2)).toBe(true);
-  }),
+  }).pipe(Effect.scoped),
+);
+
+it.live("a recorded slot a manual session holds goes back to its turn, never to another step", () =>
+  Effect.gen(function* () {
+    using tmp = tempDir();
+    const systemd = yield* systemdUnits;
+    const slots = make({
+      node: process.execPath,
+      wfSlotPath: WF_SLOT,
+      slotsDir: tmp.dir,
+      run: systemd.run,
+    });
+    const manual = NodeChildProcess.spawn(
+      "flock",
+      [
+        slotFile(tmp.dir, "r", 0),
+        process.execPath,
+        "-e",
+        'console.log("held"); setTimeout(() => {}, 1500)',
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    yield* Effect.promise(
+      () => new Promise<void>((resolve) => manual.stdout.once("data", () => resolve())),
+    );
+    // A new step waits for any free slot; the turn waits for slot 0, the one it recorded.
+    const other = yield* Effect.forkChild(slots.acquire(holdOf(tmp.dir, "other", 1)));
+    const recorded = yield* slots.acquire(holdOf(tmp.dir, "turn", 1, 0));
+    expect(recorded).toBe(0);
+    yield* slots.release("wf-slot-turn");
+    expect(yield* Fiber.join(other)).toBe(0);
+    yield* slots.release("wf-slot-other");
+  }).pipe(Effect.scoped),
 );

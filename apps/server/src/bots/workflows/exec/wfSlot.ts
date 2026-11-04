@@ -1,22 +1,32 @@
+// @effect-diagnostics nodeBuiltinImport:off - runs alone inside a systemd unit.
+// @effect-diagnostics globalDate:off globalTimers:off - standalone Node process has no Effect runtime.
 /**
- * Holds one slot of a resource for an agent turn, which is not a process of the engine:
- * `node wfSlot.ts --slot-dir <dir> --resource <name> --slots <n>` prints `{"slot":i}` once it
- * holds one, then holds it until its stdin closes (released, or the server died) or a signal ends it.
+ * Holds one slot of a resource for an agent turn, in its own unit so it outlives a server restart:
+ * `node wfSlot.ts --slot-dir <dir> --resource <name> --slots <n> [--slot <i>] --receipt <dir>`
+ * writes `held.json` (`{ slot }`, atomic rename) once it holds a slot, then holds it until the unit
+ * stops. With `--slot` it waits for exactly that slot, the one a turn recorded.
  */
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import { acquireSlot } from "./slotLock.ts";
 
 const args = process.argv.slice(2);
-const option = (name: string) => args[args.indexOf(name) + 1]!;
+const option = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const receipt = option("--receipt")!;
 
-// Registered before the wait, so a server that dies while this waits ends it too.
-process.stdin.on("end", () => process.exit(0));
-process.stdin.on("close", () => process.exit(0));
-process.stdin.resume();
 process.on("SIGTERM", () => process.exit(0));
 
+const wanted = option("--slot");
 const slot = await acquireSlot({
-  dir: option("--slot-dir"),
-  resource: option("--resource"),
+  dir: option("--slot-dir")!,
+  resource: option("--resource")!,
   slots: Number(option("--slots")),
+  slot: wanted === undefined ? undefined : Number(wanted),
 });
-process.stdout.write(`${JSON.stringify({ slot })}\n`);
+NodeFS.mkdirSync(receipt, { recursive: true });
+const temp = NodePath.join(receipt, "held.json.tmp");
+NodeFS.writeFileSync(temp, JSON.stringify({ slot, at: new Date().toISOString() }));
+NodeFS.renameSync(temp, NodePath.join(receipt, "held.json"));
+// The slot is this process's open file: it stays held while the process lives.
+setInterval(() => {}, 1 << 30);

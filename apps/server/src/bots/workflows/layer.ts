@@ -54,6 +54,7 @@ export const layer = Layer.unwrap(
         node: process.execPath,
         wfSlotPath: NodePath.join(import.meta.dirname, "exec", "wfSlot.ts"),
         slotsDir,
+        run: Units.defaultRun,
       }),
     ).pipe(Layer.provideMerge(Workspaces.layer));
     return WorkflowEngine.layer({ runsDir }).pipe(

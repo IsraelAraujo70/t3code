@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -22,7 +23,9 @@ import { WorkflowInterpreter } from "../Interpreter.ts";
 import { WorkflowBotPosts } from "../publish/BotPosts.ts";
 import * as Journal from "../Journal.ts";
 import { RUN_ID, runStarted } from "../testkit/decideHarness.ts";
-import { layer, retryable } from "./HostInterpreter.ts";
+import { keyHash } from "../ids.ts";
+import { fakeSystemd } from "../testkit/fakeSystemd.ts";
+import { layer, make, retryable } from "./HostInterpreter.ts";
 import { make as makeSlots, WorkflowSlots } from "./Slots.ts";
 import { slotFile, tryLock } from "./slotLock.ts";
 import { WorkflowTurnError, WorkflowTurns } from "./Turns.ts";
@@ -375,90 +378,116 @@ describe("bot binding", () => {
 });
 
 describe("resource slots", () => {
-  // Real holders on flock files in a temporary directory; the turns are fakes the test ends.
+  /**
+   * Fake turns that wait for the test to end them, real slot holders (a fake systemd that runs
+   * wfSlot as processes, so they outlive an interpreter) on flock files in a temporary directory.
+   */
+  const slotRig = Effect.gen(function* () {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-slots-"));
+    yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true })));
+    const systemd = yield* Effect.acquireDisposable(Effect.sync(fakeSystemd));
+    const unused = () => Effect.die("not used by slots");
+    const starts = yield* Queue.unbounded<string>();
+    const ends = new Map<string, Deferred.Deferred<void>>();
+    const state = {
+      active: 0,
+      most: 0,
+      prompts: new Map<string, string>(),
+      /** Whether the turn's slot was in the journal when the turn launched. */
+      recordedAtLaunch: new Map<string, boolean>(),
+      journal: undefined as Journal.Journal["Service"] | undefined,
+    };
+    const executors = Layer.mergeAll(
+      Layer.succeed(
+        WorkflowTurns,
+        WorkflowTurns.of({
+          start: (runId, intent) =>
+            Effect.gen(function* () {
+              const recorded = yield* state.journal!.get(runStream(runId), `slot:${intent.key}`);
+              state.recordedAtLaunch.set(intent.threadId, Option.isSome(recorded));
+              state.active++;
+              state.most = Math.max(state.most, state.active);
+              state.prompts.set(intent.threadId, intent.prompt);
+              ends.set(intent.threadId, yield* Deferred.make<void>());
+              yield* Queue.offer(starts, intent.threadId);
+              return intent.threadId;
+            }).pipe(Effect.orDie),
+          observe: (_runId, intent) =>
+            Stream.fromEffectDrain(
+              Deferred.await(ends.get(intent.threadId)!).pipe(
+                Effect.andThen(Effect.sync(() => void state.active--)),
+              ),
+            ),
+          interrupt: () => Effect.void,
+          answer: unused,
+        }),
+      ),
+      Layer.succeed(
+        WorkflowUnits,
+        WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
+      ),
+      Layer.succeed(
+        WorkflowGit,
+        WorkflowGit.of({
+          prepare: unused,
+          head: unused,
+          tree: unused,
+          advance: unused,
+          mergeLocal: unused,
+          remove: unused,
+          release: unused,
+          resolveRef: unused,
+        }),
+      ),
+      Layer.succeed(ProjectService, ProjectService.of({} as ProjectService["Service"])),
+      Layer.succeed(
+        WorkflowSlots,
+        makeSlots({
+          node: process.execPath,
+          wfSlotPath: NodePath.join(import.meta.dirname, "wfSlot.ts"),
+          slotsDir: NodePath.join(dir, "slots"),
+          run: systemd.run,
+        }),
+      ),
+      Journal.layerMemory,
+    );
+    const turn = (item: number, slots: number): Extract<Intent, { _tag: "StartTurn" }> => ({
+      _tag: "StartTurn",
+      key: `turn:fleet[${item}]/verify@1`,
+      step: `fleet[${item}]/verify`,
+      attempt: 1,
+      threadId: `wfi:x:${item}`,
+      mode: "new",
+      projectRef: "moneria-api",
+      title: "verify",
+      workspace: { name: `ticket#fleet[${item}]`, path: `/runs/ticket-${item}` },
+      prompt: "Verify",
+      model: { provider: "claude", model: "claude-opus-5-5" },
+      access: "write",
+      reservation: 0,
+      uses: { resource: "moneria-verify", slots },
+    });
+    /** Every slot of moneria-verify can be locked by this process right now. */
+    const free = (slot: number) => {
+      const fd = tryLock(slotFile(NodePath.join(dir, "slots"), "moneria-verify", slot));
+      if (fd !== null) NodeFS.closeSync(fd);
+      return fd !== null;
+    };
+    /** An interpreter as a server (re)start builds it; units and the journal outlive it. */
+    const interpreter = make({ runsDir: NodePath.join(dir, "runs") });
+    return { dir, systemd, starts, ends, state, executors, turn, free, interpreter };
+  });
+  /** The holder unit name of a turn, as the interpreter derives it. */
+  const holderOf = (key: string) => `wf-slot-${keyHash(RUN_ID, `slot:${key}`)}`;
+
   itEffect.live(
     "four agent turns on two slots run two at a time, and an abandoned start frees its slot",
     () =>
       Effect.gen(function* () {
-        const slotsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-slots-"));
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => NodeFS.rmSync(slotsDir, { recursive: true })),
-        );
-        const unused = () => Effect.die("not used by slots");
-        const starts = yield* Queue.unbounded<string>();
-        const ends = new Map<string, Deferred.Deferred<void>>();
-        let active = 0;
-        let most = 0;
-        const prompts: string[] = [];
-        const executors = Layer.mergeAll(
-          Layer.succeed(
-            WorkflowTurns,
-            WorkflowTurns.of({
-              start: (_runId, intent) =>
-                Effect.gen(function* () {
-                  active++;
-                  most = Math.max(most, active);
-                  prompts.push(intent.prompt);
-                  ends.set(intent.threadId, yield* Deferred.make<void>());
-                  yield* Queue.offer(starts, intent.threadId);
-                  return intent.threadId;
-                }),
-              observe: (_runId, intent) =>
-                Stream.fromEffectDrain(
-                  Deferred.await(ends.get(intent.threadId)!).pipe(
-                    Effect.andThen(Effect.sync(() => void active--)),
-                  ),
-                ),
-              interrupt: () => Effect.void,
-              answer: unused,
-            }),
-          ),
-          Layer.succeed(
-            WorkflowUnits,
-            WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
-          ),
-          Layer.succeed(
-            WorkflowGit,
-            WorkflowGit.of({
-              prepare: unused,
-              head: unused,
-              tree: unused,
-              advance: unused,
-              mergeLocal: unused,
-              remove: unused,
-              release: unused,
-              resolveRef: unused,
-            }),
-          ),
-          Layer.succeed(ProjectService, ProjectService.of({} as ProjectService["Service"])),
-          Layer.succeed(
-            WorkflowSlots,
-            makeSlots({
-              node: process.execPath,
-              wfSlotPath: NodePath.join(import.meta.dirname, "wfSlot.ts"),
-              slotsDir,
-            }),
-          ),
-          Journal.layerMemory,
-        );
-        const turn = (item: number): Intent => ({
-          _tag: "StartTurn",
-          key: `turn:fleet[${item}]/verify@1`,
-          step: `fleet[${item}]/verify`,
-          attempt: 1,
-          threadId: `wfi:x:${item}`,
-          mode: "new",
-          projectRef: "moneria-api",
-          title: "verify",
-          workspace: { name: `ticket#fleet[${item}]`, path: `/runs/ticket-${item}` },
-          prompt: "Verify",
-          model: { provider: "claude", model: "claude-opus-5-5" },
-          access: "write",
-          reservation: 0,
-          uses: { resource: "moneria-verify", slots: 2 },
-        });
+        const rig = yield* slotRig;
         yield* Effect.gen(function* () {
-          const interpreter = yield* WorkflowInterpreter;
+          rig.state.journal = yield* Journal.Journal;
+          const interpreter = yield* rig.interpreter;
           const phase = (intent: Intent) =>
             interpreter
               .execute(RUN_ID, intent)
@@ -470,40 +499,103 @@ describe("resource slots", () => {
                 ),
               );
           const fibers = yield* Effect.forEach([0, 1, 2, 3], (item) =>
-            Effect.forkChild(phase(turn(item))),
+            Effect.forkChild(phase(rig.turn(item, 2))),
           );
           for (let round = 0; round < 2; round++) {
-            const running = [yield* Queue.take(starts), yield* Queue.take(starts)];
-            expect(active).toBe(2);
-            for (const threadId of running) yield* Deferred.succeed(ends.get(threadId)!, undefined);
+            const running = [yield* Queue.take(rig.starts), yield* Queue.take(rig.starts)];
+            expect(rig.state.active).toBe(2);
+            for (const threadId of running)
+              yield* Deferred.succeed(rig.ends.get(threadId)!, undefined);
           }
-          const facts = yield* Effect.forEach(fibers, Fiber.join);
-          expect(most).toBe(2);
+          yield* Effect.forEach(fibers, Fiber.join);
+          expect(rig.state.most).toBe(2);
           // The agent learns which slot it holds, for per-slot state such as a compose project.
           expect(
-            prompts.every((p) =>
+            [...rig.state.prompts.values()].every((p) =>
               /This turn holds slot [01] of the resource moneria-verify \(WF_SLOT=[01]\)/.test(p),
             ),
           ).toBe(true);
-          expect(facts.map((batch) => batch.map((f) => f.fact._tag))).toEqual(
-            Array.from({ length: 4 }, () => ["SlotAcquired", "TurnStarted"]),
-          );
-          expect(allSlotsFree(slotsDir)).toBe(true);
+          expect(rig.free(0) && rig.free(1)).toBe(true);
 
-          const abandoned = turn(4);
+          const abandoned = rig.turn(4, 2);
           yield* interpreter.execute(RUN_ID, abandoned);
-          expect(allSlotsFree(slotsDir)).toBe(false);
+          expect(rig.free(0) && rig.free(1)).toBe(false);
           yield* interpreter.abandon(RUN_ID, abandoned);
-          expect(allSlotsFree(slotsDir)).toBe(true);
-        }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provideMerge(executors))));
+          expect(rig.free(0) && rig.free(1)).toBe(true);
+        }).pipe(Effect.provide(rig.executors));
       }).pipe(Effect.scoped),
   );
-});
 
-/** Both slots of moneria-verify can be locked by this process right now. */
-const allSlotsFree = (dir: string) =>
-  [0, 1].every((slot) => {
-    const fd = tryLock(slotFile(dir, "moneria-verify", slot));
-    if (fd !== null) NodeFS.closeSync(fd);
-    return fd !== null;
-  });
+  itEffect.live("a restart with a turn still running gives its slot to no other step", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        rig.state.journal = yield* Journal.Journal;
+        const running = rig.turn(0, 1);
+        const before = yield* rig.interpreter;
+        yield* before.execute(RUN_ID, running);
+        expect(yield* Queue.take(rig.starts)).toBe(running.threadId);
+
+        // The server restarts: a new interpreter, while the turn and its holder unit go on.
+        const after = yield* rig.interpreter;
+        const observed = yield* Effect.forkChild(
+          after
+            .observe(RUN_ID, running, { _tag: "TurnStarted", threadId: running.threadId })
+            .pipe(Stream.runDrain),
+        );
+        const next = rig.turn(1, 1);
+        const waiting = yield* Effect.forkChild(after.execute(RUN_ID, next));
+        yield* Effect.promise(() => rig.systemd.started(holderOf(next.key)));
+        expect(rig.systemd.live()).toEqual([holderOf(running.key), holderOf(next.key)]);
+        expect(rig.free(0)).toBe(false);
+        expect([...rig.state.prompts.keys()]).toEqual([running.threadId]);
+
+        yield* Deferred.succeed(rig.ends.get(running.threadId)!, undefined);
+        yield* Fiber.join(observed);
+        yield* Fiber.join(waiting);
+        expect(rig.state.most).toBe(1);
+        expect(rig.state.prompts.get(next.threadId)).toContain("WF_SLOT=0");
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("a replay after a crash before the launch takes the slot it recorded", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        const journal = yield* Journal.Journal;
+        rig.state.journal = journal;
+        const interpreter = yield* rig.interpreter;
+
+        // A fresh turn records its slot before it launches.
+        const fresh = rig.turn(0, 2);
+        yield* interpreter.execute(RUN_ID, fresh);
+        expect(rig.state.recordedAtLaunch.get(fresh.threadId)).toBe(true);
+        yield* interpreter.abandon(RUN_ID, fresh);
+
+        // The server died after recording slot 1 and before the result: its holder is gone,
+        // both slots are free, and the replay must still tell the agent slot 1.
+        const replayed = rig.turn(1, 2);
+        yield* journal.append([
+          {
+            stream: runStream(RUN_ID),
+            key: `slot:${replayed.key}`,
+            fact: {
+              _tag: "SlotAcquired",
+              step: replayed.step,
+              attempt: 1,
+              resource: "moneria-verify",
+              slot: 1,
+              waitedMs: 0,
+            },
+          },
+        ]);
+        expect(rig.free(0) && rig.free(1)).toBe(true);
+        yield* interpreter.execute(RUN_ID, replayed);
+        expect(rig.state.prompts.get(replayed.threadId)).toContain("WF_SLOT=1");
+        expect([rig.free(0), rig.free(1)]).toEqual([true, false]);
+        yield* interpreter.abandon(RUN_ID, replayed);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+});
