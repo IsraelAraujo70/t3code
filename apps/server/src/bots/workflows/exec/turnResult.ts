@@ -7,8 +7,10 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2ThreadProjection,
   WorkflowStepCost,
 } from "@t3tools/contracts";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 
 const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)```/g;
 
@@ -40,6 +42,23 @@ export const stepRuns = <Run extends OrderedRun>(
   runs
     .filter((run) => run.ordinal >= first.ordinal && run.ordinal <= last.ordinal)
     .sort((a, b) => a.ordinal - b.ordinal);
+
+/**
+ * The reply a step's turn produced: the last run of its chain that replied. A run that completed
+ * without assistant text, such as a background-task notification the agent had already answered
+ * in an earlier run, does not replace that answer. A failed run still does, with its error.
+ */
+export const stepReply = (
+  thread: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "turnItems">,
+  first: OrchestrationV2Run,
+  last: OrchestrationV2Run,
+): { readonly run: OrchestrationV2Run; readonly text: string } => {
+  for (const run of stepRuns(thread.runs, first, last).toReversed()) {
+    const reply = subagentResultForRun(thread, run);
+    if (run.status !== "completed" || reply.messageId !== null) return { run, text: reply.text };
+  }
+  return { run: last, text: subagentResultForRun(thread, last).text };
+};
 
 /**
  * Billable tokens are input without cache reads plus output (input already counts cache reads and
