@@ -755,7 +755,7 @@ export type RunFact =
   // resultados de intents (interpretador), chave = "result:" + intent.key
   | { _tag: "TurnStarted"; threadId; messageId; upstreamRunId: string | null }
   | { _tag: "UnitSpawned"; unit; dir }
-  | { _tag: "WorkspaceReady"; name; path; branch: WfBranch; headSha }
+  | { _tag: "WorkspaceReady"; name; path; branch: WfBranch; headSha; base?: { ref; sha } }
   | { _tag: "GitOpDone"; op; sha }
   | { _tag: "GateOpened"; gateKey }
   | { _tag: "Notified"; channel }
@@ -943,6 +943,8 @@ O caminho de volta: `failed` aceita `retry` de um passo, `paused` aceita `resume
 O `retry` segue a regra de "rodar de novo" do portão ambíguo: a tentativa seguinte do passo começa na hora, sem olhar `retry.max`. Ele vale para um passo do nível de cima cuja última tentativa não teve sucesso e cuja falha ainda não levou a nenhum sucessor; o motor recusa no RPC o que não cabe. Numa execução `failed`, o motor grava `RunReopened` e a execução volta a `running`. Repete também o que o fim parou, e os caminhos mortos que a falha cortou voltam a ser avaliados; o fim seguinte e o seu `RunOutcome` ganham chaves com o número da reabertura (`ended:1`, `outcome:<runId>:1`). Não reabre: uma execução `cancelled`, `succeeded` ou `budget_exhausted`, uma execução filha (repete-se o passo `call` do pai) ou uma cuja worktree o `retain` já removeu.
 
 A projeção `workflow_runs` é o que as listas leem: o ator grava a linha da execução depois de dobrar fatos novos, o motor grava a de uma execução criada na hora, e na partida refaz as linhas que faltam ou ficaram atrás do stream. O `lastRun` do resumo de cada workflow vem da mesma tabela.
+
+Uma worktree nova parte da ponta remota quando `base` é nome de branch. Antes de criá-la, o motor faz `git fetch` só dessa branch para `refs/remotes/<remoto>/<base>` (o remoto configurado da branch, ou `origin`) e cria a worktree nesse sha. O checkout do projeto, suas branches locais e o `FETCH_HEAD` ficam como estavam: uma `friend/main` local atrasada não vira base de um merge que depois será empurrado. Sem remoto, ou sem a branch nele, vale a ref local. Um sha, `HEAD` e `workspace:<nome>` não passam pelo fetch. Uma falha de rede no fetch é transitória e o intent tenta de novo. O `WorkspaceReady` grava em `base` a ref e o sha de onde a worktree nasceu; uma worktree adotada num replay não tem `base`. Um `interrogate` cujo `target.baseRef` é o mesmo `base` do workspace manda os revisores comparar com esse sha, porque o mesmo nome no checkout deles é a branch local.
 
 Quando a execução acaba e nada mais roda nas suas worktrees, o motor grava `RemoveWorkspace` para o que o `retain` solta: um checkout só leitura sempre sai; uma worktree declarada fica com `always`, ou com `on_failure` (o padrão) se a execução não teve sucesso. A branch `wf/…` fica.
 

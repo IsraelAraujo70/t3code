@@ -949,6 +949,9 @@ export const decide = (
         project: prepared.projectRef,
         branch: ready.branch,
         headSha: workspaceHead(name) ?? ready.headSha,
+        ...(ready.base === undefined
+          ? {}
+          : { base: { ref: prepared.baseRef, sha: ready.base.sha } }),
       };
     },
   });
