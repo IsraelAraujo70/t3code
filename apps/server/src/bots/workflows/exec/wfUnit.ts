@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
+import { redactSecrets } from "./redact.ts";
 import { acquireSlot } from "./slotLock.ts";
 
 const args = process.argv.slice(2);
@@ -117,8 +118,9 @@ const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       endedAt: new Date().toISOString(),
       out,
       parseError,
-      tail: stdout.subarray(-8192).toString(),
-      stderrTail: spawnError ? String(spawnError) : stderr.toString(),
+      // Masked before the receipt is written: it is durable and outlives every reader.
+      tail: redactSecrets(stdout.subarray(-8192).toString()),
+      stderrTail: redactSecrets(spawnError ? String(spawnError) : stderr.toString()),
     }),
   );
   // Durable before it is visible: an empty exit.json after a power loss would never decode.

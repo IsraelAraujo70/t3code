@@ -16,7 +16,7 @@ import { expect } from "vite-plus/test";
 
 import { fakeSystemd } from "../testkit/fakeSystemd.ts";
 import { make } from "./Slots.ts";
-import { slotFile, tryLock } from "./slotLock.ts";
+import { acquireSlot, slotFile, tryLock } from "./slotLock.ts";
 
 const WF_UNIT = NodePath.join(import.meta.dirname, "wfUnit.ts");
 const WF_SLOT = NodePath.join(import.meta.dirname, "wfSlot.ts");
@@ -160,6 +160,28 @@ it.live("a command that fails or times out gives its slot back", () =>
   }),
 );
 
+it.live("a failing command's token never reaches its durable receipt", () =>
+  Effect.promise(async () => {
+    using tmp = tempDir();
+    const token = "ghp_AbCdEfGhIjKlMnOpQrStUv";
+    const failed = await runUnit({
+      receipt: NodePath.join(tmp.dir, "leaky"),
+      slotsDir: NodePath.join(tmp.dir, "slots"),
+      resource: "r",
+      slots: 1,
+      argv: [
+        process.execPath,
+        "-e",
+        `console.log("pushing to https://${token}@github.com/o/r"); console.error("fatal: https://x-access-token:${token}@github.com/o/r"); process.exit(1)`,
+      ],
+    });
+    expect(failed.exit.exit).toBe(1);
+    const receipt = NodeFS.readFileSync(NodePath.join(tmp.dir, "leaky", "exit.json"), "utf8");
+    expect(receipt).not.toContain(token);
+    expect(receipt).toContain("https://***@github.com/o/r");
+  }),
+);
+
 it.live("a manual flock on the slot file holds the engine's command until it lets go", () =>
   Effect.promise(async () => {
     using tmp = tempDir();
@@ -297,24 +319,35 @@ it.live("a recorded slot a manual session holds goes back to its turn, never to 
       slotsDir: tmp.dir,
       run: systemd.run,
     });
+    // A manual session holds slot 0 until the test closes its stdin. Killing flock(1) alone would
+    // not do: the command it runs inherits the lock.
     const manual = NodeChildProcess.spawn(
       "flock",
       [
         slotFile(tmp.dir, "r", 0),
         process.execPath,
         "-e",
-        'console.log("held"); setTimeout(() => {}, 1500)',
+        'console.log("held"); process.stdin.on("end", () => process.exit(0)); process.stdin.resume()',
       ],
-      { stdio: ["ignore", "pipe", "ignore"] },
+      { stdio: ["pipe", "pipe", "ignore"] },
     );
     yield* Effect.promise(
       () => new Promise<void>((resolve) => manual.stdout.once("data", () => resolve())),
     );
-    // A new step waits for any free slot; the turn waits for slot 0, the one it recorded.
+    // The turn waits for slot 0, the one it recorded: acquireSlot claims it before it first waits.
+    const turn = acquireSlot({ dir: tmp.dir, resource: "r", slots: 1, slot: 0 });
     const other = yield* Effect.forkChild(slots.acquire(holdOf(tmp.dir, "other", 1)));
-    const recorded = yield* slots.acquire(holdOf(tmp.dir, "turn", 1, 0));
-    expect(recorded).toBe(0);
-    yield* slots.release("wf-slot-turn");
+    manual.stdin.end();
+    yield* Effect.promise(() => exited(manual));
+    expect(yield* Effect.promise(() => turn)).toBe(0);
+    // The turn holds the slot through an open file of this process: close it to hand slot 0 on.
+    for (const fd of NodeFS.readdirSync("/proc/self/fd").map(Number)) {
+      // The descriptor readdir used is gone by now.
+      const target = NodeFS.existsSync(`/proc/self/fd/${fd}`)
+        ? NodeFS.readlinkSync(`/proc/self/fd/${fd}`, { encoding: "utf8" })
+        : null;
+      if (target === slotFile(tmp.dir, "r", 0)) NodeFS.closeSync(fd);
+    }
     expect(yield* Fiber.join(other)).toBe(0);
     yield* slots.release("wf-slot-other");
   }).pipe(Effect.scoped),

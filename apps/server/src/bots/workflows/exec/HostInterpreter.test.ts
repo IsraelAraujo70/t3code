@@ -476,6 +476,9 @@ describe("resource slots", () => {
       /** Whether the turn's slot was in the journal when the turn launched. */
       recordedAtLaunch: new Map<string, boolean>(),
       journal: undefined as Journal.Journal["Service"] | undefined,
+      /** Turns whose end the engine could not observe: they settle as `unobserved`. */
+      unobserved: new Set<string>(),
+      interruptFails: false,
     };
     const executors = Layer.mergeAll(
       Layer.succeed(
@@ -500,11 +503,21 @@ describe("resource slots", () => {
                 Effect.as({
                   stream: runStream(runId),
                   key: `settled:${intent.step}@${intent.attempt}`,
-                  fact: turnSettled(intent.step, intent.attempt, "completed"),
+                  fact: state.unobserved.has(intent.threadId)
+                    ? {
+                        ...turnSettled(intent.step, intent.attempt, "failed"),
+                        unobserved: true,
+                      }
+                    : turnSettled(intent.step, intent.attempt, "completed"),
                 }),
               ),
             ),
-          interrupt: () => Effect.void,
+          interrupt: () =>
+            Effect.suspend(() =>
+              state.interruptFails
+                ? Effect.fail(new WorkflowTurnError({ message: "the provider is unreachable" }))
+                : Effect.void,
+            ),
           answer: unused,
         }),
       ),
@@ -792,6 +805,42 @@ describe("resource slots", () => {
         // runStarted's wall is 2h: 7200 s plus 600 s of slack.
         expect(rig.systemd.args(holderOf(rig.runsDir, turn.key))).toContain("RuntimeMaxSec=7800");
         yield* interpreter.abandon(RUN_ID, turn);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("a turn whose end the engine could not observe keeps its slot", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        rig.state.journal = yield* Journal.Journal;
+        const interpreter = yield* rig.interpreter;
+        const turn = rig.turn(0, 1);
+        yield* interpreter.execute(RUN_ID, turn);
+        // The reads kept failing: the agent may still run, so its slot stays held.
+        rig.state.unobserved.add(turn.threadId);
+        yield* Deferred.succeed(rig.ends.get(turn.threadId)!, undefined);
+        yield* interpreter
+          .observe(RUN_ID, turn, { _tag: "TurnStarted", threadId: turn.threadId })
+          .pipe(Stream.runDrain);
+        expect(rig.systemd.live()).toEqual([holderOf(rig.runsDir, turn.key)]);
+        expect(rig.free(0)).toBe(false);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("an abandoned start whose interrupt failed keeps its slot", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        rig.state.journal = yield* Journal.Journal;
+        const interpreter = yield* rig.interpreter;
+        const turn = rig.turn(0, 1);
+        yield* interpreter.execute(RUN_ID, turn);
+        rig.state.interruptFails = true;
+        yield* interpreter.abandon(RUN_ID, turn);
+        expect(rig.systemd.live()).toEqual([holderOf(rig.runsDir, turn.key)]);
+        expect(rig.free(0)).toBe(false);
       }).pipe(Effect.provide(rig.executors));
     }).pipe(Effect.scoped),
   );

@@ -633,6 +633,13 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
   };
 
   /**
+   * A turn's end the engine saw: a `TurnSettled` it observed. An unobserved one (the reads kept
+   * failing) leaves the agent's state unknown, so its slot stays held until the holder's cap.
+   */
+  const confirmedEnd = (fact: NewFact) =>
+    fact.fact._tag === "TurnSettled" && fact.fact.unobserved !== true;
+
+  /**
    * A turn with a slot, observed again after a restart: it takes its recorded slot back while it is
    * observed, not before, so a turn that ended while the server was down claims no slot. Its end
    * stops the wait, and the tap in `observe` releases the slot.
@@ -654,9 +661,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
         return turns
           .observe(runId, intent)
           .pipe(
-            Stream.tap((fact) =>
-              fact.fact._tag === "TurnSettled" ? Fiber.interrupt(holding) : Effect.void,
-            ),
+            Stream.tap((fact) => (confirmedEnd(fact) ? Fiber.interrupt(holding) : Effect.void)),
           );
       }),
     );
@@ -672,8 +677,9 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           : intent._tag === "StartUnit"
             ? units.stop(unitOf(runId, intent.key).unit)
             : Effect.void;
+      // Only a turn the interrupt stopped gives its slot back; a failed interrupt keeps it held.
       return stop.pipe(
-        Effect.ensuring(releaseSlot(runId, intent)),
+        Effect.andThen(releaseSlot(runId, intent)),
         Effect.as(failed(runId, intent, "The run ended before this step started.")),
         settle(runId, intent, false),
       );
@@ -705,9 +711,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
         ),
         // Only a turn that settled frees its slot. An observer interrupted by a shutdown or a
         // deploy leaves the holder unit running, and the restarted observer adopts it.
-        Stream.tap((fact) =>
-          fact.fact._tag === "TurnSettled" ? releaseSlot(runId, intent) : Effect.void,
-        ),
+        Stream.tap((fact) => (confirmedEnd(fact) ? releaseSlot(runId, intent) : Effect.void)),
       );
     },
   });
