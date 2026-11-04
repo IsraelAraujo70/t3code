@@ -1365,6 +1365,37 @@ describe("retry, reopening and cleanup", () => {
     expect(keysOf(run.drive())).not.toContain("retry:control:r2");
   });
 
+  it("shows a successor the retry started over as skipped once it is cut off again", () => {
+    const run = prepare(
+      TestRun.start(
+        compile({
+          nodes: { a: commandNode, b: commandNode, slow: commandNode, done },
+          edges: ["a:fail -> b", "b -> done", "a -> done", "slow -> done"],
+        }),
+      ),
+    );
+    run.add("result:unit:slow@1", { _tag: "UnitSpawned", unit: "s", at: iso(T0) });
+    spawned(run, "a");
+    run.add("exited:a@1", unitExited("a", 1, 1));
+    run.drive();
+    spawned(run, "b");
+    run.add("exited:b@1", unitExited("b", 1, 0));
+    run.drive();
+    run.add("control:r1", retry("a"));
+    run.drive();
+    expect(
+      stepViews(run.compiled, run.state()).find((v) => v.key === "b" && v.attempt === 2),
+    ).toMatchObject({ status: "pending" });
+    run.drive();
+    spawned(run, "a", 2);
+    run.add("exited:a@2", unitExited("a", 2, 0));
+    expect(keysOf(run.drive())).toContain("skip:b:1");
+    expect(stepViews(run.compiled, run.state()).filter((v) => v.key === "b")).toEqual([
+      expect.objectContaining({ attempt: 1, status: "succeeded" }),
+      expect.objectContaining({ attempt: 2, status: "skipped" }),
+    ]);
+  });
+
   it("skips the successor again when the retried step fails again", () => {
     const run = prepare(
       TestRun.start(
@@ -1883,6 +1914,7 @@ describe("a retry inside a map item", () => {
     expect(resolvedOf(run, "fleet")).toMatchObject({ attempt: 1, port: "ok" });
   });
 
+  // The loop is named like a retry scope: only `<loop>/r2[i]` is one.
   it("posts again from a loop the retry ran afresh inside the item", () => {
     const run = TestRun.start(
       compile({
@@ -1897,7 +1929,7 @@ describe("a retry inside a map item", () => {
             body: {
               nodes: {
                 a: { ...commandNode, check: "exit == 0" },
-                l: {
+                r2: {
                   kind: "loop",
                   max: 1,
                   until: "true",
@@ -1915,7 +1947,7 @@ describe("a retry inside a map item", () => {
                   },
                 },
               },
-              edges: ["a:fail -> l"],
+              edges: ["a:fail -> r2"],
             },
           },
         },

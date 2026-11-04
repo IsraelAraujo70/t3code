@@ -1815,11 +1815,11 @@ export const decide = (
           // Once per run at the top (`post:<node>`), once per item in a body (`post:<node>:<item>`).
           const item = level.parent === null ? null : itemKeyOf(level);
           // An output a retry ran again posts its new report: its attempt, and the retried loop
-          // scopes (`loop/r2[0]`) between it and its item, keep the key apart from the first post.
+          // scopes (`loop/r2[0]`, never a node named `r2`) between it and its item, keep the key apart.
           const scopes =
             item === null
               ? ""
-              : [...step.slice(item.length + 1).matchAll(/(?:^|\/)(r\d+)\[/g)]
+              : [...step.slice(item.length + 1).matchAll(/(?:^|\/)[a-z][a-z0-9_]*\/(r\d+)\[/g)]
                   .map((m) => `/${m[1]}`)
                   .join("");
           const post =

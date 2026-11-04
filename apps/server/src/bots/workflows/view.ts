@@ -331,7 +331,7 @@ export const stepViews = (
       key: WorkflowStepKey.make(last.step),
       ...nodeInfo(last.step),
       attempt: last.attempt + 1,
-      status: state.ended === null ? "pending" : "skipped",
+      status: state.ended === null && !state.skipped.has(last.step) ? "pending" : "skipped",
       threadId: null,
       startedAt: null,
       endedAt: null,
@@ -428,7 +428,11 @@ const changedAfter = (
   // The row a retry added after a superseded attempt changes with it (and with the run's end).
   const before = attempts.find((a) => a.attempt === view.attempt - 1);
   if (before?.superseded === true && attempts.at(-1) === before)
-    return before.lastSeq > afterSeq || (state.ended !== null && state.endedSeq > afterSeq);
+    return (
+      before.lastSeq > afterSeq ||
+      (state.skippedSeq.get(view.key) ?? 0) > afterSeq ||
+      (state.ended !== null && state.endedSeq > afterSeq)
+    );
   if (view.status === "skipped") return (state.skippedSeq.get(view.key) ?? 0) > afterSeq;
   const attempt = attempts.find((a) => a.attempt === view.attempt);
   if (attempt !== undefined) return attempt.lastSeq > afterSeq;
