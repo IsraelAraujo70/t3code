@@ -20,7 +20,7 @@ import {
 import type * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -429,7 +429,7 @@ export const handoffWorking = (state: Handoff) =>
 export const layer = Layer.effect(
   VoiceSessions,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const codex = yield* CodexRealtime.CodexRealtime;
     const threads = yield* VoiceThreads;
     const settings = yield* ServerSettingsService;
@@ -471,7 +471,7 @@ export const layer = Layer.effect(
                 })
                 .pipe(Scope.provide(scope));
             let realtime = yield* startRealtime(sdp);
-            const id = VoiceSessionId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+            const id = VoiceSessionId.make(yield* random.uuidV4());
             yield* Effect.logInfo(`Voice ${id} (${mode.type}) asked for voice ${voice}.`);
             const events = yield* Queue.unbounded<VoiceSessionEvent, BotsError | Cause.Done>();
             const end = (error: string | null) =>
@@ -767,7 +767,7 @@ export const layerThreads = Layer.effect(
   Effect.gen(function* () {
     const engine = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const notFound = () => new BotsError({ message: "This message is not in that thread." });
     const threadFailure = (cause: unknown) =>
       new BotsError({ message: "Couldn't follow this thread for voice.", cause });
@@ -817,7 +817,7 @@ export const layerThreads = Layer.effect(
         return message.text;
       }),
       post: Effect.fn("VoiceThreads.post")(function* (threadId, text) {
-        const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+        const id = yield* random.uuidV4();
         yield* engine
           .dispatch({
             type: "message.dispatch",

@@ -15,6 +15,7 @@ import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
@@ -53,6 +54,7 @@ it.effect(
                 }),
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
+            ManagedPolicy.layerTest(),
             Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
               namedProjectsRoot: "/projects",
               isScratchProject: () => Effect.succeed(true),

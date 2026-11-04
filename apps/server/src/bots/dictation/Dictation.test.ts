@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -80,7 +81,7 @@ const layerTest = (
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-dictation-" })),
     Layer.provideMerge(DocumentText.layer),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );
 

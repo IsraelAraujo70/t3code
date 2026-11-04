@@ -8,6 +8,7 @@ import { WorkflowDefinitions } from "../definitions/WorkflowDefinitions.ts";
 import { webhookPayload } from "./webhookPayload.ts";
 // @effect-diagnostics preferSchemaOverJson:off - Fixtures store the definition JSON as the store does.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -256,7 +257,7 @@ it.live("keeps each webhook trigger's task in step, with one secret for its whol
         expect(calls).toEqual([`delete ${HOOK}`]);
       }).pipe(Effect.provide(service));
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(db, NodeServices.layer))),
+  ).pipe(Effect.provide(Layer.mergeAll(db, NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("a workflow whose home project is unknown gets no task", () =>
@@ -272,7 +273,7 @@ it.effect("a workflow whose home project is unknown gets no task", () =>
       yield* reconcile();
     }).pipe(Effect.provide(service));
     expect(calls).toEqual([]);
-  }).pipe(Effect.provide(Layer.mergeAll(db, NodeServices.layer))),
+  }).pipe(Effect.provide(Layer.mergeAll(db, NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("a captured delivery replay never reaches the engine", () =>
