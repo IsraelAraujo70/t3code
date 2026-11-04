@@ -22,8 +22,8 @@ import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
-import { Route as ChatWorkflowsEnvironmentIdRouteImport } from './routes/_chat.workflows.$environmentId'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
+import { Route as ChatWorkflowsEnvironmentIdRouteImport } from './routes/_chat.workflows.$environmentId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
@@ -123,17 +123,17 @@ const ChatKanbanRoute = ChatKanbanRouteImport.update({
   path: '/kanban',
   getParentRoute: () => ChatRoute,
 } as any)
-const ChatWorkflowsEnvironmentIdRoute =
-  ChatWorkflowsEnvironmentIdRouteImport.update({
-    id: '/workflows/$environmentId',
-    path: '/workflows/$environmentId',
-    getParentRoute: () => ChatRoute,
-  } as any)
 const ThreadsEnvironmentIdThreadIdRoute =
   ThreadsEnvironmentIdThreadIdRouteImport.update({
     id: '/threads/$environmentId/$threadId',
     path: '/threads/$environmentId/$threadId',
     getParentRoute: () => rootRouteImport,
+  } as any)
+const ChatWorkflowsEnvironmentIdRoute =
+  ChatWorkflowsEnvironmentIdRouteImport.update({
+    id: '/workflows/$environmentId',
+    path: '/workflows/$environmentId',
+    getParentRoute: () => ChatRoute,
   } as any)
 const ChatSettingsWorktreesRoute = ChatSettingsWorktreesRouteImport.update({
   id: '/worktrees',
@@ -359,11 +359,11 @@ export interface FileRoutesByFullPath {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/workflows/$environmentId': typeof ChatWorkflowsEnvironmentIdRouteWithChildren
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/workflows/$environmentId/$workflowId': typeof ChatWorkflowsEnvironmentIdWorkflowIdRoute
   '/workflows/$environmentId/ledger': typeof ChatWorkflowsEnvironmentIdLedgerRoute
   '/workflows/$environmentId/': typeof ChatWorkflowsEnvironmentIdIndexRoute
   '/workflows/$environmentId/runs/$runId': typeof ChatWorkflowsEnvironmentIdRunsRunIdRoute
-  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -408,11 +408,11 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/workflows/$environmentId/$workflowId': typeof ChatWorkflowsEnvironmentIdWorkflowIdRoute
   '/workflows/$environmentId/ledger': typeof ChatWorkflowsEnvironmentIdLedgerRoute
   '/workflows/$environmentId': typeof ChatWorkflowsEnvironmentIdIndexRoute
   '/workflows/$environmentId/runs/$runId': typeof ChatWorkflowsEnvironmentIdRunsRunIdRoute
-  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -460,11 +460,11 @@ export interface FileRoutesById {
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/_chat/workflows/$environmentId': typeof ChatWorkflowsEnvironmentIdRouteWithChildren
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/_chat/workflows/$environmentId/$workflowId': typeof ChatWorkflowsEnvironmentIdWorkflowIdRoute
   '/_chat/workflows/$environmentId/ledger': typeof ChatWorkflowsEnvironmentIdLedgerRoute
   '/_chat/workflows/$environmentId/': typeof ChatWorkflowsEnvironmentIdIndexRoute
   '/_chat/workflows/$environmentId/runs/$runId': typeof ChatWorkflowsEnvironmentIdRunsRunIdRoute
-  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -512,11 +512,11 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/workflows/$environmentId'
+    | '/threads/$environmentId/$threadId'
     | '/workflows/$environmentId/$workflowId'
     | '/workflows/$environmentId/ledger'
     | '/workflows/$environmentId/'
     | '/workflows/$environmentId/runs/$runId'
-    | '/threads/$environmentId/$threadId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -561,11 +561,11 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/threads/$environmentId/$threadId'
     | '/workflows/$environmentId/$workflowId'
     | '/workflows/$environmentId/ledger'
     | '/workflows/$environmentId'
     | '/workflows/$environmentId/runs/$runId'
-    | '/threads/$environmentId/$threadId'
   id:
     | '__root__'
     | '/_chat'
@@ -612,11 +612,11 @@ export interface FileRouteTypes {
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
     | '/_chat/workflows/$environmentId'
+    | '/threads/$environmentId/$threadId'
     | '/_chat/workflows/$environmentId/$workflowId'
     | '/_chat/workflows/$environmentId/ledger'
     | '/_chat/workflows/$environmentId/'
     | '/_chat/workflows/$environmentId/runs/$runId'
-    | '/threads/$environmentId/$threadId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -723,19 +723,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatKanbanRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/workflows/$environmentId': {
-      id: '/_chat/workflows/$environmentId'
-      path: '/workflows/$environmentId'
-      fullPath: '/workflows/$environmentId'
-      preLoaderRoute: typeof ChatWorkflowsEnvironmentIdRouteImport
-      parentRoute: typeof ChatRoute
-    }
     '/threads/$environmentId/$threadId': {
       id: '/threads/$environmentId/$threadId'
       path: '/threads/$environmentId/$threadId'
       fullPath: '/threads/$environmentId/$threadId'
       preLoaderRoute: typeof ThreadsEnvironmentIdThreadIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_chat/workflows/$environmentId': {
+      id: '/_chat/workflows/$environmentId'
+      path: '/workflows/$environmentId'
+      fullPath: '/workflows/$environmentId'
+      preLoaderRoute: typeof ChatWorkflowsEnvironmentIdRouteImport
+      parentRoute: typeof ChatRoute
     }
     '/_chat/settings/worktrees': {
       id: '/_chat/settings/worktrees'
