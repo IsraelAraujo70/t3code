@@ -184,6 +184,7 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
           intent,
           openedAt: null,
           decision: null,
+          handedOver: null,
           lastSeq: stored.seq,
         });
       break;
@@ -236,10 +237,21 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       break;
     case "GateDecided": {
       const gate = next.gates.get(fact.gateKey);
-      if (gate && !gate.decision)
+      // The first of a decision and a handover wins: a handed-over gate takes no decision.
+      if (gate && !gate.decision && gate.handedOver === null)
         next.gates = new Map(next.gates).set(fact.gateKey, {
           ...gate,
           decision: fact,
+          lastSeq: stored.seq,
+        });
+      break;
+    }
+    case "GateHandedOver": {
+      const gate = next.gates.get(fact.gateKey);
+      if (gate && !gate.decision && gate.handedOver === null)
+        next.gates = new Map(next.gates).set(fact.gateKey, {
+          ...gate,
+          handedOver: fact.to,
           lastSeq: stored.seq,
         });
       break;

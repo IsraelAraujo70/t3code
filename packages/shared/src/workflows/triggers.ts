@@ -82,6 +82,8 @@ const paramError = (name: string, spec: WorkflowParamSpec, value: unknown): stri
     return bad === undefined ? null : `${name}: "${bad}" does not match ${spec.pattern}`;
   }
   if (typeof value !== spec.type) return `${name}: expected ${spec.type}`;
+  if (typeof value === "string" && spec.enum !== undefined && !spec.enum.includes(value))
+    return `${name}: "${value}" is not one of ${spec.enum.join(", ")}`;
   if (typeof value === "string" && spec.pattern !== undefined && !matchesWhole(spec.pattern, value))
     return `${name} does not match ${spec.pattern}`;
   return null;

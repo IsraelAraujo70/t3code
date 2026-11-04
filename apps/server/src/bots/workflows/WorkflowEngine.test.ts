@@ -336,7 +336,9 @@ it.effect("stops a start that keeps retrying once the run is cancelled", () =>
 it.effect("requires approval for a protected command and preserves the first decision", () =>
   Effect.gen(function* () {
     const { fake, layer } = yield* makeFakeInterpreter({});
+    // A workflow with a bot: a protected action is still Israel's alone.
     const protectedWorkflow = compile({
+      bot: BOT,
       nodes: {
         ...twoSteps.definition.nodes,
         test: {
@@ -357,8 +359,14 @@ it.effect("requires approval for a protected command and preserves the first dec
           until: (f) => f.stream === runStream(runId) && f.key === "result:open:protect:test@1",
         }),
       );
-      assert.isFalse((yield* engine.runState(runId)).intents.has("unit:test@1"));
+      const gated = yield* engine.runState(runId);
+      assert.isFalse(gated.intents.has("unit:test@1"));
+      assert.isUndefined(gated.gates.get("protect:test@1")?.intent.bot);
+      assert.isFalse(gated.intents.has("ask:protect:test@1"));
+      assert.isTrue(gated.intents.has("notify:gate:protect:test@1"));
       const input = { runId, gateKey: "protect:test@1", option: "approve", note: null };
+      const byBot = yield* engine.decideGate({ ...input, bot: BOT }).pipe(Effect.flip);
+      assert.include(byBot.message, "not routed to this bot");
       yield* engine.decideGate(input);
       const ended = yield* PubSub.take(subscription).pipe(
         Effect.repeat({
@@ -974,7 +982,7 @@ it.effect("posts a bot routine's report once, also when a restart replays the po
         ...request("manual:post"),
         params: { news: "BTC -8%" },
       });
-      yield* Queue.take(fake.stalled).pipe(Effect.repeat({ until: (key) => key === "post:done" }));
+      yield* fake.stalled("post:done");
       return runId;
     }).pipe(Effect.scoped, Effect.provide(services));
     fake.stall.delete("post:done");
@@ -1226,4 +1234,375 @@ it.effect("a restart mid-fleet adds no thread, link or item post", () =>
       1,
     );
   }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+// ── gates the workflow's bot answers ─────────────────────────────────────────────────────────
+
+const OTHER_BOT = `b_${"c".repeat(32)}`;
+const askTheBot = compile({
+  bot: BOT,
+  nodes: {
+    work: { kind: "agent", model: "$lead", prompt: "Work", workspace: "integ", access: "write" },
+    ask: { kind: "gate", answerBy: "bot", ask: "Postgres or SQLite?", options: ["answer"] },
+    resume: {
+      kind: "agent",
+      model: "$lead",
+      prompt: "The answer: {{ nodes.ask.answer }}",
+      workspace: "integ",
+      access: "write",
+      thread: "continue:work",
+    },
+    done: { kind: "output", status: "no_change", value: {} },
+  },
+  edges: ["work -> ask", "ask:answer -> resume", "resume -> done"],
+});
+const turnOf = (state: { intents: ReadonlyMap<string, { intent: Intent }> }, key: string) => {
+  const intent = state.intents.get(key)?.intent;
+  assert.equal(intent?._tag, "StartTurn");
+  return intent as Extract<Intent, { _tag: "StartTurn" }>;
+};
+const askPosts = (fake: { posts: Map<string, { report: string }> }, gateKey: string) =>
+  [...fake.posts.entries()].filter(([commandId]) => commandId.endsWith(`:ask:${gateKey}`));
+
+it.effect(
+  "posts a bot's gate once across a restart, and its owner's answer reaches the next step",
+  () =>
+    Effect.gen(function* () {
+      const { fake, layer } = yield* makeFakeInterpreter({});
+      fake.stall.add("ask:ask@1");
+      const services = Layer.mergeAll(layerFromDb, layer, layerCatalog([askTheBot]));
+      const runId = yield* Effect.gen(function* () {
+        const engine = yield* make({ runsDir: "/runs" });
+        const { runId } = yield* engine.start(request("manual:ask-bot"));
+        yield* fake.stalled("ask:ask@1");
+        return runId;
+      }).pipe(Effect.scoped, Effect.provide(services));
+      fake.stall.delete("ask:ask@1");
+      yield* Effect.gen(function* () {
+        const subscription = yield* (yield* Journal).subscribe;
+        const engine = yield* make({ runsDir: "/runs" });
+        yield* engine.tick;
+        yield* PubSub.take(subscription).pipe(
+          Effect.repeat({
+            until: (f) => f.stream === runStream(runId) && f.key === "result:ask:ask@1",
+          }),
+        );
+        const waiting = yield* engine.runState(runId);
+        const gate = waiting.gates.get("ask@1")?.intent;
+        assert.equal(gate?.bot, BOT);
+        assert.deepEqual(gate?.options, ["answer", "escalate"]);
+        // The bot gets the ask; Israel gets no push for it.
+        assert.isFalse(waiting.intents.has("notify:gate:ask@1"));
+        const refused = yield* engine
+          .decideGate({ runId, gateKey: "ask@1", option: "answer", note: "x", bot: OTHER_BOT })
+          .pipe(Effect.flip);
+        assert.include(refused.message, "not routed to this bot");
+        const decided = yield* engine.decideGate({
+          runId,
+          gateKey: "ask@1",
+          option: "answer",
+          note: "Postgres, the schema needs jsonb",
+          bot: BOT,
+        });
+        assert.equal(decided.by, `bot:${BOT}`);
+        yield* PubSub.take(subscription).pipe(
+          Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "ended" }),
+        );
+        const state = yield* engine.runState(runId);
+        assert.equal(state.ended?.status, "succeeded");
+        const resume = turnOf(state, "turn:resume@1");
+        assert.equal(resume.mode, "continue");
+        assert.equal(resume.threadId, turnOf(state, "turn:work@1").threadId);
+        assert.include(resume.prompt, "The answer: Postgres, the schema needs jsonb");
+        const view = yield* engine.runView({ runId: runId as never });
+        assert.deepInclude(view.gates[0], { key: "ask@1", bot: BOT });
+        assert.equal(view.gates[0]?.decision?.by, `bot:${BOT}`);
+      }).pipe(Effect.scoped, Effect.provide(services));
+      assert.equal(fake.executions.get("ask:ask@1"), 2);
+      const posts = askPosts(fake, "ask@1");
+      assert.equal(posts.length, 1);
+      assert.include(posts[0]![1].report, "Postgres or SQLite?");
+      assert.include(posts[0]![1].report, "Options: answer, escalate");
+    }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+it.effect(
+  "escalate hands the bot's gate to Israel with a push; Israel may answer a bot's gate",
+  () =>
+    Effect.gen(function* () {
+      const { fake, layer } = yield* makeFakeInterpreter({});
+      yield* Effect.gen(function* () {
+        const subscription = yield* (yield* Journal).subscribe;
+        const engine = yield* make({ runsDir: "/runs" });
+        const waitFor = (runId: string, key: string) =>
+          PubSub.take(subscription).pipe(
+            Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === key }),
+          );
+
+        const escalated = yield* engine.start(request("manual:escalate"));
+        yield* waitFor(escalated.runId, "result:ask:ask@1");
+        yield* engine.decideGate({
+          runId: escalated.runId,
+          gateKey: "ask@1",
+          option: "escalate",
+          note: "this is a product call",
+          bot: BOT,
+        });
+        yield* waitFor(escalated.runId, "result:notify:gate:escalated:ask@1");
+        const waiting = yield* engine.runState(escalated.runId);
+        const israel = waiting.gates.get("escalated:ask@1")?.intent;
+        assert.isUndefined(israel?.bot);
+        assert.deepEqual(israel?.options, ["answer"]);
+        assert.include(israel?.ask, "this is a product call");
+        const view = yield* engine.runView({ runId: escalated.runId as never });
+        assert.deepEqual(
+          view.gates.filter((g) => g.decision === null).map((g) => g.key),
+          ["escalated:ask@1"],
+        );
+        assert.equal(view.summary.openGates, 1);
+        // The bot handed it over: only Israel decides the escalated gate.
+        const refused = yield* engine
+          .decideGate({
+            runId: escalated.runId,
+            gateKey: "escalated:ask@1",
+            option: "answer",
+            note: "x",
+            bot: BOT,
+          })
+          .pipe(Effect.flip);
+        assert.include(refused.message, "only Israel decides it");
+        yield* engine.decideGate({
+          runId: escalated.runId,
+          gateKey: "escalated:ask@1",
+          option: "answer",
+          note: "SQLite",
+        });
+        yield* waitFor(escalated.runId, "ended");
+        const after = yield* engine.runState(escalated.runId);
+        assert.include(turnOf(after, "turn:resume@1").prompt, "The answer: SQLite");
+
+        const direct = yield* engine.start(request("manual:direct"));
+        yield* waitFor(direct.runId, "result:ask:ask@1");
+        const routed = yield* engine.runView({ runId: direct.runId as never });
+        assert.equal(routed.summary.openGates, 0);
+        yield* engine.decideGate({
+          runId: direct.runId,
+          gateKey: "ask@1",
+          option: "answer",
+          note: "MySQL",
+        });
+        yield* waitFor(direct.runId, "ended");
+        const state = yield* engine.runState(direct.runId);
+        assert.equal(state.gates.get("ask@1")?.decision?.by, "user");
+        assert.isFalse(state.gates.has("escalated:ask@1"));
+        assert.include(turnOf(state, "turn:resume@1").prompt, "The answer: MySQL");
+
+        // An ask that cannot reach the bot hands the gate to Israel: the original takes no decision.
+        fake.missingBots.add(BOT);
+        const unreachable = yield* engine.start(request("manual:unreachable"));
+        yield* waitFor(unreachable.runId, "result:notify:gate:escalated:ask@1");
+        for (const late of [{ bot: BOT }, {}]) {
+          const refused = yield* engine
+            .decideGate({
+              runId: unreachable.runId,
+              gateKey: "ask@1",
+              option: "answer",
+              note: "late",
+              ...late,
+            })
+            .pipe(Effect.flip);
+          assert.include(refused.message, "went to Israel as escalated:ask@1");
+        }
+        yield* engine.decideGate({
+          runId: unreachable.runId,
+          gateKey: "escalated:ask@1",
+          option: "answer",
+          note: "Redis",
+        });
+        yield* waitFor(unreachable.runId, "ended");
+        const handed = yield* engine.runState(unreachable.runId);
+        assert.isNull(handed.gates.get("ask@1")?.decision);
+        assert.include(turnOf(handed, "turn:resume@1").prompt, "The answer: Redis");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+            layer,
+            layerCatalog([askTheBot]),
+          ),
+        ),
+      );
+    }),
+);
+
+// A phase that cannot go on ends with `{ status: blocked, kind, detail }`; a branch per kind.
+const typedFleet = compile({
+  bot: BOT,
+  params: { tickets: { type: "string[]", maxItems: 10, pattern: "[A-Z]+-\\d+" } },
+  workspaces: {
+    item: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
+  },
+  nodes: {
+    fleet: {
+      kind: "map",
+      items: "params.tickets",
+      maxItems: 10,
+      concurrency: 2,
+      body: {
+        nodes: {
+          implement: {
+            kind: "agent",
+            model: "$lead",
+            prompt: "Implement {{ item }}.",
+            workspace: "item",
+            access: "write",
+            thread: { visible: true, kanbanCard: "{{ item }}" },
+            output: {
+              status: { type: "string", pattern: "done|blocked" },
+              kind: { type: "string", pattern: "technical|product|secret|access", optional: true },
+              detail: { type: "string", optional: true },
+            },
+          },
+          triage: {
+            kind: "branch",
+            cases: [
+              { port: "technical", when: "nodes.implement.output.kind == 'technical'" },
+              { port: "access", when: "nodes.implement.output.kind == 'access'" },
+              { port: "stop", when: "nodes.implement.output.status == 'blocked'" },
+            ],
+            else: "go",
+          },
+          ask_bot: {
+            kind: "gate",
+            answerBy: "bot",
+            ask: "{{ item }}: {{ nodes.implement.output.detail }}",
+            options: ["answer"],
+          },
+          ask_israel: {
+            kind: "gate",
+            ask: "{{ item }} needs access: {{ nodes.implement.output.detail }}",
+            options: ["answer"],
+          },
+          resume: {
+            kind: "agent",
+            model: "$lead",
+            join: "any",
+            prompt: "Go on: {{ nodes.ask_bot.answer }}{{ nodes.ask_israel.answer }}",
+            workspace: "item",
+            access: "write",
+            thread: "continue:implement",
+          },
+          done: {
+            kind: "output",
+            status: "ready_for_review",
+            join: "any",
+            value: { ticket: "{{ item }}", status: "done" },
+            report: "{{ item }}: done",
+            postToBot: true,
+          },
+          blocked: {
+            kind: "output",
+            status: "blocked",
+            value: {
+              ticket: "{{ item }}",
+              status: "blocked:{{ nodes.implement.output.kind }}",
+              reason: "{{ nodes.implement.output.detail }}",
+            },
+            report: "{{ item }} blocked:{{ nodes.implement.output.kind }}",
+            postToBot: true,
+          },
+        },
+        edges: [
+          "implement -> triage",
+          "triage:technical -> ask_bot",
+          "triage:access -> ask_israel",
+          "triage:stop -> blocked",
+          "triage:go -> done",
+          "ask_bot:answer -> resume",
+          "ask_israel:answer -> resume",
+          "resume -> done",
+        ],
+      },
+    },
+    report: {
+      kind: "output",
+      status: "ready_for_review",
+      value: {},
+      report: "{{ table(nodes.fleet.output, 'ticket', 'status', 'reason') }}",
+      postToBot: true,
+    },
+  },
+  edges: ["fleet -> report"],
+});
+
+it.effect("a technical block the bot answers ends done; a product block ends blocked:product", () =>
+  Effect.gen(function* () {
+    const { fake, layer } = yield* makeFakeInterpreter({
+      tickets: TICKETS,
+      turns: {
+        "fleet[0]/implement": {
+          output: { status: "blocked", kind: "technical", detail: "which queue, sqs or redis?" },
+        },
+        "fleet[1]/implement": {
+          output: { status: "blocked", kind: "product", detail: "the copy needs a PM call" },
+        },
+      },
+    });
+    yield* Effect.gen(function* () {
+      const subscription = yield* (yield* Journal).subscribe;
+      const engine = yield* make({ runsDir: "/runs" });
+      const { runId } = yield* engine.start(fleetStart);
+      const gateKey = "fleet[0]/ask_bot@1";
+      // The bot hears of the technical question while the run goes on, not at the end.
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({
+          until: (f) => f.stream === runStream(runId) && f.key === `result:ask:${gateKey}`,
+        }),
+      );
+      const asked = askPosts(fake, gateKey);
+      assert.equal(asked.length, 1);
+      assert.include(asked[0]![1].report, "BACK-1: which queue, sqs or redis?");
+      const waiting = yield* engine.runState(runId);
+      const thread = turnOf(waiting, "turn:fleet[0]/implement@1").threadId;
+      assert.include(asked[0]![1].report, `Item thread: ${thread}`);
+      yield* engine.decideGate({ runId, gateKey, option: "answer", note: "sqs", bot: BOT });
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "ended" }),
+      );
+      const state = yield* engine.runState(runId);
+      assert.equal(state.ended?.status, "succeeded");
+      const resume = turnOf(state, "turn:fleet[0]/resume@1");
+      assert.equal(resume.threadId, thread);
+      assert.include(resume.prompt, "Go on: sqs");
+      assert.isFalse(state.gates.has("fleet[1]/ask_bot@1"));
+      assert.deepEqual(state.attempts.get("fleet")?.at(-1)?.resolved?.output, [
+        { ticket: "BACK-1", status: "done" },
+        { ticket: "BACK-2", status: "blocked:product", reason: "the copy needs a PM call" },
+      ]);
+      assert.deepEqual(
+        [...fake.posts.values()].map((p) => p.report).sort(),
+        [
+          asked[0]![1].report,
+          "BACK-1: done",
+          "BACK-2 blocked:product",
+          [
+            "| ticket | status | reason |",
+            "| --- | --- | --- |",
+            "| BACK-1 | done |  |",
+            "| BACK-2 | blocked:product | the copy needs a PM call |",
+          ].join("\n"),
+        ].sort(),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+          layer,
+          layerCatalog([typedFleet]),
+        ),
+      ),
+    );
+  }),
 );

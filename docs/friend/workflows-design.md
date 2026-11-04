@@ -123,7 +123,9 @@ export const ModelRef = Schema.Struct({
 export const ModelUse = Schema.Union([
   ModelRef,
   Schema.String.check(Schema.isPattern(/^\$[a-z_]+$/)),
-]); // `$lead` → models.lead
+  // só em nó agent: o param string com enum escolhe a entrada de models (pelo nome ou pelo id do modelo)
+  Schema.String.check(Schema.isPattern(/^\$params\.[A-Za-z_][A-Za-z0-9_]*$/)),
+]); // `$lead` → models.lead; `$params.model` → a entrada que o valor do param nomeia
 
 export const FieldSpec = Schema.Struct({
   type: Schema.Literals(["string", "number", "boolean", "string[]", "number[]", "json"]),
@@ -137,6 +139,7 @@ export const ParamSpec = Schema.Struct({
   type: Schema.Literals(["string", "number", "boolean", "string[]"]), // string[]: pattern por elemento, maxItems
   default: Schema.optional(Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
   pattern: Schema.optional(Schema.String),
+  enum: Schema.optional(Schema.NonEmptyArray(Schema.String)), // só string: conjunto fechado; valor fora é recusado
   description: Schema.optional(Schema.String),
 });
 
@@ -201,6 +204,7 @@ export const AgentNode = Schema.Struct({
   accept: Schema.optional(AcceptSpec), // portas pass/fail; a evidência é o que o motor rodou
   tokenReservation: Schema.optional(PositiveInt), // reserva de orçamento (§9.1)
   askIsrael: Schema.optional(Schema.Boolean), // pergunta do agente vira portão; senão é recusada com instrução
+  askBot: Schema.optional(Schema.Boolean), // pergunta do agente vai antes ao bot do workflow (§6.2); exige `bot`
 });
 
 export const CommandNode = Schema.Struct({
@@ -225,6 +229,7 @@ export const GateNode = Schema.Struct({
   ask: Template,
   options: Schema.optional(Schema.Array(Schema.String)), // padrão ["approve", "reject"]
   expires: Schema.optional(Schema.Struct({ after: DurationText, decision: Schema.String })),
+  answerBy: Schema.optional(Schema.Literals(["israel", "bot"])), // bot: o bot do workflow decide, ou escala (§6.2)
 });
 
 export const BranchNode = Schema.Struct({
@@ -625,24 +630,24 @@ export const RunDelta = Schema.Struct({
 
 ### 1.5 Grupo RPC (espalhado em `BOTS_RPCS`, como `KANBAN_RPCS`)
 
-| Método (`bots.workflows.*`)         | Entrada                                                                                 | Saída                                                                   | Escopo                                  |
-| ----------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `subscribe` (stream)                | `{}`                                                                                    | `{ workflows: WorkflowSummary[], templates }`                           | read                                    |
-| `document.subscribe` (stream)       | `{ workflowId }`                                                                        | `WorkflowDocument` (fonte, definição, layout, revisão, diagnósticos)    | read                                    |
-| `validate`                          | `{ source } \| { definition }`                                                          | `{ diagnostics, normalizedSource, semanticHash }`                       | read                                    |
-| `save`                              | `{ workflowId?, baseRevision?, message, source \| definition+canvas }`                  | `Saved{revision, commit, hash, diagnostics} \| Conflict{base, current}` | operate                                 |
-| `fromTemplate`                      | `{ templateId, workflowId, params }`                                                    | `Saved`                                                                 | operate                                 |
-| `setEnabled` / `delete` / `restore` | `{ workflowId, … }`                                                                     | `WorkflowSummary`                                                       | operate                                 |
-| `history`                           | `{ workflowId, cursor? }`                                                               | versões (commit, revisão, hash, autor, mensagem)                        | read                                    |
-| `run.start`                         | `{ workflowId, params, clientRequestId }`                                               | `RunSummary`                                                            | operate                                 |
-| `runs.list`                         | `{ workflowId?, status?, cursor? }`                                                     | página de `RunSummary`                                                  | read                                    |
-| `run.get`                           | `{ runId, stepsCursor? }`                                                               | `RunView` (definição fixada + passos paginados)                         | read                                    |
-| `run.subscribe` (stream)            | `{ runId, afterSeq }`                                                                   | `RunDelta`                                                              | read                                    |
-| `run.step`                          | `{ runId, step, attempt }`                                                              | saída completa, texto, caudas de log                                    | read                                    |
-| `run.control`                       | `{ runId, control: cancel\|pause\|resume\|retry\|amendBudget, step?, clientRequestId }` | `RunSummary`                                                            | operate                                 |
-| `gate.decide`                       | `{ runId, gateKey, option, note? }`                                                     | `GateView`                                                              | operate, sessão de usuário; sem par MCP |
-| `metrics`                           | `{ workflowId, since? }`                                                                | `WorkflowMetrics`                                                       | read                                    |
-| `ledger`                            | `{ ledger?, workflowId?, cursor? }`                                                     | página de `LedgerEntry`                                                 | read                                    |
+| Método (`bots.workflows.*`)         | Entrada                                                                                 | Saída                                                                   | Escopo                                                                                                                        |
+| ----------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `subscribe` (stream)                | `{}`                                                                                    | `{ workflows: WorkflowSummary[], templates }`                           | read                                                                                                                          |
+| `document.subscribe` (stream)       | `{ workflowId }`                                                                        | `WorkflowDocument` (fonte, definição, layout, revisão, diagnósticos)    | read                                                                                                                          |
+| `validate`                          | `{ source } \| { definition }`                                                          | `{ diagnostics, normalizedSource, semanticHash }`                       | read                                                                                                                          |
+| `save`                              | `{ workflowId?, baseRevision?, message, source \| definition+canvas }`                  | `Saved{revision, commit, hash, diagnostics} \| Conflict{base, current}` | operate                                                                                                                       |
+| `fromTemplate`                      | `{ templateId, workflowId, params }`                                                    | `Saved`                                                                 | operate                                                                                                                       |
+| `setEnabled` / `delete` / `restore` | `{ workflowId, … }`                                                                     | `WorkflowSummary`                                                       | operate                                                                                                                       |
+| `history`                           | `{ workflowId, cursor? }`                                                               | versões (commit, revisão, hash, autor, mensagem)                        | read                                                                                                                          |
+| `run.start`                         | `{ workflowId, params, clientRequestId }`                                               | `RunSummary`                                                            | operate                                                                                                                       |
+| `runs.list`                         | `{ workflowId?, status?, cursor? }`                                                     | página de `RunSummary`                                                  | read                                                                                                                          |
+| `run.get`                           | `{ runId, stepsCursor? }`                                                               | `RunView` (definição fixada + passos paginados)                         | read                                                                                                                          |
+| `run.subscribe` (stream)            | `{ runId, afterSeq }`                                                                   | `RunDelta`                                                              | read                                                                                                                          |
+| `run.step`                          | `{ runId, step, attempt }`                                                              | saída completa, texto, caudas de log                                    | read                                                                                                                          |
+| `run.control`                       | `{ runId, control: cancel\|pause\|resume\|retry\|amendBudget, step?, clientRequestId }` | `RunSummary`                                                            | operate                                                                                                                       |
+| `gate.decide`                       | `{ runId, gateKey, option, note? }`                                                     | `GateView`                                                              | operate, sessão de usuário; decide qualquer portão. O par MCP `workflow_gate_decide` decide só portões roteados ao bot (§6.2) |
+| `metrics`                           | `{ workflowId, since? }`                                                                | `WorkflowMetrics`                                                       | read                                                                                                                          |
+| `ledger`                            | `{ ledger?, workflowId?, cursor? }`                                                     | página de `LedgerEntry`                                                 | read                                                                                                                          |
 
 Um `runId` devolvido como `accepted` pode ainda não ter execução (fila, motor subindo) ou nunca ter (pulado). `run.get`, `run.subscribe` e `workflow_run_status` resolvem esse caso pelo stream do workflow e devolvem `RunSummary` com status `queued` ou `skipped` e o motivo (`busy`, `disabled`, `suspended`, `invalid`), nunca "não encontrado".
 
@@ -1187,13 +1192,14 @@ Toolkit do fork `WorkflowToolkit` (`apps/server/src/bots/workflows/mcp/tools.ts`
 | `workflow_runs`        | `{ workflowId?, status?, limit? }`                         | execuções recentes, resumidas                                                 | leitura                               |
 | `workflow_run_status`  | `{ runId }`                                                | `RunSummary` mais passos e blocos com texto truncado                          | leitura                               |
 | `workflow_run_cancel`  | `{ runId }`                                                | `{ status }`                                                                  | escrita, destrutiva                   |
+| `workflow_gate_decide` | `{ runId, gateKey, option, answer? }`                      | `{ gateKey, option, by, decidedByYou }`                                       | escrita; só portão roteado ao bot     |
 | `workflow_ledger`      | `{ ledger?, workflowId?, limit? }`                         | entradas com veredito e números                                               | leitura                               |
 
 Regras:
 
 - **Mesma validação.** Os handlers chamam `WorkflowDefinitions.save` e `WorkflowEngine.start`, os mesmos métodos das RPCs. A edição de um bot vira commit com autor `<nome do bot> (bot)`.
 - **Quem pode.** Qualquer bot que não seja de guest pode ler, rascunhar e validar. Rodar exige o gatilho `bot` do workflow (§5.2). Rodar, cancelar, ativar (o workflow ou um gatilho) e salvar mantendo gatilhos ativos são permitidos quando o dono pediu na própria mensagem nesta conversa ou concedeu `canManageBots`; mensagens de outro bot, tarefas agendadas e passos de workflow não contam. Um workflow novo começa desativado; um save não solicitado sem essa permissão desativa o existente até o dono ativar no app. Bot de guest não recebe estas ferramentas.
-- **Sem portão.** Nenhuma ferramenta decide portão. Só a RPC `gate.decide`, com sessão de usuário, decide.
+- **Portão é do Israel, salvo o roteado.** A RPC `gate.decide`, com sessão de usuário, decide qualquer portão. O `workflow_gate_decide` decide só um portão que a execução roteou ao bot que chama (`answerBy: bot`, `askBot`): o `OpenGate` grava o `bot` a partir da definição fixada, e o motor confere esse campo, nunca quem chama. Protegido e ambíguo nunca levam `bot`, e um bot não decide portão de workflow de outro bot. O bot só decide no turno que o próprio aviso do portão (`ask:<gateKey>`, escrito pelo servidor) ou uma mensagem do dono abriu: um pedido de outro agente por `t3_thread_send` não conta, pela mesma proveniência que o `workflow_run` usa. A proveniência lê todas as mensagens entregues no turno, não só a que o abriu: um steer de outro agente (outra thread, ou envio por MCP) tira a autorização do turno do dono, no `workflow_gate_decide`, no `workflow_run` e no `workflow_set_enabled`. Invariante do journal: todo `GateDecided` e todo `AnswerRequest` de bot carregam `by` (`bot:<id>`); um `AnswerRequest` sem `by` é de antes do askBot e foi decidido pelo Israel.
 - **Sem autoedição.** Os handlers recusam quem chama de dentro de uma thread de passo (`isWorkflowStepThreadId`). Um workflow não edita, roda nem cancela workflows.
 - **Eval.** O texto das ferramentas fala com modelos e precisa de caso em `evals/mcp-tool-use` antes de ir ao ar (AGENTS.md, "Evals"). Hoje o catálogo da eval não inclui toolkits do fork (`evals/mcp-tool-use/run.ts:303`). A fatia 9 inclui os toolkits do fork e casos para "valida com dryRun antes de salvar" e "não tenta aprovar portão".
 
@@ -1259,8 +1265,12 @@ O ticket-fleet recebe até N cards do Kanban e roda cada um numa thread que o Is
 - **Aceite que volta com o motivo.** Num nó `agent` com `accept` e `retry: { on: [failed] }`, o aceite que falha (porta `fail`) gera outra tentativa, até `retry.max`. Se o nó continua uma thread (`continue:` ou visível), a tentativa nova vai para a mesma thread e começa pelo motivo: o argv, o exit e o fim do stdout, ou o `reason` do juiz. O motivo fica em `nodes.<nó>.error`. Esgotado o teto, vale a porta `fail` da última tentativa.
 - **Falha isolada por item.** Um item termina por uma aresta `:fail` para um `output` `blocked`. Com isso o `map` segue com os outros itens e o resultado traz todos. Sem aresta, `continueOnFail: true` no nó faz o mesmo, com o item sem `output`, e o `collect` lê `nodes.<nó>.status` e `.error`. O `fatigue.consecutiveFailures` conta falhas seguidas, então um fleet grande precisa de um teto à altura.
 - **Avisos e relatório.** Cada `output` do corpo com `postToBot` avisa o bot uma vez por item. O `output` de nível de cima monta a tabela com `table(nodes.fleet.output, "ticket", "status", "pr", "reason")`.
+- **Portão que o bot responde.** `answerBy: bot` num nó `gate`, ou `askBot: true` num nó `agent` (a pergunta nativa do provider, como o `askIsrael`), roteia o portão ao bot do workflow. Com `askBot`, só pedido de informação (`user_input`) vai ao bot; pedido de aprovação de comando, arquivo ou permissão vira portão do Israel, e uma decisão `bot:*` nunca vira `accept` de aprovação, nem no decisor nem na resposta ao runtime. O `OpenGate` grava `bot` e ganha a opção `escalate`. Em vez do push `needs_you`, o motor posta no bot o pedido (`PostToBot` com chave `ask:<gateKey>`, commandId fixo, como os reports): a pergunta, as opções, a execução, a chave do portão e a thread do item. Com chave por portão e por item, a pergunta chega na hora, não no fim, e um restart não repete o post. O bot decide com `workflow_gate_decide`, que grava `GateDecided` com `by: "bot:<id>"` e o texto em `note`. O passo seguinte lê o texto em `nodes.<gate>.answer`, e um `continue:` leva a resposta à thread do item. `answer` é texto livre: o compilador o trata como não confiável em argv.
+- **Escalar.** `escalate`, ou um post que nunca chega porque o bot sumiu, abre `escalated:<gateKey>` para o Israel. No segundo caso o decisor grava `GateHandedOver` no portão original: entre ele e uma decisão do original vale o que entrou antes no journal, e depois dele o RPC, o tool e o decisor recusam decisão do original (o `decideGate` grava com `guard` contra o fato). O portão do Israel abre: o mesmo pedido, sem `escalate`, com o motivo do bot no fim, e com push `needs_you`. A decisão dele é a que o passo lê. O Israel também decide direto o portão roteado, na tela da execução ou no Android, onde aparece como "Waiting for <bot>"; a primeira decisão vale. Portão roteado não conta como "needs you" na lista de execuções.
+- **Bloqueio tipado.** A fase que trava termina com `{ status: blocked, kind, detail }`, `kind` em `technical | product | secret | access`, e um `branch` escolhe o caminho: `technical` vai a um portão `answerBy: bot`, `access` a um portão do Israel, e `product` e `secret` vão direto a um `output` `blocked` com `status: "blocked:<kind>"` no valor. O item termina ali sem segurar os outros, e aparece no `collect` e na tabela. O comentário no Linear, o rascunho de PR e o aviso no Slack ficam com o agente, pelas skills do repo do ticket, antes de devolver o JSON.
+- **Modelo por parâmetro.** `model: $params.model` num nó `agent` usa a entrada de `models` que o valor nomeia, pelo nome ou pelo id exato do modelo. O param precisa ser `string` com `enum`, e cada valor precisa nomear exatamente uma entrada; um valor fora do `enum` é recusado no RPC, no `workflow_run` e no decisor. O valor nunca vira texto de comando: só escolhe uma entrada que a definição já declara. Juízes e blocos não aceitam modelo por param, e um `continue:` só continua uma thread que lê o mesmo param.
 
-Exemplo, no formato que o Moneria PM salva (as fases verify/review ficam como `continue:` entre `implement` e `publish`):
+Exemplo, no formato que o Moneria PM salva (as fases verify/review ficam como `continue:` entre `resume` e `publish`):
 
 ```yaml
 schema: t3.workflow/v1
@@ -1279,10 +1289,18 @@ params:
       pattern: "[A-Z]+-\\d+",
       description: Identificadores do Kanban,
     }
+  model:
+    {
+      type: string,
+      enum: [claude-opus-5-5, gpt-6.1-sol],
+      default: claude-opus-5-5,
+      description: Modelo da thread de cada ticket,
+    }
 budget: { steps: 200, wall: 8h, tokens: 20000000 }
 fatigue: { consecutiveFailures: 5 }
 models:
-  impl: { provider: claude, model: claude-opus-5-5 }
+  opus: { provider: claude, model: claude-opus-5-5 }
+  sol: { provider: codex, model: gpt-6.1-sol, effort: high }
 workspaces:
   ticket:
     {
@@ -1302,11 +1320,52 @@ nodes:
       nodes:
         implement:
           kind: agent
-          model: $impl
+          model: $params.model
           workspace: ticket
           access: write
           thread: { visible: true, kanbanCard: "{{ item }}" }
-          prompt: Rode /poteto-mode com o ticket acima.
+          prompt: >-
+            Rode /poteto-mode com o ticket acima. Se travar, responda status blocked com o kind:
+            technical (dúvida que o bot resolve), product (comente no Linear, abra o PR em draft e
+            avise no #pr-em-review), secret (marque o Fabricio com o nome do segredo, sem valor) ou
+            access (falta login, MCP ou permissão).
+          output:
+            status: { type: string, pattern: "done|blocked" }
+            kind: { type: string, pattern: "technical|product|secret|access", optional: true }
+            detail: { type: string, optional: true }
+        triage:
+          kind: branch
+          cases:
+            - { port: technical, when: "nodes.implement.output.kind == 'technical'" }
+            - { port: access, when: "nodes.implement.output.kind == 'access'" }
+            - { port: stop, when: "nodes.implement.output.status == 'blocked'" }
+          else: go
+        ask_bot:
+          kind: gate
+          answerBy: bot
+          ask: "{{ item }}: {{ nodes.implement.output.detail }}"
+          options: [answer]
+        ask_israel:
+          kind: gate
+          ask: "{{ item }} precisa de acesso: {{ nodes.implement.output.detail }}"
+          options: [answer]
+        resume:
+          kind: agent
+          join: any
+          model: $params.model
+          workspace: ticket
+          access: write
+          thread: continue:implement
+          prompt: "Resposta: {{ nodes.ask_bot.answer }}{{ nodes.ask_israel.answer }}. Siga com o ticket."
+        publish:
+          kind: agent
+          join: any
+          model: $params.model
+          workspace: ticket
+          access: write
+          thread: continue:implement
+          prompt: Rode a skill abrir-pr. Responda com o link do PR.
+          output: { pr: { type: string, pattern: "https://github\\.com/\\S+" } }
           accept:
             {
               argv: [nx, affected, -t, lint, typecheck, test, build, --base=main],
@@ -1314,14 +1373,6 @@ nodes:
               heavy: true,
             }
           retry: { max: 2, on: [failed] }
-        publish:
-          kind: agent
-          model: $impl
-          workspace: ticket
-          access: write
-          thread: continue:implement
-          prompt: Rode a skill abrir-pr. Responda com o link do PR.
-          output: { pr: { type: string, pattern: "https://github\\.com/\\S+" } }
         done:
           kind: output
           status: ready_for_review
@@ -1331,10 +1382,29 @@ nodes:
         blocked:
           kind: output
           status: blocked
-          value: { ticket: "{{ item }}", status: blocked, reason: "{{ nodes.implement.error }}" }
-          report: "{{ item }} bloqueado: {{ nodes.implement.error }}"
+          value:
+            ticket: "{{ item }}"
+            status: "blocked:{{ nodes.implement.output.kind }}"
+            reason: "{{ nodes.implement.output.detail }}"
+          report: "{{ item }} blocked:{{ nodes.implement.output.kind }}: {{ nodes.implement.output.detail }}"
           postToBot: true
-      edges: [implement -> publish, "implement:fail -> blocked", publish -> done]
+        failed:
+          kind: output
+          status: checks_failed
+          value: { ticket: "{{ item }}", status: failed, reason: "{{ nodes.publish.error }}" }
+          report: "{{ item }} falhou no gate: {{ nodes.publish.error }}"
+          postToBot: true
+      edges:
+        - implement -> triage
+        - triage:technical -> ask_bot
+        - triage:access -> ask_israel
+        - triage:stop -> blocked
+        - triage:go -> publish
+        - ask_bot:answer -> resume
+        - ask_israel:answer -> resume
+        - resume -> publish
+        - publish -> done
+        - publish:fail -> failed
   report:
     kind: output
     status: ready_for_review
@@ -1518,7 +1588,7 @@ Resumo da §3.4:
 
 Cada passo roda no host como uma thread T3 comum, na instância de provider em que o host roda os bots, com o mesmo acesso deles: a tela `:99`, os MCPs do host, o MCP do T3, os homes do Claude e do Codex e as credenciais do Israel. Não há barreira estrutural. A proteção tem três partes:
 
-1. **Portão do Israel no motor.** Antes de um nó `command`, o `decide` classifica o argv renderizado com `classifyCommand`. Deploy, restart, merge na `friend/main`, force push e mudança no `~/.t3/userdata/settings.json` abrem um portão antes do `StartUnit`. Só a RPC `gate.decide`, com sessão de usuário, decide: nenhuma ferramenta MCP decide portão, e nenhum bot aprova. Rejeitado, o passo falha sem rodar.
+1. **Portão do Israel no motor.** Antes de um nó `command`, o `decide` classifica o argv renderizado com `classifyCommand`. Deploy, restart, merge na `friend/main`, force push e mudança no `~/.t3/userdata/settings.json` abrem um portão antes do `StartUnit`. Só a RPC `gate.decide`, com sessão de usuário, decide: esse portão nunca vai para bot, e o `workflow_gate_decide` o recusa. Rejeitado, o passo falha sem rodar.
 2. **Ruleset do GitHub na `friend/main`** (sem force push, PR obrigatório, só o Israel passa). Não será ligado agora: é configuração externa pendente do Israel (§15).
 3. **As regras dos bots de hoje.** Os passos carregam a mesma configuração dos bots: os homes do Claude e do Codex do host, com as regras globais de confirmação. O prompt base de passo diz ainda para parar e pedir em vez de fazer deploy, restart, merge, force push ou mexer no `settings.json`. Com `askIsrael`, a pergunta vira portão.
 

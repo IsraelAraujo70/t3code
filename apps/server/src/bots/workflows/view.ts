@@ -53,11 +53,11 @@ const sumCosts = (
 };
 
 const shortOf = (gate: GateState): string => gate.intent.short ?? gateReason(gate.intent.ask);
-/** Gates still waiting for the user, oldest first. */
+/** Gates still waiting for the user, oldest first; one routed to the bot waits for the bot. */
 const waitingGates = (state: RunState): ReadonlyArray<GateState> =>
   state.ended === null
     ? [...state.gates.values()]
-        .filter((g) => g.decision === null)
+        .filter((g) => g.decision === null && g.intent.bot === undefined)
         .sort(
           (a, b) =>
             (state.intents.get(a.intent.key)?.seq ?? 0) -
@@ -305,9 +305,18 @@ export const stepViews = (
   return views;
 };
 
-/** Every gate the run opened, in the order it opened them. */
+/**
+ * Every gate the run opened, in the order it opened them. A bot's gate it never decided, handed
+ * to Israel as `escalated:<key>`, shows only as Israel's.
+ */
 export const gateViews = (state: RunState): ReadonlyArray<WorkflowGateView> => {
   return [...state.gates.values()]
+    .filter(
+      (g) =>
+        g.intent.bot === undefined ||
+        g.decision !== null ||
+        !state.gates.has(`escalated:${g.intent.gateKey}`),
+    )
     .sort(
       (a, b) =>
         (state.intents.get(a.intent.key)?.seq ?? 0) - (state.intents.get(b.intent.key)?.seq ?? 0),
@@ -321,8 +330,9 @@ export const gateViews = (state: RunState): ReadonlyArray<WorkflowGateView> => {
       openedAt: g.openedAt ?? state.started?.at ?? "",
       expiresAt: g.intent.expiresAt,
       decision: g.decision
-        ? { option: g.decision.option, note: g.decision.note, at: g.decision.at }
+        ? { option: g.decision.option, note: g.decision.note, at: g.decision.at, by: g.decision.by }
         : null,
+      ...(g.intent.bot === undefined ? {} : { bot: g.intent.bot }),
     }));
 };
 

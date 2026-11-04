@@ -43,6 +43,13 @@ describe("runtime requests", () => {
     expect(requestResponse(approval, { text: "ok" })).toEqual(
       Result.succeed({ decision: "accept" }),
     );
+    // A bot answers questions but never approves: its "answer" to an approval is a decline.
+    expect(requestResponse(approval, { text: "ok" }, `bot:b_${"a".repeat(32)}`)).toEqual(
+      Result.succeed({ decision: "decline" }),
+    );
+    expect(requestResponse(question, { text: "v2" }, `bot:b_${"a".repeat(32)}`)).toEqual(
+      Result.succeed({ answers: { q1: "v2", q2: "v2" } }),
+    );
     expect(requestResponse(question, "decline")).toEqual(Result.succeed({ decision: "decline" }));
     expect(Result.isFailure(requestResponse(undefined, { text: "ok" }))).toBe(true);
   });

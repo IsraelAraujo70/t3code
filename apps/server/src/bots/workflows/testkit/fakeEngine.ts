@@ -8,7 +8,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
 import type { Json } from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -72,8 +71,8 @@ export interface FakeInterpreter {
   readonly release: (key: string) => Effect.Effect<void>;
   /** Executions of these keys never return (a crash between recording and executing). */
   readonly stall: Set<string>;
-  /** Each stalled execution's key, once that execution started. */
-  readonly stalled: Queue.Dequeue<string>;
+  /** Waits until a stalled key's execution began, so a test stops the engine only after it. */
+  readonly stalled: (key: string) => Effect.Effect<void>;
   /** Start intents the engine abandoned because the run ended first. */
   readonly abandoned: Set<string>;
   /** Executions of these keys fail with a retryable IntentFailed. */
@@ -109,7 +108,14 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
   const units = new Map<string, string>();
   const holds = new Map<string, Deferred.Deferred<void>>();
   const stall = new Set<string>();
-  const stalled = yield* Queue.unbounded<string>();
+  const stallsBegun = new Map<string, Deferred.Deferred<void>>();
+  const stallBegun = (key: string) => {
+    const existing = stallsBegun.get(key);
+    if (existing !== undefined) return existing;
+    const created = Deferred.makeUnsafe<void>();
+    stallsBegun.set(key, created);
+    return created;
+  };
   const abandoned = new Set<string>();
   const failRetryable = new Set<string>();
   const posts = new Map<string, { readonly botId: string; readonly report: string }>();
@@ -129,7 +135,7 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
     Effect.gen(function* () {
       executions.set(intent.key, (executions.get(intent.key) ?? 0) + 1);
       if (stall.has(intent.key)) {
-        yield* Queue.offer(stalled, intent.key);
+        yield* Deferred.succeed(stallBegun(intent.key), undefined);
         return yield* Effect.never;
       }
       if (failRetryable.has(intent.key)) {
@@ -286,7 +292,7 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
       }),
     release: (step) => Deferred.succeed(holdFor(step), undefined).pipe(Effect.asVoid),
     stall,
-    stalled,
+    stalled: (key) => Deferred.await(stallBegun(key)),
     abandoned,
     failRetryable,
     posts,

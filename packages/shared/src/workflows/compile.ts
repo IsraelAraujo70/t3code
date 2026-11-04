@@ -22,7 +22,13 @@ import { semanticHash } from "./canonical.ts";
 import { citesHeavyScript, classifyCommand } from "./command.ts";
 import { exprPaths, parseExpr } from "./expr.ts";
 import { ancestors, buildGraph, formatEdge, parseEdge } from "./graph.ts";
-import { isModelAlias, modelFamily, resolveModelUse } from "./models.ts";
+import {
+  isModelAlias,
+  modelFamily,
+  modelForValue,
+  modelParamOf,
+  resolveModelUse,
+} from "./models.ts";
 import { matchesWhole } from "./output.ts";
 import { parseTemplate } from "./template.ts";
 import { decodeRunParams, isOnDemandTrigger } from "./triggers.ts";
@@ -56,7 +62,7 @@ const RESERVED_ROOTS = new Set<string>([
   ...CHECK_ROOTS,
   ...HILLCLIMB_ROOTS,
 ]);
-const NODE_FIELDS = new Set(["output", "status", "port", "thread", "error"]);
+const NODE_FIELDS = new Set(["output", "status", "port", "thread", "error", "answer"]);
 const WORKSPACE_FIELDS = new Set(["branch", "head", "path"]);
 const RUN_FIELDS = new Set(["id", "dir"]);
 const STEP_FIELDS = new Set(["dir"]);
@@ -66,6 +72,8 @@ const BLOCK_EXPORTS: Partial<Record<WorkflowNode["kind"], string>> = {
   arena: "graft",
   graph: "integration",
 };
+/** The option a bot picks on a gate routed to it when it cannot resolve it: Israel gets the gate. */
+export const ESCALATE = "escalate";
 /** Outputs read by the engine from its own records; every other non-command output may carry model text. */
 const TRUSTED_OUTPUT_KINDS = new Set<WorkflowNode["kind"]>([
   "command",
@@ -218,6 +226,12 @@ export const compileWorkflow = (
     checkPattern(spec.pattern, `${path}.pattern`);
     if (spec.maxItems !== undefined && spec.type !== "string[]")
       report(`${path}.maxItems`, "schema", "maxItems applies to string[] params");
+    if (spec.enum !== undefined && spec.type !== "string")
+      report(`${path}.enum`, "schema", "enum applies to string params");
+    if (spec.enum !== undefined && spec.type === "string" && spec.default !== undefined) {
+      const problem = decodeRunParams({ [name]: spec }, {});
+      if (!problem.ok) report(`${path}.default`, "schema", problem.errors[0]!.message);
+    }
     if (spec.type === "string[]") {
       if (spec.default === undefined) continue;
       const problem = decodeRunParams({ [name]: spec }, {});
@@ -246,7 +260,48 @@ export const compileWorkflow = (
       report(`models.${name}.model`, "model-alias", aliasMessage(ref.model));
     }
   }
-  const resolveModel = (use: WorkflowModelUse, path: string): WorkflowModelRef | null => {
+  /**
+   * `$params.<name>` is a model only an agent node may take: a string param with an `enum`, each
+   * value naming a `models` entry. It checks as its default (or first) value.
+   */
+  const modelParamsChecked = new Set<string>();
+  const paramModel = (name: string, path: string): WorkflowModelRef | null => {
+    const spec = own(definition.params, name);
+    if (spec === undefined) {
+      report(path, "model-alias", `params.${name} is not a declared param`);
+      return null;
+    }
+    if (spec.type !== "string" || spec.enum === undefined) {
+      report(
+        path,
+        "model-alias",
+        `params.${name} picks a model only as a string param with an enum`,
+      );
+      return null;
+    }
+    let first: WorkflowModelRef | null = null;
+    for (const value of spec.enum) {
+      const ref = modelForValue(value, definition.models);
+      if (Result.isSuccess(ref)) {
+        if (value === (spec.default ?? spec.enum[0])) first = ref.success;
+      } else if (!modelParamsChecked.has(name)) {
+        report(`params.${name}.enum`, "model-alias", ref.failure);
+      }
+    }
+    modelParamsChecked.add(name);
+    return first;
+  };
+  const resolveModel = (
+    use: WorkflowModelUse,
+    path: string,
+    fromParam = false,
+  ): WorkflowModelRef | null => {
+    const param = typeof use === "string" ? modelParamOf(use) : null;
+    if (param !== null) {
+      if (fromParam) return paramModel(param, path);
+      report(path, "model-alias", "only an agent node's model may come from a param");
+      return null;
+    }
     const resolved = resolveModelUse(use, definition.models);
     if (Result.isFailure(resolved)) {
       report(path, "model-alias", resolved.failure);
@@ -267,11 +322,15 @@ export const compileWorkflow = (
         return "trigger data";
       case "params": {
         const spec = typeof first === "string" ? own(definition.params, first) : undefined;
-        return (spec?.type === "string" || spec?.type === "string[]") && spec.pattern === undefined
+        return (spec?.type === "string" || spec?.type === "string[]") &&
+          spec.pattern === undefined &&
+          spec.enum === undefined
           ? `param ${String(first)} has no pattern`
           : null;
       }
       case "nodes": {
+        // A gate's answer is free text from whoever decided it, a bot included.
+        if (typeof first === "string" && second === "answer") return `the answer to ${first}`;
         if (typeof first !== "string" || second !== "output") return null;
         const node = nodeById.get(first);
         if (node === undefined || TRUSTED_OUTPUT_KINDS.has(node.kind)) return null;
@@ -326,7 +385,7 @@ export const compileWorkflow = (
             report(
               path,
               "template-root",
-              `nodes.${first} has output, status, port, thread and error`,
+              `nodes.${first} has output, status, port, thread, error and answer`,
             );
           }
           break;
@@ -556,8 +615,9 @@ export const compileWorkflow = (
     },
     path: string,
     ctx: UseContext,
+    modelFromParam = false,
   ) => {
-    resolveModel(spec.model, `${path}.model`);
+    resolveModel(spec.model, `${path}.model`, modelFromParam);
     checkTemplate(spec.prompt, `${path}.prompt`, ctx.scope);
     checkWorkspaceUse(spec.workspace, `${path}.workspace`, ctx);
     if (typeof spec.workspace !== "string" && spec.access === "write") {
@@ -633,6 +693,18 @@ export const compileWorkflow = (
         `a thread keeps one workspace and one access: use ${target}'s workspace and access, or a new thread`,
       );
     }
+    // A model a param picks is the same model only when both read the same param.
+    const fromParam = [spec.model, continued.model].some(
+      (use) => typeof use === "string" && modelParamOf(use) !== null,
+    );
+    if (fromParam && spec.model !== continued.model) {
+      report(
+        `${path}.thread`,
+        "thread-continue",
+        `a thread keeps one model: use ${target}'s model, or a new thread`,
+      );
+      return;
+    }
     const mine = resolveModelUse(spec.model, definition.models);
     const theirs = resolveModelUse(continued.model, definition.models);
     if (
@@ -665,7 +737,9 @@ export const compileWorkflow = (
     checkTimeout(node.timeout, `${path}.timeout`);
     switch (node.kind) {
       case "agent":
-        checkAgent(node, path, ctx);
+        checkAgent(node, path, ctx, true);
+        if (node.askBot === true && definition.bot === undefined)
+          report(`${path}.askBot`, "bot", "askBot asks the workflow's bot: set bot at the top");
         return;
       case "command":
         checkCommand(node, path, ctx, []);
@@ -673,6 +747,20 @@ export const compileWorkflow = (
       case "gate": {
         checkTemplate(node.ask, `${path}.ask`, scope);
         const options = node.options ?? ["approve", "reject"];
+        if (node.answerBy === "bot") {
+          if (definition.bot === undefined)
+            report(
+              `${path}.answerBy`,
+              "bot",
+              "answerBy: bot asks the workflow's bot: set bot at the top",
+            );
+          if (options.includes(ESCALATE))
+            report(
+              `${path}.options`,
+              "port",
+              `"${ESCALATE}" is the bot's way to hand the gate to Israel`,
+            );
+        }
         if (node.expires !== undefined && !options.includes(node.expires.decision)) {
           report(
             `${path}.expires.decision`,

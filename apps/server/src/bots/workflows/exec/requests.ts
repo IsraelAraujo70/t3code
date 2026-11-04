@@ -47,13 +47,17 @@ export const requestText = (kind: string, item: RequestItem | undefined): string
 
 /**
  * Israel's answer for the orchestrator: a user-input request takes the text for each question; an
- * approval takes `accept`. Feedback is only valid with a decline, so the text never rides an accept.
+ * approval takes `accept`, and only from Israel. Feedback is only valid with a decline, so the text never rides an accept.
  */
 export const requestResponse = (
   item: RequestItem | undefined,
   answer: "decline" | { readonly text: string },
+  /** Who decided (`user`, `expiry`, `bot:<id>`): a bot never accepts an approval. */
+  by?: string,
 ): Result.Result<RequestResponse, string> => {
   if (answer === "decline") return Result.succeed({ decision: "decline" });
+  if (item?.type === "approval_request" && by?.startsWith("bot:"))
+    return Result.succeed({ decision: "decline" });
   if (item?.type === "user_input_request") {
     return Result.succeed({
       answers: Object.fromEntries(item.questions.map((q) => [q.id, answer.text])),

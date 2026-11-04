@@ -390,6 +390,7 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
       const response = requestResponse(
         requestItem(thread.turnItems, intent.requestId),
         intent.answer,
+        intent.by,
       );
       if (Result.isFailure(response)) {
         return yield* new WorkflowTurnError({ message: response.failure, permanent: true });

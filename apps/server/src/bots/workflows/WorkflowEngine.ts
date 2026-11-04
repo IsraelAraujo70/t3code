@@ -119,6 +119,8 @@ interface GateDecisionInput {
   readonly gateKey: string;
   readonly option: string;
   readonly note: string | null;
+  /** A bot deciding: only a gate the run routed to this bot. Absent: Israel, any gate. */
+  readonly bot?: string;
 }
 
 export interface WorkflowEngineOptions {
@@ -1089,7 +1091,17 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       if (gate === undefined) {
         return yield* new WorkflowJournalError({ message: `There is no gate ${input.gateKey}.` });
       }
+      if (input.bot !== undefined && gate.intent.bot !== input.bot) {
+        return yield* new WorkflowJournalError({
+          message: `Gate ${input.gateKey} is not routed to this bot; only Israel decides it.`,
+        });
+      }
       if (gate.decision !== null) return gate.decision;
+      const handedOver = (to: string) =>
+        new WorkflowJournalError({
+          message: `Gate ${input.gateKey} went to Israel as ${to}; only that gate decides now.`,
+        });
+      if (gate.handedOver !== null) return yield* handedOver(gate.handedOver);
       if (!gate.intent.options.includes(input.option)) {
         return yield* new WorkflowJournalError({
           message: `"${input.option}" is not one of ${gate.intent.options.join(", ")}.`,
@@ -1099,18 +1111,23 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
         {
           stream: runStream(input.runId),
           key: `gate:${input.gateKey}`,
+          // A bot's gate the decider handed over since this read takes no decision.
+          ...(gate.intent.bot === undefined
+            ? {}
+            : { guard: { absent: ["GateHandedOver"], after: state.lastSeq } }),
           fact: {
             _tag: "GateDecided",
             gateKey: input.gateKey,
             option: input.option,
             note: input.note,
-            by: "user",
+            by: input.bot === undefined ? "user" : `bot:${input.bot}`,
             at: yield* nowIso,
           },
         },
       ]);
-      const fact = stored?.fact.fact;
-      if (fact?._tag !== "GateDecided") {
+      if (stored === undefined) return yield* handedOver(`escalated:${input.gateKey}`);
+      const fact = stored.fact.fact;
+      if (fact._tag !== "GateDecided") {
         return yield* new WorkflowJournalError({ message: "The gate decision was not stored." });
       }
       return fact;

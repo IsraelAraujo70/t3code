@@ -31,6 +31,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
+  BotIcon,
   HandIcon,
   PauseIcon,
   PencilIcon,
@@ -43,7 +44,7 @@ import { randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { commandFailureMessage } from "../../botsSettingsShared";
 import { Button } from "../../../components/ui/button";
-import { useWorkflowRun, workflowsEnvironment } from "../state";
+import { useWorkflowRun, useWorkflowsSnapshot, workflowsEnvironment } from "../state";
 import {
   WorkflowsBreadcrumb,
   WorkflowsNotice,
@@ -148,6 +149,13 @@ function RunContent({
     ? formatDuration(Math.max(0, Date.parse(summary.endedAt) - Date.parse(summary.startedAt)))
     : liveDuration(summary.startedAt, now);
   const waitingGates = openGates(view.gates);
+  // A gate routed to the workflow's bot waits for it; Israel may still answer it.
+  const workflow = useWorkflowsSnapshot(environmentId).data?.workflows.find(
+    (w) => w.workflowId === summary.workflowId,
+  );
+  const botName = workflow?.bot?.name ?? "the bot";
+  const forYou = waitingGates.filter((g) => g.bot === undefined);
+  const forBot = waitingGates.filter((g) => g.bot !== undefined);
   return (
     <WorkflowsPageFrame
       title={
@@ -294,13 +302,31 @@ function RunContent({
               Skipped: {skipReasons[summary.skipReason]}.
             </p>
           ) : null}
-          {waitingGates.length > 0 ? (
+          {forBot.length > 0 ? (
+            <section className="flex flex-col gap-2 rounded-lg border p-3">
+              {forBot.map((g) => (
+                <div key={g.key} className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <h2 className="flex items-center gap-1.5 font-medium text-muted-foreground text-sm">
+                      <BotIcon aria-hidden className="size-3.5" />
+                      Waiting for {botName}
+                    </h2>
+                    <GateAsk environmentId={environmentId} gate={g} />
+                  </div>
+                  <Button size="xs" variant="outline" onClick={() => setGate(g)}>
+                    Answer
+                  </Button>
+                </div>
+              ))}
+            </section>
+          ) : null}
+          {forYou.length > 0 ? (
             <section className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/8 p-3">
               <h2 className="flex items-center gap-1.5 font-medium text-sm text-warning-foreground">
                 <HandIcon aria-hidden className="size-3.5" />
                 Needs you
               </h2>
-              {waitingGates.map((g) => (
+              {forYou.map((g) => (
                 <div key={g.key} className="flex items-start justify-between gap-4">
                   <GateAsk environmentId={environmentId} gate={g} />
                   <Button size="xs" onClick={() => setGate(g)}>
