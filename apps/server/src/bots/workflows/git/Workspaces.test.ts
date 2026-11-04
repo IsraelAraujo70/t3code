@@ -178,7 +178,12 @@ it.effect("guards an agent's pushes in its worktree only, and keeps the reposito
     // A replay adopts the worktree on the agent's branch instead of rebuilding it.
     const head = git(path, "rev-parse", "HEAD");
     const again = yield* service.prepare(input);
-    expect(again).toEqual({ path, branch: "feat/back-1", headSha: head });
+    expect(again).toEqual({
+      path,
+      branch: "feat/back-1",
+      headSha: head,
+      base: { ref: "refs/remotes/origin/main", sha: git(repo, "rev-parse", "main") },
+    });
 
     // The user's checkout and other worktrees of the same repository are not guarded.
     expect(run(repo, "config", "--get", "core.hooksPath").stdout.trim()).toBe("");
@@ -243,5 +248,118 @@ it.effect("keeps every worktree's own top level when the repository sets core.wo
       .pipe(Effect.flip);
     expect(refused.permanent).toBe(true);
     expect(refused.message).toContain("core.worktree differs");
+  }).pipe(Effect.provide(layer), Effect.scoped),
+);
+
+it.effect("starts a branch base from the fetched remote tip and leaves the checkout alone", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-base-")),
+    );
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const origin = NodePath.join(root, "origin");
+    const repo = NodePath.join(root, "repo");
+    const git = (cwd: string, ...args: string[]) =>
+      NodeChildProcess.execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+    NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "friend/main", origin]);
+    git(origin, "config", "user.name", "Test");
+    git(origin, "config", "user.email", "test@t3.invalid");
+    git(origin, "commit", "-q", "--allow-empty", "-m", "old");
+    const old = git(origin, "rev-parse", "HEAD");
+    NodeChildProcess.execFileSync("git", ["clone", "-q", origin, repo]);
+    git(repo, "branch", "local-only");
+    // A configured fetch refspec that maps into refs/heads must not move that local branch.
+    git(repo, "branch", "base-local");
+    git(
+      repo,
+      "config",
+      "--add",
+      "remote.origin.fetch",
+      "+refs/heads/friend/main:refs/heads/base-local",
+    );
+    // The remote moves on; the clone's local branch and remote-tracking ref stay behind.
+    git(origin, "commit", "-q", "--allow-empty", "-m", "new");
+    const tip = git(origin, "rev-parse", "HEAD");
+    const service = yield* WorkflowGit;
+    const input = { baseRef: "friend/main", runId: "r1" };
+
+    const branch = yield* service.prepare({
+      ...input,
+      repoRoot: repo,
+      path: NodePath.join(root, "integ"),
+      branch: "wf/merge",
+    });
+    expect(branch.headSha).toBe(tip);
+    expect(branch.base).toEqual({ ref: "refs/remotes/origin/friend/main", sha: tip });
+    const detached = yield* service.prepare({
+      ...input,
+      repoRoot: repo,
+      path: NodePath.join(root, "ro"),
+      branch: null,
+    });
+    expect(detached.headSha).toBe(tip);
+    // The project's checkout keeps its branch, its local ref and its HEAD.
+    expect(git(repo, "rev-parse", "refs/heads/friend/main")).toBe(old);
+    expect(git(repo, "symbolic-ref", "HEAD")).toBe("refs/heads/friend/main");
+    expect(git(repo, "rev-parse", "HEAD")).toBe(old);
+    expect(git(repo, "status", "--porcelain")).toBe("");
+    expect(git(repo, "rev-parse", "refs/heads/base-local")).toBe(old);
+
+    // A crash before WorkspaceReady: the replay adopts the worktree with the base it was created
+    // from, not a newer remote tip and not none.
+    git(origin, "commit", "-q", "--allow-empty", "-m", "newer");
+    const adopted = yield* service.prepare({
+      ...input,
+      repoRoot: repo,
+      path: NodePath.join(root, "integ"),
+      branch: "wf/merge",
+    });
+    expect(adopted.base).toEqual({ ref: "refs/remotes/origin/friend/main", sha: tip });
+
+    // A branch the remote does not have starts from the local ref.
+    const localOnly = yield* service.prepare({
+      ...input,
+      repoRoot: repo,
+      path: NodePath.join(root, "local-only"),
+      branch: null,
+      baseRef: "local-only",
+    });
+    expect(localOnly.base).toEqual({ ref: "local-only", sha: old });
+
+    // An unreachable remote is retried, never silently replaced by the stale local branch.
+    git(repo, "remote", "set-url", "origin", NodePath.join(root, "gone"));
+    const unreachable = yield* service
+      .prepare({ ...input, repoRoot: repo, path: NodePath.join(root, "offline"), branch: null })
+      .pipe(Effect.flip);
+    expect(unreachable.permanent).toBe(false);
+  }).pipe(Effect.provide(layer), Effect.scoped),
+);
+
+it.effect("starts from the local ref when the project has no remote", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-nobase-")),
+    );
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const repo = NodePath.join(root, "repo");
+    const git = (...args: string[]) =>
+      NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
+    NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@t3.invalid");
+    git("commit", "-q", "--allow-empty", "-m", "base");
+    const ready = yield* (yield* WorkflowGit).prepare({
+      repoRoot: repo,
+      path: NodePath.join(root, "work"),
+      baseRef: "main",
+      branch: "wf/work",
+      runId: "r1",
+    });
+    expect(ready.base).toEqual({ ref: "main", sha: git("rev-parse", "main") });
+    expect(ready.headSha).toBe(git("rev-parse", "main"));
   }).pipe(Effect.provide(layer), Effect.scoped),
 );

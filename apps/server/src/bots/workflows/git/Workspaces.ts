@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { FORWARDED_HOOKS, forwardingHook, prePushGuard } from "./pushGuard.ts";
 
@@ -30,6 +32,8 @@ export interface PreparedWorktree {
   /** null for a detached worktree. */
   readonly branch: string | null;
   readonly headSha: string;
+  /** What a newly created worktree started from; absent when an existing one was adopted. */
+  readonly base?: { readonly ref: string; readonly sha: string };
 }
 
 export class WorkflowGit extends Context.Service<
@@ -96,7 +100,7 @@ export class WorkflowGit extends Context.Service<
 >()("t3/bots/workflows/git/Workspaces/WorkflowGit") {}
 
 const BAD_REVISION =
-  /invalid reference|not a valid object name|unknown revision|bad revision|not a valid ref/i;
+  /invalid reference|not a valid object name|unknown revision|bad revision|not a valid ref|needed a single revision/i;
 
 const git = (path: string, args: ReadonlyArray<string>) =>
   Effect.tryPromise({
@@ -212,6 +216,77 @@ const mainWorktreeKeys = Effect.fn("WorkflowGit.mainWorktreeKeys")(function* (
   return moved;
 });
 
+const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
+const NO_REMOTE_REF = /couldn't find remote ref/i;
+
+/**
+ * The commit a new worktree starts from. A branch name starts from its remote tip, fetched into
+ * `refs/remotes/<remote>/<branch>` only, so the project's checkout and local branches stay as
+ * they are while a stale local branch cannot become the base. The remote is the branch's
+ * configured one, else `origin`. No such remote or remote branch falls back to the local ref.
+ */
+const freshBase = Effect.fn("WorkflowGit.freshBase")(function* (repoRoot: string, baseRef: string) {
+  const local = git(repoRoot, ["rev-parse", "--verify", `${baseRef}^{commit}`]).pipe(
+    Effect.map((sha) => ({ ref: baseRef, sha })),
+  );
+  if (baseRef === "HEAD" || FULL_SHA.test(baseRef)) return yield* local;
+  const branchName = yield* git(repoRoot, ["check-ref-format", "--branch", baseRef]).pipe(
+    Effect.option,
+  );
+  if (branchName._tag === "None") return yield* local;
+  const configured = yield* git(repoRoot, ["config", "--get", `branch.${baseRef}.remote`]).pipe(
+    Effect.option,
+  );
+  const remote =
+    configured._tag === "Some" && configured.value !== "." ? configured.value : "origin";
+  if ((yield* git(repoRoot, ["remote", "get-url", remote]).pipe(Effect.option))._tag === "None")
+    return yield* local;
+  const tracking = `refs/remotes/${remote}/${baseRef}`;
+  const fetched = yield* git(repoRoot, [
+    "fetch",
+    "--no-tags",
+    "--no-write-fetch-head",
+    // Only the refspec given here is written: a configured `remote.<name>.fetch` may map into refs/heads.
+    "--refmap=",
+    remote,
+    `+refs/heads/${baseRef}:${tracking}`,
+  ]).pipe(
+    Effect.as(true),
+    Effect.catchIf(
+      (error) => NO_REMOTE_REF.test(error.message),
+      () => Effect.succeed(false),
+    ),
+  );
+  if (!fetched) return yield* local;
+  return { ref: tracking, sha: yield* git(repoRoot, ["rev-parse", "--verify", tracking]) };
+});
+
+/**
+ * Where a worktree's base is kept, beside it and written before `worktree add`, so a worktree
+ * adopted after a crash reports the base it was created from instead of none.
+ */
+const baseFile = (path: string) => `${NodePath.resolve(path)}.base.json`;
+const BaseJson = Schema.fromJsonString(Schema.Struct({ ref: Schema.String, sha: Schema.String }));
+const decodeBase = Schema.decodeUnknownOption(BaseJson);
+const encodeBase = Schema.encodeSync(BaseJson);
+const writeBase = (path: string, base: { readonly ref: string; readonly sha: string }) =>
+  Effect.try({
+    try: () => {
+      const file = baseFile(path);
+      NodeFS.writeFileSync(`${file}.tmp`, encodeBase(base));
+      NodeFS.renameSync(`${file}.tmp`, file);
+    },
+    catch: (error) => new WorkflowGitError({ message: String(error) }),
+  });
+const readBase = (path: string) =>
+  Effect.sync(() => {
+    try {
+      return Option.getOrUndefined(decodeBase(NodeFS.readFileSync(baseFile(path), "utf8")));
+    } catch {
+      return undefined;
+    }
+  });
+
 const head = Effect.fn("WorkflowGit.head")((path: string) => git(path, ["rev-parse", "HEAD"]));
 const tree = Effect.fn("WorkflowGit.tree")((path: string) =>
   git(path, ["rev-parse", "HEAD^{tree}"]),
@@ -228,6 +303,7 @@ const make = Effect.sync(() =>
       const expected = branch === null ? "detached" : `branch refs/heads/${branch}`;
       // The agent may have switched its worktree to its own branch: that is its work, kept as is.
       const adopted = input.agentBranch !== undefined && entry !== undefined;
+      let base: { readonly ref: string; readonly sha: string } | undefined;
       if (!adopted && !entry?.split("\n").includes(expected)) {
         if (entry) yield* git(repoRoot, ["worktree", "remove", "--force", path]);
         else yield* deleteDirectory(path);
@@ -251,14 +327,16 @@ const make = Effect.sync(() =>
             });
           yield* git(repoRoot, ["worktree", "add", path, branch]);
         } else {
+          base = yield* freshBase(repoRoot, baseRef);
+          yield* writeBase(path, base);
           // The owner goes in first: a crash after creating the branch must not leave it ownerless.
           if (branch !== null)
             yield* git(repoRoot, ["config", `branch.${branch}.wfrun`, input.runId]);
           yield* git(
             repoRoot,
             branch === null
-              ? ["worktree", "add", "--detach", path, baseRef]
-              : ["worktree", "add", "-b", branch, path, baseRef],
+              ? ["worktree", "add", "--detach", path, base.sha]
+              : ["worktree", "add", "-b", branch, path, base.sha],
           );
         }
       }
@@ -269,7 +347,13 @@ const make = Effect.sync(() =>
           : yield* git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
               Effect.orElseSucceed(() => null),
             );
-      return { path, branch: current === "" ? null : current, headSha: yield* head(path) };
+      const recorded = base ?? (yield* readBase(path));
+      return {
+        path,
+        branch: current === "" ? null : current,
+        headSha: yield* head(path),
+        ...(recorded === undefined ? {} : { base: recorded }),
+      };
     }),
     resolveRef: Effect.fn("WorkflowGit.resolveRef")(function* ({ repoRoot, ref }) {
       return yield* git(repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`]).pipe(
@@ -353,6 +437,7 @@ const make = Effect.sync(() =>
       if (yield* worktree(repoRoot, path))
         yield* git(repoRoot, ["worktree", "remove", "--force", path]);
       else yield* deleteDirectory(path);
+      yield* deleteDirectory(baseFile(path));
       yield* git(repoRoot, ["worktree", "prune"]);
     }),
   }),

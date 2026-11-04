@@ -34,6 +34,8 @@ export interface BlockWorkspace {
   readonly branch: string | null;
   /** The sha it was prepared at. */
   readonly headSha: string;
+  /** The `base` a declared workspace asked for and the sha it started from, when recorded. */
+  readonly base?: { readonly ref: string; readonly sha: string };
 }
 
 /** Never recorded. */

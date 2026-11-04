@@ -185,6 +185,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
         path: ready.path,
         branch: ready.branch,
         headSha: ready.headSha,
+        ...(ready.base === undefined ? {} : { base: ready.base }),
       }),
     ];
   });
