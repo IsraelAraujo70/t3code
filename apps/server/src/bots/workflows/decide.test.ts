@@ -1491,3 +1491,51 @@ it("fails the run when its report never reached the bot", () => {
   expect(run.state().ended?.status).toBe("failed");
   expect(run.intent("notify:end")).toMatchObject({ kind: "failed" });
 });
+
+it("starts a per-item worktree from another per-item worktree of the same item", () => {
+  const run = TestRun.start(
+    compile({
+      params: { tickets: { type: "string[]", pattern: "[A-Z]+-\\d+" } },
+      workspaces: {
+        src: { project: "t3code", base: "friend/main", branch: "wf/src-{{ item }}", perItem: true },
+        dst: {
+          project: "t3code",
+          base: "workspace:src",
+          branch: "wf/dst-{{ item }}",
+          perItem: true,
+        },
+      },
+      nodes: {
+        each: {
+          kind: "map",
+          items: "params.tickets",
+          maxItems: 1,
+          concurrency: 1,
+          body: {
+            nodes: {
+              a: { kind: "command", cwd: "src", argv: ["node", "a.ts"] },
+              b: { kind: "command", cwd: "dst", argv: ["node", "b.ts"] },
+            },
+            edges: ["a -> b"],
+          },
+        },
+      },
+      edges: [],
+    }),
+    runStarted({ params: { tickets: ["A-1"] } }),
+  );
+  run.drive();
+  run.result("ws:src#each[0]", {
+    _tag: "WorkspaceReady",
+    name: "src#each[0]",
+    path: "/runs/x/src",
+    branch: "wf/src-A-1",
+    headSha: "s1",
+  });
+  run.drive();
+  run.result("unit:each[0]/a@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+  run.add("exited:each[0]/a@1", unitExited("each[0]/a", 1, 0, { headSha: "s2" }));
+  run.drive();
+  expect(run.state().attempts.get("each[0]/b")?.[0]?.resolved ?? null).toBeNull();
+  expect(run.intent("ws:dst#each[0]")).toMatchObject({ baseRef: "s2", branch: "wf/dst-A-1" });
+});

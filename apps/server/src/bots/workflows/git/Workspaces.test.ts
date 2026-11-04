@@ -189,3 +189,59 @@ it.effect("guards an agent's pushes in its worktree only, and keeps the reposito
     expect(run(manual, "push", "-q", "--force", "origin", "mine").status).toBe(0);
   }).pipe(Effect.provide(layer), Effect.scoped),
 );
+
+it.effect("keeps every worktree's own top level when the repository sets core.worktree", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-cw-")));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const repo = NodePath.join(root, "repo");
+    const git = (cwd: string, ...args: string[]) =>
+      NodeChildProcess.execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+    NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    git(repo, "config", "user.name", "Test");
+    git(repo, "config", "user.email", "test@t3.invalid");
+    git(repo, "config", "core.worktree", repo);
+    git(repo, "commit", "-q", "--allow-empty", "-m", "base");
+    const existing = NodePath.join(root, "existing");
+    git(repo, "worktree", "add", "-q", "--detach", existing, "main");
+    const path = NodePath.join(root, "item");
+    yield* (yield* WorkflowGit).prepare({
+      repoRoot: repo,
+      path,
+      baseRef: "main",
+      branch: null,
+      runId: "r1",
+      agentBranch: { protect: ["main"] },
+    });
+    expect(git(path, "rev-parse", "--show-toplevel")).toBe(path);
+    expect(git(repo, "rev-parse", "--show-toplevel")).toBe(repo);
+    expect(git(existing, "rev-parse", "--show-toplevel")).toBe(existing);
+    // The main checkout still names its work tree, now in its own worktree config.
+    expect(git(repo, "config", "--worktree", "--get", "core.worktree")).toBe(repo);
+    const shared = NodeChildProcess.spawnSync("git", [
+      "-C",
+      repo,
+      "config",
+      "--local",
+      "--get-all",
+      "core.worktree",
+    ]);
+    expect(shared.status).toBe(1);
+    // A shared value that disagrees with the main worktree's own cannot be moved: refused.
+    git(repo, "config", "--file", NodePath.join(repo, ".git", "config"), "core.worktree", root);
+    const refused = yield* (yield* WorkflowGit)
+      .prepare({
+        repoRoot: repo,
+        path: NodePath.join(root, "item2"),
+        baseRef: "main",
+        branch: null,
+        runId: "r1",
+        agentBranch: { protect: ["main"] },
+      })
+      .pipe(Effect.flip);
+    expect(refused.permanent).toBe(true);
+    expect(refused.message).toContain("core.worktree differs");
+  }).pipe(Effect.provide(layer), Effect.scoped),
+);

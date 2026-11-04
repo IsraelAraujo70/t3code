@@ -168,8 +168,48 @@ const guardPushes = Effect.fn("WorkflowGit.guardPushes")(function* (
     },
     catch: (error) => new WorkflowGitError({ message: String(error) }),
   });
+  const common = NodePath.resolve(path, yield* git(path, ["rev-parse", "--git-common-dir"]));
+  const moved = yield* mainWorktreeKeys(path, common);
   yield* git(path, ["config", "extensions.worktreeConfig", "true"]);
+  for (const key of moved)
+    yield* git(path, ["config", "--file", NodePath.join(common, "config"), "--unset", key]);
   yield* git(path, ["config", "--worktree", "core.hooksPath", hooks]);
+});
+
+/**
+ * With `extensions.worktreeConfig` on, a `core.worktree` or `core.bare = true` left in the shared
+ * config applies to every worktree (git-worktree(1)), so the agent's would work in the main
+ * checkout. Copies them into the main worktree's own `config.worktree` and returns the keys the
+ * caller unsets once the extension is on; refuses a value it cannot move as it is.
+ */
+const mainWorktreeKeys = Effect.fn("WorkflowGit.mainWorktreeKeys")(function* (
+  path: string,
+  common: string,
+) {
+  const shared = NodePath.join(common, "config");
+  const own = NodePath.join(common, "config.worktree");
+  const refuse = (message: string) =>
+    new WorkflowGitError({
+      message: `branchPolicy agent cannot guard this repository: ${message}`,
+      permanent: true,
+    });
+  const moved: string[] = [];
+  for (const key of ["core.worktree", "core.bare"]) {
+    const found = yield* git(path, ["config", "--file", shared, "--get-all", key]).pipe(
+      Effect.option,
+    );
+    if (found._tag === "None") continue;
+    const values = found.value.split("\n");
+    if (values.length > 1) return yield* refuse(`${key} is set more than once in ${shared}`);
+    const value = values[0]!;
+    if (key === "core.bare" && value !== "true") continue;
+    const current = yield* git(path, ["config", "--file", own, "--get", key]).pipe(Effect.option);
+    if (current._tag === "Some" && current.value !== value)
+      return yield* refuse(`${key} differs between ${shared} and ${own}`);
+    if (current._tag === "None") yield* git(path, ["config", "--file", own, key, value]);
+    moved.push(key);
+  }
+  return moved;
 });
 
 const head = Effect.fn("WorkflowGit.head")((path: string) => git(path, ["rev-parse", "HEAD"]));

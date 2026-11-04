@@ -507,6 +507,14 @@ export const decide = (
     return head;
   };
 
+  /** The worktree a declared name means at this level: its item's instance when it is per item. */
+  const worktreeAt = (name: string, level: Level): string => {
+    const decl = Object.hasOwn(definition.workspaces ?? {}, name)
+      ? definition.workspaces?.[name]
+      : undefined;
+    return decl === undefined ? name : (instanceOf(name, decl, level) ?? name);
+  };
+
   /** The fold keeps each workspace's head at the last observation that reported one. */
   const workspaceHead = (name: string): string | null =>
     state.workspaces.get(name)?.headSha ?? null;
@@ -552,8 +560,8 @@ export const decide = (
       if (l.iteration !== null && !("iteration" in roots)) roots.iteration = l.iteration;
     }
     const workspaces: Record<string, JsonValue> = {};
-    for (const [declared, decl] of Object.entries(definition.workspaces ?? {})) {
-      const name = instanceOf(declared, decl, level) ?? declared;
+    for (const declared of Object.keys(definition.workspaces ?? {})) {
+      const name = worktreeAt(declared, level);
       const ready = state.workspaces.get(name);
       workspaces[declared] = {
         branch: ready?.branch ?? null,
@@ -695,7 +703,7 @@ export const decide = (
       if (branch === null && !agentBranch) return Result.fail(`workspace ${use} has no branch`);
       let baseRef: string;
       if (decl.base.startsWith("workspace:")) {
-        const head = workspaceHead(decl.base.slice("workspace:".length));
+        const head = workspaceHead(worktreeAt(decl.base.slice("workspace:".length), level));
         if (head === null) return Result.fail(`${decl.base} has no HEAD yet`);
         baseRef = head;
       } else {
@@ -766,11 +774,7 @@ export const decide = (
     level: Level,
   ): Result.Result<Extract<Intent, { readonly _tag: "OpenPullRequest" }>, string> => {
     const exported = blockExport(level, pr.workspace);
-    const declared = definition.workspaces?.[pr.workspace];
-    const name =
-      declared === undefined
-        ? pr.workspace
-        : (instanceOf(pr.workspace, declared, level) ?? pr.workspace);
+    const name = worktreeAt(pr.workspace, level);
     const ready = state.workspaces.get(name);
     const workspace =
       exported !== null
@@ -824,9 +828,10 @@ export const decide = (
     render: (template, roots) => render(template, envFor(level, roots)),
     evaluate: (expr, roots) => evaluate(expr, envFor(level, roots)),
     model: (use) => resolveModelUse(use, definition.models),
-    namedWorkspace: (name) => {
-      const exported = blockExport(level, name);
+    namedWorkspace: (declared) => {
+      const exported = blockExport(level, declared);
       if (exported !== null) return { ...exported, headSha: exported.head };
+      const name = worktreeAt(declared, level);
       const ready = state.workspaces.get(name);
       const prepared = state.intents.get(`ws:${name}`)?.intent;
       if (ready === undefined || prepared?._tag !== "PrepareWorkspace") return null;
