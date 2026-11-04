@@ -44,20 +44,31 @@ export const stepRuns = <Run extends OrderedRun>(
     .sort((a, b) => a.ordinal - b.ordinal);
 
 /**
- * The reply a step's turn produced: the last run of its chain that replied. A run that completed
- * without assistant text, such as a background-task notification the agent had already answered
- * in an earlier run, does not replace that answer. A failed run still does, with its error.
+ * The reply a step's turn produced: its last run's, except that a run opened by a notification
+ * (a background task finishing) that ended without assistant text, whatever its status, does not
+ * replace the reply of a run before it, where the agent had already answered.
  */
 export const stepReply = (
   thread: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "turnItems">,
   first: OrchestrationV2Run,
   last: OrchestrationV2Run,
 ): { readonly run: OrchestrationV2Run; readonly text: string } => {
-  for (const run of stepRuns(thread.runs, first, last).toReversed()) {
-    const reply = subagentResultForRun(thread, run);
-    if (run.status !== "completed" || reply.messageId !== null) return { run, text: reply.text };
-  }
-  return { run: last, text: subagentResultForRun(thread, last).text };
+  const notices = new Set(
+    thread.messages.flatMap((message) => (message.notification === undefined ? [] : [message.id])),
+  );
+  const replied = new Set(
+    thread.messages.flatMap((message) =>
+      message.role === "assistant" && message.text.trim().length > 0 ? [message.runId] : [],
+    ),
+  );
+  const run =
+    stepRuns(thread.runs, first, last).findLast(
+      (candidate) =>
+        candidate.id === first.id ||
+        !notices.has(candidate.userMessageId) ||
+        replied.has(candidate.id),
+    ) ?? last;
+  return { run, text: subagentResultForRun(thread, run).text };
 };
 
 /**

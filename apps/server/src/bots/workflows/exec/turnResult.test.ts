@@ -50,7 +50,10 @@ describe("lastJsonBlock", () => {
 describe("stepReply", () => {
   const threadId = ThreadId.make("wfi:run:step");
   const at = DateTime.makeUnsafe("2026-11-04T12:51:44.000Z");
-  const fullRun = (ordinal: number): OrchestrationV2Run => ({
+  const fullRun = (
+    ordinal: number,
+    status: OrchestrationV2Run["status"] = "completed",
+  ): OrchestrationV2Run => ({
     id: RunId.make(`run:${ordinal}`),
     threadId,
     ordinal,
@@ -60,23 +63,23 @@ describe("stepReply", () => {
     userMessageId: MessageId.make(`user:${ordinal}`),
     rootNodeId: NodeId.make("root"),
     activeAttemptId: null,
-    status: "completed",
+    status,
     requestedAt: at,
     startedAt: at,
     completedAt: at,
     checkpointId: null,
     contextHandoffId: null,
   });
-  const reply = (ordinal: number, text: string) => {
+  const message = (ordinal: number, role: "user" | "assistant", text: string) => {
     const { message, turnItem } = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(`reply:${ordinal}`),
-      turnItemId: TurnItemId.make(`reply:${ordinal}`),
+      messageId: MessageId.make(role === "user" ? `user:${ordinal}` : `reply:${ordinal}`),
+      turnItemId: TurnItemId.make(`${role}:${ordinal}`),
       threadId,
       rootNodeId: NodeId.make("root"),
       providerThreadId: null,
       providerTurnId: null,
       nativeItemRef: null,
-      role: "assistant",
+      role,
       text,
       ordinal,
       now: at,
@@ -84,36 +87,59 @@ describe("stepReply", () => {
     const runId = RunId.make(`run:${ordinal}`);
     return { message: { ...message, runId }, turnItem: { ...turnItem, runId } };
   };
-  // Run 1 ended waiting on a background command, run 2 answered the nudge, and run 3 is the
-  // command's completion notice, which ended without assistant text.
-  const runs = [fullRun(1), fullRun(2), fullRun(3)];
-  const replies = [
-    reply(1, "The gates are still running."),
-    reply(2, 'Done.\n```json\n{"status":"done"}\n```'),
-  ];
-  const thread = (extra: ReadonlyArray<ReturnType<typeof reply>> = []) => ({
-    runs,
-    messages: [...replies, ...extra].map((r) => r.message),
-    turnItems: [...replies, ...extra].map((r) => r.turnItem),
+  const command = message(3, "user", 'Background command "Run gates" completed (exit code 0)');
+  const notice = {
+    ...command,
+    message: {
+      ...command.message,
+      notification: {
+        source: { kind: "command" },
+        outcome: "completed",
+        summary: 'Command "Run gates" finished',
+      },
+    },
+  } satisfies ReturnType<typeof message>;
+  // Run 1 ended waiting on a background command, run 2 answered the nudge, and run 3 was opened by
+  // the command's completion notice (run wfr_8d8708127ce0c0c5b95d).
+  const thread = (
+    third: OrchestrationV2Run["status"],
+    ...extra: ReadonlyArray<ReturnType<typeof message>>
+  ) => {
+    const items = [
+      message(1, "assistant", "The gates are still running."),
+      message(2, "assistant", 'Done.\n```json\n{"status":"done"}\n```'),
+      ...extra,
+    ];
+    return {
+      runs: [fullRun(1), fullRun(2), fullRun(3, third)],
+      messages: items.map((item) => item.message),
+      turnItems: items.map((item) => item.turnItem),
+    };
+  };
+
+  it("keeps the nudge's answer when a notice's run ends without a reply, whatever its status", () => {
+    for (const status of ["completed", "failed", "interrupted"] as const) {
+      const settled = stepReply(thread(status, notice), fullRun(2), fullRun(3, status));
+      expect(settled.run.id).toBe("run:2");
+      expect(lastJsonBlock(settled.text)).toEqual({ output: { status: "done" }, error: null });
+    }
   });
 
-  it("keeps the nudge's answer when a background-task notice ends without a reply", () => {
-    const settled = stepReply(thread(), fullRun(2), fullRun(3));
-    expect(settled.run.id).toBe("run:2");
-    expect(lastJsonBlock(settled.text)).toEqual({ output: { status: "done" }, error: null });
+  it("takes a notice's reply when the agent answered it", () => {
+    const answer = message(3, "assistant", 'Gates passed.\n```json\n{"status":"blocked"}\n```');
+    const settled = stepReply(thread("completed", notice, answer), fullRun(2), fullRun(3));
+    expect(settled.run.id).toBe("run:3");
+    expect(lastJsonBlock(settled.text).output).toEqual({ status: "blocked" });
   });
 
-  it("takes a notice's reply when the agent answered it, and never a run before the step's", () => {
-    const later = reply(3, 'Gates passed.\n```json\n{"status":"blocked"}\n```');
-    expect(lastJsonBlock(stepReply(thread([later]), fullRun(2), fullRun(3)).text).output).toEqual({
-      status: "blocked",
-    });
-    const [before] = replies;
-    const silent = { runs, messages: [before!.message], turnItems: [before!.turnItem] };
-    expect(stepReply(silent, fullRun(2), fullRun(3))).toEqual({
+  it("still settles on a silent run the engine or a restart opened, never on one before the step", () => {
+    const continuation = stepReply(thread("completed"), fullRun(2), fullRun(3));
+    expect(continuation).toEqual({
       run: fullRun(3),
       text: "Child task completed without an assistant result.",
     });
+    const silent = { ...thread("completed", notice), messages: [notice.message] };
+    expect(stepReply(silent, fullRun(2), fullRun(3)).run.id).toBe("run:2");
   });
 });
 
