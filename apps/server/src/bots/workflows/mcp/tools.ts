@@ -52,17 +52,25 @@ const RUNNABLE =
   "Only a workflow whose `bot` entry is set can be run by you: it has a bot trigger that allows you. `description` says when to run it and `params` what to pass; `on: false` means the run would be skipped until the workflow and that trigger are on.";
 
 const Limit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: WORKFLOW_LIST_LIMIT }));
-const ParamValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
+const ParamValue = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.Boolean,
+  Schema.Array(Schema.String),
+]);
 const BotEntry = Schema.Struct({
   trigger: Schema.String,
   description: Schema.String,
   params: Schema.Record(
     Schema.String,
     Schema.Struct({
-      type: Schema.Literals(["string", "number", "boolean"]),
+      type: Schema.Literals(["string", "number", "boolean", "string[]"]),
       description: Schema.optional(Schema.String),
       default: Schema.optional(ParamValue),
+      /** Each element of a `string[]` matches it whole. */
       pattern: Schema.optional(Schema.String),
+      /** A `string[]` with more elements is refused. */
+      maxItems: Schema.optional(Schema.Number),
       /** No default: workflow_run must pass it. */
       required: Schema.Boolean,
     }),

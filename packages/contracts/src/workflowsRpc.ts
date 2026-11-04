@@ -45,7 +45,12 @@ const WorkflowSource = Schema.String.check(Schema.isMaxLength(MAX_SOURCE_LENGTH)
 const CommitMessage = Schema.String.check(Schema.isMaxLength(2_000));
 /** Idempotency key of a mutation: the same key replays the first result. */
 const ClientRequestId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._:-]{1,128}$/));
-const WorkflowParamValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
+const WorkflowParamValue = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.Boolean,
+  Schema.Array(Schema.String),
+]);
 const Cursor = Schema.String.check(Schema.isMaxLength(200));
 const PageLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(200));
 

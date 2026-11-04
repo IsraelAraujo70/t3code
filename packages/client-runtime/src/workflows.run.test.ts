@@ -81,6 +81,13 @@ describe("run presentation", () => {
     { spec: { type: "string", pattern: "[a-z]+" }, text: "abc", ok: true },
     { spec: { type: "string", pattern: "[a-z]+" }, text: "1abc", ok: false },
     { spec: { type: "string", pattern: "[" }, text: "abc", ok: false },
+    { spec: { type: "string[]", pattern: "[A-Z]+-\\d+", maxItems: 2 }, text: "A-1, B-2", ok: true },
+    {
+      spec: { type: "string[]", pattern: "[A-Z]+-\\d+", maxItems: 2 },
+      text: "A-1 B-2 C-3",
+      ok: false,
+    },
+    { spec: { type: "string[]", pattern: "[A-Z]+-\\d+" }, text: "A-1\nnope", ok: false },
   ])("parses $text", ({ spec, text, ok }) => expect(parseRunParam(spec, text).ok).toBe(ok));
   it("uses latest attempts and aggregates instances", () =>
     expect(

@@ -922,6 +922,52 @@ describe("review regressions", () => {
       expect(run.state().attempts.get("a")?.[0]?.resolved).toMatchObject({ port: "fail" });
     });
 
+    it("sends a failed acceptance back to the continued thread with its reason, up to retry.max", () => {
+      const run = ready(
+        {
+          a: { ...agentNode, access: "write" },
+          fix: {
+            ...agentNode,
+            access: "write",
+            prompt: "Fix it",
+            thread: "continue:a",
+            accept: { judge: "$sol", criterion: "Done?" },
+            retry: { max: 1, on: ["failed"] },
+          },
+        },
+        ["a -> fix"],
+      );
+      run.drive();
+      run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+      run.add("settled:a@1", turnSettled("a", 1, "completed"));
+      run.drive();
+      for (const attempt of [1, 2]) {
+        run.add(`result:turn:fix@${attempt}`, { _tag: "TurnStarted", threadId: "wf:x" });
+        run.add(`settled:fix@${attempt}`, turnSettled("fix", attempt, "completed"));
+        run.drive();
+        run.add(`result:judge:fix@${attempt}`, { _tag: "TurnStarted", threadId: `wf:j${attempt}` });
+        run.add(
+          `settled:fix/judge@${attempt}`,
+          turnSettled("fix/judge", attempt, "completed", {
+            pass: false,
+            reason: `tests red ${attempt}`,
+          }),
+        );
+        run.drive();
+      }
+      const second = run.intent("turn:fix@2");
+      expect(second).toMatchObject({ threadId: "wf:x", mode: "continue" });
+      expect(second?._tag === "StartTurn" ? second.prompt : "").toContain(
+        "did not pass: the judge: tests red 1",
+      );
+      expect(run.intent("turn:fix@3")).toBeUndefined();
+      expect(run.state().attempts.get("fix")?.[1]?.resolved).toMatchObject({
+        status: "succeeded",
+        port: "fail",
+        error: "the judge: tests red 2",
+      });
+    });
+
     it("applies the step's timeout to its judge turn", () => {
       const run = ready(
         {

@@ -22,7 +22,7 @@ import { gateReason } from "@t3tools/shared/workflows";
 /** What a status means to the eye; each client maps a tone to its own colors. */
 export type WorkflowTone = "neutral" | "info" | "success" | "warning" | "danger" | "muted";
 
-export type WorkflowParamValue = string | number | boolean;
+export type WorkflowParamValue = string | number | boolean | ReadonlyArray<string>;
 
 export interface WorkflowStepRow {
   readonly key: WorkflowStepAttemptView["key"];
@@ -85,11 +85,14 @@ export interface WorkflowRunApi {
   readonly formatUsd: (usd: number | null) => string;
   /** Gates with no decision yet, oldest first. */
   readonly openGates: (gates: ReadonlyArray<WorkflowGateView>) => ReadonlyArray<WorkflowGateView>;
-  /** Each param's default, or `""`/`0`/`false` by type. */
+  /** Each param's default, or `""`/`0`/`false`/`[]` by type. */
   readonly defaultRunParams: (
     params: Readonly<Record<string, WorkflowParamSpec>> | undefined,
   ) => Record<string, WorkflowParamValue>;
-  /** Reads a form field as the param's type and checks its `pattern`. */
+  /**
+   * Reads a form field as the param's type and checks its `pattern`; a `string[]` is one field of
+   * values separated by commas, spaces or new lines, each checked, at most `maxItems`.
+   */
   readonly parseRunParam: (spec: WorkflowParamSpec, text: string) => ParsedRunParam;
   /** Web route of a run: `/workflows/<env>/runs/<runId>`. */
   readonly workflowRunHref: (environmentId: EnvironmentId, runId: WorkflowRunId) => string;
@@ -266,7 +269,14 @@ export const defaultRunParams: WorkflowRunApi["defaultRunParams"] = (params) =>
   Object.fromEntries(
     Object.entries(params ?? {}).map(([key, spec]) => [
       key,
-      spec.default ?? (spec.type === "string" ? "" : spec.type === "number" ? 0 : false),
+      spec.default ??
+        (spec.type === "string"
+          ? ""
+          : spec.type === "number"
+            ? 0
+            : spec.type === "string[]"
+              ? []
+              : false),
     ]),
   );
 export const parseRunParam: WorkflowRunApi["parseRunParam"] = (spec, text) => {
@@ -278,15 +288,26 @@ export const parseRunParam: WorkflowRunApi["parseRunParam"] = (spec, text) => {
     return /^(true|false)$/i.test(text)
       ? { ok: true, value: text.toLowerCase() === "true" }
       : { ok: false, message: "Enter true or false." };
+  const values = spec.type === "string[]" ? text.split(/[\s,]+/).filter((v) => v !== "") : [text];
+  if (spec.type === "string[]" && spec.maxItems !== undefined && values.length > spec.maxItems)
+    return { ok: false, message: `At most ${spec.maxItems}.` };
   if (spec.pattern !== undefined) {
     try {
-      if (!new RegExp(`^(?:${spec.pattern})$`).test(text))
-        return { ok: false, message: `Doesn't match ${spec.pattern}.` };
+      const pattern = new RegExp(`^(?:${spec.pattern})$`);
+      const bad = values.find((value) => !pattern.test(value));
+      if (bad !== undefined)
+        return {
+          ok: false,
+          message:
+            spec.type === "string[]"
+              ? `"${bad}" doesn't match ${spec.pattern}.`
+              : `Doesn't match ${spec.pattern}.`,
+        };
     } catch {
       return { ok: false, message: "Invalid pattern." };
     }
   }
-  return { ok: true, value: text };
+  return { ok: true, value: spec.type === "string[]" ? values : text };
 };
 export const workflowRunHref: WorkflowRunApi["workflowRunHref"] = (env, id) =>
   `/workflows/${encodeURIComponent(env)}/runs/${id}`;

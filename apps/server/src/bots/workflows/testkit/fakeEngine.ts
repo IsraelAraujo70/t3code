@@ -56,6 +56,7 @@ export interface TurnScript {
 export interface UnitScript {
   readonly exit?: number;
   readonly out?: Json;
+  readonly tail?: string;
 }
 
 export interface FakeInterpreter {
@@ -80,6 +81,10 @@ export interface FakeInterpreter {
    */
   readonly posts: Map<string, { readonly botId: string; readonly report: string }>;
   readonly missingBots: Set<string>;
+  /** Thread ↔ card links, as `<ticketId> <threadId>`, each once like the kanban's table. */
+  readonly links: Set<string>;
+  /** Worktrees prepared, by workspace name, with how they were asked for. */
+  readonly workspaces: Map<string, Extract<Intent, { readonly _tag: "PrepareWorkspace" }>>;
 }
 
 /**
@@ -89,6 +94,12 @@ export interface FakeInterpreter {
 export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (options: {
   readonly turns?: Readonly<Record<string, TurnScript>>;
   readonly units?: Readonly<Record<string, UnitScript>>;
+  /** The kanban board `ReadTicket` reads, by id; identifiers match case-insensitively. */
+  readonly tickets?: ReadonlyArray<{
+    readonly id: string;
+    readonly identifier: string;
+    readonly title: string;
+  }>;
 }) {
   const executions = yield* Effect.sync(() => new Map<string, number>());
   const threads = new Map<string, string>();
@@ -99,6 +110,8 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
   const failRetryable = new Set<string>();
   const posts = new Map<string, { readonly botId: string; readonly report: string }>();
   const missingBots = new Set<string>();
+  const links = new Set<string>();
+  const workspaces = new Map<string, Extract<Intent, { readonly _tag: "PrepareWorkspace" }>>();
   const at = Clock.currentTimeMillis.pipe(
     Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
   );
@@ -129,6 +142,7 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
           return [result(runId, intent, { _tag: "UnitSpawned", unit, at: yield* at })];
         }
         case "PrepareWorkspace":
+          workspaces.set(intent.name, intent);
           return [
             result(runId, intent, {
               _tag: "WorkspaceReady",
@@ -165,6 +179,29 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
               branch: intent.branch,
             }),
           ];
+        case "ReadTicket": {
+          const ref = intent.ref.toLowerCase();
+          const ticket = options.tickets?.find(
+            (t) => t.id === intent.ref || t.identifier.toLowerCase() === ref,
+          );
+          return [
+            result(
+              runId,
+              intent,
+              ticket === undefined
+                ? { _tag: "IntentFailed", error: `no ticket ${intent.ref}`, retryable: false }
+                : {
+                    _tag: "TicketRead",
+                    ticketId: ticket.id,
+                    title: `${ticket.identifier} ${ticket.title}`,
+                    message: `Kanban ticket ${ticket.identifier}\n${ticket.identifier}: ${ticket.title}`,
+                  },
+            ),
+          ];
+        }
+        case "LinkThread":
+          links.add(`${intent.ticketId} ${intent.threadId}`);
+          return [result(runId, intent, { _tag: "ThreadLinked" })];
         case "StartChildRun":
           return [
             result(runId, intent, { _tag: "ChildRunStarted", childRunId: `child-${intent.key}` }),
@@ -222,7 +259,7 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
           signal: null,
           queuedMs: 0,
           out: script.out ?? null,
-          tail: "",
+          tail: script.tail ?? "",
           lost: false,
           started: true,
         };
@@ -246,6 +283,8 @@ export const makeFakeInterpreter = Effect.fn("makeFakeInterpreter")(function* (o
     failRetryable,
     posts,
     missingBots,
+    links,
+    workspaces,
   };
   const layer = Layer.succeed(
     WorkflowInterpreter,

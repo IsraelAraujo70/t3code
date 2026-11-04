@@ -29,6 +29,8 @@ export const EXPR_FUNCTIONS = [
   "min",
   "max",
   "coalesce",
+  /** `table(rows, "col", …)`: a markdown table of a list of objects (a map's `collect`). */
+  "table",
   "ledgerDigest",
   "ledgerBest",
 ] as const;

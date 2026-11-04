@@ -50,7 +50,7 @@ export class WorkflowTurnError extends Data.TaggedError("WorkflowTurnError")<{
 const stepRules = (heavyScript: string) =>
   [
     "You are one step of a T3 workflow running unattended on the bots host.",
-    "Never deploy, restart services, merge into friend/main, force push, or edit ~/.t3/userdata/settings.json;",
+    "Never deploy, restart services, merge into friend/main, force push, push with --no-verify, or edit ~/.t3/userdata/settings.json;",
     "if the task needs one of these, stop and say so in your reply.",
     `Run heavy commands (typecheck, tests, builds, installs) through ${heavyScript}, one at a time.`,
   ].join(" ");

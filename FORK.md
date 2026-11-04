@@ -383,13 +383,19 @@ restarts, merges into `friend/main`, force pushes or writes `~/.t3/userdata/sett
 waits for a decision that only a user session makes (`bots.workflows.gate.decide`, which needs
 `orchestration:operate`); no MCP tool and no bot decides a gate. The gate reads only command argv,
 so an agent with a shell can go around it, a risk the owner accepted. The engine itself only pushes
-`wf/…` branches, without force, and opens draft pull requests. Merging into `friend/main` is always
-a handoff.
+`wf/…` branches, without force, and opens draft pull requests. In a `branchPolicy: agent` worktree
+the agent pushes its own branch and opens the pull request; a pre-push hook set for that worktree
+alone (`git config --worktree core.hooksPath`) refuses force pushes, deletions and pushes to `main`,
+`master` and `friend/main`, while the repository's other worktrees keep their hooks
+([`pushGuard.ts`](apps/server/src/bots/workflows/git/pushGuard.ts)). Merging into `friend/main` is
+always a handoff.
 
 A step's agent turn is an ordinary thread with id `wf:<runId>:<keyHash>`
 ([`workflowThreads.ts`](packages/contracts/src/workflowThreads.ts)). These threads stay out of the
 sidebar, search, the command palette, the archive and per-thread notifications; they open from the
-run view or by direct link.
+run view or by direct link. A step declared `thread: { visible: true }` instead gets
+`wfi:<runId>:<keyHash>`, which is listed like any thread and can be linked to a kanban card (the
+ticket-fleet pattern, [design §6.2](docs/friend/workflows-design.md)).
 
 ## Using workflows
 

@@ -60,16 +60,37 @@ export const triggerParts = (trigger: WorkflowTrigger): WorkflowTriggerParts => 
       return {};
   }
 };
+/** A run param's value: `string[]` params decode to a list of strings. */
+type RunParamValue = string | number | boolean | ReadonlyArray<string>;
 export type DecodeRunParamsResult =
-  | { readonly ok: true; readonly params: Readonly<Record<string, string | number | boolean>> }
+  | { readonly ok: true; readonly params: Readonly<Record<string, RunParamValue>> }
   | {
       readonly ok: false;
       readonly errors: ReadonlyArray<{ readonly param: string; readonly message: string }>;
     };
+/** Why one value does not fit its declaration, or null. */
+const paramError = (name: string, spec: WorkflowParamSpec, value: unknown): string | null => {
+  if (spec.type === "string[]") {
+    if (!Array.isArray(value) || !value.every((v) => typeof v === "string"))
+      return `${name}: expected a list of strings`;
+    if (spec.maxItems !== undefined && value.length > spec.maxItems)
+      return `${name} has ${value.length} items; at most ${spec.maxItems}`;
+    const bad =
+      spec.pattern === undefined
+        ? undefined
+        : value.find((v: string) => !matchesWhole(spec.pattern!, v));
+    return bad === undefined ? null : `${name}: "${bad}" does not match ${spec.pattern}`;
+  }
+  if (typeof value !== spec.type) return `${name}: expected ${spec.type}`;
+  if (typeof value === "string" && spec.pattern !== undefined && !matchesWhole(spec.pattern, value))
+    return `${name} does not match ${spec.pattern}`;
+  return null;
+};
 /**
  * The params a run starts with: each declared param from `input` or its default, typed as
- * declared, string patterns matched whole; an undeclared key is an error. The decider and every
- * caller that refuses early (RPC, MCP) use this one function.
+ * declared, string patterns matched whole (every element of a `string[]`, which also respects
+ * `maxItems`); an undeclared key is an error. The decider and every caller that refuses early
+ * (RPC, MCP) use this one function.
  */
 export const decodeRunParams = (
   declarations: Readonly<Record<string, WorkflowParamSpec>> | undefined,
@@ -77,7 +98,7 @@ export const decodeRunParams = (
 ): DecodeRunParamsResult => {
   const specs = declarations ?? {};
   const errors: Array<{ param: string; message: string }> = [];
-  const params: Record<string, string | number | boolean> = {};
+  const params: Record<string, RunParamValue> = {};
   for (const name of Object.keys(input))
     if (!Object.hasOwn(specs, name))
       errors.push({ param: name, message: `${name} is not a declared param` });
@@ -87,20 +108,12 @@ export const decodeRunParams = (
       errors.push({ param: name, message: `${name} is required` });
       continue;
     }
-    if (
-      (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") ||
-      typeof value !== spec.type
-    ) {
-      errors.push({ param: name, message: `${name}: expected ${spec.type}` });
+    const error = paramError(name, spec, value);
+    if (error !== null) {
+      errors.push({ param: name, message: error });
       continue;
     }
-    if (
-      typeof value === "string" &&
-      spec.pattern !== undefined &&
-      !matchesWhole(spec.pattern, value)
-    )
-      errors.push({ param: name, message: `${name} does not match ${spec.pattern}` });
-    params[name] = value;
+    params[name] = value as RunParamValue;
   }
   return errors.length ? { ok: false, errors } : { ok: true, params };
 };

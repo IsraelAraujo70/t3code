@@ -9,6 +9,7 @@ import {
   botThreadId,
   ProviderInstanceId,
   ThreadId,
+  workflowItemThreadId,
   workflowStepThreadId,
 } from "@t3tools/contracts";
 import type { AppTools } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -306,12 +307,12 @@ describe("HostMcpForward", () => {
       Effect.gen(function* () {
         const fake = yield* fakeServer();
         const runId = "wfr_0123456789abcdef0123";
-        const step = (hash: string, bot: string | undefined): Intent => ({
+        const step = (hash: string, bot: string | undefined, visible = false): Intent => ({
           _tag: "StartTurn",
           key: `turn:${hash}@1`,
           step: hash,
           attempt: 1,
-          threadId: workflowStepThreadId(runId, hash),
+          threadId: (visible ? workflowItemThreadId : workflowStepThreadId)(runId, hash),
           mode: "new",
           projectRef: "t3code",
           title: "Routine",
@@ -325,6 +326,7 @@ describe("HostMcpForward", () => {
         const bound = step("a".repeat(16), financeBot);
         const unbound = step("b".repeat(16), undefined);
         const deleted = step("c".repeat(16), "b_deleted");
+        const visible = step("e".repeat(16), financeBot, true);
         const bot: Bot = {
           id: financeBot,
           name: "Finance",
@@ -342,7 +344,7 @@ describe("HostMcpForward", () => {
         yield* Effect.gen(function* () {
           yield* (yield* BotsStore.BotsStore).insertBot(bot);
           yield* (yield* Journal.Journal).append(
-            [bound, unbound, deleted].map((intent) => ({
+            [bound, unbound, deleted, visible].map((intent) => ({
               stream: `run:${runId}`,
               key: intent.key,
               fact: { _tag: "IntentRecorded" as const, intent },
@@ -357,6 +359,11 @@ describe("HostMcpForward", () => {
               assert.deepStrictEqual(
                 servers?.map((server) => [server.server, server.tools.map((tool) => tool.name)]),
                 [["pluggy", ["balance"]]],
+              );
+              // A visible (`wfi:`) step thread works for the bot like a hidden one.
+              assert.deepStrictEqual(
+                (yield* service.forThread(threadOf(visible)))?.map((server) => server.server),
+                ["pluggy"],
               );
               assert.isUndefined(yield* service.forThread(threadOf(unbound)));
               assert.isUndefined(yield* service.forThread(threadOf(deleted)));

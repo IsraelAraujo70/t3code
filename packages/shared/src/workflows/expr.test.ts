@@ -90,6 +90,10 @@ it.each([
   ["max(nums)", 3],
   ["coalesce(n, 2)", 2],
   ["coalesce(1, 1/0)", 1],
+  [
+    "table(rows, 'ticket', 'pr', 'reason')",
+    "| ticket | pr | reason |\n| --- | --- | --- |\n| BACK-1 | https://pr/1 |  |\n| BACK-2 |  | a \\| b c |",
+  ],
 ] as const)("evaluates rule %s", (source, value) => {
   const parsed = parseExpr(source);
   if (Result.isFailure(parsed)) throw new Error(parsed.failure.message);
@@ -103,6 +107,10 @@ it.each([
         a: [{ k: 1 }],
         empty: [],
         nums: [3, 1],
+        rows: [
+          { ticket: "BACK-1", pr: "https://pr/1", reason: null },
+          { ticket: "BACK-2", reason: "a | b\n  c" },
+        ],
       },
     }),
   ).toEqual(Result.succeed(value));
@@ -125,6 +133,8 @@ it.each([
   ["max('a')", "expected number, got string"],
   ["ledgerBest('valid')", "ledger not available"],
   ["ledgerDigest('valid')", "ledger not available"],
+  ["table(1, 'a')", "table expects a list of rows"],
+  ["table(empty, 1)", "table columns are strings"],
 ] as const)("reports evaluation error for %s", (source, message) => {
   const parsed = parseExpr(source);
   if (Result.isFailure(parsed)) throw new Error(parsed.failure.message);

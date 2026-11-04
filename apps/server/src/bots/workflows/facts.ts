@@ -64,6 +64,12 @@ export const Intent = Schema.TaggedUnion({
     projectRef: Text,
     baseRef: Text,
     branch: NullableText,
+    /**
+     * `branchPolicy: agent`: the worktree is the agent's on any branch it creates (adopted as it
+     * is on a replay), and a pre-push hook for this worktree alone refuses a force push, a
+     * deletion and a push to one of `protect`.
+     */
+    agentBranch: Schema.optional(Schema.Struct({ protect: Schema.Array(Text) })),
   },
   GitOp: {
     key: Text,
@@ -137,6 +143,10 @@ export const Intent = Schema.TaggedUnion({
     workflowTitle: Text,
     report: Text,
   },
+  /** Key `ticket:<ref>`: a kanban ticket (id or identifier) and its issue as a first message. */
+  ReadTicket: { key: Text, ref: Text },
+  /** Key `link:<ticketId>:<threadId>`: links a visible step thread to its kanban card. */
+  LinkThread: { key: Text, ticketId: Text, threadId: Text },
   StartChildRun: {
     key: Text,
     step: Text,
@@ -248,6 +258,9 @@ export const RunFact = Schema.TaggedUnion({
   ChildRunStarted: { childRunId: Text },
   /** `threadId` null: the bot no longer exists and nothing was posted. */
   BotPosted: { threadId: NullableText },
+  /** `title` is `<identifier> <title>`; `message` opens the visible thread. */
+  TicketRead: { ticketId: Text, title: Text, message: Text },
+  ThreadLinked: {},
   /** The intent cannot be done; `retryable` lets the actor try the same key again later. */
   IntentFailed: { error: Text, retryable: Schema.Boolean },
 

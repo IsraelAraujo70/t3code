@@ -20,6 +20,7 @@ import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { type ProjectOperationError, ProjectService } from "../../../project/ProjectService.ts";
 // wf-engine slice 8: notices, the run's card and the draft pull request.
 import { WorkflowCards } from "../card/WorkflowCards.ts";
+import { WorkflowTickets } from "../card/WorkflowTickets.ts";
 import { workflowRunWebPath } from "../notices/notices.ts";
 import { WorkflowNotices } from "../notices/WorkflowNotices.ts";
 import { WorkflowPullRequests } from "../publish/PullRequests.ts";
@@ -88,6 +89,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
   // wf-engine slice 8: optional, so a host without them (tests, the CLI) keeps logging instead.
   const notices = yield* Effect.serviceOption(WorkflowNotices);
   const cards = yield* Effect.serviceOption(WorkflowCards);
+  const tickets = yield* Effect.serviceOption(WorkflowTickets);
   const pullRequests = yield* Effect.serviceOption(WorkflowPullRequests);
   const botPosts = yield* Effect.serviceOption(WorkflowBotPosts);
   const environment = yield* Effect.serviceOption(ServerEnvironment);
@@ -171,6 +173,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
       baseRef: intent.baseRef,
       branch: intent.branch,
       runId,
+      agentBranch: intent.agentBranch,
     };
     const ready = yield* git
       .prepare(input)
@@ -381,6 +384,28 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           ),
           Effect.catch((error) => Effect.succeed(failed(runId, intent, error.message, true))),
         );
+      }
+      case "ReadTicket": {
+        if (Option.isNone(tickets))
+          return failed(runId, intent, "The kanban is not available on this host.");
+        return yield* tickets.value.read(intent.ref).pipe(
+          Effect.map((ticket) => [result(runId, intent, { _tag: "TicketRead", ...ticket })]),
+          Effect.catch((error) =>
+            Effect.succeed(failed(runId, intent, error.message, error.retryable)),
+          ),
+        );
+      }
+      case "LinkThread": {
+        if (Option.isNone(tickets))
+          return failed(runId, intent, "The kanban is not available on this host.");
+        return yield* tickets.value
+          .link({ ticketId: intent.ticketId, threadId: intent.threadId })
+          .pipe(
+            Effect.as([result(runId, intent, { _tag: "ThreadLinked" })]),
+            Effect.catch((error) =>
+              Effect.succeed(failed(runId, intent, error.message, error.retryable)),
+            ),
+          );
       }
       case "StartChildRun":
         return yield* startChild(runId, intent);

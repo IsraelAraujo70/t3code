@@ -33,6 +33,26 @@ export function workflowStepThreadId(runId: string, keyHash: string): ThreadId {
 }
 
 /**
+ * A visible step thread (`thread: { visible: true }`): `wfi:<runId>:<keyHash>`. Unlike `wf:` it is
+ * listed like any thread, so the user can follow and steer it; the prefix only names its run.
+ */
+export const WORKFLOW_ITEM_THREAD_PREFIX = "wfi:";
+
+const WORKFLOW_ITEM_THREAD_ID = /^wfi:(wfr_[0-9a-f]{20}):([0-9a-f]{16,64})$/;
+
+export function workflowItemThreadId(runId: string, keyHash: string): ThreadId {
+  return ThreadId.make(`${WORKFLOW_ITEM_THREAD_PREFIX}${runId}:${keyHash}`);
+}
+
+/** The run of a well-formed visible step thread id; null for anything else. */
+export function parseWorkflowItemThreadId(
+  threadId: string,
+): { readonly runId: string; readonly keyHash: string } | null {
+  const match = WORKFLOW_ITEM_THREAD_ID.exec(threadId);
+  return match === null ? null : { runId: match[1]!, keyHash: match[2]! };
+}
+
+/**
  * A step thread or a subagent or side chat inside one. A user's fork of a step thread keeps the
  * step as its root but is the user's own thread, so it stays listed.
  */
