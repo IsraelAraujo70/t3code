@@ -178,7 +178,12 @@ it.effect("guards an agent's pushes in its worktree only, and keeps the reposito
     // A replay adopts the worktree on the agent's branch instead of rebuilding it.
     const head = git(path, "rev-parse", "HEAD");
     const again = yield* service.prepare(input);
-    expect(again).toEqual({ path, branch: "feat/back-1", headSha: head });
+    expect(again).toEqual({
+      path,
+      branch: "feat/back-1",
+      headSha: head,
+      base: { ref: "refs/remotes/origin/main", sha: git(repo, "rev-parse", "main") },
+    });
 
     // The user's checkout and other worktrees of the same repository are not guarded.
     expect(run(repo, "config", "--get", "core.hooksPath").stdout.trim()).toBe("");
@@ -265,6 +270,15 @@ it.effect("starts a branch base from the fetched remote tip and leaves the check
     const old = git(origin, "rev-parse", "HEAD");
     NodeChildProcess.execFileSync("git", ["clone", "-q", origin, repo]);
     git(repo, "branch", "local-only");
+    // A configured fetch refspec that maps into refs/heads must not move that local branch.
+    git(repo, "branch", "base-local");
+    git(
+      repo,
+      "config",
+      "--add",
+      "remote.origin.fetch",
+      "+refs/heads/friend/main:refs/heads/base-local",
+    );
     // The remote moves on; the clone's local branch and remote-tracking ref stay behind.
     git(origin, "commit", "-q", "--allow-empty", "-m", "new");
     const tip = git(origin, "rev-parse", "HEAD");
@@ -291,6 +305,18 @@ it.effect("starts a branch base from the fetched remote tip and leaves the check
     expect(git(repo, "symbolic-ref", "HEAD")).toBe("refs/heads/friend/main");
     expect(git(repo, "rev-parse", "HEAD")).toBe(old);
     expect(git(repo, "status", "--porcelain")).toBe("");
+    expect(git(repo, "rev-parse", "refs/heads/base-local")).toBe(old);
+
+    // A crash before WorkspaceReady: the replay adopts the worktree with the base it was created
+    // from, not a newer remote tip and not none.
+    git(origin, "commit", "-q", "--allow-empty", "-m", "newer");
+    const adopted = yield* service.prepare({
+      ...input,
+      repoRoot: repo,
+      path: NodePath.join(root, "integ"),
+      branch: "wf/merge",
+    });
+    expect(adopted.base).toEqual({ ref: "refs/remotes/origin/friend/main", sha: tip });
 
     // A branch the remote does not have starts from the local ref.
     const localOnly = yield* service.prepare({
