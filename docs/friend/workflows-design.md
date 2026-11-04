@@ -911,7 +911,7 @@ O ator de cada execução (`runActor` em `WorkflowEngine.ts`, uma fibra por exec
 - Todo início, inclusive `accept`, `nudge` e `judge`, gasta um passo do orçamento. O `accept.argv` passa pelo mesmo portão do Israel que o argv de um nó `command`.
 - De `pause` e `resume`, só o controle mais recente vale, com a chave dele. `amendBudget` fica gravado e a fatia 8 aplica o novo teto.
 - O tick do motor é um laço próprio que espera a ativação do servidor (`forkParked`). O `Scheduler` compartilhado é fornecido dentro do `runtimeLayer` e não chega à camada dos bots.
-- Ainda não: `retry` de passo numa execução já terminada (o `RunEnded` é final), orçamento por tokens, reserva e tempo ativo (fatia 8) e a publicação do PR (fatia 8).
+- Ainda não: orçamento por tokens, reserva e tempo ativo (fatia 8) e a publicação do PR (fatia 8).
 
 ### 3.2 Execução
 
@@ -925,7 +925,7 @@ O ator de cada execução (`runActor` em `WorkflowEngine.ts`, uma fibra por exec
      │              │  └─ orçamento estourado ─► Interrupt dos vivos ─► budget_exhausted
      │              ├─ cancel ─► Interrupt dos vivos ─► cancelled
      │              └─ nada vivo e nada pronto ─► OutputSet ─► succeeded | failed
-     └── retry de um passo numa execução failed ─► running (tentativa + 1)
+     └── retry de um passo falho numa execução failed ou succeeded ─► running (tentativa + 1)
 ```
 
 **Do gatilho à execução.** Todo pedido de execução é primeiro um `TriggerFired` no stream do workflow, com chave = ocorrência. Quem cria a execução é o **decisor do workflow**, outra função pura (`decideWorkflow(workflowState, ctx) -> WorkflowIntent[]`) que o motor roda no tick e logo depois de cada `TriggerFired`. Para cada `TriggerFired` sem `RunCreated` nem `TriggerSkipped`, ele decide entre:
@@ -938,9 +938,9 @@ O `runId` é derivado da ocorrência, então `start`, `run.start` e `workflow_ru
 
 O fim é atômico. Num único append vão `OutputSet` e `RunEnded` em `run:<id>`, `RunOutcome` em `workflow:<id>` e, se a execução falhou, os `TriggerFired` dos workflows que assinam `workflowFailed`. Notificações e cartões do fim são intents gravados nesse mesmo batch. Na partida, o motor carrega as execuções vivas e também as terminadas com `pending_intents > 0`. Assim nenhuma consequência some entre duas gravações.
 
-O caminho de volta: `failed` aceita `retry` de um passo, `paused` aceita `resume`, `budget_exhausted` aceita `amendBudget` (registrado como `ControlRequested`, com o novo teto) seguido de `resume`, e um workflow suspenso por fadiga aceita `Unsuspended`. Uma nova versão roda numa execução nova.
+O caminho de volta: `failed` e `succeeded` aceitam `retry` de um passo que falhou, `paused` aceita `resume`, `budget_exhausted` aceita `amendBudget` (registrado como `ControlRequested`, com o novo teto) seguido de `resume`, e um workflow suspenso por fadiga aceita `Unsuspended`. Uma nova versão roda numa execução nova.
 
-O `retry` segue a regra de "rodar de novo" do portão ambíguo: a tentativa seguinte do passo começa na hora, sem olhar `retry.max`. Ele vale para um passo do nível de cima cuja última tentativa não teve sucesso e cuja falha ainda não levou a nenhum sucessor; o motor recusa no RPC o que não cabe. Numa execução `failed`, o motor grava `RunReopened` e a execução volta a `running`. Repete também o que o fim parou, e os caminhos mortos que a falha cortou voltam a ser avaliados; o fim seguinte e o seu `RunOutcome` ganham chaves com o número da reabertura (`ended:1`, `outcome:<runId>:1`). Não reabre: uma execução `cancelled`, `succeeded` ou `budget_exhausted`, uma execução filha (repete-se o passo `call` do pai) ou uma cuja worktree o `retain` já removeu.
+O `retry` segue a regra de "rodar de novo" do portão ambíguo: a tentativa seguinte do passo começa na hora, sem olhar `retry.max`. Vale para um passo cuja última tentativa falhou ou saiu pela porta `fail` (um check que não passou), no nível de cima ou dentro de um item de map (`fleet[1]/review`), com a execução ainda rodando ou já terminada. O motor grava `RetryApplied`: os passos depois dele no item, e depois de cada map que o contém, recomeçam (a última tentativa fica `superseded` e a próxima ganha número novo), e esses maps resolvem de novo na mesma tentativa (a chave da resolução leva a contagem: `resolved:fleet@1:1`). O que veio antes, como implement e verify, fica. O report de um output que roda de novo sai com a tentativa na chave (`post:done:fleet[1]@2`). Numa execução terminada, `failed` ou `succeeded`, o motor grava `RunReopened` junto com o `RetryApplied` e a execução volta a `running`; repete também o que o fim parou, e o fim seguinte e o seu `RunOutcome` ganham chaves com o número da reabertura (`ended:1`, `outcome:<runId>:1`). O motor recusa no RPC (e grava `RunWarned` se a recusa só aparece ao aplicar): filho de bloco ou subpasso (refaz-se o bloco), passo dentro de `loop`, tentativa antiga do map, passo que ainda roda ou que teve sucesso, sucessor que ainda roda, execução `cancelled` ou `budget_exhausted`, execução filha (repete-se o passo `call` do pai), worktree do próprio item ou compartilhada que o `retain` já removeu, e branch que foi para uma execução mais nova.
 
 A projeção `workflow_runs` é o que as listas leem: o ator grava a linha da execução depois de dobrar fatos novos, o motor grava a de uma execução criada na hora, e na partida refaz as linhas que faltam ou ficaram atrás do stream. O `lastRun` do resumo de cada workflow vem da mesma tabela.
 
@@ -1104,6 +1104,7 @@ Fases: `contract → planning → leaves → final → ended`.
 Rodadas `r1..rN`:
 
 1. Revisores em **threads novas a cada rodada**, só leitura, cada um numa worktree descartável no sha congelado da worktree alvo, com o diff `baseRef..HEAD` e o diff desde a rodada anterior. No modo loop há um revisor. No painel, todos na r1 e, depois, só os que têm achado aberto. Saída `{ verdict: APPROVE|CHANGES, findings: [{ id, severity: blocker|should|nit, file, line, claim, evidence }] }`.
+   Um turno de revisor que falha porque o modelo está fora do alcance por um tempo ("Unable to verify model access… Please retry", stream cortado, rate limit, 429, overloaded) roda de novo na mesma rodada, como o filho `r<n>/rev<i>/t<k>`, sem gastar rodada: `reviewerRetry: { max, backoff }`, padrão `{ max: 3, backoff: "5m" }`, com a espera dobrando (5, 10, 20 min) e `max: 0` para desligar. O bloco grava a hora de acordar num evento (`wakeAt`) e o `nextDeadline` acorda a execução nela. A tentativa refeita aparece `cancelled`, com o erro e a próxima espera, e não conta para a fadiga; esgotadas as tentativas, vale a regra do fim da rodada.
 2. O lead (uma thread de escrita na worktree alvo, que continua de rodada em rodada) só começa quando os revisores terminam. Verifica cada achado, corrige ou discorda com evidência e devolve `{ resolutions: [{ id, state: fixed|disagree|declined }] }`.
 3. `checks` rodam.
 4. Fim: APPROVE sem blocker ou should aberto → `approve`. Só nits → para cedo. Teto de rodadas, ou o mesmo achado disputado duas vezes → porta `stuck`, que costuma ir para um portão. Erro ou timeout de revisor nunca conta como aprovação; se no teto a última rodada não teve nenhuma revisão válida, ninguém julgou a mudança e o bloco sai pela porta `fail`, com o erro de cada revisor.
@@ -1194,6 +1195,7 @@ Toolkit do fork `WorkflowToolkit` (`apps/server/src/bots/workflows/mcp/tools.ts`
 | `workflow_runs`        | `{ workflowId?, status?, limit? }`                         | execuções recentes, resumidas                                                 | leitura                               |
 | `workflow_run_status`  | `{ runId }`                                                | `RunSummary` mais passos e blocos com texto truncado                          | leitura                               |
 | `workflow_run_cancel`  | `{ runId }`                                                | `{ status }`                                                                  | escrita, destrutiva                   |
+| `workflow_run_retry`   | `{ runId, step }`                                          | `{ status }`; a recusa volta com o motivo                                     | escrita; mesma permissão do cancel    |
 | `workflow_gate_decide` | `{ runId, gateKey, option, answer? }`                      | `{ gateKey, option, by, decidedByYou }`                                       | escrita; só portão roteado ao bot     |
 | `workflow_ledger`      | `{ ledger?, workflowId?, limit? }`                         | entradas com veredito e números                                               | leitura                               |
 

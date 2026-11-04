@@ -1354,6 +1354,13 @@ describe("retry, reopening and cleanup", () => {
     spawned(run, "a", 2);
     run.add("exited:a@2", unitExited("a", 2, 0));
     expect(keysOf(run.drive())).toContain("unit:b@1");
+    // A retry the run can no longer take when it applies is refused in the run's warnings.
+    run.add("control:r2", retry("slow"));
+    expect(keysOf(run.drive())).toEqual(["retry:control:r2"]);
+    expect(run.state().warnings.at(-1)?.message).toBe(
+      "The retry of slow was refused: slow is still running.",
+    );
+    expect(keysOf(run.drive())).not.toContain("retry:control:r2");
   });
 
   it("refuses a retry the run cannot take", () => {
@@ -1652,6 +1659,8 @@ describe("a retry inside a map item", () => {
               lead: "$lead",
               checks: [],
               rounds: 1,
+              // The outage outlasts the reviewer's own tries; the user's retry comes after.
+              reviewerRetry: { max: 0 },
             },
             gate: { ...commandNode, cwd: "ticket", check: "exit == 0" },
             done: {

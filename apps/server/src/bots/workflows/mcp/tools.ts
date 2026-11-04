@@ -16,6 +16,7 @@ import {
   WorkflowRunId,
   WorkflowRunStatus,
   WorkflowRunSummary,
+  WorkflowStepKey,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -237,6 +238,15 @@ const WorkflowRunCancelTool = Tool.make("workflow_run_cancel", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true);
 
+const WorkflowRunRetryTool = Tool.make("workflow_run_retry", {
+  ...shared,
+  description: `Run a failed step of a run again, such as a map item's step (\`fleet[1]/review\`), from its failed attempt: the steps before it keep their results, and the steps after it in its item run again. Works while the run still runs and after it ended; an ended run reopens. Take the step key from workflow_run_status. When the run cannot take the retry, the error says why. Only when the user asks for it. ${NEEDS_MANAGE}`,
+  parameters: Schema.Struct({ runId: WorkflowRunId, step: WorkflowStepKey }),
+  success: Schema.Struct({ status: WorkflowRunStatus }),
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false);
+
 const WorkflowGateDecideTool = Tool.make("workflow_gate_decide", {
   ...shared,
   description:
@@ -281,6 +291,7 @@ export const WorkflowToolkit = Toolkit.make(
   WorkflowRunsTool,
   WorkflowRunStatusTool,
   WorkflowRunCancelTool,
+  WorkflowRunRetryTool,
   WorkflowGateDecideTool,
   WorkflowLedgerTool,
 );

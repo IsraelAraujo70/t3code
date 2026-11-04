@@ -25,6 +25,7 @@ import {
   nodeStatuses,
   withTriggerStates,
   gateReasonOf,
+  canRetryStep,
 } from "@t3tools/client-runtime/workflows";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
@@ -436,9 +437,7 @@ function RunContent({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center justify-end gap-1">
-                          {["failed", "lost", "timed_out", "ambiguous"].includes(
-                            row.latest.status,
-                          ) ? (
+                          {canRetryStep(row.latest) ? (
                             <Button
                               disabled={pending || !canOperate}
                               size="xs"

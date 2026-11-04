@@ -72,6 +72,7 @@ type Reply =
     };
 
 const approve = { output: { verdict: "APPROVE", findings: [] } };
+const MODEL_ACCESS = "stream disconnected before completion: Unable to verify model access";
 const finding = (id: string, severity: string) => ({
   id,
   severity,
@@ -89,7 +90,8 @@ const resolve = (state: string, ...ids: ReadonlyArray<string>) => ({
 
 /** Reviewer `r<n>/rev<i>` and lead `r<n>/lead` answers; the lead commits `lead<n>` by default. */
 interface Script {
-  readonly review: (round: number, reviewer: number) => Reply;
+  /** `attempt` is the reviewer's try in the round: 1, then 2… after the model was out of reach. */
+  readonly review: (round: number, reviewer: number, attempt: number) => Reply;
   readonly lead?: (round: number) => Exclude<Reply, "hold">;
   readonly unit?: (step: string) => Reply;
 }
@@ -100,8 +102,9 @@ const world =
     if (intent._tag === "StartUnit") return script.unit?.(intent.step) ?? {};
     if (intent._tag !== "StartTurn") return {};
     if (intent.step === "impl") return { head: "impl0" };
-    const reviewer = /^review\/r(\d+)\/rev(\d+)$/.exec(intent.step);
-    if (reviewer !== null) return script.review(Number(reviewer[1]), Number(reviewer[2]));
+    const reviewer = /^review\/r(\d+)\/rev(\d+)(?:\/t(\d+))?$/.exec(intent.step);
+    if (reviewer !== null)
+      return script.review(Number(reviewer[1]), Number(reviewer[2]), Number(reviewer[3] ?? 1));
     const lead = /^review\/r(\d+)\/lead$/.exec(intent.step);
     if (lead !== null) {
       const n = Number(lead[1]);
@@ -165,9 +168,9 @@ const answer = (run: TestRun, intent: Intent, reply: Exclude<Reply, "hold">) => 
 };
 
 /** Drives the run, answering every pending intent, until a pass changes nothing. */
-const play = (run: TestRun, respond: (intent: Intent) => Reply): TestRun => {
+const play = (run: TestRun, respond: (intent: Intent) => Reply, now = T0 + 1_000): TestRun => {
   for (let pass = 0; pass < 300; pass++) {
-    const out = run.drive();
+    const out = run.drive(now);
     let answered = 0;
     for (const entry of run.state().intents.values()) {
       if (entry.result !== null) continue;
@@ -325,7 +328,10 @@ describe("interrogate block", () => {
 
   it("fails, not stuck, when no reviewer answered the last round", () => {
     const error = "stream disconnected before completion: Unable to verify model access right now.";
-    const run = play(start(), world({ review: () => ({ status: "failed", text: error }) }));
+    const run = play(
+      start({ reviewerRetry: { max: 0 } }),
+      world({ review: () => ({ status: "failed", text: error }) }),
+    );
 
     expect(turnIntent(run, "r3/rev0")).toBeDefined();
     expect(resolution(run)).toMatchObject({
@@ -334,6 +340,43 @@ describe("interrogate block", () => {
       error: expect.stringContaining(`no reviewer answered in round 3:\nreviewer 0: ${error}`),
     });
     expect(run.state().attempts.get("broke")?.at(-1)?.resolved?.status).toBe("succeeded");
+  });
+
+  it("tries a reviewer again once the model is back, in the same round", () => {
+    const unreachable = { status: "failed", text: MODEL_ACCESS } as const;
+    const script = world({ review: (_n, _i, k) => (k === 1 ? unreachable : approve) });
+    const run = play(start(), script);
+
+    expect(resolution(run)).toBeNull();
+    expect(run.state().attempts.get("review/r1/rev0")?.[0]?.resolved).toMatchObject({
+      status: "cancelled",
+      error: expect.stringContaining("try 2 in 5 min"),
+    });
+    expect(turnIntent(run, "r1/rev0/t2")).toBeUndefined();
+    expect(run.deadline(T0 + 1_000)).toBe(T0 + 1_000 + 300_000);
+
+    play(run, script, T0 + 1_000 + 300_000);
+    expect(turnIntent(run, "r1/rev0/t2")).toMatchObject({ mode: "new", access: "read" });
+    expect(turnIntent(run, "r2/rev0")).toBeUndefined();
+    expect(resolution(run)).toMatchObject({ port: "approve", output: { rounds: 1 } });
+  });
+
+  it("gives up after reviewerRetry.max tries, doubling the wait", () => {
+    const run = start({ rounds: 1, reviewerRetry: { max: 2, backoff: "1m" } });
+    const script = world({ review: () => ({ status: "failed", text: MODEL_ACCESS }) });
+    const t1 = T0 + 1_000;
+    play(run, script, t1);
+    expect(run.deadline(t1)).toBe(t1 + 60_000);
+    play(run, script, t1 + 60_000);
+    expect(run.deadline(t1 + 60_000)).toBe(t1 + 180_000);
+    play(run, script, t1 + 180_000);
+
+    expect(turnIntent(run, "r1/rev0/t3")).toBeDefined();
+    expect(turnIntent(run, "r1/rev0/t4")).toBeUndefined();
+    expect(resolution(run)).toMatchObject({
+      port: "fail",
+      error: expect.stringContaining(MODEL_ACCESS),
+    });
   });
 
   it("is stuck when the lead disputes the same finding in two rounds", () => {

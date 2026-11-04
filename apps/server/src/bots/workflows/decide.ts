@@ -446,7 +446,7 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
     // A newer run taking a branch over after this read refuses the reopening, atomically.
     const guard = { absent: ["BranchReleased"], after: state.lastSeq };
     const at = isoOf(now);
-    return [
+    const reopening: ReadonlyArray<NewFact> = [
       {
         stream: runStream(state.runId),
         key: `reopen:${retry.key}`,
@@ -460,6 +460,7 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
         guard,
       },
     ];
+    return reopening;
   }
   const failedSteps = failedStepsOf(compiled, state);
   return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
@@ -2586,6 +2587,16 @@ export const nextDeadline = (
       ?.find((a) => a.attempt === intent.attempt)?.startedAt;
     if (timeoutMs !== undefined && startedAt != null) {
       candidates.push(Date.parse(startedAt) + timeoutMs);
+    }
+  }
+  // A block that waits before its next child pins when it wakes (an interrogate reviewer's retry).
+  for (const events of state.blocks.values()) {
+    for (const { event } of events) {
+      const wakeAt =
+        event !== null && typeof event === "object" && !Array.isArray(event)
+          ? (event as { readonly [k: string]: Json })["wakeAt"]
+          : undefined;
+      if (typeof wakeAt === "number") candidates.push(wakeAt);
     }
   }
   for (const attempts of state.attempts.values()) {

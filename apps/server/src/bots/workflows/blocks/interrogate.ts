@@ -38,6 +38,12 @@ const DURATION_UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000 } as const;
 const durationMs = (text: string): number =>
   Number(text.slice(0, -1)) * DURATION_UNIT_MS[text.slice(-1) as keyof typeof DURATION_UNIT_MS];
 
+/** Default `reviewerRetry`: three more tries, 5, 10 and 20 minutes after each failure. */
+const REVIEWER_RETRY = { max: 3, backoff: "5m" } as const;
+/** How providers say the model is briefly out of reach; any other failure is the review's own. */
+const MODEL_UNREACHABLE =
+  /unable to verify model access|please retry|stream disconnected|rate limit|too many requests|\b429\b|overloaded|service unavailable|temporarily unavailable/i;
+
 const REVIEW_OUTPUT: WorkflowOutputShape = {
   verdict: { type: "string" },
   findings: { type: "json" },
@@ -427,6 +433,10 @@ const decide = (node: Node, state: State, io: BlockIO): void => {
     // the local branch, which may be behind it.
     const baseRef = target.base?.ref === rendered.success ? target.base.sha : rendered.success;
     const prior = state.rounds.at(-2);
+    const retry = {
+      max: node.reviewerRetry?.max ?? REVIEWER_RETRY.max,
+      backoffMs: durationMs(node.reviewerRetry?.backoff ?? REVIEWER_RETRY.backoff),
+    };
     const entries: Json[] = [];
     let waiting = false;
     for (const i of round.reviewers) {
@@ -461,25 +471,53 @@ const decide = (node: Node, state: State, io: BlockIO): void => {
                 state: lastReview?.r.resolutions?.get(finding.key) ?? "no answer",
               })),
             };
-      const turn = io.turn(child, {
+      const request = {
         model: model.success,
         prompt: reviewerPrompt(intent.success, baseRef, round, previous),
         workspace: ws.workspace,
         access: "read",
         output: REVIEW_OUTPUT,
-      });
-      if (turn._tag === "Failed") entries.push({ reviewer: i, error: turn.error, output: null });
-      else if (turn._tag !== "Settled") waiting = true;
-      else if (!turn.ok)
-        entries.push({
-          reviewer: i,
-          error: turn.error ?? `the turn ended ${turn.status}`,
-          output: null,
-        });
-      else {
-        const parsed = parseReview({ reviewer: i, output: turn.output }, node.mode === "panel");
-        if (parsed !== null && parsed.error !== null) io.settleChild(child, "failed", parsed.error);
-        entries.push({ reviewer: i, error: null, output: turn.output });
+      } as const;
+      // Try k > 1 is the child `<child>/t<k>`, started once the wait pinned for it is over.
+      for (let k = 1; ; k++) {
+        const tryChild = k === 1 ? child : `${child}/t${k}`;
+        const turn = io.turn(tryChild, request);
+        if (turn._tag !== "Failed" && turn._tag !== "Settled") {
+          waiting = true;
+          break;
+        }
+        if (turn._tag === "Settled" && turn.ok) {
+          const parsed = parseReview({ reviewer: i, output: turn.output }, node.mode === "panel");
+          if (parsed !== null && parsed.error !== null)
+            io.settleChild(tryChild, "failed", parsed.error);
+          entries.push({ reviewer: i, error: null, output: turn.output });
+          break;
+        }
+        const error =
+          turn._tag === "Failed" ? turn.error : (turn.error ?? `the turn ended ${turn.status}`);
+        // A turn that completed without a valid review is the reviewer's answer, not an outage.
+        const said =
+          turn._tag === "Failed"
+            ? error
+            : turn.status === "completed"
+              ? ""
+              : `${error}\n${turn.text}`;
+        if (k > retry.max || !MODEL_UNREACHABLE.test(said)) {
+          entries.push({ reviewer: i, error, output: null });
+          break;
+        }
+        const waitId = `${child.replaceAll("/", "_")}_t${k + 1}`;
+        const pinned = io.events.find((e) => e.id === waitId)?.event;
+        const wakeAt = isRecord(pinned) && typeof pinned.wakeAt === "number" ? pinned.wakeAt : null;
+        if (wakeAt === null) {
+          const delay = retry.backoffMs * 2 ** (k - 1);
+          io.settleChild(tryChild, "cancelled", `${error} (try ${k + 1} in ${delay / 60_000} min)`);
+          io.event(waitId, { wakeAt: io.now + delay });
+        }
+        if (wakeAt === null || io.now < wakeAt) {
+          waiting = true;
+          break;
+        }
       }
     }
     if (waiting) return;

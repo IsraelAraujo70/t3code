@@ -6,7 +6,6 @@
 import type {
   WorkflowRunSummary,
   WorkflowStepAttemptView,
-  WorkflowStepStatus,
   WorkflowSummary,
 } from "@t3tools/contracts";
 import {
@@ -299,11 +298,6 @@ export function gateOptionTone(option: string, index: number): "primary" | "seco
 /** Whether two texts say the same once whitespace is folded, so the full ask is not repeated. */
 export const sameText = (a: string, b: string): boolean =>
   a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
-
-const RETRYABLE: ReadonlyArray<WorkflowStepStatus> = ["failed", "lost", "timed_out", "ambiguous"];
-
-/** Whether a step's latest attempt ended in a way the user may retry. */
-export const isRetryable = (status: WorkflowStepStatus): boolean => RETRYABLE.includes(status);
 
 /** A step row's meta line: status, how long it ran, and its tokens when it used any. */
 export function stepMetaLine(step: WorkflowStepAttemptView, nowMs: number): string {

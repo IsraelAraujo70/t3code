@@ -249,6 +249,8 @@ const fields = {
     { path: "lead", format: "json" },
     { path: "checks", format: "json" },
     { path: "rounds", format: "number" },
+    { path: "reviewerRetry.max", format: "number" },
+    { path: "reviewerRetry.backoff" },
   ],
 } satisfies Record<WorkflowNode["kind"], readonly InspectorFieldSpec[]>;
 

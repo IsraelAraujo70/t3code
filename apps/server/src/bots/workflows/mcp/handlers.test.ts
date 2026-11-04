@@ -11,6 +11,7 @@ import {
   type WorkflowDefinition,
   WorkflowRunId,
   WorkflowRunView,
+  WorkflowStepKey,
   WorkflowsError,
   MessageId,
   RunId,
@@ -151,6 +152,14 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
             gates: [],
           }),
         ),
+      controlRun: (input, by) =>
+        input.control._tag === "retry" && input.control.step.endsWith("/rev0")
+          ? Effect.fail(
+              new WorkflowJournalError({
+                message: `Cannot retry: retry the step that contains ${input.control.step}.`,
+              }),
+            )
+          : record({ control: input.control, by }).pipe(Effect.as({ status: "running" } as never)),
       // The user's RPC path; a bot decides only through decideGate with its id.
       gateDecide: () => Effect.die("MCP must not decide gates as the user"),
       decideGate: (input) =>
@@ -299,6 +308,13 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
           runId: WorkflowRunId.make("wfr_0123456789abcdef0123"),
         }),
       ),
+    retry: (step = "fleet[1]/review") =>
+      run(
+        toolkit.handle("workflow_run_retry", {
+          runId: WorkflowRunId.make("wfr_0123456789abcdef0123"),
+          step: WorkflowStepKey.make(step),
+        }),
+      ),
     enable: (triggerId?: string) =>
       run(
         toolkit.handle("workflow_set_enabled", {
@@ -322,7 +338,7 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
 it.effect("rejects workflow steps before consulting services", () =>
   Effect.gen(function* () {
     const t = yield* setup("wf:wfr_0123456789abcdef0123:0123456789abcdef");
-    for (const call of [t.save, t.run, t.cancel, () => t.decide()])
+    for (const call of [t.save, t.run, t.cancel, () => t.retry(), () => t.decide()])
       expect(yield* call()).toMatchObject({ code: "capability_denied" });
     expect(yield* Ref.get(t.calls)).toEqual([]);
   }),
@@ -438,7 +454,8 @@ it.effect("starts bot runs with their occurrence and refuses unprivileged mutati
     const denied = yield* setup("bot:test:1");
     expect(yield* denied.run()).toMatchObject({ code: "capability_denied" });
     expect(yield* denied.cancel()).toMatchObject({ code: "capability_denied" });
-    expect(yield* Ref.get(denied.calls)).toEqual(["botForThread", "botForThread"]);
+    expect(yield* denied.retry()).toMatchObject({ code: "capability_denied" });
+    expect(yield* Ref.get(denied.calls)).toEqual(["botForThread", "botForThread", "botForThread"]);
   }),
 );
 
@@ -461,6 +478,16 @@ it.effect("allows owner turns to run and enable workflows", () =>
     const t = yield* setup("bot:test:1", true, false, ownerMessage);
     expect(yield* t.run()).toMatchObject({ status: "queued" });
     expect(yield* t.enable()).toEqual({ enabled: true });
+    expect(yield* t.retry()).toEqual({ status: "running" });
+    expect((yield* Ref.get(t.calls)).at(-1)).toEqual({
+      control: { _tag: "retry", step: "fleet[1]/review" },
+      by: "Test (bot)",
+    });
+    // The engine's refusal reaches the bot as is: it says what to retry instead.
+    expect(yield* t.retry("fleet[1]/review/r1/rev0")).toMatchObject({
+      code: "invalid_request",
+      message: "Cannot retry: retry the step that contains fleet[1]/review/r1/rev0.",
+    });
     yield* t.save();
     expect((yield* Ref.get(t.calls)).at(-1)).toEqual({
       kind: "bot",
