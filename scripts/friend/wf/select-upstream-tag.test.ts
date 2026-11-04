@@ -37,6 +37,19 @@ it("has no verdict when upstream has no stable tag", () => {
   expect(result.stderr).toContain("no stable tag");
 });
 
+it("says which base ref is missing instead of failing to compare", () => {
+  using dir = fixtureDir();
+  const upstream = initRepo(NodePath.join(dir.path, "upstream"));
+  git(upstream, "tag", "v0.1.6");
+  const fork = initRepo(NodePath.join(dir.path, "fork"), "friend/main");
+  const result = runWfCli("select-upstream-tag.ts", ["--remote", upstream, "--base", "main"], {
+    cwd: fork,
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("base ref 'main' not found; use friend/main");
+});
+
 it("orders stable tags numerically and ignores previews", () => {
   const refs = ["v0.9.0", "v0.10.0", "v0.10.1-beta", "nightly-v9.0.0", "v0.10.0^{}"]
     .map((tag, index) => `${index}\trefs/tags/${tag}`)

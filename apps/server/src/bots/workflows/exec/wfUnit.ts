@@ -4,6 +4,9 @@ import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
+import { redactSecrets } from "./redact.ts";
+import { acquireSlot } from "./slotLock.ts";
+
 const args = process.argv.slice(2);
 const separator = args.indexOf("--");
 // Only wfUnit's own options, before `--`: the command's argv may contain the same words.
@@ -17,11 +20,19 @@ const parse = option("--parse");
 const keepBytes = parse === "none" ? 8192 : 1 << 20;
 /** The parsed result lands in the journal and in every fold of the run, so it stays small. */
 const MAX_OUT_BYTES = 64 * 1024;
-const startedAt = new Date().toISOString();
 NodeFS.mkdirSync(receipt, { recursive: true });
+// `uses`: wait for a slot before the start receipt, so the wait counts as queued, not as running.
+const slot = options.includes("--resource")
+  ? await acquireSlot({
+      dir: option("--slot-dir"),
+      resource: option("--resource"),
+      slots: Number(option("--slots")),
+    })
+  : undefined;
+const startedAt = new Date().toISOString();
 const fd = NodeFS.openSync(NodePath.join(receipt, "started.json"), "w");
 try {
-  NodeFS.writeSync(fd, JSON.stringify({ pid: process.pid, at: startedAt }));
+  NodeFS.writeSync(fd, JSON.stringify({ pid: process.pid, at: startedAt, slot }));
   NodeFS.fsyncSync(fd);
 } finally {
   NodeFS.closeSync(fd);
@@ -30,7 +41,8 @@ const argv = args.slice(separator + 1);
 // Its own process group: a shell or package manager leaves descendants that hold stdout open.
 const child = NodeChildProcess.spawn(argv[0]!, argv.slice(1), {
   cwd: option("--cwd"),
-  env: process.env,
+  // The slot number, for a command that names per-slot state (a compose project, a port range).
+  env: slot === undefined ? process.env : { ...process.env, WF_SLOT: String(slot) },
   stdio: ["ignore", "pipe", "pipe"],
   detached: true,
 });
@@ -106,8 +118,9 @@ const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       endedAt: new Date().toISOString(),
       out,
       parseError,
-      tail: stdout.subarray(-8192).toString(),
-      stderrTail: spawnError ? String(spawnError) : stderr.toString(),
+      // Masked before the receipt is written: it is durable and outlives every reader.
+      tail: redactSecrets(stdout.subarray(-8192).toString()),
+      stderrTail: redactSecrets(spawnError ? String(spawnError) : stderr.toString()),
     }),
   );
   // Durable before it is visible: an empty exit.json after a power loss would never decode.

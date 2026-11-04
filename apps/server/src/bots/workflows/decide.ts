@@ -92,6 +92,19 @@ export interface DecideContext {
 const MAX_LOST_REPLAYS = 2;
 /** How much of a failed acceptance command's output its reason quotes. */
 const ACCEPT_TAIL_CHARS = 1_500;
+
+/** `exited 1:` and the ends of stderr and stdout, which say why a command failed. */
+const exitReason = (exited: {
+  readonly exit: number | null;
+  readonly tail: string;
+  readonly stderr?: string | undefined;
+}): string => {
+  const stderr = (exited.stderr ?? "").trim().slice(-ACCEPT_TAIL_CHARS);
+  const stdout = exited.tail.trim().slice(-ACCEPT_TAIL_CHARS);
+  const parts = [stderr, stdout === "" ? "" : stderr === "" ? stdout : `stdout:\n${stdout}`];
+  const text = parts.filter((part) => part !== "").join("\n");
+  return `exited ${exited.exit ?? "without a code"}${text === "" ? "" : `:\n${text}`}`;
+};
 const AMBIGUOUS_OPTIONS = ["rerun", "fail", "cancel"] as const;
 const DURATION_UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000 } as const;
 const durationMs = (text: string): number =>
@@ -960,6 +973,14 @@ export const decide = (
 
   // ── Dispatch and progress per kind ──────────────────────────────────────────────────────────
 
+  /** The `uses` of a start, empty without one: the compiler checked that the resource exists. */
+  const slotUse = (resource: string | undefined) => {
+    const declared = resource === undefined ? undefined : definition.resources?.[resource];
+    return resource === undefined || declared === undefined
+      ? {}
+      : { uses: { resource, slots: declared.slots } };
+  };
+
   const startTurn = (
     node: WorkflowAgentNode,
     step: string,
@@ -992,8 +1013,10 @@ export const decide = (
       );
       if (Result.isFailure(prompt))
         return void resolve(step, attempt, "failed", "fail", null, prompt.failure);
+      const { uses: _continuedUses, ...continuedIntent } = prevIntent;
       record({
-        ...prevIntent,
+        ...continuedIntent,
+        ...slotUse(node.uses),
         key: `turn:${stepKey(step, attempt)}`,
         step,
         attempt,
@@ -1033,6 +1056,7 @@ export const decide = (
       reservation: node.tokenReservation ?? turnEstimate(step),
       // Only agent turns work for the bound bot; continues and nudges copy it from here.
       ...(definition.bot === undefined ? {} : { bot: definition.bot }),
+      ...slotUse(node.uses),
     } as const;
     if (typeof thread !== "object") {
       record({
@@ -1259,6 +1283,7 @@ export const decide = (
           replay: "safe",
           timeoutMs: durationMs(definition.budget.wall),
           env: {},
+          ...slotUse(accept.uses),
         });
         return;
       }
@@ -1283,8 +1308,7 @@ export const decide = (
       if (isTruthy(check.success)) return resolve(step, a.attempt, "succeeded", "pass", output);
       const ran = state.intents.get(acceptKey)?.intent;
       const command = ran?._tag === "StartUnit" ? ran.argv.join(" ") : "the acceptance check";
-      const tail = exited.tail.trim().slice(-ACCEPT_TAIL_CHARS);
-      const why = `\`${command}\` exited ${exited.exit ?? "without a code"}${tail === "" ? "" : `:\n${tail}`}`;
+      const why = `\`${command}\` ${exitReason(exited)}`;
       return resolve(step, a.attempt, "succeeded", "fail", output, why);
     }
     const judgeKey = `judge:${stepKey(step, a.attempt)}`;
@@ -1295,7 +1319,7 @@ export const decide = (
       const criterion = render(accept.criterion, envFor(level));
       if (Result.isFailure(criterion))
         return resolve(step, a.attempt, "failed", "fail", output, criterion.failure);
-      const { bot: _judgeWorksForNoBot, ...judgeBase } = turnIntent;
+      const { bot: _judgeWorksForNoBot, uses: _judgeHoldsNoSlot, ...judgeBase } = turnIntent;
       record({
         ...judgeBase,
         key: judgeKey,
@@ -1394,6 +1418,7 @@ export const decide = (
         argv: argv.success,
         cwd: { name: workspace.success.name, path: workspace.success.path },
         heavy: node.heavy === true,
+        ...slotUse(node.uses),
         replay: node.replay ?? "never",
         timeoutMs:
           node.timeout === undefined
@@ -1444,8 +1469,11 @@ export const decide = (
       return resolve(step, a.attempt, "timed_out", "fail", null, exited.tail);
     // The engine could not observe the unit: it may still run, so Israel decides, no retry or check.
     if (exited.signal === "UNOBSERVED") return ambiguous(step, a.attempt, exited.tail);
+    // A command that failed printed no result: its exit and stderr say why, not the parse.
     if ((node.parse ?? "none") !== "none" && (exited.parseError ?? null) !== null) {
-      return resolve(step, a.attempt, "failed", "fail", null, exited.parseError ?? null);
+      return exited.exit === 0
+        ? resolve(step, a.attempt, "failed", "fail", null, exited.parseError ?? null)
+        : resolve(step, a.attempt, "failed", "fail", null, exitReason(exited));
     }
     const out = exited.out;
     if (node.check !== undefined) {
@@ -1459,7 +1487,7 @@ export const decide = (
     }
     return exited.exit === 0
       ? resolve(step, a.attempt, "succeeded", "ok", out)
-      : resolve(step, a.attempt, "failed", "fail", out, exited.tail);
+      : resolve(step, a.attempt, "failed", "fail", out, exitReason(exited));
   };
 
   /** A command that may have run halfway pauses the run until Israel says what happened. */

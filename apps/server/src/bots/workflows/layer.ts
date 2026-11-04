@@ -13,6 +13,7 @@ import * as BotsDb from "../BotsDb.ts";
 import * as Catalog from "./definitions/catalog.ts";
 import * as Definitions from "./definitions/WorkflowDefinitions.ts";
 import * as HostInterpreter from "./exec/HostInterpreter.ts";
+import * as Slots from "./exec/Slots.ts";
 import * as Turns from "./exec/Turns.ts";
 import * as Units from "./exec/Units.ts";
 import * as Workspaces from "./git/Workspaces.ts";
@@ -25,6 +26,10 @@ export const layer = Layer.unwrap(
     const config = yield* ServerConfig;
     const runsDir = NodePath.join(config.baseDir, "workflows", "runs");
     const env = process.env;
+    // The slots manual sessions take too (`flock <dir>/<resource>-<i>.lock …`).
+    const slotsDir =
+      env.T3CODE_WORKFLOW_SLOTS_DIR ??
+      NodePath.join(env.HOME ?? "", ".cache", "t3-testdata", "slots");
     const executors = Layer.mergeAll(
       Turns.layer({
         heavyScript:
@@ -42,6 +47,13 @@ export const layer = Layer.unwrap(
         heavyLock:
           env.T3CODE_WORKFLOW_HEAVY_LOCK ??
           NodePath.join(env.HOME ?? "", ".cache", "t3-testdata", "heavy.lock"),
+        slotsDir,
+        run: Units.defaultRun,
+      }),
+      Slots.layer({
+        node: process.execPath,
+        wfSlotPath: NodePath.join(import.meta.dirname, "exec", "wfSlot.ts"),
+        slotsDir,
         run: Units.defaultRun,
       }),
     ).pipe(Layer.provideMerge(Workspaces.layer));

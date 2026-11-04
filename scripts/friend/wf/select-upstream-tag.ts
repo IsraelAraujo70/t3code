@@ -43,6 +43,14 @@ export function highestStableTag(lsRemote: string): string | undefined {
 function select(cwd: string): SelectUpstreamTagOutput {
   const remote = flag("--remote") ?? UPSTREAM_URL;
   const base = flag("--base") ?? "friend/main";
+  const exists = (ref: string) =>
+    gitStatus(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], cwd) === 0;
+  if (!exists(base))
+    throw new Error(
+      base !== "friend/main" && exists("friend/main")
+        ? `base ref '${base}' not found; use friend/main`
+        : `base ref '${base}' not found; pass an existing ref with --base`,
+    );
   const tag = highestStableTag(git(["ls-remote", "--tags", "--refs", remote, "refs/tags/v*"], cwd));
   if (tag === undefined) throw new Error(`${remote} has no stable tag`);
   const ref = `refs/wf/upstream/${tag}`;

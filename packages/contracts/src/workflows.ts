@@ -29,6 +29,10 @@ export const WorkflowKey = Schema.String.check(Schema.isPattern(WORKFLOW_ID_PATT
 /** A node, trigger, port or map variable name inside a definition. */
 export const WorkflowNodeKey = Schema.String.check(Schema.isPattern(WORKFLOW_NODE_ID_PATTERN));
 export const WorkflowLedgerKey = Schema.String.check(Schema.isPattern(WORKFLOW_LEDGER_ID_PATTERN));
+/** A resource name: it names lock files, so no `/`, no `.` and no leading `-`. */
+export const WORKFLOW_RESOURCE_PATTERN = /^[a-z][a-z0-9-]{0,40}$/;
+/** The most slots one resource may declare. */
+export const WORKFLOW_MAX_RESOURCE_SLOTS = 8;
 
 export const WorkflowId = WorkflowKey.pipe(Schema.brand("WorkflowId"));
 export type WorkflowId = typeof WorkflowId.Type;
@@ -173,6 +177,8 @@ export const WorkflowAcceptSpec = Schema.Union([
     argv: Schema.NonEmptyArray(WorkflowTemplate),
     check: WorkflowExpr,
     heavy: Schema.optional(Schema.Boolean),
+    /** A name in `resources`: the check waits for a free slot of it. */
+    uses: Schema.optional(Schema.String),
   }),
   Schema.Struct({ judge: WorkflowModelUse, criterion: WorkflowTemplate }),
 ]);
@@ -247,7 +253,7 @@ const CommandFields = {
   /** No shell. */
   argv: Schema.NonEmptyArray(WorkflowTemplate),
   cwd: WorkflowWorkspaceUse,
-  /** Wrapped in heavy.sh. */
+  /** Takes heavy.sh's lock: a host-wide resource of one slot, shared with manual heavy.sh runs. */
   heavy: Schema.optional(Schema.Boolean),
   /** The command calls heavy.sh by itself (the bench's run.py). */
   selfSerializing: Schema.optional(Schema.Boolean),
@@ -270,6 +276,8 @@ export const WorkflowAgentNode = Schema.Struct({
   ...StepFields,
   ...GraphFields,
   ...AgentFields,
+  /** A name in `resources`: each turn of the node waits for a free slot and holds it while it runs. */
+  uses: Schema.optional(Schema.String),
 });
 export type WorkflowAgentNode = typeof WorkflowAgentNode.Type;
 
@@ -278,6 +286,8 @@ export const WorkflowCommandNode = Schema.Struct({
   ...StepFields,
   ...GraphFields,
   ...CommandFields,
+  /** A name in `resources`: the command waits for a free slot and holds it until it exits. */
+  uses: Schema.optional(Schema.String),
 });
 export type WorkflowCommandNode = typeof WorkflowCommandNode.Type;
 
@@ -672,6 +682,11 @@ export const WorkflowDefinition = Schema.Struct({
   fatigue: Schema.Struct({ consecutiveFailures: PositiveInt }),
   /** Adds protected refs; the host's list always applies. */
   protect: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Resources with slots, by name: a node with `uses: <name>` waits for one of `slots` flock files
+   * (`<slots dir>/<name>-<i>.lock`), which a manual `flock` on the same file also takes.
+   */
+  resources: Schema.optional(Schema.Record(Schema.String, Schema.Struct({ slots: PositiveInt }))),
   models: Schema.optional(Schema.Record(Schema.String, WorkflowModelRef)),
   workspaces: Schema.optional(Schema.Record(Schema.String, WorkflowWorkspaceDecl)),
   /** A local kanban board; a project linked to Linear is refused. */
@@ -703,6 +718,7 @@ export const WORKFLOW_DIAGNOSTIC_CODES = [
   "card-linear",
   "thread-continue",
   "bot",
+  "resource",
 ] as const;
 export const WorkflowDiagnosticCode = Schema.Literals(WORKFLOW_DIAGNOSTIC_CODES);
 export type WorkflowDiagnosticCode = typeof WorkflowDiagnosticCode.Type;
@@ -755,8 +771,12 @@ export const WorkflowStepAttemptView = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   startedAt: Schema.NullOr(IsoDateTime),
   endedAt: Schema.NullOr(IsoDateTime),
-  /** heavy.sh wait, separate from run time. */
+  /** Wait for the heavy lock or a resource slot, separate from run time. */
   queuedMs: Schema.NullOr(NonNegativeInt),
+  /** The resource whose slot the attempt takes (`uses`); absent from older hosts. */
+  resource: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The resource the attempt is waiting for a slot of right now; null once it holds one. */
+  waitingFor: Schema.optional(Schema.NullOr(Schema.String)),
   port: Schema.NullOr(Schema.String),
   /** 500 characters. */
   summary: Schema.NullOr(Schema.String),

@@ -366,7 +366,12 @@ const handlers = (
           .pipe(Effect.mapError(runFailure));
         return {
           summary,
-          steps: steps.map(({ key, status, summary }) => ({ key, status, summary })),
+          steps: steps.map(({ key, status, summary, waitingFor }) => ({
+            key,
+            status,
+            summary,
+            ...(waitingFor ? { waitingFor } : {}),
+          })),
           gates: gates.map((g) => ({
             key: g.key,
             ask: g.ask,

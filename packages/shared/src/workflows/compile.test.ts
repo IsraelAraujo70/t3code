@@ -72,6 +72,44 @@ interface FailingCase {
 
 const FAILING: ReadonlyArray<FailingCase> = [
   {
+    name: "a resource name that could leave the slots directory",
+    code: "resource",
+    path: "resources.../verify",
+    change: (def) => {
+      def.resources = { "../verify": { slots: 1 } };
+    },
+  },
+  {
+    name: "more slots than a resource may have",
+    code: "resource",
+    path: "resources.verify.slots",
+    change: (def) => {
+      def.resources = { verify: { slots: 9 } };
+    },
+  },
+  {
+    name: "a command that uses an undeclared resource",
+    code: "resource",
+    path: "nodes.test.uses",
+    change: (def) => {
+      def.nodes.test.uses = "verify";
+    },
+  },
+  {
+    name: "an accept check that is heavy and uses a resource",
+    code: "resource",
+    path: "nodes.plan.accept.uses",
+    change: (def) => {
+      def.resources = { verify: { slots: 2 } };
+      def.nodes.plan.accept = {
+        argv: ["node", "c.ts"],
+        check: "exit == 0",
+        heavy: true,
+        uses: "verify",
+      };
+    },
+  },
+  {
     name: "duplicate manual triggers",
     code: "trigger",
     path: "triggers.second",

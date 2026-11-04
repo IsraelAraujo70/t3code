@@ -17,6 +17,7 @@ const setup = (state: string, stopExit = 0) => {
     node: "node",
     wfUnitPath: "wfUnit.ts",
     heavyLock: "heavy.lock",
+    slotsDir: "slots",
     run: (command, args) => {
       calls.push([command, args]);
       if (args[1] === "is-active")
@@ -82,6 +83,25 @@ it.effect("runs a heavy command under the heavy lock without a runtime cap", () 
     expect(lightArgs).toContain("RuntimeMaxSec=180");
     expect(lightArgs).not.toContain("flock");
     expect(lightArgs).not.toContain("CI=1");
+
+    // A slot is taken in wfUnit, inside the unit; its wait must not count against a runtime cap.
+    using slotted = setup("inactive");
+    yield* slotted.units.start({
+      ...slotted.input,
+      heavy: false,
+      uses: { resource: "moneria-verify", slots: 2 },
+    });
+    const slottedArgs = slotted.spawned()[0]?.[1] ?? [];
+    expect(slottedArgs.some((arg) => arg.startsWith("RuntimeMaxSec="))).toBe(false);
+    expect(slottedArgs).not.toContain("flock");
+    expect(slottedArgs.slice(slottedArgs.indexOf("--slot-dir"), -3)).toEqual([
+      "--slot-dir",
+      "slots",
+      "--resource",
+      "moneria-verify",
+      "--slots",
+      "2",
+    ]);
   }),
 );
 
@@ -95,6 +115,7 @@ it.effect("reads the exit receipt, and reports a vanished unit as lost", () =>
       out: { ok: true },
       parseError: null,
       tail: "ok",
+      stderrTail: "warning: slow",
     });
     const spawnedAt = Date.parse("2026-11-02T00:00:00.000Z");
     expect(
@@ -105,6 +126,7 @@ it.effect("reads the exit receipt, and reports a vanished unit as lost", () =>
       out: { ok: true },
       parseError: null,
       tail: "ok",
+      stderr: "warning: slow",
       queuedMs: 2000,
       started: true,
       lost: false,

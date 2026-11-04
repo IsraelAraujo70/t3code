@@ -1270,9 +1270,15 @@ O ticket-fleet recebe até N cards do Kanban e roda cada um numa thread que o Is
 - **Portão que o bot responde.** `answerBy: bot` num nó `gate`, ou `askBot: true` num nó `agent` (a pergunta nativa do provider, como o `askIsrael`), roteia o portão ao bot do workflow. Com `askBot`, só pedido de informação (`user_input`) vai ao bot; pedido de aprovação de comando, arquivo ou permissão vira portão do Israel, e uma decisão `bot:*` nunca vira `accept` de aprovação, nem no decisor nem na resposta ao runtime. O `OpenGate` grava `bot` e ganha a opção `escalate`. Em vez do push `needs_you`, o motor posta no bot o pedido (`PostToBot` com chave `ask:<gateKey>`, commandId fixo, como os reports): a pergunta, as opções, a execução, a chave do portão e a thread do item. Com chave por portão e por item, a pergunta chega na hora, não no fim, e um restart não repete o post. O bot decide com `workflow_gate_decide`, que grava `GateDecided` com `by: "bot:<id>"` e o texto em `note`. O passo seguinte lê o texto em `nodes.<gate>.answer`, e um `continue:` leva a resposta à thread do item. `answer` é texto livre: o compilador o trata como não confiável em argv.
 - **Escalar.** `escalate`, ou um post que nunca chega porque o bot sumiu, abre `escalated:<gateKey>` para o Israel. No segundo caso o decisor grava `GateHandedOver` no portão original: entre ele e uma decisão do original vale o que entrou antes no journal, e depois dele o RPC, o tool e o decisor recusam decisão do original (o `decideGate` grava com `guard` contra o fato). O portão do Israel abre: o mesmo pedido, sem `escalate`, com o motivo do bot no fim, e com push `needs_you`. A decisão dele é a que o passo lê. O Israel também decide direto o portão roteado, na tela da execução ou no Android, onde aparece como "Waiting for <bot>"; a primeira decisão vale. Portão roteado não conta como "needs you" na lista de execuções.
 - **Bloqueio tipado.** A fase que trava termina com `{ status: blocked, kind, detail }`, `kind` em `technical | product | secret | access`, e um `branch` escolhe o caminho: `technical` vai a um portão `answerBy: bot`, `access` a um portão do Israel, e `product` e `secret` vão direto a um `output` `blocked` com `status: "blocked:<kind>"` no valor. O item termina ali sem segurar os outros, e aparece no `collect` e na tabela. O comentário no Linear, o rascunho de PR e o aviso no Slack ficam com o agente, pelas skills do repo do ticket, antes de devolver o JSON.
+- **Recurso com vagas.** `resources: { moneria-verify: { slots: 2 } }` no topo e `uses: moneria-verify` num nó `agent`, num `command` ou num `accept {argv}`. Cada vaga é um arquivo de flock, `~/.cache/t3-testdata/slots/<recurso>-<i>.lock` (`T3CODE_WORKFLOW_SLOTS_DIR` troca o diretório em teste). Por isso uma sessão manual com `flock <arquivo da vaga> <comando>` ocupa a mesma vaga que o motor. A fase pega a primeira vaga livre e espera enquanto todas estão ocupadas. O nome segue `[a-z][a-z0-9-]{0,40}`, sem `/` nem `.`, e um recurso tem no máximo 8 vagas. Um passo usa `heavy` ou `uses`, nunca os dois.
+  - **Comando e aceite.** O `wfUnit` pega a vaga dentro da própria unit, antes do `started.json`. O comando roda com `WF_SLOT=<i>`, e a vaga é solta quando a unit sai, por exit, falha, timeout, `systemctl stop` ou morte do processo. Um restart do servidor não mexe nela, porque a unit sobrevive ao servidor e segue com o trabalho.
+  - **Agente.** O turno do provider não é um processo do motor. Quem segura a vaga é uma unit própria (`wf-slot-<hash>`, `exec/wfSlot.ts` sob `systemd-run --user`). O hash cobre o diretório de runs, a execução e a intent, então um servidor de teste com a mesma ocorrência não adota nem para o holder da produção. As units `wf-<hash>` dos comandos não mudaram de nome, porque isso quebraria a adoção das units que estiverem rodando num deploy. Como a unit sobrevive a um restart do servidor, um turno que continua rodando continua com a vaga. O motor grava `SlotAcquired`, com o índice, antes de lançar o turno, e o prompt diz o número (`WF_SLOT=<i>`), para o agente rodar o verify com `VERIFY_SLOT` igual. Num replay, o motor adota a unit viva (uma unit em `deactivating` não conta). Se ela sumiu, espera exatamente a vaga gravada, nunca "a primeira livre". Enquanto espera, segura `<recurso>-<i>.claim`, e quem pede a primeira vaga livre pula uma vaga reivindicada. Assim, uma vaga presa por uma sessão manual volta para o turno dono, não para outro passo. Depois de um restart, a observação retomada pega a vaga de volta em paralelo e para de esperar quando o turno termina, então um turno que acabou com o servidor fora não reserva vaga.
+  - **Quando solta.** Só com fim confirmado: o `TurnSettled` que a observação viu (inclusive o de um cancelamento ou de um timeout), o abandono cujo `Interrupt` deu certo, e um lançamento que falhou. Um turno que o motor não consegue observar (`unobserved`) e um abandono cujo interrupt falhou mantêm a vaga, porque o agente pode estar rodando. Uma observação interrompida por shutdown ou deploy também não solta, e o lançamento interrompido também não: o servidor novo adota a unit. Uma vaga que nenhum desses caminhos solta cai no `RuntimeMaxSec` da unit, que é o `budget.wall` da execução mais 10 minutos. Cada turno do nó (o principal e o do JSON) tem a própria vaga.
+  - **Limites.** Se a unit morrer enquanto o servidor está fora (reboot, OOM), a observação retomada pega de volta a vaga gravada, mas outro passo pode entrar nela antes. Se o lançamento falhar depois de o upstream aceitar o turno, a vaga fica solta até a nova tentativa, alguns segundos depois, que pega a mesma vaga de volta. Num replay de um turno que ainda não tinha resultado, o motor espera a vaga gravada antes de lançar, mesmo que o turno já tenha sido lançado e terminado com o servidor fora; essa espera só acontece se uma sessão manual estiver com a vaga.
+  - **Espera à parte.** O fato `SlotAcquired` (chave `slot:<intent>`) grava a vaga e o `waitedMs`. Enquanto ele não existe, o passo mostra `waitingFor: <recurso>`, e a web, o Android e o `workflow_run_status` dizem "Waiting for a slot in <recurso>". Depois, o `queuedMs` do passo é a espera pela vaga ou pelo heavy lock; um passo sem trava não tem `queuedMs`, então "Waited … for the heavy lock" só aparece num passo `heavy`. O stdout e o stderr de um comando entram no recibo `exit.json` (o `wfUnit` mascara antes da primeira escrita), no journal e nas telas com credencial de URL e tokens conhecidos (`ghp_`, `github_pat_`, `sk-`, `xox[bp]-`, `Bearer …`) trocados por `***`.
 - **Modelo por parâmetro.** `model: $params.model` num nó `agent` usa a entrada de `models` que o valor nomeia, pelo nome ou pelo id exato do modelo. O param precisa ser `string` com `enum`, e cada valor precisa nomear exatamente uma entrada; um valor fora do `enum` é recusado no RPC, no `workflow_run` e no decisor. O valor nunca vira texto de comando: só escolhe uma entrada que a definição já declara. Juízes e blocos não aceitam modelo por param, e um `continue:` só continua uma thread que lê o mesmo param.
 
-Exemplo, no formato que o Moneria PM salva (as fases verify/review ficam como `continue:` entre `resume` e `publish`):
+Exemplo, no formato que o Moneria PM salva. A fase `verify` espera uma das 2 vagas de `moneria-verify`, e as implementações rodam em paralelo. O aceite do `nx affected` é `heavy`, um por vez no host:
 
 ```yaml
 schema: t3.workflow/v1
@@ -1300,6 +1306,8 @@ params:
     }
 budget: { steps: 200, wall: 8h, tokens: 20000000 }
 fatigue: { consecutiveFailures: 5 }
+resources:
+  moneria-verify: { slots: 2 } # o compose do verify: VERIFY_SLOT=0 e VERIFY_SLOT=1
 models:
   opus: { provider: claude, model: claude-opus-5-5 }
   sol: { provider: codex, model: gpt-6.1-sol, effort: high }
@@ -1359,6 +1367,15 @@ nodes:
           access: write
           thread: continue:implement
           prompt: "Resposta: {{ nodes.ask_bot.answer }}{{ nodes.ask_israel.answer }}. Siga com o ticket."
+        verify:
+          kind: agent
+          join: any
+          model: $params.model
+          workspace: ticket
+          access: write
+          thread: continue:implement
+          uses: moneria-verify
+          prompt: Rode o verify do moneria-api com VERIFY_SLOT igual ao WF_SLOT desta fase e corrija o que falhar.
         publish:
           kind: agent
           join: any
@@ -1401,10 +1418,11 @@ nodes:
         - triage:technical -> ask_bot
         - triage:access -> ask_israel
         - triage:stop -> blocked
-        - triage:go -> publish
+        - triage:go -> verify
         - ask_bot:answer -> resume
         - ask_israel:answer -> resume
-        - resume -> publish
+        - resume -> verify
+        - verify -> publish
         - publish -> done
         - publish:fail -> failed
   report:
@@ -1567,6 +1585,7 @@ A lógica comum (status para cor, agrupamento de passos, merge de deltas e layou
 - Comandos nunca rodam na árvore de processos do servidor. `WorkflowUnits.start` (`exec/Units.ts`) cria **uma** unit no gerenciador de usuário do Israel: `systemd-run --user --unit=wf-<k> --collect`. A unit roda o `wfUnit`, que grava `started.json` com fsync, roda o argv no próprio grupo de processos (timeout e parada matam o grupo; descendentes que seguram a saída depois do fim morrem após 2 s) e grava `exit.json` com o código de saída que ele mesmo observou, por rename atômico. `queuedMs = started − spawned`, e espera de lock não conta como execução.
 - Com `heavy: true`, a unit leva os limites e o ambiente do `heavy.sh` (`CPUWeight=20`, `IOWeight=20`, `MemoryMax=6G`, `Nice=19`, `TMPDIR`, `CI=1`) e roda `flock /home/israel/.cache/t3-testdata/heavy.lock wfUnit …`: o mesmo lock do `heavy.sh` (`T3CODE_WORKFLOW_HEAVY_LOCK` troca o caminho em teste), pego dentro da mesma unit. O motor não chama o `heavy.sh`, porque ele abre uma segunda unit (`systemd-run --wait`) que sobrevive à primeira: se a de fora morre, o flock é solto enquanto a de dentro continua, e duas cópias rodam. Com o lock na unit, parar a unit mata o lock e o trabalho juntos.
 - O lock nunca é aninhado. O compilador recusa `heavy` junto com `selfSerializing` ou com argv que cita `heavy.sh`.
+- `heavy: true` equivale a um recurso global de 1 vaga, o `heavy.lock`, com os limites do `heavy.sh`. Um recurso declarado (`resources`, `uses`; §6.2) tem as próprias vagas, vale só para quem usa o mesmo nome e não muda os limites da unit. Um passo usa um ou outro.
 - **Agentes e comandos que chamam `heavy.sh`** (o agente rodando typecheck, o `run.py` do bench por episódio) usam o `heavy.sh` do host, com o mesmo lock.
 - **Computer use.** Vale a trava por display do servidor de computer use (`$XDG_RUNTIME_DIR/computer-use-linux/input-<display>.lock`). Ela serializa cada ação de entrada (clique, digitação, tecla) entre servidores, não o passo inteiro: dois passos na tela `:99` intercalam suas ações em vez de esperar um pelo outro. Uma rotina que precisa da tela por um episódio inteiro, como o bench do argo35, se serializa sozinha (fatia 12).
 - **Limite.** Um agente que rode `cargo build` sem passar pelo `heavy.sh` não é serializado. O prompt base de passo manda usar `heavy.sh`.

@@ -17,6 +17,7 @@ import {
   formatUsd,
   stepRows,
   stepDurationMs,
+  stepWaitLine,
   isRunActive,
   openGates,
   toCanvasModel,
@@ -403,10 +404,8 @@ function RunContent({
                           : row.latest.endedAt === null
                             ? liveDuration(row.latest.startedAt, now)
                             : formatDuration(stepDurationMs(row.latest, now) ?? 0)}
-                        {row.latest.queuedMs !== null ? (
-                          <p className="text-muted-foreground">
-                            queued {formatDuration(row.latest.queuedMs)}
-                          </p>
+                        {stepWaitLine(row.latest) !== null ? (
+                          <p className="text-muted-foreground">{stepWaitLine(row.latest)}</p>
                         ) : null}
                       </TableCell>
                       <TableCell className="text-right">

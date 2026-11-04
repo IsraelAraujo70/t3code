@@ -1,5 +1,5 @@
 import type { WorkflowStepRow } from "@t3tools/client-runtime/workflows";
-import { formatUsd, stepStatusTone } from "@t3tools/client-runtime/workflows";
+import { formatUsd, stepStatusTone, stepWaitLine } from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId, WorkflowRunId } from "@t3tools/contracts";
 import { useState } from "react";
 import { ScrollView, View } from "react-native";
@@ -57,10 +57,8 @@ export function WorkflowStepSheet(props: {
               {step.cost.usage === "complete" ? "" : " (usage incomplete)"}
             </Text>
           ) : null}
-          {step.queuedMs ? (
-            <Text className="text-xs text-foreground-muted">
-              Waited {Math.round(step.queuedMs / 1000)}s for the heavy lock
-            </Text>
+          {stepWaitLine(step) !== null ? (
+            <Text className="text-xs text-foreground-muted">{stepWaitLine(step)}</Text>
           ) : null}
         </View>
         {row.attempts.length > 1 ? (

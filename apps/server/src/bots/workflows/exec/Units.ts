@@ -3,7 +3,7 @@
  * Commands of workflow steps, each in its own transient `systemd-run --user` unit that outlives a
  * server restart. The unit runs `wfUnit.ts`, which writes `started.json` (fsync) before the argv
  * and `exit.json` (atomic rename) after it, so a restart adopts the unit or reads its receipt.
- * A heavy command takes the heavy.sh lock inside the same unit, with heavy.sh's limits.
+ * A heavy command takes the heavy.sh lock, a `uses` command a slot, inside the same unit.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -28,6 +28,7 @@ export interface UnitStart {
   readonly argv: ReadonlyArray<string>;
   readonly cwd: string;
   readonly heavy: boolean;
+  readonly uses?: { readonly resource: string; readonly slots: number } | undefined;
   readonly timeoutMs: number;
   readonly env: { readonly [name: string]: string };
   readonly parse: "none" | "json" | "json-last-line";
@@ -37,12 +38,14 @@ export interface UnitOutcome {
   readonly exit: number | null;
   /** "TIMEOUT" when wfUnit killed the command at its timeout. */
   readonly signal: string | null;
-  /** From the unit's start to `started.json`: the heavy lock's wait. */
+  /** From the unit's start to `started.json`: the wait for the heavy lock or a slot. */
   readonly queuedMs: number;
   readonly out: Json;
   readonly parseError: string | null;
   /** stdout's last 8 KiB. */
   readonly tail: string;
+  /** stderr's last 8 KiB. */
+  readonly stderr: string;
   /** No exit receipt and the unit is gone. */
   readonly lost: boolean;
   /** `started.json` exists: the argv began. */
@@ -63,6 +66,17 @@ export class WorkflowUnits extends Context.Service<
       readonly receiptDir: string;
       readonly spawnedAt: number;
     }) => Effect.Effect<UnitOutcome, WorkflowUnitError>;
+    /**
+     * Waits until the argv starts (`started.json`): when the unit and the slot it took; null when
+     * the unit is gone without starting it.
+     */
+    readonly started: (input: {
+      readonly unit: string;
+      readonly receiptDir: string;
+    }) => Effect.Effect<
+      { readonly at: string; readonly slot: number | null } | null,
+      WorkflowUnitError
+    >;
     /** `systemctl --user stop <unit>`; a unit already gone is fine. Never stops by pattern. */
     readonly stop: (unit: string) => Effect.Effect<void, WorkflowUnitError>;
   }
@@ -72,6 +86,8 @@ export interface Options {
   readonly node: string;
   readonly wfUnitPath: string;
   readonly heavyLock: string;
+  /** Where `<resource>-<i>.lock` live. */
+  readonly slotsDir: string;
   readonly run: (
     command: string,
     args: ReadonlyArray<string>,
@@ -113,8 +129,9 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
         "--quiet",
         `--working-directory=${input.cwd}`,
       ];
-      // wfUnit enforces the timeout; this backstop would also count a heavy unit's wait for the lock.
-      if (!input.heavy) args.push("-p", `RuntimeMaxSec=${Math.ceil(input.timeoutMs / 1000) + 120}`);
+      // wfUnit enforces the timeout; this backstop would also count a wait for a lock.
+      if (!input.heavy && input.uses === undefined)
+        args.push("-p", `RuntimeMaxSec=${Math.ceil(input.timeoutMs / 1000) + 120}`);
       if (input.heavy)
         args.push("-p", "CPUWeight=20", "-p", "IOWeight=20", "-p", "MemoryMax=6G", "-p", "Nice=19");
       for (const [name, value] of Object.entries({
@@ -139,6 +156,16 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
         input.parse,
         "--timeout-ms",
         String(input.timeoutMs),
+        ...(input.uses === undefined
+          ? []
+          : [
+              "--slot-dir",
+              options.slotsDir,
+              "--resource",
+              input.uses.resource,
+              "--slots",
+              String(input.uses.slots),
+            ]),
         "--",
         ...input.argv,
       );
@@ -163,8 +190,10 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
               ),
             catch: (error) => new WorkflowUnitError({ message: String(error) }),
           });
+          const { stderrTail, ...receipt } = result;
           return {
-            ...result,
+            ...receipt,
+            stderr: stderrTail ?? "",
             queuedMs: Math.max(0, Date.parse(started.at) - input.spawnedAt),
             started: true,
             lost: false,
@@ -179,9 +208,29 @@ export const make = (options: Options): WorkflowUnits["Service"] => {
             out: null,
             parseError: null,
             tail: "",
+            stderr: "",
             lost: true,
             started: exists(input.receiptDir, "started.json"),
           };
+        }
+        yield* Effect.sleep("1 second");
+      }
+    }),
+    started: Effect.fn("WorkflowUnits.started")(function* (input) {
+      for (let tick = 0; ; tick++) {
+        if (exists(input.receiptDir, "started.json")) {
+          const started = yield* Effect.try({
+            try: () =>
+              decodeStarted(
+                NodeFS.readFileSync(NodePath.join(input.receiptDir, "started.json"), "utf8"),
+              ),
+            catch: (error) => new WorkflowUnitError({ message: String(error) }),
+          });
+          return { at: started.at, slot: started.slot ?? null };
+        }
+        if (tick % 10 === 0 && !(yield* active(input.unit))) {
+          if (exists(input.receiptDir, "started.json")) continue;
+          return null;
         }
         yield* Effect.sleep("1 second");
       }
@@ -206,10 +255,11 @@ const decodeExit = Schema.decodeUnknownSync(
       out: Schema.Json,
       parseError: Schema.NullOr(Schema.String),
       tail: Schema.String,
+      stderrTail: Schema.optional(Schema.String),
     }),
   ),
 );
 
 const decodeStarted = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Struct({ at: Schema.String })),
+  Schema.fromJsonString(Schema.Struct({ at: Schema.String, slot: Schema.optional(Schema.Number) })),
 );

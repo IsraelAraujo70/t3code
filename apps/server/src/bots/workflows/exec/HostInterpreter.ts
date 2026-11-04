@@ -11,10 +11,13 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+
+import { DEFAULT_HOST_LIMITS } from "@t3tools/shared/workflows";
 
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { type ProjectOperationError, ProjectService } from "../../../project/ProjectService.ts";
@@ -33,11 +36,14 @@ import { WorkflowInterpreter } from "../Interpreter.ts";
 import { Journal, type WorkflowJournalError } from "../Journal.ts";
 import type { IntentResult } from "../state.ts";
 import { projectByRef } from "./projects.ts";
+import { redactSecrets } from "./redact.ts";
+import { type WorkflowSlotError, WorkflowSlots } from "./Slots.ts";
 import { unobservedTurn } from "./turnResult.ts";
-import { WorkflowTurns, type WorkflowTurnError } from "./Turns.ts";
+import { WorkflowTurnError, WorkflowTurns } from "./Turns.ts";
 import { WorkflowUnits, type WorkflowUnitError } from "./Units.ts";
 
 type ExecutorError =
+  | WorkflowSlotError
   | WorkflowTurnError
   | WorkflowUnitError
   | WorkflowGitError
@@ -93,6 +99,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
   const pullRequests = yield* Effect.serviceOption(WorkflowPullRequests);
   const botPosts = yield* Effect.serviceOption(WorkflowBotPosts);
   const environment = yield* Effect.serviceOption(ServerEnvironment);
+  const slots = yield* Effect.serviceOption(WorkflowSlots);
 
   const runDir = (runId: string) => NodePath.join(options.runsDir, runId);
   /** A workspace's path from its name alone, so GitOp and RemoveWorkspace find it. */
@@ -252,10 +259,92 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     return [cancel, done];
   });
 
+  /**
+   * The holder unit of a turn's slot. Its name carries the runs directory, so a test server with
+   * the same run id and key never adopts or stops the production holder.
+   */
+  const slotUnitOf = (runId: string, key: string) => {
+    const hash = keyHash(runId, `slot:${options.runsDir}:${key}`);
+    return { unit: `wf-slot-${hash}`, receiptDir: NodePath.join(runDir(runId), "slots", hash) };
+  };
+  const releaseSlot = (runId: string, intent: Intent) =>
+    intent._tag !== "StartTurn" || intent.uses === undefined || Option.isNone(slots)
+      ? Effect.void
+      : slots.value.release(slotUnitOf(runId, intent.key).unit).pipe(Effect.ignore);
+  /**
+   * Holds the slot of a turn's resource in its holder unit and returns its number. The first time,
+   * the first free slot, recorded as SlotAcquired before the turn launches; after that (a replay, a
+   * restart) exactly the recorded slot, whose live holder is adopted, so the agent never learns a
+   * second number and no other step gets its slot meanwhile.
+   */
+  const holdSlot = Effect.fn("HostInterpreter.holdSlot")(function* (
+    runId: string,
+    intent: Extract<Intent, { readonly _tag: "StartTurn" }>,
+    uses: NonNullable<Extract<Intent, { readonly _tag: "StartTurn" }>["uses"]>,
+  ) {
+    if (Option.isNone(slots))
+      return yield* new WorkflowTurnError({
+        message: "Resource slots are not available on this host.",
+        permanent: true,
+      });
+    const key = `slot:${intent.key}`;
+    const stored = Option.getOrUndefined(yield* journal.get(runStream(runId), key))?.fact;
+    const recorded = stored?._tag === "SlotAcquired" ? stored.slot : undefined;
+    // The holder's cap: the run's wall budget, so a server that never comes back frees it then.
+    const started = Option.getOrUndefined(yield* journal.get(runStream(runId), "started"))?.fact;
+    const wallMs =
+      started?._tag === "RunStarted" ? started.budget.wallMs : DEFAULT_HOST_LIMITS.maxWallMs;
+    const from = yield* Clock.currentTimeMillis;
+    const slot = yield* slots.value.acquire({
+      ...slotUnitOf(runId, intent.key),
+      resource: uses.resource,
+      slots: uses.slots,
+      slot: recorded,
+      maxSec: Math.ceil(wallMs / 1000) + 600,
+    });
+    if (recorded === undefined) {
+      const now = yield* Clock.currentTimeMillis;
+      yield* journal.append([
+        {
+          stream: runStream(runId),
+          key,
+          fact: {
+            _tag: "SlotAcquired",
+            step: intent.step,
+            attempt: intent.attempt,
+            resource: uses.resource,
+            slot,
+            waitedMs: Math.max(0, now - from),
+          },
+        },
+      ]);
+    }
+    return slot;
+  });
+
   const run = Effect.fn("HostInterpreter.run")(function* (runId: string, intent: Intent) {
     switch (intent._tag) {
       case "StartTurn": {
-        const threadId = yield* turns.start(runId, intent);
+        const uses = intent.uses;
+        const slot = uses === undefined ? null : yield* holdSlot(runId, intent, uses);
+        // A turn that did not start gives its slot back; a replay waits for one again.
+        const threadId = yield* turns
+          .start(
+            runId,
+            slot === null || uses === undefined
+              ? intent
+              : {
+                  ...intent,
+                  prompt: `${intent.prompt}\n\nThis turn holds slot ${slot} of the resource ${uses.resource} (WF_SLOT=${slot}); use that number wherever the project asks for a slot.`,
+                },
+          )
+          // A turn that failed to start gives its slot back; its replay takes the same one again.
+          // A shutdown mid-launch keeps it: the turn may run, and the restart adopts the holder.
+          .pipe(
+            Effect.onError((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.void : releaseSlot(runId, intent),
+            ),
+          );
         const started = result(runId, intent, { _tag: "TurnStarted", threadId });
         if (intent.bot === undefined || Option.isNone(botPosts)) return [started];
         // HostMcpForward finds no bot either, so the turn runs without the bot's servers.
@@ -273,6 +362,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           argv: intent.argv,
           cwd: intent.cwd.path,
           heavy: intent.heavy,
+          uses: intent.uses,
           timeoutMs: intent.timeoutMs,
           env: intent.env,
           parse: intent.parse ?? "none",
@@ -479,34 +569,101 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     intent: Extract<Intent, { readonly _tag: "StartUnit" }>,
     spawnedAt: string,
   ): Stream.Stream<NewFact, WorkflowUnitError> =>
-    Stream.fromEffect(
+    Stream.concat(
+      unitSlot(runId, intent, spawnedAt),
+      Stream.fromEffect(
+        Effect.gen(function* () {
+          const { unit, receiptDir } = unitOf(runId, intent.key);
+          const outcome = yield* units.observe({
+            unit,
+            receiptDir,
+            spawnedAt: Date.parse(spawnedAt),
+          });
+          const headSha = yield* git.head(intent.cwd.path).pipe(Effect.option);
+          const exited: RunFact = {
+            _tag: "UnitExited",
+            step: intent.step,
+            attempt: intent.attempt,
+            exit: outcome.exit,
+            signal: outcome.signal,
+            queuedMs: outcome.queuedMs,
+            out: outcome.out,
+            tail: redactSecrets(outcome.tail),
+            lost: outcome.lost,
+            started: outcome.started,
+            parseError: outcome.parseError,
+            stderr: redactSecrets(outcome.stderr),
+            headSha: Option.getOrNull(headSha),
+          };
+          return {
+            stream: runStream(runId),
+            key: `exited:${intent.step}@${intent.attempt}`,
+            fact: exited,
+          } satisfies NewFact;
+        }),
+      ),
+    );
+
+  /** A unit that `uses` a resource: its SlotAcquired once wfUnit holds a slot and starts the argv. */
+  const unitSlot = (
+    runId: string,
+    intent: Extract<Intent, { readonly _tag: "StartUnit" }>,
+    spawnedAt: string,
+  ): Stream.Stream<NewFact, WorkflowUnitError> => {
+    const uses = intent.uses;
+    if (uses === undefined) return Stream.empty;
+    return Stream.fromIterableEffect(
       Effect.gen(function* () {
-        const { unit, receiptDir } = unitOf(runId, intent.key);
-        const outcome = yield* units.observe({
-          unit,
-          receiptDir,
-          spawnedAt: Date.parse(spawnedAt),
-        });
-        const headSha = yield* git.head(intent.cwd.path).pipe(Effect.option);
-        const exited: RunFact = {
-          _tag: "UnitExited",
-          step: intent.step,
-          attempt: intent.attempt,
-          exit: outcome.exit,
-          signal: outcome.signal,
-          queuedMs: outcome.queuedMs,
-          out: outcome.out,
-          tail: outcome.tail,
-          lost: outcome.lost,
-          started: outcome.started,
-          parseError: outcome.parseError,
-          headSha: Option.getOrNull(headSha),
-        };
-        return {
+        const started = yield* units.started(unitOf(runId, intent.key));
+        if (started === null || started.slot === null) return [];
+        const fact: NewFact = {
           stream: runStream(runId),
-          key: `exited:${intent.step}@${intent.attempt}`,
-          fact: exited,
-        } satisfies NewFact;
+          key: `slot:${intent.key}`,
+          fact: {
+            _tag: "SlotAcquired",
+            step: intent.step,
+            attempt: intent.attempt,
+            resource: uses.resource,
+            slot: started.slot,
+            waitedMs: Math.max(0, Date.parse(started.at) - Date.parse(spawnedAt)),
+          },
+        };
+        return [fact];
+      }),
+    );
+  };
+
+  /**
+   * A turn's end the engine saw: a `TurnSettled` it observed. An unobserved one (the reads kept
+   * failing) leaves the agent's state unknown, so its slot stays held until the holder's cap.
+   */
+  const confirmedEnd = (fact: NewFact) =>
+    fact.fact._tag === "TurnSettled" && fact.fact.unobserved !== true;
+
+  /**
+   * A turn with a slot, observed again after a restart: it takes its recorded slot back while it is
+   * observed, not before, so a turn that ended while the server was down claims no slot. Its end
+   * stops the wait, and the tap in `observe` releases the slot.
+   */
+  const observeHolding = (
+    runId: string,
+    intent: Extract<Intent, { readonly _tag: "StartTurn" }>,
+    uses: NonNullable<Extract<Intent, { readonly _tag: "StartTurn" }>["uses"]>,
+  ): Stream.Stream<NewFact, WorkflowTurnError> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const holding = yield* Effect.forkScoped(
+          holdSlot(runId, intent, uses).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("workflow slot not taken back", { runId, error: error.message }),
+            ),
+          ),
+        );
+        return turns
+          .observe(runId, intent)
+          .pipe(
+            Stream.tap((fact) => (confirmedEnd(fact) ? Fiber.interrupt(holding) : Effect.void)),
+          );
       }),
     );
 
@@ -521,7 +678,9 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           : intent._tag === "StartUnit"
             ? units.stop(unitOf(runId, intent.key).unit)
             : Effect.void;
+      // Only a turn the interrupt stopped gives its slot back; a failed interrupt keeps it held.
       return stop.pipe(
+        Effect.andThen(releaseSlot(runId, intent)),
         Effect.as(failed(runId, intent, "The run ended before this step started.")),
         settle(runId, intent, false),
       );
@@ -529,7 +688,9 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
     observe: (runId, intent, observed) => {
       const stream: Stream.Stream<NewFact, WorkflowTurnError | WorkflowUnitError> =
         intent._tag === "StartTurn" && observed._tag === "TurnStarted"
-          ? turns.observe(runId, intent)
+          ? intent.uses === undefined
+            ? turns.observe(runId, intent)
+            : observeHolding(runId, intent, intent.uses)
           : intent._tag === "StartUnit" && observed._tag === "UnitSpawned"
             ? observeUnit(runId, intent, observed.at)
             : Stream.empty;
@@ -549,6 +710,9 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
             ),
           ),
         ),
+        // Only a turn that settled frees its slot. An observer interrupted by a shutdown or a
+        // deploy leaves the holder unit running, and the restarted observer adopts it.
+        Stream.tap((fact) => (confirmedEnd(fact) ? releaseSlot(runId, intent) : Effect.void)),
       );
     },
   });

@@ -59,8 +59,9 @@
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
-        // Fork (friend): the fork's voice bench runs by path.
+        // Fork (friend): the voice bench and the workflow slot holder run by path.
         "src/bots/voice/voiceBench.ts",
+        "src/bots/workflows/exec/wfSlot.ts",
       ],
       // The generated operations export every selection's class.
       // Fork (friend): the fork's own unused exports predate this check; prune them separately.
