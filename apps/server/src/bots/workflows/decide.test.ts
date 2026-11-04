@@ -1417,6 +1417,53 @@ describe("retry, reopening and cleanup", () => {
     expect(ended("always", 0)).toEqual(["rm:r@1"]);
     expect(ended("never", 1)).toEqual(["rm:r@1", "rm:integ"]);
   });
+
+  it("keeps an item's worktree when its failure went to an output and the run succeeded", () => {
+    const run = TestRun.start(
+      compile({
+        params: { tickets: { type: "string[]", pattern: "[A-Z]+-\\d+" } },
+        workspaces: {
+          ticket: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
+        },
+        nodes: {
+          each: {
+            kind: "map",
+            items: "params.tickets",
+            maxItems: 2,
+            concurrency: 2,
+            body: {
+              nodes: {
+                gate: { ...commandNode, cwd: "ticket", check: "exit == 0" },
+                ok: { kind: "output", status: "ready_for_review", value: { ok: "yes" } },
+                failed: { kind: "output", status: "checks_failed", value: { ok: "no" } },
+              },
+              edges: ["gate:pass -> ok", "gate:fail -> failed"],
+            },
+          },
+          report: done,
+        },
+        edges: ["each -> report"],
+      }),
+      runStarted({ params: { tickets: ["A-1", "A-2"] } }),
+    );
+    run.drive();
+    for (const [i, exit] of [1, 0].entries()) {
+      const name = `ticket#each[${i}]`;
+      run.result(`ws:${name}`, {
+        _tag: "WorkspaceReady",
+        name,
+        path: `/runs/x/${i}`,
+        branch: null,
+        headSha: "s1",
+      });
+      run.drive();
+      spawned(run, `each[${i}]/gate`);
+      run.add(`exited:each[${i}]/gate@1`, unitExited(`each[${i}]/gate`, 1, exit));
+    }
+    run.drive();
+    expect(run.state().ended?.status).toBe("succeeded");
+    expect(keysOf(run.drive()).filter((k) => k.startsWith("rm:"))).toEqual(["rm:ticket#each[1]"]);
+  });
 });
 
 it("maps failure subscriber params and omits invalid templates", () => {

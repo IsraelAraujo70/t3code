@@ -2,7 +2,7 @@
  * The interrogate block (§4.4): each round, fresh read-only reviewers look at the target frozen at
  * the round's sha; the lead answers their findings in one write thread that carries over rounds,
  * then the checks run. Approval needs every reviewer of the round clean, and a review that failed
- * (error, timeout, invalid JSON) never counts as one.
+ * (error, timeout, invalid JSON) never counts as one. A last round where no reviewer answered fails.
  */
 import * as Result from "effect/Result";
 import type { Json } from "effect/Schema";
@@ -149,7 +149,7 @@ interface Round {
   readonly complete: boolean;
 }
 
-type End = { readonly port: "approve" | "stuck"; readonly reason: string };
+type End = { readonly port: "approve" | "stuck" | "fail"; readonly reason: string };
 
 interface FindingView {
   readonly finding: Finding;
@@ -243,6 +243,14 @@ const derive = (node: Node, reader: BlockReader): State => {
       end = {
         port: "approve",
         reason: raised.length > 0 ? "only nits are open" : "every reviewer approved",
+      };
+    else if (end === null && complete && n >= node.rounds && reviews.every((r) => r.error !== null))
+      // Reviewers that never answered are not reviewers stuck on the change: nobody judged it.
+      end = {
+        port: "fail",
+        reason:
+          `no reviewer answered in round ${n}:\n` +
+          reviews.map((r) => `reviewer ${r.reviewer}: ${r.error}`).join("\n"),
       };
     else if (end === null && complete && n >= node.rounds)
       end = {
@@ -387,12 +395,16 @@ const decide = (node: Node, state: State, io: BlockIO): void => {
   // Each pin fills the slot derive found empty, so deriving again always moves the round on.
   const again = () => decide(node, derive(node, io), io);
   if (state.end !== null)
-    return io.finish(state.end.port, {
-      rounds: state.rounds.length,
-      verdict: state.end.port,
-      reason: state.end.reason,
-      findings: state.findings.map(findingJson),
-    });
+    return io.finish(
+      state.end.port,
+      {
+        rounds: state.rounds.length,
+        verdict: state.end.port,
+        reason: state.end.reason,
+        findings: state.findings.map(findingJson),
+      },
+      state.end.port === "fail" ? { error: state.end.reason } : {},
+    );
   const target = io.namedWorkspace(node.target.workspace);
   if (target === null) return fail(`target workspace ${node.target.workspace} was never prepared`);
 

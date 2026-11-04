@@ -946,7 +946,7 @@ A projeção `workflow_runs` é o que as listas leem: o ator grava a linha da ex
 
 Uma worktree nova parte da ponta remota quando `base` é nome de branch. Antes de criá-la, o motor faz `git fetch` só dessa branch para `refs/remotes/<remoto>/<base>` (o remoto configurado da branch, ou `origin`) e cria a worktree nesse sha. O fetch leva `--refmap=`, então um `remote.<nome>.fetch` configurado que aponte para `refs/heads` não move nada. O checkout do projeto, suas branches locais e o `FETCH_HEAD` ficam como estavam: uma `friend/main` local atrasada não vira base de um merge que depois será empurrado. Sem remoto, ou sem a branch nele, vale a ref local. Um sha, `HEAD` e `workspace:<nome>` não passam pelo fetch. Uma falha de rede no fetch é transitória e o intent tenta de novo. O `WorkspaceReady` grava em `base` a ref e o sha de onde a worktree nasceu; a mesma base fica em `<worktree>.base.json`, gravado antes do `worktree add`, para que uma worktree adotada depois de uma queda devolva a base de onde nasceu. Um `interrogate` cujo `target.baseRef` é o mesmo `base` do workspace manda os revisores comparar com esse sha, porque o mesmo nome no checkout deles é a branch local.
 
-Quando a execução acaba e nada mais roda nas suas worktrees, o motor grava `RemoveWorkspace` para o que o `retain` solta: um checkout só leitura sempre sai; uma worktree declarada fica com `always`, ou com `on_failure` (o padrão) se a execução não teve sucesso. A branch `wf/…` fica.
+Quando a execução acaba e nada mais roda nas suas worktrees, o motor grava `RemoveWorkspace` para o que o `retain` solta: um checkout só leitura sempre sai; uma worktree declarada fica com `always`, ou com `on_failure` (o padrão) se a execução não teve sucesso ou se um passo dela falhou (no próprio item, para uma worktree `perItem`). Um item de map que leva a falha a um output deixa a execução terminar com sucesso, e é a worktree desse item que o retry precisa. A branch `wf/…` fica.
 
 ### 3.3 Passo
 
@@ -1106,7 +1106,7 @@ Rodadas `r1..rN`:
 1. Revisores em **threads novas a cada rodada**, só leitura, cada um numa worktree descartável no sha congelado da worktree alvo, com o diff `baseRef..HEAD` e o diff desde a rodada anterior. No modo loop há um revisor. No painel, todos na r1 e, depois, só os que têm achado aberto. Saída `{ verdict: APPROVE|CHANGES, findings: [{ id, severity: blocker|should|nit, file, line, claim, evidence }] }`.
 2. O lead (uma thread de escrita na worktree alvo, que continua de rodada em rodada) só começa quando os revisores terminam. Verifica cada achado, corrige ou discorda com evidência e devolve `{ resolutions: [{ id, state: fixed|disagree|declined }] }`.
 3. `checks` rodam.
-4. Fim: APPROVE sem blocker ou should aberto → `approve`. Só nits → para cedo. Teto de rodadas, ou o mesmo achado disputado duas vezes → porta `stuck`, que costuma ir para um portão. Erro ou timeout de revisor nunca conta como aprovação.
+4. Fim: APPROVE sem blocker ou should aberto → `approve`. Só nits → para cedo. Teto de rodadas, ou o mesmo achado disputado duas vezes → porta `stuck`, que costuma ir para um portão. Erro ou timeout de revisor nunca conta como aprovação; se no teto a última rodada não teve nenhuma revisão válida, ninguém julgou a mudança e o bloco sai pela porta `fail`, com o erro de cada revisor.
 
 ### 4.5 A RSI cabe nos blocos
 
