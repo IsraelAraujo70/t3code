@@ -91,8 +91,10 @@ export function GateSheet(props: {
           <Button size="sm" variant="outline" disabled={pending} onClick={props.onClose}>
             Close
           </Button>
-          {(props.gate.options.length ? props.gate.options : ["approve", "reject"]).map(
-            (option) => (
+          {(props.gate.options.length ? props.gate.options : ["approve", "reject"])
+            // `escalate` is how the bot hands the gate to Israel, not one of Israel's answers.
+            .filter((option) => props.gate.bot === undefined || option !== "escalate")
+            .map((option) => (
               <Button
                 key={option}
                 size="sm"
@@ -102,8 +104,7 @@ export function GateSheet(props: {
               >
                 {option}
               </Button>
-            ),
-          )}
+            ))}
         </DialogFooter>
       </DialogPopup>
     </Dialog>

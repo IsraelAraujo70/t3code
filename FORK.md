@@ -381,7 +381,9 @@ Steps run on the host, not in a container: the RSI routines need the `:99` displ
 servers and the provider homes. The guard is the owner's gate. Before a command whose argv deploys,
 restarts, merges into `friend/main`, force pushes or writes `~/.t3/userdata/settings.json`, the run
 waits for a decision that only a user session makes (`bots.workflows.gate.decide`, which needs
-`orchestration:operate`); no MCP tool and no bot decides a gate. The gate reads only command argv,
+`orchestration:operate`); no bot decides a protected gate. The only gates a bot decides are the ones
+a run routes to the workflow's own bot (`answerBy: bot`, `askBot`), through the MCP tool
+`workflow_gate_decide`; the engine checks the bot the gate recorded, never the caller. The gate reads only command argv,
 so an agent with a shell can go around it, a risk the owner accepted. The engine itself only pushes
 `wf/…` branches, without force, and opens draft pull requests. In a `branchPolicy: agent` worktree
 the agent pushes its own branch and opens the pull request; a pre-push hook set for that worktree
@@ -426,7 +428,10 @@ so a link opens the same view.
   worked in. A failed step can be retried from there.
 - **Approve a gate.** A run that needs you stops at a gate and shows the question with its options
   on the run page; Android also sends a notification. Pick an option and the run continues on that
-  path. Only you decide gates, never a bot.
+  path. A gate the workflow routes to its bot (`answerBy: bot` or `askBot: true`) goes to that bot's
+  conversation instead and shows as "Waiting for <bot>"; you can still answer it there. When the bot
+  cannot resolve it, it escalates and the gate comes to you with a notification. Protected actions
+  (deploy, restart, force push, merge into `friend/main`) are always yours.
 - **Read the result.** A run ends ready for review (with a draft pull request), with no gain,
   blocked, or failed. Merging into `friend/main` stays your step.
 

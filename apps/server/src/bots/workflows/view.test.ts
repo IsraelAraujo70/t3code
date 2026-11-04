@@ -341,6 +341,7 @@ describe("run views", () => {
       option: "approve",
       note: "Reviewed",
       at: iso(T0 + 3000),
+      by: "user",
     });
   });
 

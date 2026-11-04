@@ -100,6 +100,8 @@ function RunContent(props: { environmentId: EnvironmentId; runId: WorkflowRunId 
   const nowMs = useNowMinuteMs();
   const control = useAtomCommand(workflowsEnvironment.runControl);
   const allowed = useAtomValue(workflowsEnvironment.runControl.permissionAtom(environmentId));
+  // A gate routed to the workflow's bot waits for it; Israel may still answer it.
+  const botName = workflow?.bot?.name ?? "the bot";
   const [pending, setPending] = useState(false);
   const [openStep, setOpenStep] = useState<string | null>(null);
   const openThread = useOpenLinkedThread();
@@ -142,9 +144,19 @@ function RunContent(props: { environmentId: EnvironmentId; runId: WorkflowRunId 
             {openGates(run.gates).map((gate) => (
               <View
                 key={gate.key}
-                className="gap-3 rounded-2xl border border-warning-border bg-warning p-4"
+                className={
+                  gate.bot === undefined
+                    ? "gap-3 rounded-2xl border border-warning-border bg-warning p-4"
+                    : "gap-3 rounded-2xl border border-border p-4"
+                }
               >
-                <Text className="text-xs font-t3-bold text-warning-foreground">NEEDS YOU</Text>
+                {gate.bot === undefined ? (
+                  <Text className="text-xs font-t3-bold text-warning-foreground">NEEDS YOU</Text>
+                ) : (
+                  <Text className="text-xs font-t3-bold text-foreground-muted">
+                    WAITING FOR {botName.toUpperCase()}
+                  </Text>
+                )}
                 <GateDecision
                   environmentId={environmentId}
                   runId={runId}

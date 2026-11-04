@@ -82,10 +82,14 @@ export const WorkflowModelRef = Schema.Struct({
   effort: Schema.optional(Schema.Literals(WORKFLOW_EFFORTS)),
 });
 export type WorkflowModelRef = typeof WorkflowModelRef.Type;
-/** A model, or `$name` for `models.name`. */
+/**
+ * A model, `$name` for `models.name`, or `$params.<name>` for the `models` entry a string param
+ * with an `enum` picks (by entry name or exact model id); the run refuses a value outside the enum.
+ */
 export const WorkflowModelUse = Schema.Union([
   WorkflowModelRef,
   Schema.String.check(Schema.isPattern(/^\$[a-z_]+$/)),
+  Schema.String.check(Schema.isPattern(/^\$params\.[A-Za-z_][A-Za-z0-9_]*$/)),
 ]);
 export type WorkflowModelUse = typeof WorkflowModelUse.Type;
 
@@ -121,6 +125,8 @@ export const WorkflowParamSpec = Schema.Struct({
   pattern: Schema.optional(Schema.String),
   /** `string[]` only: a run with more elements is refused, never cut. */
   maxItems: Schema.optional(PositiveInt),
+  /** `string` only: the closed set of values a run may pass; any other is refused. */
+  enum: Schema.optional(Schema.NonEmptyArray(Schema.String)),
   description: Schema.optional(Schema.String),
 });
 export type WorkflowParamSpec = typeof WorkflowParamSpec.Type;
@@ -230,6 +236,11 @@ const AgentFields = {
   tokenReservation: Schema.optional(PositiveInt),
   /** A question from the agent becomes a gate; otherwise it is declined with an instruction. */
   askIsrael: Schema.optional(Schema.Boolean),
+  /**
+   * A question from the agent goes first to the workflow's `bot`, which answers it with
+   * `workflow_gate_decide` or escalates it to Israel. Needs `bot` at the top.
+   */
+  askBot: Schema.optional(Schema.Boolean),
 };
 
 const CommandFields = {
@@ -278,6 +289,12 @@ export const WorkflowGateNode = Schema.Struct({
   /** Default `["approve", "reject"]`; each option is a port. */
   options: Schema.optional(Schema.Array(WorkflowNodeKey)),
   expires: Schema.optional(Schema.Struct({ after: WorkflowDuration, decision: WorkflowNodeKey })),
+  /**
+   * `israel` (default) pushes the gate to Israel. `bot` posts it to the workflow's `bot`, which
+   * decides it with `workflow_gate_decide` (its text answer is `nodes.<gate>.answer`) or picks
+   * `escalate` to hand the same ask to Israel. Israel may decide it either way.
+   */
+  answerBy: Schema.optional(Schema.Literals(["israel", "bot"])),
 });
 export type WorkflowGateNode = typeof WorkflowGateNode.Type;
 
@@ -759,8 +776,16 @@ export const WorkflowGateView = Schema.Struct({
   openedAt: IsoDateTime,
   expiresAt: Schema.NullOr(IsoDateTime),
   decision: Schema.NullOr(
-    Schema.Struct({ option: Schema.String, note: Schema.NullOr(Schema.String), at: IsoDateTime }),
+    Schema.Struct({
+      option: Schema.String,
+      note: Schema.NullOr(Schema.String),
+      at: IsoDateTime,
+      /** `user`, `expiry` or `bot:<id>`; absent from older hosts. */
+      by: Schema.optional(Schema.String),
+    }),
   ),
+  /** The bot the gate is routed to (`answerBy: bot`, `askBot`); Israel may still decide it. */
+  bot: Schema.optional(Schema.String),
 });
 export type WorkflowGateView = typeof WorkflowGateView.Type;
 
