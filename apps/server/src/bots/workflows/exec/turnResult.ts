@@ -7,8 +7,10 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2ThreadProjection,
   WorkflowStepCost,
 } from "@t3tools/contracts";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 
 const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)```/g;
 
@@ -40,6 +42,36 @@ export const stepRuns = <Run extends OrderedRun>(
   runs
     .filter((run) => run.ordinal >= first.ordinal && run.ordinal <= last.ordinal)
     .sort((a, b) => a.ordinal - b.ordinal);
+
+/**
+ * The reply a step's turn produced: its last run's, except that a run opened by a notification
+ * (a background task finishing) that ended without assistant text, whatever its status, does not
+ * replace the reply of a run before it, where the agent had already answered.
+ */
+export const stepReply = (
+  thread: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "turnItems">,
+  first: OrchestrationV2Run,
+  last: OrchestrationV2Run,
+): { readonly run: OrchestrationV2Run; readonly text: string } => {
+  const notices = new Set(
+    thread.messages.flatMap((message) => (message.notification === undefined ? [] : [message.id])),
+  );
+  const replied = new Set(
+    thread.messages.flatMap((message) =>
+      message.role === "assistant" && message.text.trim().length > 0 ? [message.runId] : [],
+    ),
+  );
+  const run =
+    stepRuns(thread.runs, first, last).findLast(
+      (candidate) =>
+        candidate.id === first.id ||
+        // A restart continuation opens with a system notice but carries the turn's own outcome.
+        candidate.restartContinuationOfRunId !== undefined ||
+        !notices.has(candidate.userMessageId) ||
+        replied.has(candidate.id),
+    ) ?? last;
+  return { run, text: subagentResultForRun(thread, run).text };
+};
 
 /**
  * Billable tokens are input without cache reads plus output (input already counts cache reads and

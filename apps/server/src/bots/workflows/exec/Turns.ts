@@ -22,7 +22,6 @@ import {
   ThreadId,
   type WorkflowModelRef,
 } from "@t3tools/contracts";
-import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 
 import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegistry.ts";
@@ -33,7 +32,7 @@ import { WorkflowGit } from "../git/Workspaces.ts";
 import { commandIdFor, messageIdFor } from "../ids.ts";
 import { projectByRef } from "./projects.ts";
 import { type RequestItem, requestResponse, requestText } from "./requests.ts";
-import { lastJsonBlock, stepRuns, turnCost, unobservedTurn } from "./turnResult.ts";
+import { lastJsonBlock, stepReply, stepRuns, turnCost, unobservedTurn } from "./turnResult.ts";
 import { continuationChain, usageReport } from "../budget/budget.ts";
 
 type StartTurn = Extract<Intent, { readonly _tag: "StartTurn" }>;
@@ -207,8 +206,8 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
     resultRun: OrchestrationV2Run,
   ) {
     const thread = yield* projection(intent.threadId);
-    const { text } = subagentResultForRun(thread, resultRun);
-    const { output, error } = lastJsonBlock(text);
+    const reply = stepReply(thread, run, resultRun);
+    const { output, error } = lastJsonBlock(reply.text);
     const headSha = yield* git.head(intent.workspace.path).pipe(Effect.option);
     // wf-engine slice 7.
     const treeHash = yield* git.tree(intent.workspace.path).pipe(Effect.option);
@@ -220,9 +219,9 @@ export const make = Effect.fn("WorkflowTurns.make")(function* (options: Workflow
         _tag: "TurnSettled",
         step: intent.step,
         attempt: intent.attempt,
-        // The reply consumed is the result run's, so its status is the turn's.
-        status: settledStatus(resultRun.status),
-        text: text.slice(0, 16_384),
+        // The status is that of the run whose reply was consumed.
+        status: settledStatus(reply.run.status),
+        text: reply.text.slice(0, 16_384),
         output,
         outputError: error,
         cost: turnCost(
