@@ -119,6 +119,8 @@ interface GateDecisionInput {
   readonly gateKey: string;
   readonly option: string;
   readonly note: string | null;
+  /** A bot deciding: only a gate the run routed to this bot. Absent: Israel, any gate. */
+  readonly bot?: string;
 }
 
 export interface WorkflowEngineOptions {
@@ -1089,6 +1091,11 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       if (gate === undefined) {
         return yield* new WorkflowJournalError({ message: `There is no gate ${input.gateKey}.` });
       }
+      if (input.bot !== undefined && gate.intent.bot !== input.bot) {
+        return yield* new WorkflowJournalError({
+          message: `Gate ${input.gateKey} is not routed to this bot; only Israel decides it.`,
+        });
+      }
       if (gate.decision !== null) return gate.decision;
       if (!gate.intent.options.includes(input.option)) {
         return yield* new WorkflowJournalError({
@@ -1104,7 +1111,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
             gateKey: input.gateKey,
             option: input.option,
             note: input.note,
-            by: "user",
+            by: input.bot === undefined ? "user" : `bot:${input.bot}`,
             at: yield* nowIso,
           },
         },

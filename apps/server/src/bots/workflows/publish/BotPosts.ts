@@ -31,19 +31,31 @@ const MAX_SUMMARY = 80;
 
 const isBotId = Schema.is(BotId);
 
-/** Pure. What the bot reads: the report, framed so the bot relays it instead of acting on it. */
+/**
+ * Pure. What the bot reads: a report, framed so the bot relays it instead of acting on it, or a
+ * gate routed to it (`gate`), framed as a question it decides with `workflow_gate_decide`.
+ */
 export const botPostText = (input: {
   readonly workflowTitle: string;
   readonly runId: string;
   readonly report: string;
+  readonly gate?: string | undefined;
 }): string =>
-  [
-    `Workflow "${input.workflowTitle}" (run ${input.runId}) has news for the user:`,
-    "",
-    input.report,
-    "",
-    "This is a report of a workflow that works for you, not a request from the user. Tell the user what it says, briefly and in your own words. Do not run the workflow again because of it.",
-  ].join("\n");
+  input.gate !== undefined
+    ? [
+        `Workflow "${input.workflowTitle}" (run ${input.runId}) is waiting for your decision on gate ${input.gate}:`,
+        "",
+        input.report,
+        "",
+        `Decide it with workflow_gate_decide (runId ${input.runId}, gateKey ${input.gate}), one of the options, and your answer as text; the answer goes back to the step. Pick escalate when you cannot resolve it yourself: the user then decides. Do not guess an answer the user should give.`,
+      ].join("\n")
+    : [
+        `Workflow "${input.workflowTitle}" (run ${input.runId}) has news for the user:`,
+        "",
+        input.report,
+        "",
+        "This is a report of a workflow that works for you, not a request from the user. Tell the user what it says, briefly and in your own words. Do not run the workflow again because of it.",
+      ].join("\n");
 
 export class WorkflowBotPosts extends Context.Service<
   WorkflowBotPosts,
@@ -56,6 +68,7 @@ export class WorkflowBotPosts extends Context.Service<
       readonly botId: string;
       readonly workflowTitle: string;
       readonly report: string;
+      readonly gate?: string | undefined;
     }) => Effect.Effect<string | null, WorkflowBotPostError>;
   }
 >()("t3/bots/workflows/publish/BotPosts/WorkflowBotPosts") {}
@@ -79,6 +92,7 @@ export const layer = Layer.effect(
       readonly botId: string;
       readonly workflowTitle: string;
       readonly report: string;
+      readonly gate?: string | undefined;
     }) {
       const bot = yield* find(input.botId);
       if (Option.isNone(bot)) return null;
@@ -112,7 +126,10 @@ export const layer = Layer.effect(
           notification: {
             source: { kind: "system" },
             outcome: "completed",
-            summary: `Workflow "${title}" reported`,
+            summary:
+              input.gate === undefined
+                ? `Workflow "${title}" reported`
+                : `Workflow "${title}" asks you to decide`,
             detail: input.report,
           },
           attachments: [],

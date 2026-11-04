@@ -20,6 +20,7 @@ import {
 import {
   checkOutput,
   classifyCommand,
+  ESCALATE,
   evalExpr,
   evalTemplateValue,
   gateReason,
@@ -531,7 +532,96 @@ export const decide = (
       thread: a?.threadId ?? null,
       // Why it failed, or why its acceptance check did not pass: what an item's report quotes.
       error: r?.error ?? null,
+      answer: a === undefined ? null : gateAnswer(stepKey(step, a.attempt)),
     };
+  };
+
+  /** The text of whoever decided a gate (a bot's answer, Israel's note), escalation followed. */
+  const gateAnswer = (gateKey: string): string | null => {
+    const decision = decisionOf(gateKey);
+    const final =
+      decision !== null && decision.option !== ESCALATE
+        ? decision
+        : decisionOf(`escalated:${gateKey}`);
+    return final?.note ?? null;
+  };
+
+  /**
+   * The decision a gate's step reads. A gate routed to the bot hands its ask to Israel, as gate
+   * `escalated:<key>`, when the bot picks `escalate` or the ask can never reach it; that gate's
+   * decision is then the one that counts. Opens Israel's gate when it is not open yet.
+   */
+  const gateDecision = (gateKey: string): GateDecided | null => {
+    const decision = decisionOf(gateKey);
+    const gate = state.gates.get(gateKey)?.intent;
+    if (gate?.bot === undefined) return decision;
+    const posted = resultOf(`ask:${gateKey}`);
+    const unreachable =
+      (posted?._tag === "IntentFailed" && !posted.retryable) ||
+      (posted?._tag === "BotPosted" && posted.threadId === null);
+    if (decision === null ? !unreachable : decision.option !== ESCALATE) return decision;
+    const escalatedKey = `escalated:${gateKey}`;
+    const escalated = decisionOf(escalatedKey);
+    if (escalated !== null) return escalated;
+    const { bot: _routed, ...ask } = gate;
+    const why = decision?.note?.trim();
+    record({
+      ...ask,
+      key: `open:${escalatedKey}`,
+      gateKey: escalatedKey,
+      ask: why ? `${gate.ask}\n\nThe workflow's bot could not resolve it: ${why}` : gate.ask,
+      options: gate.options.filter((option) => option !== ESCALATE),
+    });
+    return null;
+  };
+
+  /**
+   * Opens a gate, routed to the workflow's bot when `toBot`: the bot gets the ask in its
+   * conversation (`ask:<gateKey>`) instead of Israel's push, with `escalate` as one more option.
+   */
+  const openGate = (
+    gate: Omit<Extract<Intent, { readonly _tag: "OpenGate" }>, "_tag" | "key" | "bot">,
+    toBot: boolean,
+    threadId: string | null,
+  ) => {
+    const bot = toBot ? definition.bot : undefined;
+    if (bot === undefined) {
+      record({ _tag: "OpenGate", key: `open:${gate.gateKey}`, ...gate });
+      return;
+    }
+    const options = [...gate.options, ESCALATE];
+    record({ _tag: "OpenGate", key: `open:${gate.gateKey}`, ...gate, options, bot });
+    record({
+      _tag: "PostToBot",
+      key: `ask:${gate.gateKey}`,
+      step: gate.step,
+      botId: bot,
+      workflowTitle: definition.title,
+      gate: gate.gateKey,
+      report: [
+        gate.ask,
+        "",
+        `Run: ${runId}`,
+        `Gate: ${gate.gateKey}`,
+        `Options: ${options.join(", ")}`,
+        ...(threadId === null ? [] : [`Item thread: ${threadId}`]),
+      ].join("\n"),
+    });
+  };
+
+  /** The visible thread of the item a level belongs to, if a step of it opened one. */
+  const itemThread = (level: Level): string | null => {
+    if (level.prefix === "") return null;
+    for (const entry of state.intents.values()) {
+      const intent = entry.intent;
+      if (
+        intent._tag === "StartTurn" &&
+        intent.step.startsWith(level.prefix) &&
+        intent.threadId.startsWith("wfi:")
+      )
+        return intent.threadId;
+    }
+    return null;
   };
 
   const triggerRoot = (): JsonValue => {
@@ -899,7 +989,7 @@ export const decide = (
     if (Result.isFailure(workspace))
       return void resolve(step, attempt, "failed", "fail", null, workspace.failure);
     if (workspace.success === null) return;
-    const model = resolveModelUse(node.model, definition.models);
+    const model = resolveModelUse(node.model, definition.models, started.params);
     if (Result.isFailure(model))
       return void resolve(step, attempt, "failed", "fail", null, model.failure);
     const prompt = promptRender(
@@ -1444,23 +1534,26 @@ export const decide = (
         return progressCommand(node, step, { ...emptyAttempt(step, attempt) }, level);
       case "gate": {
         const gateKey = stepKey(step, attempt);
-        const decision = decisionOf(gateKey);
+        const decision = gateDecision(gateKey);
         if (decision !== null) return resolve(step, attempt, "succeeded", decision.option);
+        if (has(`open:${gateKey}`)) return;
         const ask = render(node.ask, envFor(level));
         if (Result.isFailure(ask))
           return resolve(step, attempt, "failed", "fail", null, ask.failure);
-        record({
-          _tag: "OpenGate",
-          key: `open:${gateKey}`,
-          step,
-          gateKey,
-          reason: "gate",
-          ask: ask.success,
-          short: gateReason(ask.success, { template: node.ask, title: node.title }),
-          options: [...(node.options ?? ["approve", "reject"])],
-          expiresAt:
-            node.expires === undefined ? null : isoOf(ctx.now + durationMs(node.expires.after)),
-        });
+        openGate(
+          {
+            step,
+            gateKey,
+            reason: "gate",
+            ask: ask.success,
+            short: gateReason(ask.success, { template: node.ask, title: node.title }),
+            options: [...(node.options ?? ["approve", "reject"])],
+            expiresAt:
+              node.expires === undefined ? null : isoOf(ctx.now + durationMs(node.expires.after)),
+          },
+          node.answerBy === "bot",
+          itemThread(level),
+        );
         return;
       }
       case "branch": {
@@ -1807,7 +1900,7 @@ export const decide = (
       case "command":
         return progressCommand(node, step, a, level);
       case "gate": {
-        const decision = decisionOf(stepKey(step, a.attempt));
+        const decision = gateDecision(stepKey(step, a.attempt));
         if (decision !== null) resolve(step, a.attempt, "succeeded", decision.option);
         return;
       }
@@ -1932,25 +2025,27 @@ export const decide = (
     record(needsYouNotice(definition.title, runId, { _tag: "fatigue", pause, streak }));
   }
 
-  // 2. Runtime requests: decline, or ask Israel when the step allows it.
+  // 2. Runtime requests: decline, or ask the bot or Israel when the step allows it.
   for (const request of state.requests.values()) {
     const answerKey = `answer:${request.requestId}`;
     if (has(answerKey)) continue;
     const node = nodeAt(compiled, request.step);
-    if (node?.kind === "agent" && node.askIsrael === true) {
+    if (node?.kind === "agent" && (node.askIsrael === true || node.askBot === true)) {
       const gateKey = `ask:${request.requestId}`;
-      const decision = decisionOf(gateKey);
+      const decision = gateDecision(gateKey);
       if (decision === null) {
-        record({
-          _tag: "OpenGate",
-          key: `open:${gateKey}`,
-          step: request.step,
-          gateKey,
-          reason: "question",
-          ask: request.text,
-          options: ["answer", "decline"],
-          expiresAt: null,
-        });
+        openGate(
+          {
+            step: request.step,
+            gateKey,
+            reason: "question",
+            ask: request.text,
+            options: ["answer", "decline"],
+            expiresAt: null,
+          },
+          node.askBot === true,
+          request.threadId,
+        );
         continue;
       }
       record({
@@ -2084,6 +2179,7 @@ export const decide = (
       const postedToBot = [...state.intents.values()].some(
         (entry) =>
           entry.intent._tag === "PostToBot" &&
+          entry.intent.gate === undefined &&
           !entry.intent.step.includes("[") &&
           entry.result?._tag === "BotPosted" &&
           entry.result.threadId !== null,
@@ -2136,6 +2232,8 @@ export const decide = (
   for (const fact of out) {
     if (fact.fact._tag !== "IntentRecorded" || fact.fact.intent._tag !== "OpenGate") continue;
     const gate = fact.fact.intent;
+    // A gate routed to the bot reaches it as a post; Israel's push comes if the bot escalates.
+    if (gate.bot !== undefined) continue;
     record(
       needsYouNotice(definition.title, runId, {
         _tag: "gate",

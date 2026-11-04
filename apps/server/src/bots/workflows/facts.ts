@@ -97,7 +97,11 @@ export const Intent = Schema.TaggedUnion({
     requestId: Text,
     answer: Schema.Union([Schema.Literal("decline"), Schema.Struct({ text: Text })]),
   },
-  /** Every gate is the owner's: only `gate.decide` with a user session answers it. */
+  /**
+   * Israel decides every gate through `gate.decide`. A gate with `bot` is also the workflow bot's:
+   * it gets the ask in its conversation instead of the push, and `workflow_gate_decide` lets that
+   * bot alone decide it. A protected or ambiguous gate never carries `bot`.
+   */
   OpenGate: {
     key: Text,
     step: Text,
@@ -108,6 +112,7 @@ export const Intent = Schema.TaggedUnion({
     short: Schema.optionalKey(Text),
     options: Schema.Array(Text),
     expiresAt: NullableText,
+    bot: Schema.optionalKey(Text),
   },
   /** One of the three notices the user gets; `key` names the event, so a resend deduplicates. */
   Notify: {
@@ -135,13 +140,18 @@ export const Intent = Schema.TaggedUnion({
     title: Text,
     body: Text,
   },
-  /** Key `post:<step>`: the output's report as a message in the bot's current main thread. */
+  /**
+   * Key `post:<step>` (`post:<node>:<item>` in a body): the output's report as a message in the
+   * bot's current main thread. Key `ask:<gateKey>` with `gate`: a gate routed to the bot, framed
+   * as a question it answers with `workflow_gate_decide`.
+   */
   PostToBot: {
     key: Text,
     step: Text,
     botId: Text,
     workflowTitle: Text,
     report: Text,
+    gate: Schema.optionalKey(Text),
   },
   /** Key `ticket:<ref>`: a kanban ticket (id or identifier) and its issue as a first message. */
   ReadTicket: { key: Text, ref: Text },
@@ -306,12 +316,15 @@ export const RunFact = Schema.TaggedUnion({
     requestKind: Text,
     text: Text,
   },
-  /** Key `gate:<gateKey>`: the first decision wins. */
+  /** Key `gate:<gateKey>`: the first decision wins. A bot's `note` is its answer. */
   GateDecided: {
     gateKey: Text,
     option: Text,
     note: NullableText,
-    by: Schema.Literals(["user", "expiry"]),
+    by: Schema.Union([
+      Schema.Literals(["user", "expiry"]),
+      Schema.TemplateLiteral(["bot:", Schema.String]),
+    ]),
     at: Text,
   },
   /** Key `control:<clientRequestId>`. */

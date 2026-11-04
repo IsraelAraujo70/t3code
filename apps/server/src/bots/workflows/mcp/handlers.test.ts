@@ -34,6 +34,7 @@ import { liveThreadsLayer } from "../../../mcp/McpToolAccess.testkit.ts";
 import { WorkflowToolkit } from "./tools.ts";
 import { layerOver } from "./handlers.ts";
 
+import { WorkflowJournalError } from "../Journal.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 
@@ -146,7 +147,25 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
             gates: [],
           }),
         ),
-      gateDecide: () => Effect.die("MCP must not decide gates"),
+      // The user's RPC path; a bot decides only through decideGate with its id.
+      gateDecide: () => Effect.die("MCP must not decide gates as the user"),
+      decideGate: (input) =>
+        input.gateKey === "protect:push@1"
+          ? Effect.fail(
+              new WorkflowJournalError({
+                message: "Gate protect:push@1 is not routed to this bot; only Israel decides it.",
+              }),
+            )
+          : record({ decideGate: input }).pipe(
+              Effect.as({
+                _tag: "GateDecided" as const,
+                gateKey: input.gateKey,
+                option: input.option,
+                note: input.note,
+                by: `bot:${input.bot}` as const,
+                at: "2026-01-01T00:00:00.000Z",
+              }),
+            ),
     }),
     liveThreadsLayer,
     NodeCrypto.layer,
@@ -280,14 +299,47 @@ const setup = Effect.fn("WorkflowHandlersTest.setup")(function* (
         }),
       ),
     list: () => run(toolkit.handle("workflow_list", {})),
+    decide: (gateKey = "ask@1") =>
+      run(
+        toolkit.handle("workflow_gate_decide", {
+          runId: WorkflowRunId.make("wfr_0123456789abcdef0123"),
+          gateKey,
+          option: "answer",
+          answer: "sqs",
+        }),
+      ),
   };
 });
 it.effect("rejects workflow steps before consulting services", () =>
   Effect.gen(function* () {
     const t = yield* setup("wf:wfr_0123456789abcdef0123:0123456789abcdef");
-    for (const call of [t.save, t.run, t.cancel])
+    for (const call of [t.save, t.run, t.cancel, () => t.decide()])
       expect(yield* call()).toMatchObject({ code: "capability_denied" });
     expect(yield* Ref.get(t.calls)).toEqual([]);
+  }),
+);
+it.effect("decides a gate as the calling bot, and passes on the engine's refusal", () =>
+  Effect.gen(function* () {
+    const t = yield* setup("bot:b_test:1");
+    expect(yield* t.decide()).toEqual({
+      gateKey: "ask@1",
+      option: "answer",
+      by: "bot:b_test",
+      decidedByYou: true,
+    });
+    expect(yield* Ref.get(t.calls)).toContainEqual({
+      decideGate: {
+        runId: "wfr_0123456789abcdef0123",
+        gateKey: "ask@1",
+        option: "answer",
+        note: "sqs",
+        bot: "b_test",
+      },
+    });
+    expect(yield* t.decide("protect:push@1")).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("only Israel decides it"),
+    });
   }),
 );
 it.effect("rejects non-bot threads", () =>

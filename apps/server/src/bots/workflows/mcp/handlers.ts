@@ -310,7 +310,7 @@ const handlers = (
   ),
   workflow_run_status: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      yield* callerBot;
+      const { bot } = yield* callerBot;
       const engine = yield* engineAvailable;
       const { summary, steps, gates } = yield* engine
         .runView(input)
@@ -323,6 +323,7 @@ const handlers = (
           ask: g.ask,
           options: g.options,
           decided: g.decision?.option ?? null,
+          routedToYou: g.bot === bot.id,
         })),
       };
     }),
@@ -339,6 +340,34 @@ const handlers = (
         )
         .pipe(Effect.mapError(runFailure));
       return { status: summary.status };
+    }),
+  ),
+  workflow_gate_decide: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { bot } = yield* callerBot;
+      const engine = yield* engineAvailable;
+      // The engine refuses a gate the run did not route to this bot: protected and ambiguous
+      // gates, Israel's own and another workflow's bot's alike.
+      const decision = yield* engine
+        .decideGate({
+          runId: input.runId,
+          gateKey: input.gateKey,
+          option: input.option,
+          note: input.answer ?? null,
+          bot: bot.id,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
+      return {
+        gateKey: decision.gateKey,
+        option: decision.option,
+        by: decision.by,
+        decidedByYou: decision.by === `bot:${bot.id}`,
+      };
     }),
   ),
   workflow_ledger: McpToolAccess.readsAsCaller((input) =>

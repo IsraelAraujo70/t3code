@@ -104,17 +104,20 @@ export function GateDecision(props: {
           {error ? <Notice tone="danger" message={error} /> : null}
           {allowed ? null : <Notice message="This device may not decide gates." />}
           <View className="gap-2">
-            {gate.options.map((option, index) => (
-              <Button
-                key={option}
-                label={option}
-                tone={gateOptionTone(option, index)}
-                fullWidth
-                loading={pending === option}
-                disabled={pending !== null || !allowed}
-                onPress={() => void submit(option)}
-              />
-            ))}
+            {/* `escalate` is how the bot hands the gate to Israel, not one of Israel's answers. */}
+            {gate.options
+              .filter((option) => gate.bot === undefined || option !== "escalate")
+              .map((option, index) => (
+                <Button
+                  key={option}
+                  label={option}
+                  tone={gateOptionTone(option, index)}
+                  fullWidth
+                  loading={pending === option}
+                  disabled={pending !== null || !allowed}
+                  onPress={() => void submit(option)}
+                />
+              ))}
           </View>
         </>
       )}

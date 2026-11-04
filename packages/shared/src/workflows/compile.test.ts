@@ -416,6 +416,99 @@ const FAILING: ReadonlyArray<FailingCase> = [
     },
   },
   {
+    name: "a gate for the bot in a workflow that works for no bot",
+    code: "bot",
+    path: "nodes.ask.answerBy",
+    change: (d) => {
+      d.nodes.ask = { kind: "gate", answerBy: "bot", ask: "Which?", options: ["go"] };
+      d.edges.push("test:fail -> ask");
+    },
+  },
+  {
+    name: "askBot in a workflow that works for no bot",
+    code: "bot",
+    path: "nodes.plan.askBot",
+    change: (d) => (d.nodes.plan.askBot = true),
+  },
+  {
+    name: "a bot's gate that declares escalate itself",
+    code: "port",
+    path: "nodes.ask.options",
+    change: (d) => {
+      d.bot = "b_trader";
+      d.nodes.ask = { kind: "gate", answerBy: "bot", ask: "Which?", options: ["escalate"] };
+      d.edges.push("test:fail -> ask");
+    },
+  },
+  {
+    name: "a gate's answer in argv",
+    code: "untrusted-in-argv",
+    path: "nodes.again.argv[2]",
+    change: (d) => {
+      d.nodes.ask = { kind: "gate", ask: "Which?", options: ["go"] };
+      d.nodes.again = {
+        kind: "command",
+        argv: ["node", "x.ts", "{{nodes.ask.answer}}"],
+        cwd: "integ",
+      };
+      d.edges.push("test:fail -> ask", "ask:go -> again");
+    },
+  },
+  {
+    name: "an enum on a list param",
+    code: "schema",
+    path: "params.list.enum",
+    change: (d) => (d.params.list = { type: "string[]", enum: ["a"] }),
+  },
+  {
+    name: "a default outside the enum",
+    code: "schema",
+    path: "params.pick.default",
+    change: (d) => (d.params.pick = { type: "string", enum: ["lead"], default: "sol" }),
+  },
+  {
+    name: "a model param whose value names no models entry",
+    code: "model-alias",
+    path: "params.pick.enum",
+    change: (d) => {
+      d.params.pick = { type: "string", enum: ["lead", "gpt-9"], default: "lead" };
+      d.nodes.plan.model = "$params.pick";
+    },
+  },
+  {
+    name: "a model from a param without an enum",
+    code: "model-alias",
+    path: "nodes.plan.model",
+    change: (d) => (d.nodes.plan.model = "$params.note"),
+  },
+  {
+    name: "a model from a param outside an agent node",
+    code: "model-alias",
+    path: "nodes.plan.accept.judge",
+    change: (d) => {
+      d.params.pick = { type: "string", enum: ["sol"] };
+      d.nodes.plan.accept = { judge: "$params.pick", criterion: "ok" };
+    },
+  },
+  {
+    name: "a continuation that switches from a param's model to a fixed one",
+    code: "thread-continue",
+    path: "nodes.fixup.thread",
+    change: (d) => {
+      d.params.pick = { type: "string", enum: ["lead", "sol"], default: "lead" };
+      d.nodes.plan.model = "$params.pick";
+      d.nodes.fixup = {
+        kind: "agent",
+        model: "$lead",
+        prompt: "Fix it",
+        workspace: "integ",
+        access: "write",
+        thread: "continue:plan",
+      };
+      d.edges.push("test:fail -> fixup");
+    },
+  },
+  {
     name: "a per-item worktree used outside a map body",
     code: "template-root",
     path: "workspaces.integ.perItem",
@@ -535,6 +628,29 @@ describe("compileWorkflow", () => {
       postToBot: true,
     };
     def.edges.push("test:fail -> fleet", "fleet -> report");
+    expect(diagnosticsOf(def)).toEqual([]);
+  });
+
+  it("compiles gates the bot answers and a model a param picks from a closed set", () => {
+    const def = base();
+    def.bot = "b_trader";
+    def.params.model = {
+      type: "string",
+      enum: ["claude-opus-5-5", "gpt-6.1-sol"],
+      default: "claude-opus-5-5",
+    };
+    def.nodes.plan.model = "$params.model";
+    def.nodes.plan.askBot = true;
+    def.nodes.ask = { kind: "gate", answerBy: "bot", ask: "Which?", options: ["answer"] };
+    def.nodes.resume = {
+      kind: "agent",
+      model: "$params.model",
+      prompt: "Answer: {{nodes.ask.answer}}",
+      workspace: "integ",
+      access: "write",
+      thread: "continue:plan",
+    };
+    def.edges.push("test:fail -> ask", "ask:answer -> resume");
     expect(diagnosticsOf(def)).toEqual([]);
   });
 

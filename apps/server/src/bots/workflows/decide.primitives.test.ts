@@ -124,6 +124,96 @@ describe("run decider primitives", () => {
     });
   });
 
+  it("asks the bot first with askBot, and an escalation reaches Israel with a push", () => {
+    const BOT = `b_${"b".repeat(32)}`;
+    const run = TestRun.start(
+      compile({ bot: BOT, nodes: { a: { ...agent, askBot: true } }, edges: [] }),
+    );
+    run.drive();
+    run.add("result:ws:integ", {
+      _tag: "WorkspaceReady",
+      name: "integ",
+      path: "/work/integ",
+      branch: "wf/demo",
+      headSha: "abc",
+    });
+    run.drive();
+    run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "thread-a" }, T0);
+    run.add("request:r1", {
+      _tag: "RuntimeRequest",
+      step: "a",
+      attempt: 1,
+      threadId: "thread-a",
+      requestId: "r1",
+      requestKind: "user-input",
+      text: "Postgres or SQLite?",
+    });
+    const asked = keysOf(run.drive());
+    expect(run.intent("open:ask:r1")).toMatchObject({
+      bot: BOT,
+      options: ["answer", "decline", "escalate"],
+    });
+    expect(run.intent("ask:ask:r1")).toMatchObject({ _tag: "PostToBot", gate: "ask:r1" });
+    const post = run.intent("ask:ask:r1");
+    expect(post?._tag === "PostToBot" && post.report).toContain("Item thread: thread-a");
+    expect(asked).not.toContain("notify:gate:ask:r1");
+    run.add("gate:ask:r1", {
+      _tag: "GateDecided",
+      gateKey: "ask:r1",
+      option: "escalate",
+      note: "a product call",
+      by: `bot:${BOT}`,
+      at: iso(T0),
+    });
+    const escalated = keysOf(run.drive());
+    const israel = run.intent("open:escalated:ask:r1");
+    expect(israel).toMatchObject({ options: ["answer", "decline"] });
+    expect(israel !== undefined && "bot" in israel).toBe(false);
+    expect(israel?._tag === "OpenGate" && israel.ask).toContain("a product call");
+    expect(escalated).toContain("notify:gate:escalated:ask:r1");
+    expect(run.intent("answer:r1")).toBeUndefined();
+    run.add("gate:escalated:ask:r1", {
+      _tag: "GateDecided",
+      gateKey: "escalated:ask:r1",
+      option: "answer",
+      note: "SQLite",
+      by: "user",
+      at: iso(T0),
+    });
+    run.drive();
+    expect(run.intent("answer:r1")).toMatchObject({ answer: { text: "SQLite" } });
+  });
+
+  it.each([
+    [undefined, { provider: "claude", model: "claude-opus-5-5" }],
+    ["gpt-6.1-sol", { provider: "codex", model: "gpt-6.1-sol", effort: "low" }],
+  ])("starts the turn on the model param %s picks", (model, expected) => {
+    const run = TestRun.start(
+      compile({
+        params: {
+          model: {
+            type: "string",
+            enum: ["claude-opus-5-5", "gpt-6.1-sol"],
+            default: "claude-opus-5-5",
+          },
+        },
+        nodes: { a: { ...agent, model: "$params.model" } },
+        edges: [],
+      }),
+      runStarted({ params: { model: model ?? "claude-opus-5-5" } }),
+    );
+    run.drive();
+    run.add("result:ws:integ", {
+      _tag: "WorkspaceReady",
+      name: "integ",
+      path: "/work/integ",
+      branch: "wf/demo",
+      headSha: "abc",
+    });
+    run.drive();
+    expect(run.intent("turn:a@1")).toMatchObject({ _tag: "StartTurn", model: expected });
+  });
+
   it("cancels and interrupts a running turn in one pass", () => {
     const run = running();
     run.add("control:x", {

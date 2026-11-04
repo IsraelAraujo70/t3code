@@ -67,3 +67,34 @@ it.each([
     ),
   ).toEqual(expected);
 });
+
+it.each([
+  [{}, { ok: true, params: { model: "claude-opus-5-5" } }],
+  [{ model: "gpt-6.1-sol" }, { ok: true, params: { model: "gpt-6.1-sol" } }],
+  [
+    { model: "claude-opus-5-5 --dangerously" },
+    {
+      ok: false,
+      errors: [
+        {
+          param: "model",
+          message:
+            'model: "claude-opus-5-5 --dangerously" is not one of claude-opus-5-5, gpt-6.1-sol',
+        },
+      ],
+    },
+  ],
+])("decodes a closed set %j", (input, expected) => {
+  expect(
+    decodeRunParams(
+      {
+        model: {
+          type: "string",
+          enum: ["claude-opus-5-5", "gpt-6.1-sol"],
+          default: "claude-opus-5-5",
+        },
+      },
+      input,
+    ),
+  ).toEqual(expected);
+});
