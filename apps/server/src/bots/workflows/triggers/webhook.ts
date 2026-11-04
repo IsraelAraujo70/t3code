@@ -13,7 +13,7 @@ import {
   type WorkflowTrigger,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -187,7 +187,7 @@ export const makeReconciler = Effect.fn("WorkflowWebhooks.makeReconciler")(funct
   const tasks = yield* ScheduledTaskService.ScheduledTaskService;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const context = yield* Effect.context<SqlClient.SqlClient | Journal>();
   const listTriggerTargets = yield* makeTriggerTargets;
 
@@ -199,7 +199,7 @@ export const makeReconciler = Effect.fn("WorkflowWebhooks.makeReconciler")(funct
     const file = path.join(options.secretsDir, `${workflowId}.${triggerId}`);
     if (yield* fs.exists(file)) return (yield* fs.readFileString(file)).trim();
     yield* fs.makeDirectory(options.secretsDir, { recursive: true, mode: 0o700 });
-    const secret = Buffer.from(yield* crypto.randomBytes(32)).toString("hex");
+    const secret = Buffer.from(yield* random.randomBytes(32)).toString("hex");
     yield* fs.writeFileString(file, `${secret}\n`, { mode: 0o600 });
     return secret;
   });

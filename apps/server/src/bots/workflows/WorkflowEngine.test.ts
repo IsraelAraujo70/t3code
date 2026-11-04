@@ -187,6 +187,12 @@ it.effect("promotes behind 200 finished runs reading only the facts that can dec
         }),
       );
       assert.equal(ended.fact._tag === "RunEnded" && ended.fact.status, "succeeded");
+      // The ended run stays live, its actor still reading, until its end notice and cleanup settle.
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({
+          until: () => journal.liveRuns.pipe(Effect.map((ids) => !ids.includes(runId))),
+        }),
+      );
       assert.isBelow(reads.facts, 100);
 
       // The fatigue limit still trips on the latest outcomes, behind 201 successes.

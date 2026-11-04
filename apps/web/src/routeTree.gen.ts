@@ -22,6 +22,7 @@ import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
+import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatWorkflowsEnvironmentIdRouteImport } from './routes/_chat.workflows.$environmentId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
@@ -122,6 +123,12 @@ const ChatKanbanRoute = ChatKanbanRouteImport.update({
   path: '/kanban',
   getParentRoute: () => ChatRoute,
 } as any)
+const ThreadsEnvironmentIdThreadIdRoute =
+  ThreadsEnvironmentIdThreadIdRouteImport.update({
+    id: '/threads/$environmentId/$threadId',
+    path: '/threads/$environmentId/$threadId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ChatWorkflowsEnvironmentIdRoute =
   ChatWorkflowsEnvironmentIdRouteImport.update({
     id: '/workflows/$environmentId',
@@ -352,6 +359,7 @@ export interface FileRoutesByFullPath {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/workflows/$environmentId': typeof ChatWorkflowsEnvironmentIdRouteWithChildren
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/workflows/$environmentId/$workflowId': typeof ChatWorkflowsEnvironmentIdWorkflowIdRoute
   '/workflows/$environmentId/ledger': typeof ChatWorkflowsEnvironmentIdLedgerRoute
   '/workflows/$environmentId/': typeof ChatWorkflowsEnvironmentIdIndexRoute
@@ -400,6 +408,7 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/workflows/$environmentId/$workflowId': typeof ChatWorkflowsEnvironmentIdWorkflowIdRoute
   '/workflows/$environmentId/ledger': typeof ChatWorkflowsEnvironmentIdLedgerRoute
   '/workflows/$environmentId': typeof ChatWorkflowsEnvironmentIdIndexRoute
@@ -451,6 +460,7 @@ export interface FileRoutesById {
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/_chat/workflows/$environmentId': typeof ChatWorkflowsEnvironmentIdRouteWithChildren
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/_chat/workflows/$environmentId/$workflowId': typeof ChatWorkflowsEnvironmentIdWorkflowIdRoute
   '/_chat/workflows/$environmentId/ledger': typeof ChatWorkflowsEnvironmentIdLedgerRoute
   '/_chat/workflows/$environmentId/': typeof ChatWorkflowsEnvironmentIdIndexRoute
@@ -502,6 +512,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/workflows/$environmentId'
+    | '/threads/$environmentId/$threadId'
     | '/workflows/$environmentId/$workflowId'
     | '/workflows/$environmentId/ledger'
     | '/workflows/$environmentId/'
@@ -550,6 +561,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/threads/$environmentId/$threadId'
     | '/workflows/$environmentId/$workflowId'
     | '/workflows/$environmentId/ledger'
     | '/workflows/$environmentId'
@@ -600,6 +612,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
     | '/_chat/workflows/$environmentId'
+    | '/threads/$environmentId/$threadId'
     | '/_chat/workflows/$environmentId/$workflowId'
     | '/_chat/workflows/$environmentId/ledger'
     | '/_chat/workflows/$environmentId/'
@@ -614,6 +627,7 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  ThreadsEnvironmentIdThreadIdRoute: typeof ThreadsEnvironmentIdThreadIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -708,6 +722,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/kanban'
       preLoaderRoute: typeof ChatKanbanRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/threads/$environmentId/$threadId': {
+      id: '/threads/$environmentId/$threadId'
+      path: '/threads/$environmentId/$threadId'
+      fullPath: '/threads/$environmentId/$threadId'
+      preLoaderRoute: typeof ThreadsEnvironmentIdThreadIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_chat/workflows/$environmentId': {
       id: '/_chat/workflows/$environmentId'
@@ -1080,6 +1101,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  ThreadsEnvironmentIdThreadIdRoute: ThreadsEnvironmentIdThreadIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -18,6 +18,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -49,7 +50,18 @@ interface Seen {
     readonly nativeThreadId: string | null;
     readonly mcpServers: ReadonlyArray<string>;
   }>;
+  /** Completes once the provider received the turn, keyed by `thread:text`. */
+  readonly started: Map<string, Deferred.Deferred<void>>;
 }
+
+const turnStarted = (seen: Seen, thread: ThreadId, text: string) => {
+  const key = `${thread}:${text}`;
+  const existing = seen.started.get(key);
+  if (existing !== undefined) return existing;
+  const created = Deferred.makeUnsafe<void>();
+  seen.started.set(key, created);
+  return created;
+};
 
 /**
  * Like `claude`, each session reads the MCP servers configured when its process starts and keeps
@@ -122,6 +134,7 @@ function makeAdapter(
                 nativeThreadId: turn.providerThread.nativeThreadRef?.nativeId ?? null,
                 mcpServers,
               });
+              yield* Deferred.succeed(turnStarted(seen, turn.threadId, text), undefined);
               const providerTurnId = ProviderTurnId.make(`provider-turn:${turn.attemptId}`);
               const occurredAt = yield* DateTime.now;
               const status = text === "hold" ? "running" : "completed";
@@ -196,7 +209,7 @@ const withRuntime = <A, E>(
 ) =>
   Effect.gen(function* () {
     const cwd = yield* checkpointWorkspace(name);
-    const seen: Seen = { opens: [], turns: [] };
+    const seen: Seen = { opens: [], turns: [], started: new Map() };
     const config = { mcpServers: ["t3-code"] as ReadonlyArray<string> };
     // One in-memory database, shared by the runtime and the restart's projection reads.
     const database = SqlitePersistence.layerMemory;
@@ -263,6 +276,8 @@ const withRuntime = <A, E>(
           });
           yield* worker.drain();
           yield* Fiber.join(settled);
+          // A running run can be projected before the worker hands its turn to the provider.
+          yield* Deferred.await(turnStarted(seen, thread, text));
           yield* worker.drain();
         }).pipe(Effect.orDie);
       return yield* use({ config, restarts, send, orchestrator });

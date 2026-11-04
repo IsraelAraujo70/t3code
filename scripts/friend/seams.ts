@@ -56,7 +56,7 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/server/src/auth/EnvironmentAuth.ts",
-    markers: 25,
+    markers: 23,
     why: "carry thread grants and confine granted sessions to their RPC socket",
   },
   {
@@ -398,8 +398,8 @@ export const SEAMS: readonly Seam[] = [
   },
   {
     file: "apps/mobile/src/features/voice-input/VoiceInputProvider.tsx",
-    markers: 7,
-    why: "server dictation where the device cannot transcribe; Android permission dialog",
+    markers: 4,
+    why: "server dictation where the device cannot transcribe",
   },
   {
     file: "apps/mobile/app.config.ts",

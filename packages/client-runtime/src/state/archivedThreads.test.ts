@@ -1,14 +1,18 @@
-import { EnvironmentId, OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Schema from "effect/Schema";
+import {
+  EnvironmentId,
+  type OrchestrationV2ArchivedShellSnapshot,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
 } from "./archivedThreads.ts";
+import { v2Project, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 it("does not expose an archived snapshot failure message", () => {
   const environmentId = EnvironmentId.make("env-sensitive");
@@ -19,6 +23,10 @@ it("does not expose an archived snapshot failure message", () => {
           Cause.fail(new Error("credential=secret-value")),
         ),
       ),
+    hiddenThreadTagsAtom: () => Atom.make(null),
+    hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
+    liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> => []),
+    anyEnvironmentHidingAtom: Atom.make(false),
     labelPrefix: "test:archived-thread-snapshots",
   });
   const registry = AtomRegistry.make();
@@ -32,54 +40,30 @@ it("does not expose an archived snapshot failure message", () => {
   registry.dispose();
 });
 
-const decodeArchivedSnapshot = Schema.decodeUnknownSync(OrchestrationV2ArchivedShellSnapshot);
-
 it("hides archived workflow steps while retaining ordinary threads and user forks", () => {
-  const workflowId = "wf:wfr_0123456789abcdef0123:0123456789abcdef";
-  const at = DateTime.makeUnsafe("2026-11-02T00:00:00.000Z");
-  const snapshot = decodeArchivedSnapshot({
+  const workflowId = ThreadId.make("wf:wfr_0123456789abcdef0123:0123456789abcdef");
+  const snapshot: OrchestrationV2ArchivedShellSnapshot = {
     schemaVersion: 1,
     snapshotSequence: 0,
     projects: [],
-    threads: [workflowId, "ordinary", "fork"].map((id) => ({
+    threads: [workflowId, ThreadId.make("ordinary"), ThreadId.make("fork")].map((id) => ({
+      ...v2ThreadShell,
       id,
-      projectId: "project",
-      title: id,
-      createdBy: "user",
-      creationSource: "web",
-      providerInstanceId: "codex",
-      modelSelection: { instanceId: "codex", model: "gpt-5" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
       lineage: {
         rootThreadId: id === "fork" ? workflowId : id,
         parentThreadId: id === "fork" ? workflowId : null,
         relationshipToParent: id === "fork" ? "fork" : null,
       },
-      forkedFrom: null,
-      activeProviderThreadId: null,
-      latestRunId: null,
-      activeRunId: null,
-      status: "idle",
-      pendingRuntimeRequest: null,
-      latestVisibleMessage: null,
-      latestUserMessageAt: null,
-      hasActionableProposedPlan: false,
-      itemCount: 0,
-      visibleItemCount: 0,
-      createdAt: at,
-      updatedAt: at,
-      archivedAt: at,
-      settledOverride: null,
-      settledAt: null,
-      deletedAt: null,
+      archivedAt: v2ThreadShell.createdAt,
     })),
-  });
+  };
   const environmentId = EnvironmentId.make("env");
   const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
     getSnapshotAtom: () => Atom.make(AsyncResult.success(snapshot)),
+    hiddenThreadTagsAtom: () => Atom.make(null),
+    hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
+    liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> => []),
+    anyEnvironmentHidingAtom: Atom.make(false),
     labelPrefix: "test:archive",
   });
   const registry = AtomRegistry.make();
@@ -92,4 +76,71 @@ it("hides archived workflow steps while retaining ordinary threads and user fork
   } finally {
     registry.dispose();
   }
+});
+
+describe("archived delegated tasks follow their parent on another machine", () => {
+  const parentEnvironmentId = EnvironmentId.make("env-parent");
+  const taskEnvironmentId = EnvironmentId.make("env-task");
+  const parentId = ThreadId.make("thread-parent");
+  const page = (
+    threads: OrchestrationV2ArchivedShellSnapshot["threads"],
+  ): OrchestrationV2ArchivedShellSnapshot => ({
+    schemaVersion: 1,
+    snapshotSequence: 1,
+    projects: [v2Project],
+    threads,
+  });
+  const taskPage = page([
+    {
+      ...v2ThreadShell,
+      id: ThreadId.make("thread-task"),
+      delegatedFrom: { environmentId: parentEnvironmentId, threadId: parentId, title: "p" },
+    },
+  ]);
+  const archivedTaggedParent = page([{ ...v2ThreadShell, id: parentId, tags: ["private"] }]);
+
+  it.each([
+    { name: "archived tagged parent", parentPage: archivedTaggedParent, live: false, tasks: 0 },
+    { name: "live visible parent", parentPage: page([]), live: true, tasks: 1 },
+    { name: "parent page not loaded yet", parentPage: null, live: false, tasks: 0 },
+    { name: "archive scoped to the task's machine", parentPage: undefined, live: false, tasks: 0 },
+    {
+      name: "only a third machine hides tags",
+      parentPage: page([]),
+      live: false,
+      tasks: 0,
+      parentTags: null,
+    },
+  ])("$name", ({ parentPage, live, tasks, parentTags = ["private"] }) => {
+    const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
+      getSnapshotAtom: (environmentId) =>
+        Atom.make(
+          environmentId === taskEnvironmentId
+            ? AsyncResult.success(taskPage)
+            : parentPage === null || parentPage === undefined
+              ? AsyncResult.initial<OrchestrationV2ArchivedShellSnapshot, Error>(true)
+              : AsyncResult.success(parentPage),
+        ),
+      hiddenThreadTagsAtom: (environmentId) =>
+        Atom.make(environmentId === parentEnvironmentId ? parentTags : null),
+      hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
+      liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> =>
+        live ? [{ environmentId: parentEnvironmentId, threadId: parentId }] : [],
+      ),
+      // The parent's machine hides tags; a scoped archive learns that only from this flag.
+      anyEnvironmentHidingAtom: Atom.make(true),
+      labelPrefix: "test:archived-thread-snapshots",
+    });
+    const registry = AtomRegistry.make();
+    const { snapshots } = registry.get(
+      snapshotsAtom(
+        makeArchivedThreadsEnvironmentKey(
+          parentPage === undefined ? [taskEnvironmentId] : [parentEnvironmentId, taskEnvironmentId],
+        ),
+      ),
+    );
+    const taskSnapshot = snapshots.find((entry) => entry.environmentId === taskEnvironmentId);
+    expect(taskSnapshot?.snapshot.threads.length).toBe(tasks);
+    registry.dispose();
+  });
 });
