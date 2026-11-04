@@ -22,6 +22,7 @@ const exited = (child: NodeChildProcess.ChildProcess) =>
 export const fakeSystemd = () => {
   const units = new Map<string, NodeChildProcess.ChildProcess>();
   const waiters = new Map<string, Array<() => void>>();
+  const startArgs = new Map<string, ReadonlyArray<string>>();
   const alive = (unit: string) => {
     const child = units.get(unit);
     return child !== undefined && child.exitCode === null && child.signalCode === null;
@@ -39,6 +40,7 @@ export const fakeSystemd = () => {
       if (command === "systemd-run") {
         const unit = args.find((arg) => arg.startsWith("--unit="))!.slice("--unit=".length);
         const argv = args.slice(args.indexOf("--") + 1);
+        startArgs.set(unit, args);
         units.set(unit, NodeChildProcess.spawn(argv[0]!, argv.slice(1), { stdio: "ignore" }));
         for (const wake of waiters.get(unit) ?? []) wake();
         waiters.delete(unit);
@@ -55,6 +57,8 @@ export const fakeSystemd = () => {
     run,
     /** Unit names, in start order, of units still running. */
     live: () => [...units.keys()].filter(alive),
+    /** The `systemd-run` arguments a unit was last started with. */
+    args: (unit: string) => startArgs.get(unit),
     /** Resolves once a unit of this name was started. */
     started: (unit: string) =>
       new Promise<void>((resolve) => {

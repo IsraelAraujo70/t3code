@@ -188,6 +188,16 @@ describe("run views", () => {
     });
   });
 
+  it.each([
+    [false, null],
+    [true, 200],
+  ])("reports a command's start delay as a wait only behind a lock (heavy %s)", (heavy, queued) => {
+    const run = prepare(compile({ nodes: { c: { ...command, heavy } } }));
+    run.add("result:unit:c@1", { _tag: "UnitSpawned", unit: "u", at: iso(T0) });
+    run.add("exited:c@1", unitExited("c", 1, 0, { queuedMs: 200 }));
+    expect(stepViews(run.compiled, run.state()).find((v) => v.key === "c")?.queuedMs).toBe(queued);
+  });
+
   it("shows a step waiting for a slot, then how long it waited for it", () => {
     const run = prepare(
       compile({ resources: { verify: { slots: 2 } }, nodes: { a: { ...agent, uses: "verify" } } }),

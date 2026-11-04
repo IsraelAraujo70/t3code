@@ -236,6 +236,29 @@ it.live("a holder unit that is stopped or killed frees its slot", () =>
   }).pipe(Effect.scoped),
 );
 
+it.live("a holder that is stopping is not adopted, so its slot is not reported held", () =>
+  Effect.gen(function* () {
+    using tmp = tempDir();
+    const hold = holdOf(tmp.dir, "a", 1);
+    NodeFS.mkdirSync(hold.receiptDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(hold.receiptDir, "held.json"), JSON.stringify({ slot: 0 }));
+    const slots = make({
+      node: process.execPath,
+      wfSlotPath: WF_SLOT,
+      slotsDir: tmp.dir,
+      // The old holder is deactivating; a new one cannot start under its name yet.
+      run: (command) =>
+        Effect.succeed(
+          command === "systemd-run"
+            ? { exitCode: 1, stdout: "", stderr: "Unit wf-slot-a.service already exists." }
+            : { exitCode: 0, stdout: "deactivating\n", stderr: "" },
+        ),
+    });
+    const error = yield* Effect.flip(slots.acquire(hold));
+    expect(error.message).toContain("already exists");
+  }),
+);
+
 it.live("an agent's slot waits while both are taken, and a cancelled wait takes none", () =>
   Effect.gen(function* () {
     using tmp = tempDir();

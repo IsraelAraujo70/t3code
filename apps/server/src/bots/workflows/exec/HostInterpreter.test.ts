@@ -22,7 +22,7 @@ import { WorkflowGit, WorkflowGitError } from "../git/Workspaces.ts";
 import { WorkflowInterpreter } from "../Interpreter.ts";
 import { WorkflowBotPosts } from "../publish/BotPosts.ts";
 import * as Journal from "../Journal.ts";
-import { RUN_ID, runStarted } from "../testkit/decideHarness.ts";
+import { RUN_ID, runStarted, turnSettled } from "../testkit/decideHarness.ts";
 import { keyHash } from "../ids.ts";
 import { fakeSystemd } from "../testkit/fakeSystemd.ts";
 import { layer, make, retryable } from "./HostInterpreter.ts";
@@ -135,6 +135,86 @@ describe("observe", () => {
         ).toEqual([["settled:a@1", true]]);
       }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provideMerge(executors))));
     }).pipe(Effect.scoped),
+  );
+});
+
+describe("unit output", () => {
+  itEffect.effect("masks a token a failing command printed before it reaches the journal", () =>
+    Effect.gen(function* () {
+      const unused = () => Effect.die("not used by unit output");
+      const executors = Layer.mergeAll(
+        Layer.succeed(
+          WorkflowTurns,
+          WorkflowTurns.of({
+            start: unused,
+            observe: () => Stream.die("not used"),
+            interrupt: unused,
+            answer: unused,
+          }),
+        ),
+        Layer.succeed(
+          WorkflowUnits,
+          WorkflowUnits.of({
+            start: unused,
+            observe: () =>
+              Effect.succeed({
+                exit: 128,
+                signal: null,
+                queuedMs: 0,
+                out: null,
+                parseError: null,
+                tail: "",
+                stderr:
+                  "fatal: could not read from https://ghp_AbCdEfGhIjKlMnOpQrStUv@github.com/o/r",
+                lost: false,
+                started: true,
+              }),
+            started: unused,
+            stop: unused,
+          }),
+        ),
+        Layer.succeed(
+          WorkflowGit,
+          WorkflowGit.of({
+            prepare: unused,
+            head: () => Effect.fail(new WorkflowGitError({ message: "no head" })),
+            tree: unused,
+            advance: unused,
+            mergeLocal: unused,
+            remove: unused,
+            release: unused,
+            resolveRef: unused,
+          }),
+        ),
+        Layer.succeed(ProjectService, ProjectService.of({} as ProjectService["Service"])),
+        Journal.layerMemory,
+      );
+      const intent: Intent = {
+        _tag: "StartUnit",
+        key: "unit:c@1",
+        step: "c",
+        attempt: 1,
+        argv: ["git", "fetch"],
+        cwd: { name: "integ", path: "/runs/integ" },
+        heavy: false,
+        replay: "safe",
+        timeoutMs: 60_000,
+        env: {},
+      };
+      const facts = yield* Effect.gen(function* () {
+        const interpreter = yield* WorkflowInterpreter;
+        return yield* interpreter
+          .observe(RUN_ID, intent, {
+            _tag: "UnitSpawned",
+            unit: "u",
+            at: "2026-11-02T00:00:00.000Z",
+          })
+          .pipe(Stream.runCollect);
+      }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provideMerge(executors))));
+      expect([...facts].map((f) => f.fact)).toMatchObject([
+        { _tag: "UnitExited", stderr: "fatal: could not read from https://***@github.com/o/r" },
+      ]);
+    }),
   );
 });
 
@@ -412,10 +492,16 @@ describe("resource slots", () => {
               yield* Queue.offer(starts, intent.threadId);
               return intent.threadId;
             }).pipe(Effect.orDie),
-          observe: (_runId, intent) =>
-            Stream.fromEffectDrain(
+          // The turn's end is the TurnSettled its observer reports, as the real one does.
+          observe: (runId, intent) =>
+            Stream.fromEffect(
               Deferred.await(ends.get(intent.threadId)!).pipe(
                 Effect.andThen(Effect.sync(() => void state.active--)),
+                Effect.as({
+                  stream: runStream(runId),
+                  key: `settled:${intent.step}@${intent.attempt}`,
+                  fact: turnSettled(intent.step, intent.attempt, "completed"),
+                }),
               ),
             ),
           interrupt: () => Effect.void,
@@ -474,11 +560,13 @@ describe("resource slots", () => {
       return fd !== null;
     };
     /** An interpreter as a server (re)start builds it; units and the journal outlive it. */
-    const interpreter = make({ runsDir: NodePath.join(dir, "runs") });
-    return { dir, systemd, starts, ends, state, executors, turn, free, interpreter };
+    const runsDir = NodePath.join(dir, "runs");
+    const interpreter = make({ runsDir });
+    return { dir, systemd, starts, ends, state, executors, turn, free, interpreter, runsDir };
   });
-  /** The holder unit name of a turn, as the interpreter derives it. */
-  const holderOf = (key: string) => `wf-slot-${keyHash(RUN_ID, `slot:${key}`)}`;
+  /** The holder unit name of a turn, as the interpreter derives it for `runsDir`. */
+  const holderOf = (runsDir: string, key: string) =>
+    `wf-slot-${keyHash(RUN_ID, `slot:${runsDir}:${key}`)}`;
 
   itEffect.live(
     "four agent turns on two slots run two at a time, and an abandoned start frees its slot",
@@ -545,8 +633,11 @@ describe("resource slots", () => {
         );
         const next = rig.turn(1, 1);
         const waiting = yield* Effect.forkChild(after.execute(RUN_ID, next));
-        yield* Effect.promise(() => rig.systemd.started(holderOf(next.key)));
-        expect(rig.systemd.live()).toEqual([holderOf(running.key), holderOf(next.key)]);
+        yield* Effect.promise(() => rig.systemd.started(holderOf(rig.runsDir, next.key)));
+        expect(rig.systemd.live()).toEqual([
+          holderOf(rig.runsDir, running.key),
+          holderOf(rig.runsDir, next.key),
+        ]);
         expect(rig.free(0)).toBe(false);
         expect([...rig.state.prompts.keys()]).toEqual([running.threadId]);
 
@@ -595,6 +686,112 @@ describe("resource slots", () => {
         expect(rig.state.prompts.get(replayed.threadId)).toContain("WF_SLOT=1");
         expect([rig.free(0), rig.free(1)]).toEqual([true, false]);
         yield* interpreter.abandon(RUN_ID, replayed);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("a shutdown that interrupts the observer leaves the holder running", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        rig.state.journal = yield* Journal.Journal;
+        const running = rig.turn(0, 1);
+        const before = yield* rig.interpreter;
+        yield* before.execute(RUN_ID, running);
+        const observer = yield* Effect.forkChild(
+          before
+            .observe(RUN_ID, running, { _tag: "TurnStarted", threadId: running.threadId })
+            .pipe(Stream.runDrain),
+        );
+        yield* Fiber.interrupt(observer);
+        expect(rig.systemd.live()).toEqual([holderOf(rig.runsDir, running.key)]);
+        expect(rig.free(0)).toBe(false);
+        // Its end, observed by the restarted server, is what frees the slot.
+        const after = yield* rig.interpreter;
+        yield* Deferred.succeed(rig.ends.get(running.threadId)!, undefined);
+        yield* after
+          .observe(RUN_ID, running, { _tag: "TurnStarted", threadId: running.threadId })
+          .pipe(Stream.runDrain);
+        expect(rig.systemd.live()).toEqual([]);
+        expect(rig.free(0)).toBe(true);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("a server on another runs directory never adopts this one's holder", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        rig.state.journal = yield* Journal.Journal;
+        const turn = rig.turn(0, 2);
+        const production = yield* rig.interpreter;
+        // Its own state directory, so its own journal (built in the test's scope, which outlives it).
+        const ownJournal = yield* Layer.build(Layer.fresh(Journal.layerMemory));
+        const testServer = yield* make({ runsDir: NodePath.join(rig.dir, "other-runs") }).pipe(
+          Effect.provide(ownJournal),
+        );
+        yield* production.execute(RUN_ID, turn);
+        // Same run id and key on the other server: its own holder, its own slot.
+        yield* testServer.execute(RUN_ID, { ...turn, key: turn.key });
+        expect(rig.systemd.live()).toHaveLength(2);
+        expect(rig.free(0) || rig.free(1)).toBe(false);
+        yield* production.abandon(RUN_ID, turn);
+        yield* testServer.abandon(RUN_ID, turn);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("a turn that ended while the server was down reserves no slot on restart", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        const journal = yield* Journal.Journal;
+        rig.state.journal = journal;
+        const interpreter = yield* rig.interpreter;
+        const other = rig.turn(1, 1);
+        yield* interpreter.execute(RUN_ID, other);
+        // The ended turn recorded slot 0, which `other` now holds; its holder is gone.
+        const ended = rig.turn(0, 1);
+        yield* journal.append([
+          {
+            stream: runStream(RUN_ID),
+            key: `slot:${ended.key}`,
+            fact: {
+              _tag: "SlotAcquired",
+              step: ended.step,
+              attempt: 1,
+              resource: "moneria-verify",
+              slot: 0,
+              waitedMs: 0,
+            },
+          },
+        ]);
+        rig.ends.set(ended.threadId, yield* Deferred.make<void>());
+        yield* Deferred.succeed(rig.ends.get(ended.threadId)!, undefined);
+        rig.state.active++;
+        yield* interpreter
+          .observe(RUN_ID, ended, { _tag: "TurnStarted", threadId: ended.threadId })
+          .pipe(Stream.runDrain);
+        expect(rig.systemd.live()).toEqual([holderOf(rig.runsDir, other.key)]);
+        yield* interpreter.abandon(RUN_ID, other);
+        expect(rig.free(0)).toBe(true);
+      }).pipe(Effect.provide(rig.executors));
+    }).pipe(Effect.scoped),
+  );
+
+  itEffect.live("a holder's runtime cap is the run's wall budget, not the host's", () =>
+    Effect.gen(function* () {
+      const rig = yield* slotRig;
+      yield* Effect.gen(function* () {
+        const journal = yield* Journal.Journal;
+        rig.state.journal = journal;
+        yield* journal.append([{ stream: runStream(RUN_ID), key: "started", fact: runStarted() }]);
+        const interpreter = yield* rig.interpreter;
+        const turn = rig.turn(0, 1);
+        yield* interpreter.execute(RUN_ID, turn);
+        // runStarted's wall is 2h: 7200 s plus 600 s of slack.
+        expect(rig.systemd.args(holderOf(rig.runsDir, turn.key))).toContain("RuntimeMaxSec=7800");
+        yield* interpreter.abandon(RUN_ID, turn);
       }).pipe(Effect.provide(rig.executors));
     }).pipe(Effect.scoped),
   );

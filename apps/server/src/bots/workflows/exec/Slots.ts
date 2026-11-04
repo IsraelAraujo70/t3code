@@ -54,8 +54,11 @@ export interface SlotsOptions {
   readonly run: UnitOptions["run"];
 }
 
-/** `systemctl is-active` states in which the holder may still hold or take a slot. */
-const LIVE_STATES = new Set(["active", "activating", "deactivating", "reloading", "refreshing"]);
+/**
+ * `systemctl is-active` states of a holder that holds or takes a slot. A `deactivating` holder is
+ * stopping and about to free its slot, so it is never adopted.
+ */
+const LIVE_STATES = new Set(["active", "activating", "reloading", "refreshing"]);
 
 const decodeHeld = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ slot: Schema.Number })),

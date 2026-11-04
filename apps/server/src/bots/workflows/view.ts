@@ -222,14 +222,19 @@ const subStepStatus = (a: StepAttempt, state: RunState): WorkflowStepAttemptView
 /** One view per attempt of every step, in the order the attempts started (`firstSeq`). */
 
 /**
- * By `<step>@<attempt>`, the resource its starts `uses` and whether one of them waits for a slot
- * now: a turn that has not started, or a unit that has neither started its argv nor exited.
+ * By `<step>@<attempt>`, the lock its starts wait for: the resource they `uses` (null for the heavy
+ * lock), and whether one of them waits for a slot now (a turn that has not started, or a unit that
+ * has neither started its argv nor exited). Starts that take no lock are absent.
  */
 const slotUses = (state: RunState) => {
-  const uses = new Map<string, { readonly resource: string; readonly waiting: boolean }>();
+  const uses = new Map<string, { readonly resource: string | null; readonly waiting: boolean }>();
   for (const [key, { intent, result }] of state.intents) {
-    if ((intent._tag !== "StartTurn" && intent._tag !== "StartUnit") || intent.uses === undefined)
+    if (intent._tag !== "StartTurn" && intent._tag !== "StartUnit") continue;
+    if (intent.uses === undefined) {
+      if (intent._tag === "StartUnit" && intent.heavy)
+        uses.set(`${intent.step}@${intent.attempt}`, { resource: null, waiting: false });
       continue;
+    }
     const id = `${intent.step}@${intent.attempt}`;
     const exited = state.attempts
       .get(intent.step)
@@ -286,7 +291,10 @@ export const stepViews = (
       threadId: a.threadId ? ThreadId.make(a.threadId) : null,
       startedAt: a.startedAt,
       endedAt: a.resolved?.at ?? null,
-      queuedMs: a.exited?.queuedMs ?? a.slot?.waitedMs ?? null,
+      // Only a lock's wait: any unit also spends a moment between spawn and start.
+      queuedMs: slots.has(`${a.step}@${a.attempt}`)
+        ? (a.exited?.queuedMs ?? a.slot?.waitedMs ?? null)
+        : null,
       resource: slots.get(`${a.step}@${a.attempt}`)?.resource ?? null,
       waitingFor:
         a.resolved === null && slots.get(`${a.step}@${a.attempt}`)?.waiting === true
