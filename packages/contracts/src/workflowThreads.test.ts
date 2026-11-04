@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isWorkflowStepLineage,
   isWorkflowStepThreadId,
+  parseWorkflowItemThreadId,
   parseWorkflowStepThreadId,
+  workflowItemThreadId,
   workflowStepThreadId,
 } from "./workflowThreads.ts";
 import { ThreadId } from "./baseSchemas.ts";
@@ -38,15 +40,21 @@ describe("workflow step thread ids", () => {
     ["WF:x", false],
     ["bot:abc:1", false],
     ["thread-wf:x", false],
+    // A visible step thread is listed like any thread.
+    [`wfi:${RUN}:${KEY16}`, false],
     ["", false],
   ] as const)("prefix check %s is %s", (threadId, expected) => {
     expect(isWorkflowStepThreadId(threadId)).toBe(expected);
   });
 
-  it("round-trips the builder through the parser", () => {
+  it("round-trips the builders through the parsers", () => {
     const threadId = workflowStepThreadId(RUN, KEY64);
     expect(threadId).toBe(`wf:${RUN}:${KEY64}`);
     expect(parseWorkflowStepThreadId(threadId)).toEqual({ runId: RUN, keyHash: KEY64 });
+    const visible = workflowItemThreadId(RUN, KEY16);
+    expect(visible).toBe(`wfi:${RUN}:${KEY16}`);
+    expect(parseWorkflowItemThreadId(visible)).toEqual({ runId: RUN, keyHash: KEY16 });
+    expect(parseWorkflowStepThreadId(visible)).toBeNull();
   });
 
   it.each([
@@ -64,6 +72,7 @@ describe("workflow step thread ids", () => {
     ["subagent", `wf:${RUN}:${KEY16}`, false],
     ["fork", `wf:${RUN}:${KEY16}`, true],
     [null, "thread-1", true],
+    [null, `wfi:${RUN}:${KEY16}`, true],
   ] as const)(
     "lists a %s thread rooted at %s: %s",
     (relationshipToParent, rootThreadId, expected) => {

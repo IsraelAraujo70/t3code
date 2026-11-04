@@ -416,26 +416,51 @@ const FAILING: ReadonlyArray<FailingCase> = [
     },
   },
   {
-    name: "a post to the bot from a map body, once per item",
-    code: "bot",
-    path: "nodes.each.body.nodes.say.postToBot",
+    name: "a per-item worktree used outside a map body",
+    code: "template-root",
+    path: "workspaces.integ.perItem",
     change: (d) => {
-      d.bot = "b_trader";
+      d.workspaces.integ.perItem = true;
+    },
+  },
+  {
+    name: "an agent-owned worktree that names a branch",
+    code: "schema",
+    path: "workspaces.integ.branch",
+    change: (d) => {
+      d.workspaces.integ.branchPolicy = "agent";
+    },
+  },
+  {
+    name: "a visible thread on a read-only checkout",
+    code: "thread-continue",
+    path: "nodes.plan.thread",
+    change: (d) => {
+      d.nodes.plan.access = "read";
+      d.nodes.plan.thread = { visible: true };
+    },
+  },
+  {
+    name: "a list param whose default is longer than maxItems",
+    code: "schema",
+    path: "params.tickets.default",
+    change: (d) => {
+      d.params.tickets = { type: "string[]", maxItems: 1, default: ["A-1", "A-2"] };
+    },
+  },
+  {
+    name: "a list param without a pattern reaching argv through a map item",
+    code: "untrusted-in-argv",
+    path: "nodes.each.body.nodes.check.argv[2]",
+    change: (d) => {
+      d.params.tickets = { type: "string[]" };
       d.nodes.each = {
         kind: "map",
-        items: "[1, 2]",
+        items: "params.tickets",
         maxItems: 2,
         concurrency: 1,
         body: {
-          nodes: {
-            say: {
-              kind: "output",
-              status: "no_change",
-              value: {},
-              report: "item",
-              postToBot: true,
-            },
-          },
+          nodes: { check: { kind: "command", argv: ["node", "t.ts", "{{item}}"], cwd: "integ" } },
           edges: [],
         },
       };
@@ -462,6 +487,55 @@ describe("compileWorkflow", () => {
     const def = base();
     change(def);
     expect(diagnosticsOf(def, host)).toContainEqual(expect.objectContaining({ code, path }));
+  });
+
+  it("compiles a ticket fleet: list param, per-item agent worktree, visible thread, item posts", () => {
+    const def = base();
+    def.bot = "b_trader";
+    def.params.tickets = { type: "string[]", maxItems: 10, pattern: "[A-Z]+-\\d+" };
+    def.workspaces.ticket = {
+      project: "t3code",
+      base: "{{params.base}}",
+      perItem: true,
+      branchPolicy: "agent",
+    };
+    def.nodes.fleet = {
+      kind: "map",
+      items: "params.tickets",
+      maxItems: 10,
+      concurrency: 2,
+      body: {
+        nodes: {
+          work: {
+            kind: "agent",
+            model: "$lead",
+            prompt: "Do {{item}}",
+            workspace: "ticket",
+            access: "write",
+            thread: { visible: true, kanbanCard: "{{item}}" },
+            accept: { argv: ["node", "gate.ts", "{{item}}"], check: "exit == 0" },
+            retry: { max: 2, on: ["failed"] },
+          },
+          said: {
+            kind: "output",
+            status: "ready_for_review",
+            value: { ticket: "{{item}}", reason: "{{nodes.work.error}}" },
+            report: "{{item}} done",
+            postToBot: true,
+          },
+        },
+        edges: ["work -> said"],
+      },
+    };
+    def.nodes.report = {
+      kind: "output",
+      status: "ready_for_review",
+      value: {},
+      report: "{{ table(nodes.fleet.output, 'ticket', 'reason') }}",
+      postToBot: true,
+    };
+    def.edges.push("test:fail -> fleet", "fleet -> report");
+    expect(diagnosticsOf(def)).toEqual([]);
   });
 
   it("accepts a protected command: the engine gates it on Israel's approval when it runs", () => {

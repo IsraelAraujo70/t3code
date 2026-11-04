@@ -859,13 +859,34 @@ it.effect("owner runs validate params and expose their trigger payload", () =>
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "WorkflowsError");
       assert.include(error.message, "n");
+      const tooMany = yield* engine
+        .startRun(
+          {
+            workflowId: WorkflowId.make("demo"),
+            clientRequestId: "too-many",
+            params: { tickets: ["A-1", "A-2", "A-3"] },
+          },
+          "Owner",
+        )
+        .pipe(Effect.flip);
+      assert.include(tooMany.message, "tickets has 3 items; at most 2");
     }).pipe(
       Effect.scoped,
       Effect.provide(
         Layer.mergeAll(
           layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
           interpreter,
-          layerCatalog([compile({ params: { n: { type: "number", default: 1 } } })], false),
+          layerCatalog(
+            [
+              compile({
+                params: {
+                  n: { type: "number", default: 1 },
+                  tickets: { type: "string[]", default: [], maxItems: 2 },
+                },
+              }),
+            ],
+            false,
+          ),
         ),
       ),
     );
@@ -996,5 +1017,210 @@ it.effect("posts nothing for an empty report and keeps the finished push", () =>
       ),
     );
     assert.equal(fake.posts.size, 0);
+  }).pipe(Effect.provide(BotsDb.layerMemory)),
+);
+
+// ── ticket fleet: one visible, card-linked thread and worktree per item ─────────────────────────
+
+const TICKETS = [
+  { id: "ticket-a", identifier: "BACK-1", title: "Fails its gate" },
+  { id: "ticket-b", identifier: "BACK-2", title: "Passes" },
+];
+const fleet = compile({
+  bot: BOT,
+  params: { tickets: { type: "string[]", maxItems: 10, pattern: "[A-Z]+-\\d+" } },
+  workspaces: {
+    item: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
+  },
+  nodes: {
+    fleet: {
+      kind: "map",
+      items: "params.tickets",
+      maxItems: 10,
+      concurrency: 2,
+      body: {
+        nodes: {
+          implement: {
+            kind: "agent",
+            model: "$lead",
+            prompt: "Implement {{ item }}.",
+            workspace: "item",
+            access: "write",
+            thread: { visible: true, kanbanCard: "{{ item }}" },
+            accept: { argv: ["node", "gate.ts"], check: "exit == 0" },
+            retry: { max: 1, on: ["failed"] },
+          },
+          publish: {
+            kind: "agent",
+            model: "$lead",
+            prompt: "Open the pull request.",
+            workspace: "item",
+            access: "write",
+            thread: "continue:implement",
+            output: { pr: { type: "string" } },
+          },
+          done: {
+            kind: "output",
+            status: "ready_for_review",
+            value: { ticket: "{{ item }}", status: "done", pr: "{{ nodes.publish.output.pr }}" },
+            report: "{{ item }}: {{ nodes.publish.output.pr }}",
+            postToBot: true,
+          },
+          blocked: {
+            kind: "output",
+            status: "blocked",
+            value: {
+              ticket: "{{ item }}",
+              status: "blocked",
+              reason: "{{ nodes.implement.error }}",
+            },
+            report: "{{ item }} blocked",
+            postToBot: true,
+          },
+        },
+        edges: ["implement -> publish", "implement:fail -> blocked", "publish -> done"],
+      },
+    },
+    report: {
+      kind: "output",
+      status: "ready_for_review",
+      value: {},
+      report: "{{ table(nodes.fleet.output, 'ticket', 'status', 'pr', 'reason') }}",
+      postToBot: true,
+    },
+  },
+  edges: ["fleet -> report"],
+});
+const fleetScripts = {
+  tickets: TICKETS,
+  units: {
+    "fleet[0]/implement/accept": { exit: 1, tail: "lint: 2 errors in src/a.ts" },
+    "fleet[1]/implement/accept": { exit: 0 },
+  },
+  turns: { "fleet[1]/publish": { output: { pr: "https://github.com/o/r/pull/7" } } },
+};
+const fleetStart = { ...request("manual:fleet"), params: { tickets: ["BACK-1", "BACK-2"] } };
+
+it.effect("runs each ticket in its own visible, card-linked thread and worktree", () =>
+  Effect.gen(function* () {
+    const { fake, layer } = yield* makeFakeInterpreter(fleetScripts);
+    yield* Effect.gen(function* () {
+      const subscription = yield* (yield* Journal).subscribe;
+      const engine = yield* make({ runsDir: "/runs" });
+      const { runId } = yield* engine.start(fleetStart);
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "ended" }),
+      );
+      const state = yield* engine.runState(runId);
+      assert.equal(state.ended?.status, "succeeded");
+      const turn = (key: string) => {
+        const intent = state.intents.get(key)?.intent;
+        assert.equal(intent?._tag, "StartTurn");
+        return intent as Extract<Intent, { _tag: "StartTurn" }>;
+      };
+      // One listed `wfi:` thread per item; the continuation and the retry stay in it.
+      const first = turn("turn:fleet[0]/implement@1");
+      const second = turn("turn:fleet[1]/implement@1");
+      assert.match(first.threadId, /^wfi:wfr_[0-9a-f]{20}:[0-9a-f]{32}$/);
+      assert.notEqual(first.threadId, second.threadId);
+      assert.equal(first.mode, "new");
+      assert.equal(first.title, "BACK-1 Fails its gate");
+      assert.include(first.prompt, "Kanban ticket BACK-1");
+      assert.include(first.prompt, "Implement BACK-1.");
+      assert.equal(turn("turn:fleet[1]/publish@1").threadId, second.threadId);
+      // Each item works in its own worktree, on a branch the agent names, behind the push guard.
+      assert.equal(first.workspace.name, "item#fleet[0]");
+      assert.equal(second.workspace.name, "item#fleet[1]");
+      assert.deepEqual([...fake.workspaces.keys()].sort(), ["item#fleet[0]", "item#fleet[1]"]);
+      for (const ws of fake.workspaces.values()) {
+        assert.isNull(ws.branch);
+        assert.deepEqual(ws.agentBranch?.protect, ["main", "master", "friend/main"]);
+      }
+      assert.deepEqual(
+        [...fake.links].sort(),
+        [`ticket-a ${first.threadId}`, `ticket-b ${second.threadId}`].sort(),
+      );
+      // The failed acceptance goes back to the same thread with its reason, up to retry.max.
+      const retried = turn("turn:fleet[0]/implement@2");
+      assert.equal(retried.threadId, first.threadId);
+      assert.equal(retried.mode, "continue");
+      assert.include(retried.prompt, "did not pass: `node gate.ts` exited 1");
+      assert.include(retried.prompt, "lint: 2 errors in src/a.ts");
+      assert.isFalse(state.intents.has("turn:fleet[0]/implement@3"));
+      // The blocked item does not stop the other: both are in the map's result and the report.
+      const items = state.attempts.get("fleet")?.at(-1)?.resolved?.output;
+      assert.deepEqual(items, [
+        {
+          ticket: "BACK-1",
+          status: "blocked",
+          reason: "`node gate.ts` exited 1:\nlint: 2 errors in src/a.ts",
+        },
+        { ticket: "BACK-2", status: "done", pr: "https://github.com/o/r/pull/7" },
+      ]);
+      assert.deepEqual([...fake.posts.values()].map((p) => p.report).sort(), [
+        "BACK-1 blocked",
+        "BACK-2: https://github.com/o/r/pull/7",
+        [
+          "| ticket | status | pr | reason |",
+          "| --- | --- | --- | --- |",
+          "| BACK-1 | blocked |  | `node gate.ts` exited 1: lint: 2 errors in src/a.ts |",
+          "| BACK-2 | done | https://github.com/o/r/pull/7 |  |",
+        ].join("\n"),
+      ]);
+      assert.isTrue(state.intents.has("post:blocked:fleet[0]"));
+      assert.isTrue(state.intents.has("post:done:fleet[1]"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerFromDb.pipe(Layer.provide(BotsDb.layerMemory)),
+          layer,
+          layerCatalog([fleet]),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("a restart mid-fleet adds no thread, link or item post", () =>
+  Effect.gen(function* () {
+    const { fake, layer } = yield* makeFakeInterpreter(fleetScripts);
+    fake.stall.add("post:done:fleet[1]");
+    const services = Layer.mergeAll(layerFromDb, layer, layerCatalog([fleet]));
+    const runId = yield* Effect.gen(function* () {
+      const subscription = yield* (yield* Journal).subscribe;
+      const engine = yield* make({ runsDir: "/runs" });
+      const { runId } = yield* engine.start(fleetStart);
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({
+          until: (f) => f.stream === runStream(runId) && f.key === "post:done:fleet[1]",
+        }),
+      );
+      return runId;
+    }).pipe(Effect.scoped, Effect.provide(services));
+    fake.stall.delete("post:done:fleet[1]");
+    for (const restart of [1, 2]) {
+      yield* Effect.gen(function* () {
+        const subscription = yield* (yield* Journal).subscribe;
+        const engine = yield* make({ runsDir: "/runs" });
+        yield* engine.tick;
+        if (restart === 1)
+          yield* PubSub.take(subscription).pipe(
+            Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "ended" }),
+          );
+        const state = yield* engine.runState(runId);
+        assert.equal(state.ended?.status, "succeeded");
+        const intents = [...state.intents.values()].map((e) => e.intent);
+        assert.equal(intents.filter((i) => i._tag === "LinkThread").length, 2);
+        assert.equal(intents.filter((i) => i._tag === "StartTurn" && i.mode === "new").length, 2);
+      }).pipe(Effect.scoped, Effect.provide(services));
+    }
+    assert.equal(fake.links.size, 2);
+    assert.equal(new Set(fake.threads.values()).size, 2);
+    assert.equal(
+      [...fake.posts.values()].filter((p) => p.report === "BACK-2: https://github.com/o/r/pull/7")
+        .length,
+      1,
+    );
   }).pipe(Effect.provide(BotsDb.layerMemory)),
 );

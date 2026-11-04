@@ -8,6 +8,7 @@ import {
   isWebhookDedupeTemplate,
   WORKFLOW_NODE_ID_PATTERN,
   WorkflowDefinition,
+  type WorkflowAgentNode,
   type WorkflowCommandSpec,
   type WorkflowDiagnosticCode,
   type WorkflowModelRef,
@@ -24,7 +25,7 @@ import { ancestors, buildGraph, formatEdge, parseEdge } from "./graph.ts";
 import { isModelAlias, modelFamily, resolveModelUse } from "./models.ts";
 import { matchesWhole } from "./output.ts";
 import { parseTemplate } from "./template.ts";
-import { isOnDemandTrigger } from "./triggers.ts";
+import { decodeRunParams, isOnDemandTrigger } from "./triggers.ts";
 import type {
   CompiledGraph,
   CompiledWorkflow,
@@ -55,7 +56,7 @@ const RESERVED_ROOTS = new Set<string>([
   ...CHECK_ROOTS,
   ...HILLCLIMB_ROOTS,
 ]);
-const NODE_FIELDS = new Set(["output", "status", "port", "thread"]);
+const NODE_FIELDS = new Set(["output", "status", "port", "thread", "error"]);
 const WORKSPACE_FIELDS = new Set(["branch", "head", "path"]);
 const RUN_FIELDS = new Set(["id", "dir"]);
 const STEP_FIELDS = new Set(["dir"]);
@@ -215,6 +216,14 @@ export const compileWorkflow = (
   for (const [name, spec] of Object.entries(definition.params ?? {})) {
     const path = `params.${name}`;
     checkPattern(spec.pattern, `${path}.pattern`);
+    if (spec.maxItems !== undefined && spec.type !== "string[]")
+      report(`${path}.maxItems`, "schema", "maxItems applies to string[] params");
+    if (spec.type === "string[]") {
+      if (spec.default === undefined) continue;
+      const problem = decodeRunParams({ [name]: spec }, {});
+      if (!problem.ok) report(`${path}.default`, "schema", problem.errors[0]!.message);
+      continue;
+    }
     if (spec.default === undefined) continue;
     if (typeof spec.default !== spec.type) {
       report(
@@ -258,7 +267,7 @@ export const compileWorkflow = (
         return "trigger data";
       case "params": {
         const spec = typeof first === "string" ? own(definition.params, first) : undefined;
-        return spec?.type === "string" && spec.pattern === undefined
+        return (spec?.type === "string" || spec?.type === "string[]") && spec.pattern === undefined
           ? `param ${String(first)} has no pattern`
           : null;
       }
@@ -314,7 +323,11 @@ export const compileWorkflow = (
           } else if (!scope.nodes.has(first)) {
             report(path, "template-root", `node ${first} has not run when this is evaluated`);
           } else if (typeof second !== "string" || !NODE_FIELDS.has(second)) {
-            report(path, "template-root", `nodes.${first} has output, status, port and thread`);
+            report(
+              path,
+              "template-root",
+              `nodes.${first} has output, status, port, thread and error`,
+            );
           }
           break;
         case "workspaces":
@@ -534,7 +547,7 @@ export const compileWorkflow = (
       readonly model: WorkflowModelUse;
       readonly prompt: string;
       readonly workspace: WorkflowWorkspaceUse;
-      readonly thread?: string | undefined;
+      readonly thread?: WorkflowAgentNode["thread"];
       readonly access?: "read" | "write" | undefined;
       readonly output?: WorkflowOutputShape | undefined;
       readonly accept?: WorkflowNodeAccept | undefined;
@@ -567,7 +580,7 @@ export const compileWorkflow = (
 
   function checkThread(
     spec: {
-      readonly thread?: string | undefined;
+      readonly thread?: WorkflowAgentNode["thread"];
       readonly model: WorkflowModelUse;
       readonly workspace: WorkflowWorkspaceUse;
       readonly access?: "read" | "write" | undefined;
@@ -576,6 +589,20 @@ export const compileWorkflow = (
     ctx: UseContext,
   ) {
     if (spec.thread === undefined || spec.thread === "new") return;
+    if (typeof spec.thread !== "string") {
+      const visible = spec.thread;
+      if (visible.kanbanCard !== undefined)
+        checkTemplate(visible.kanbanCard, `${path}.thread.kanbanCard`, ctx.scope);
+      if (visible.title !== undefined)
+        checkTemplate(visible.title, `${path}.thread.title`, ctx.scope);
+      if (typeof spec.workspace !== "string" || (spec.access ?? "read") !== "write")
+        report(
+          `${path}.thread`,
+          "thread-continue",
+          "a visible thread works in a named workspace with access: write",
+        );
+      return;
+    }
     const target = spec.thread.startsWith("continue:")
       ? spec.thread.slice("continue:".length)
       : null;
@@ -675,12 +702,6 @@ export const compileWorkflow = (
             );
           if (node.report === undefined)
             report(`${path}.postToBot`, "bot", "postToBot posts the report: add a report");
-          if (path !== `nodes.${id}`)
-            report(
-              `${path}.postToBot`,
-              "bot",
-              "only a top-level output posts to the bot; a map or loop body would post once per item",
-            );
         }
         if (node.pullRequest !== undefined) {
           const pr = node.pullRequest;
@@ -867,19 +888,42 @@ export const compileWorkflow = (
         );
       }
     }
+    const agentBranch = decl.branchPolicy === "agent";
+    if (agentBranch && decl.branch !== undefined)
+      report(
+        `workspaces.${name}.branch`,
+        "schema",
+        "with branchPolicy: agent the agent names its own branch; remove branch",
+      );
+    if (!agentBranch && decl.branch === undefined)
+      report(`workspaces.${name}.branch`, "schema", "a workspace needs a wf/… branch");
+    // A per-item worktree renders once per map item, so its templates may read that item.
+    const perItem = decl.perItem === true;
+    if (perItem) {
+      const outside = users.find((u) => !u.scope.roots.has("item"));
+      if (outside !== undefined)
+        report(
+          `workspaces.${name}.perItem`,
+          "template-root",
+          `${outside.node} is outside a map body, where there is no item to key the worktree by`,
+        );
+    }
     for (const [field, text, sink] of [
       ["project", decl.project, "text"],
       ["base", decl.base, "argv"],
       ["branch", decl.branch, "argv"],
     ] as const) {
+      if (text === undefined) continue;
       const path = `workspaces.${name}.${field}`;
       if (field === "base" && text.startsWith("workspace:")) continue;
       const scopes =
         users.length > 0
           ? users.map((u) => ({
               ...u.scope,
-              roots: new Set<string>(BASE_ROOTS),
-              itemTaint: new Map(),
+              roots: new Set<string>([...BASE_ROOTS, ...(perItem ? ["item"] : [])]),
+              itemTaint: perItem
+                ? new Map([["item", u.scope.itemTaint.get("item") ?? null]])
+                : new Map<string, string | null>(),
             }))
           : [emptyScope()];
       for (const scope of scopes) checkTemplate(text, path, scope, sink);

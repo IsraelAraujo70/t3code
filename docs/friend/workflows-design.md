@@ -15,7 +15,7 @@ Os caminhos de código citados são relativos à raiz do repositório, no commit
 3. **Cada passo de agente é uma thread T3 comum**, lançada com `ThreadLaunchService.launch` (`apps/server/src/orchestration-v2/ThreadLaunchService.ts:838`). Ela acompanha a continuação de restart que o upstream já faz (`ThreadManagementService.ts:845-894`). O motor nunca manda o próprio "continue".
 4. **hillclimb, arena, graph e interrogate são tipos nativos de nó**, cada um com sub-estado tipado e sub-decisor puro. Todos executam pelos mesmos três executores (turno de agente, comando, operação git), então o crash e a retomada são os mesmos para tudo.
 5. **O arquivo é a fonte da verdade.** Cada workflow é um `<id>.workflow.yaml` num repositório git do host de bots. Canvas, bot (MCP) e edição à mão passam pelo mesmo compilador e viram commit. Uma edição à mão aparece no canvas aberto. Cada execução fixa o commit e o hash semântico da versão.
-6. **Cada passo roda no host**, como uma thread T3 comum, na mesma instância de provider e com o mesmo acesso dos bots: a tela `:99` do computer use, os MCPs do host e o resto. Um comando que faria deploy, restart, merge na `friend/main`, force push ou mudança no `~/.t3/userdata/settings.json` espera um portão que só o Israel decide. O portão não é uma barreira: um passo com shell consegue contornar o portão, e o Israel aceitou esse risco (§9.5). Só o motor empurra uma branch `wf/…` e abre o PR em rascunho.
+6. **Cada passo roda no host**, como uma thread T3 comum, na mesma instância de provider e com o mesmo acesso dos bots: a tela `:99` do computer use, os MCPs do host e o resto. Um comando que faria deploy, restart, merge na `friend/main`, force push ou mudança no `~/.t3/userdata/settings.json` espera um portão que só o Israel decide. O portão não é uma barreira: um passo com shell consegue contornar o portão, e o Israel aceitou esse risco (§9.5). O motor empurra a branch `wf/…` e abre o PR em rascunho; numa worktree `branchPolicy: agent` quem cria a branch, empurra e abre o PR é o agente, atrás de um hook pre-push só daquela worktree (§6.2).
 7. **Gatilhos reaproveitam o que existe.** O webhook vira uma `ScheduledTask` (URL, HMAC, filtros, dedupe e URL pública prontos). O cron com fuso usa o `Scheduler` compartilhado com `effect/Cron`. A `ScheduledTask` não tem cron nem fuso.
 8. **Poucas seams.** São nove arquivos do upstream, e sete deles já são seams hoje. A única lógica de servidor nova num arquivo do upstream é o gancho e o guard das tasks de webhook no `ScheduledTaskService`.
 9. **Canvas: React Flow com traço desenhado à mão via roughjs.** Os dois são MIT. O pedaço preguiçoso tem 65 KiB gzip, contra 2,4 MiB do Excalidraw. A biblioteca já impede seta solta. O tldraw ficou de fora pela licença.
@@ -134,7 +134,7 @@ export const FieldSpec = Schema.Struct({
 export const OutputShape = Schema.Record(Schema.String, FieldSpec);
 
 export const ParamSpec = Schema.Struct({
-  type: Schema.Literals(["string", "number", "boolean"]),
+  type: Schema.Literals(["string", "number", "boolean", "string[]"]), // string[]: pattern por elemento, maxItems
   default: Schema.optional(Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
   pattern: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
@@ -145,7 +145,9 @@ export const ParamSpec = Schema.Struct({
 export const WorkspaceDecl = Schema.Struct({
   project: Template,
   base: Template, // ref, ou "workspace:<nome>" para partir do HEAD de outro
-  branch: Template,
+  branch: Schema.optional(Template), // obrigatória com branchPolicy engine; proibida com agent
+  perItem: Schema.optional(Schema.Boolean), // uma worktree por item de map (§6.2)
+  branchPolicy: Schema.optional(Schema.Literals(["engine", "agent"])), // agent: o agente empurra, atrás do guard (§6.2)
   // o que sobra quando a execução acaba; depois, a árvore toda sai em 7 dias, menos `always` e worktree com PR aberto
   retain: Schema.optional(Schema.Literals(["always", "on_failure", "never"])), // padrão on_failure
 });
@@ -190,9 +192,10 @@ export const AgentNode = Schema.Struct({
   model: ModelUse,
   prompt: Template,
   workspace: WorkspaceUse,
-  // "new" (padrão) ou "continue:<nodeId>". Uma thread tem um só acesso, uma só worktree e um só modelo
-  // a vida toda: o compilador só aceita continue com o mesmo workspace, access e modelo.
-  thread: Schema.optional(Schema.String),
+  // "new" (padrão), "continue:<nodeId>" ou { visible: true, kanbanCard?, title? } (§6.2). Uma thread tem
+  // um só acesso, uma só worktree e um só modelo a vida toda: o compilador só aceita continue com o
+  // mesmo workspace, access e modelo.
+  thread: Schema.optional(Schema.Union([Schema.String, VisibleThread])),
   access: Schema.optional(Schema.Literals(["read", "write"])), // read = worktree descartável; padrão read
   output: Schema.optional(OutputShape),
   accept: Schema.optional(AcceptSpec), // portas pass/fail; a evidência é o que o motor rodou
@@ -452,8 +455,9 @@ expr := or ;  or := and ('||' and)* ;  and := not ('&&' not)* ;  not := '!' not 
 cmp  := sum (('=='|'!='|'<'|'<='|'>'|'>=') sum)? ;  sum := term (('+'|'-') term)* ;  term := atom (('*'|'/') atom)*
 atom := number | string | true | false | null | path | fn '(' args ')' | '(' expr ')'
 fn   := len | any | all | contains | startsWith | min | max | coalesce
+      | table(<linhas>, "coluna", …)                 -- tabela markdown de uma lista de objetos (o resultado de um map)
       | ledgerDigest(<id>) | ledgerBest(<id>)          -- id do ledger como string: ledgerBest("argo35-throughput")
-raízes em todo lugar:  params trigger nodes.<id>.{output,status,port,thread} workspaces.<n>.{branch,head,path}
+raízes em todo lugar:  params trigger nodes.<id>.{output,status,port,thread,error} workspaces.<n>.{branch,head,path}
                        run.{id,dir} step.dir
 dentro de map/loop:    item iteration
 dentro de command:     exit out                 (em `check`)
@@ -472,12 +476,13 @@ export const compileWorkflow = (
   //    gate <options>, branch <portas>|else, blocos ok|fail|<saídas nomeadas>; desconhecida → "port"
   // 4. acíclico em cada nível (map/loop são nós; seus corpos são grafos à parte); call sem ciclo
   // 5. toda Expr/Template parseada; raiz legal no contexto; `nodes.<id>` só de nó que já rodou
-  // 6. contaminação: trigger.*, param string sem pattern e saídas de agente sem `pattern` não entram em argv, env, ref git nem branch
+  // 6. contaminação: trigger.*, param string ou string[] sem pattern e saídas de agente sem `pattern` não entram em argv, env, ref git nem branch
   // 7. classifyCommand(argv): shell inline, programa dinâmico, escalada de privilégio → erro; ação protegida → aceita (portão na execução, §9.5)
   // 8. heavy && (selfSerializing || argv cita heavy.sh) → "heavy-nesting"
   // 9. modelos: sem apelidos (opus|sonnet|haiku|fable), $refs resolvem; arena: família(judge) ≠ família(lead)
   // 10. orçamentos ≤ teto do host, timeouts ≤ wall; tokensFrom exige tokenReservation
-  // 11. thread "continue:<nó>" só com o mesmo workspace e o mesmo access do nó continuado
+  // 11. thread "continue:<nó>" só com o mesmo workspace e o mesmo access do nó continuado;
+  //     thread visível só em workspace nomeado com access: write
   // 12. gatilhos: id único, cron e fuso parseiam, replayKey, pattern da tag; card fora de projeto do Linear
   // 13. hash = sha256(JSON canônico sem canvas), com as edges reescritas como "a -> b"
   throw new Error("not implemented");
@@ -1006,7 +1011,8 @@ apps/server/src/bots/workflows/
   exec/Units.ts         uma unit systemd-run por comando; com heavy, o flock do heavy.lock e os limites do heavy.sh na mesma unit;
                         o observador lê exit.json
   exec/wfUnit.ts        roda na unit: started.json (fsync) → argv → exit.json (rename atômico)
-  git/Workspaces.ts     git do motor no host: worktrees, update-ref com CAS, merge local; sem hooks (o push para wf/… é da fatia 8)
+  git/Workspaces.ts     git do motor no host: worktrees, update-ref com CAS, merge local; sem hooks nas chamadas do motor
+  git/pushGuard.ts      o hook pre-push das worktrees `branchPolicy: agent`, posto só naquela worktree
   layer.ts              o bloco do motor: journal, catálogo, interpretador e executores; o SqlClient do bots.sqlite fica privado
   definitions/WorkflowRepo.ts          git do repositório de workflows (ler HEAD, commit, log, restaurar)
   definitions/yamlCodec.ts             YAML ⇄ definição, ordem canônica
@@ -1196,7 +1202,7 @@ Regras:
 Uma rotina de bot (o heartbeat de hora em hora do Trader, o resumo das 21:00) vira workflow com dois campos:
 
 - `bot: <botId>` no nível de cima diz para quem o workflow trabalha. Os passos `agent` recebem os MCPs de host desse bot pelo mesmo encaminhamento in-process que o bot usa (`HostMcpForward`); o token nunca chega ao passo. Só `agent` recebe: o juiz de `accept`, `hillclimb`, `arena`, `graph` e `interrogate` fazem trabalho de código e não precisam da carteira de ninguém. Um `continue:` e o nudge do JSON herdam o vínculo, porque é a mesma thread.
-- `postToBot: true` num `output` de nível de cima posta o `report` renderizado na thread principal atual do bot.
+- `postToBot: true` num `output` posta o `report` renderizado na thread principal atual do bot: uma vez por execução no nível de cima, uma vez por item dentro do corpo de um `map`.
 
 Decisões:
 
@@ -1204,9 +1210,9 @@ Decisões:
 2. **Quem vincula.** Pelo `workflow_save`, um bot só põe o próprio id e não troca nem tira o vínculo de outro bot; o dono, pela UI ou RPC, vincula a qualquer bot que exista. Bot inexistente é diagnóstico `bot` no save e no `dryRun`. O `workflow_list` devolve `you`, o id do bot que chama. Edição à mão não passa por essa regra (é do dono).
 3. **Bot apagado.** O passo roda sem MCP de host e a execução grava `RunWarned` (`warn:bot-missing:<id>`), que a tela da execução mostra. O post também vira aviso e não acontece.
 4. **O post acorda o bot.** O orquestrador não tem mensagem sem turno: criar uma seria mexer no `Orchestrator` do upstream e nos dois clientes. O post é um `message.dispatch` na fila (`queue_after_active`), com `notification` de sistema, e o bot repassa o report na própria voz, como as rotinas de hoje. Por isso não existe opção "não acordar".
-5. **Uma vez por execução e nó.** O intent `PostToBot` tem chave `post:<nó>` e o commandId é `server:workflow-post:<keyHash(runId, chave)>`. Um restart que reexecuta o intent cai no recibo do comando; uma execução reaberta não posta de novo. A thread é resolvida na hora do post (`bot:<id>:<homeGeneration>`), então a rotação de conversa não perde o report.
-6. **Sem novidade, sem post.** Report vazio (depois de `trim`) ou `when` falso não postam. Só `output` de nível de cima posta; dentro de `map` ou `loop` seria um post por item, e o compilador recusa.
-7. **Sem notificação dupla.** Quando o post acontece, o push "finished" da execução não sai: a resposta do bot já notifica. Sem post (report vazio, bot apagado, falha), o push segue as regras de antes.
+5. **Uma vez por execução e nó (e item).** O intent `PostToBot` tem chave `post:<nó>` no nível de cima e `post:<nó>:<item>` num corpo (`post:done:fleet[1]`), e o commandId é `server:workflow-post:<keyHash(runId, chave)>`. Um restart que reexecuta o intent cai no recibo do comando; uma execução reaberta não posta de novo. A thread é resolvida na hora do post (`bot:<id>:<homeGeneration>`), então a rotação de conversa não perde o report.
+6. **Sem novidade, sem post.** Report vazio (depois de `trim`) ou `when` falso não postam. Dentro de `map` ou `loop` cada instância posta o seu: é o aviso por item de um ticket-fleet.
+7. **Sem notificação dupla.** Quando o post de nível de cima acontece, o push "finished" da execução não sai: a resposta do bot já notifica. Sem post (report vazio, bot apagado, falha), o push segue as regras de antes.
 
 Exemplo, o heartbeat do Trader:
 
@@ -1241,6 +1247,102 @@ edges: [look -> done]
 ```
 
 Os MCPs de host só valem para passos em instância Claude, como para os bots (`docs/friend/bot-host-mcp.md`).
+
+### 6.2 Uma thread por ticket (ticket-fleet)
+
+O ticket-fleet recebe até N cards do Kanban e roda cada um numa thread que o Israel vê, ligada ao card, como as que ele abre com "Start thread". O motor tem as peças; a definição é do bot dono (`workflow_save`).
+
+- **Lista como parâmetro.** `params.tickets: { type: "string[]", maxItems: 10, pattern: … }`. O `pattern` vale para cada elemento e torna o item confiável em argv. Acima de `maxItems` a execução é recusada no RPC, no `workflow_run` e no decisor, nunca cortada. No formulário "Run now" a lista é um campo só, separado por vírgula ou espaço.
+- **Thread visível.** `thread: { visible: true, kanbanCard: "{{ item }}" }` num nó `agent` com workspace nomeado e `access: write`. O id é `wfi:<runId>:<keyHash("thread:<passo>")>`: um por instância de passo, então retry e restart caem na mesma thread. O prefixo `wfi:` não é `wf:`, por isso ela aparece na sidebar, na busca e no card, e uma mensagem do Israel no meio da fase entra no contexto como em qualquer thread. `kanbanCard` aceita o id ou o identificador do ticket (`BACK-222`): o motor lê o card (`ReadTicket`, chave `ticket:<ref>`), abre a thread com a mensagem de `buildTicketThreadMessage` seguida do prompt, e liga a thread ao card depois que ela existe (`LinkThread`, chave `link:<ticketId>:<threadId>`, e o `kanban_ticket_threads` ignora repetição). O `KanbanThreadStarter` não serve: gera ids aleatórios. Os nós seguintes usam `thread: continue:<nó>`. Modelo e modo: o modelo é o do nó (`$impl` em `models`), e todo passo roda em full-access. Uma thread visível não dispara gatilho `threadSettled`.
+- **Worktree por item.** `workspaces.<n>.perItem: true` cria uma worktree por item do `map` (`ws:<n>#<item>`, `item#fleet[1]`), e `project`, `base` e `branch` podem ler `item`. Só nós dentro de um corpo de `map` usam esse workspace.
+- **Branch do agente.** `branchPolicy: agent` (sem `branch`) cria a worktree destacada na `base`. O agente cria a branch de feature, empurra e abre o PR. Num replay o motor adota a worktree na branch que estiver. A proteção é um hook pre-push (`git/pushGuard.ts`) que recusa push em `main`, `master`, `friend/main` e nos refs de `protect`, deleção de branch e qualquer push que não seja fast-forward. O hook confere ancestralidade, porque o git não diz ao hook se houve `--force`. Ele é posto com `extensions.worktreeConfig` e `git config --worktree core.hooksPath`, num diretório dentro do git dir privado daquela worktree. As outras worktrees do repositório, inclusive as sessões do Israel, não mudam. Antes de ligar a extensão, o motor move `core.worktree` e `core.bare = true` da config compartilhada para a `config.worktree` do checkout principal, como pede o git-worktree(1); sem isso, toda worktree herdaria o diretório do checkout principal. Se o valor não dá para mover como está (repetido, ou diferente do que já está na `config.worktree`), a política é recusada com erro. O hook pre-push e os outros hooks do repositório continuam rodando: o diretório do guard repassa para eles. Limite: `git push --no-verify` pula hooks. O prompt do passo proíbe isso, e a proteção de branch do GitHub é a camada que o agente não contorna.
+- **Aceite que volta com o motivo.** Num nó `agent` com `accept` e `retry: { on: [failed] }`, o aceite que falha (porta `fail`) gera outra tentativa, até `retry.max`. Se o nó continua uma thread (`continue:` ou visível), a tentativa nova vai para a mesma thread e começa pelo motivo: o argv, o exit e o fim do stdout, ou o `reason` do juiz. O motivo fica em `nodes.<nó>.error`. Esgotado o teto, vale a porta `fail` da última tentativa.
+- **Falha isolada por item.** Um item termina por uma aresta `:fail` para um `output` `blocked`. Com isso o `map` segue com os outros itens e o resultado traz todos. Sem aresta, `continueOnFail: true` no nó faz o mesmo, com o item sem `output`, e o `collect` lê `nodes.<nó>.status` e `.error`. O `fatigue.consecutiveFailures` conta falhas seguidas, então um fleet grande precisa de um teto à altura.
+- **Avisos e relatório.** Cada `output` do corpo com `postToBot` avisa o bot uma vez por item. O `output` de nível de cima monta a tabela com `table(nodes.fleet.output, "ticket", "status", "pr", "reason")`.
+
+Exemplo, no formato que o Moneria PM salva (as fases verify/review ficam como `continue:` entre `implement` e `publish`):
+
+```yaml
+schema: t3.workflow/v1
+id: ticket-fleet
+title: Ticket fleet
+home: { project: moneria-api }
+bot: b_0123456789abcdef0123456789abcdef # o bot dono
+triggers:
+  run: { kind: manual }
+  pm: { kind: bot, description: "Roda até 10 tickets do Kanban, um PR por ticket." }
+params:
+  tickets:
+    {
+      type: "string[]",
+      maxItems: 10,
+      pattern: "[A-Z]+-\\d+",
+      description: Identificadores do Kanban,
+    }
+budget: { steps: 200, wall: 8h, tokens: 20000000 }
+fatigue: { consecutiveFailures: 5 }
+models:
+  impl: { provider: claude, model: claude-opus-5-5 }
+workspaces:
+  ticket:
+    {
+      project: moneria-api,
+      base: origin/main,
+      perItem: true,
+      branchPolicy: agent,
+      retain: on_failure,
+    }
+nodes:
+  fleet:
+    kind: map
+    items: params.tickets
+    maxItems: 10
+    concurrency: 2
+    body:
+      nodes:
+        implement:
+          kind: agent
+          model: $impl
+          workspace: ticket
+          access: write
+          thread: { visible: true, kanbanCard: "{{ item }}" }
+          prompt: Rode /poteto-mode com o ticket acima.
+          accept:
+            {
+              argv: [nx, affected, -t, lint, typecheck, test, build, --base=main],
+              check: "exit == 0",
+              heavy: true,
+            }
+          retry: { max: 2, on: [failed] }
+        publish:
+          kind: agent
+          model: $impl
+          workspace: ticket
+          access: write
+          thread: continue:implement
+          prompt: Rode a skill abrir-pr. Responda com o link do PR.
+          output: { pr: { type: string, pattern: "https://github\\.com/\\S+" } }
+        done:
+          kind: output
+          status: ready_for_review
+          value: { ticket: "{{ item }}", status: done, pr: "{{ nodes.publish.output.pr }}" }
+          report: "{{ item }}: PR {{ nodes.publish.output.pr }}"
+          postToBot: true
+        blocked:
+          kind: output
+          status: blocked
+          value: { ticket: "{{ item }}", status: blocked, reason: "{{ nodes.implement.error }}" }
+          report: "{{ item }} bloqueado: {{ nodes.implement.error }}"
+          postToBot: true
+      edges: [implement -> publish, "implement:fail -> blocked", publish -> done]
+  report:
+    kind: output
+    status: ready_for_review
+    value: {}
+    report: "{{ table(nodes.fleet.output, 'ticket', 'status', 'pr', 'reason') }}"
+    postToBot: true
+edges: [fleet -> report]
+```
 
 ---
 

@@ -40,3 +40,30 @@ it("requires a value", () => {
     errors: [{ param: "name", message: "name is required" }],
   });
 });
+
+it.each([
+  [{ tickets: ["BACK-1", "BACK-2"] }, { ok: true, params: { tickets: ["BACK-1", "BACK-2"] } }],
+  [{}, { ok: true, params: { tickets: [] } }],
+  [
+    { tickets: ["BACK-1", "BACK-2", "BACK-3"] },
+    { ok: false, errors: [{ param: "tickets", message: "tickets has 3 items; at most 2" }] },
+  ],
+  [
+    { tickets: ["BACK-1", "rm -rf"] },
+    {
+      ok: false,
+      errors: [{ param: "tickets", message: 'tickets: "rm -rf" does not match [A-Z]+-\\d+' }],
+    },
+  ],
+  [
+    { tickets: "BACK-1" },
+    { ok: false, errors: [{ param: "tickets", message: "tickets: expected a list of strings" }] },
+  ],
+])("decodes the list %j", (input, expected) => {
+  expect(
+    decodeRunParams(
+      { tickets: { type: "string[]", default: [], maxItems: 2, pattern: "[A-Z]+-\\d+" } },
+      input,
+    ),
+  ).toEqual(expected);
+});

@@ -3,7 +3,11 @@ import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, WorkflowDefinition, WorkflowId } from "@t3tools/contracts";
-import { defaultRunParams, parseRunParam } from "@t3tools/client-runtime/workflows";
+import {
+  defaultRunParams,
+  parseRunParam,
+  type WorkflowParamValue,
+} from "@t3tools/client-runtime/workflows";
 import * as Crypto from "expo-crypto";
 import { Button } from "../../components/ui/Button";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
@@ -41,7 +45,7 @@ export function RunNowSheet({
   const start = useAtomCommand(workflowsEnvironment.runStart);
   const navigation = useNavigation();
   const submit = async () => {
-    const params: Record<string, string | number | boolean> = {};
+    const params: Record<string, WorkflowParamValue> = {};
     const failures: Record<string, string> = {};
     for (const [key, spec] of Object.entries(definition.params ?? {})) {
       const parsed = parseRunParam(spec, values[key] ?? "");

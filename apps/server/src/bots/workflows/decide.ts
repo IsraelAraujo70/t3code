@@ -7,12 +7,15 @@ import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 import type { Json } from "effect/Schema";
 
-import type {
-  WorkflowAgentNode,
-  WorkflowCommandNode,
-  WorkflowNode,
-  WorkflowStepStatus,
-  WorkflowWorkspaceUse,
+import {
+  type WorkflowAgentNode,
+  type WorkflowCommandNode,
+  type WorkflowDefinition,
+  type WorkflowNode,
+  type WorkflowStepStatus,
+  type WorkflowWorkspaceDecl,
+  type WorkflowWorkspaceUse,
+  workflowItemThreadId,
 } from "@t3tools/contracts";
 import {
   checkOutput,
@@ -43,7 +46,8 @@ import {
   runStream,
   workflowStream,
 } from "./facts.ts";
-import { runIdFor, stepThreadId } from "./ids.ts";
+import { keyHash, runIdFor, stepThreadId } from "./ids.ts";
+import { DEFAULT_PROTECTED_REFS } from "./git/pushGuard.ts";
 import { isSubStep, nodeIdOfStep } from "./steps.ts";
 import { liveTarget } from "./fold.ts";
 // wf-engine slices 7-8.
@@ -65,7 +69,7 @@ import {
 } from "./budget/budget.ts";
 import { cardColumnOf, cardIntent } from "./card/cardIntent.ts";
 import { failedNotice, finishedNotice, needsYouNotice } from "./notices/notices.ts";
-import type { GateDecided, RunState, StepAttempt } from "./state.ts";
+import type { GateDecided, IntentResult, RunState, StepAttempt } from "./state.ts";
 
 export interface DecideContext {
   /** Epoch milliseconds. */
@@ -85,6 +89,8 @@ export interface DecideContext {
 
 /** A lost turn, or a lost command that may run again, is replayed this often (crash recovery). */
 const MAX_LOST_REPLAYS = 2;
+/** How much of a failed acceptance command's output its reason quotes. */
+const ACCEPT_TAIL_CHARS = 1_500;
 const AMBIGUOUS_OPTIONS = ["rerun", "fail", "cancel"] as const;
 const DURATION_UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000 } as const;
 const durationMs = (text: string): number =>
@@ -102,6 +108,7 @@ const retryReadyAt = (
   node: WorkflowNode,
   attempt: number,
   status: ResolvedStatus,
+  port: string | null,
   resolvedAt: string,
   markedFailed: boolean,
   rerun: boolean,
@@ -110,8 +117,21 @@ const retryReadyAt = (
   if (rerun && status !== "succeeded") return at;
   if (markedFailed) return null;
   if (status === "ambiguous") return at;
-  if (status === "succeeded" || status === "cancelled") return null;
   const policy = node.retry;
+  // An agent whose acceptance check failed runs again while `retry` covers failures; the next
+  // attempt gets the reason in the same thread when it continues one (see `retryNote`).
+  if (
+    status === "succeeded" &&
+    port === "fail" &&
+    node.kind === "agent" &&
+    node.accept !== undefined &&
+    policy !== undefined &&
+    policy.on.includes("failed") &&
+    attempt <= policy.max
+  ) {
+    return at + (policy.backoff === undefined ? 0 : durationMs(policy.backoff));
+  }
+  if (status === "succeeded" || status === "cancelled") return null;
   if (policy !== undefined && policy.on.includes(status) && attempt <= policy.max) {
     return at + (policy.backoff === undefined ? 0 : durationMs(policy.backoff));
   }
@@ -138,6 +158,42 @@ interface Level {
   readonly item: { readonly value: Json; readonly alias: string | null } | null;
   readonly iteration: number | null;
 }
+
+/** The map item a level runs under, as its step-key prefix without the slash (`fleet[1]`). */
+const itemKeyOf = (level: Level): string | null => {
+  for (let l: Level | null = level; l !== null; l = l.parent) {
+    if (l.item !== null) return l.prefix.slice(0, -1);
+  }
+  return null;
+};
+
+/** The worktree a declared workspace is at this level: itself, or its item's `<name>#<item>`. */
+const instanceOf = (name: string, decl: WorkflowWorkspaceDecl, level: Level): string | null => {
+  if (decl.perItem !== true) return name;
+  const item = itemKeyOf(level);
+  return item === null ? null : `${name}#${item}`;
+};
+
+/** The declaration behind a worktree name, including a per-item instance's. */
+const declarationOf = (
+  definition: WorkflowDefinition,
+  name: string,
+): WorkflowWorkspaceDecl | undefined => {
+  const declared = definition.workspaces ?? {};
+  if (Object.hasOwn(declared, name)) return declared[name];
+  const hash = name.indexOf("#");
+  const base = hash < 0 ? null : name.slice(0, hash);
+  return base !== null && Object.hasOwn(declared, base) && declared[base]?.perItem === true
+    ? declared[base]
+    : undefined;
+};
+
+/** The note a retried attempt opens with when it continues the thread its last attempt used. */
+const retryNote = (previous: StepAttempt | undefined): string => {
+  const r = previous?.resolved;
+  if (r == null || r.port !== "fail" || r.error === null) return "";
+  return `Your previous attempt at this step did not pass: ${r.error}\n\nFix that, then do the step again.\n\n`;
+};
 
 type LevelOutcome =
   | { readonly done: false }
@@ -186,9 +242,9 @@ export const retryRefusal = (
   if (state.ended === null) return null;
   if (state.ended.status !== "failed") return `the run ended ${state.ended.status}`;
   if (state.started.parent !== null) return "retry the call step in the parent run";
-  const declared = compiled.definition.workspaces ?? {};
   const removed = [...state.workspaces.keys()].find(
-    (name) => Object.hasOwn(declared, name) && state.keys.has(`rm:${name}`),
+    (name) =>
+      declarationOf(compiled.definition, name) !== undefined && state.keys.has(`rm:${name}`),
   );
   if (removed !== undefined) return `the worktree ${removed} was already removed`;
   const given = [...state.workspaces.values()].find(
@@ -232,9 +288,8 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
     };
     return [reopened];
   }
-  const declared = compiled.definition.workspaces ?? {};
   return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
-    const decl = Object.hasOwn(declared, name) ? declared[name] : undefined;
+    const decl = declarationOf(compiled.definition, name);
     const retain = decl?.retain ?? "on_failure";
     const keep =
       decl !== undefined &&
@@ -403,6 +458,7 @@ export const decide = (
       node,
       a.attempt,
       r.status,
+      r.port,
       r.at,
       markedFailed(a.step, a.attempt),
       rerunWanted(a),
@@ -451,6 +507,14 @@ export const decide = (
     return head;
   };
 
+  /** The worktree a declared name means at this level: its item's instance when it is per item. */
+  const worktreeAt = (name: string, level: Level): string => {
+    const decl = Object.hasOwn(definition.workspaces ?? {}, name)
+      ? definition.workspaces?.[name]
+      : undefined;
+    return decl === undefined ? name : (instanceOf(name, decl, level) ?? name);
+  };
+
   /** The fold keeps each workspace's head at the last observation that reported one. */
   const workspaceHead = (name: string): string | null =>
     state.workspaces.get(name)?.headSha ?? null;
@@ -465,6 +529,8 @@ export const decide = (
       status: statusOf(step),
       port: r?.port ?? null,
       thread: a?.threadId ?? null,
+      // Why it failed, or why its acceptance check did not pass: what an item's report quotes.
+      error: r?.error ?? null,
     };
   };
 
@@ -494,9 +560,10 @@ export const decide = (
       if (l.iteration !== null && !("iteration" in roots)) roots.iteration = l.iteration;
     }
     const workspaces: Record<string, JsonValue> = {};
-    for (const name of Object.keys(definition.workspaces ?? {})) {
+    for (const declared of Object.keys(definition.workspaces ?? {})) {
+      const name = worktreeAt(declared, level);
       const ready = state.workspaces.get(name);
-      workspaces[name] = {
+      workspaces[declared] = {
         branch: ready?.branch ?? null,
         head: workspaceHead(name),
         path: ready?.path ?? null,
@@ -620,18 +687,23 @@ export const decide = (
     const env = envFor(level);
     const project = render(decl.project, env);
     if (Result.isFailure(project)) return Result.fail(project.failure);
-    const key = `ws:${use}`;
+    // A per-item worktree is keyed by its map item: `ws:<name>#<item>` (`ws:impl#fleet[1]`).
+    const name = instanceOf(use, decl, level);
+    if (name === null) return Result.fail(`workspace ${use} is per item, outside a map item`);
+    const key = `ws:${name}`;
     const ready = resultOf(key);
     if (ready?._tag === "IntentFailed") return Result.fail(ready.error);
     if (ready?._tag !== "WorkspaceReady") {
-      const branch = render(decl.branch, env);
-      if (Result.isFailure(branch)) return Result.fail(branch.failure);
-      if (!/^wf\/[A-Za-z0-9._/-]{1,120}$/.test(branch.success)) {
+      const agentBranch = decl.branchPolicy === "agent";
+      const branch = agentBranch || decl.branch === undefined ? null : render(decl.branch, env);
+      if (branch !== null && Result.isFailure(branch)) return Result.fail(branch.failure);
+      if (branch !== null && !/^wf\/[A-Za-z0-9._/-]{1,120}$/.test(branch.success)) {
         return Result.fail(`branch "${branch.success}" is not a wf/… branch`);
       }
+      if (branch === null && !agentBranch) return Result.fail(`workspace ${use} has no branch`);
       let baseRef: string;
       if (decl.base.startsWith("workspace:")) {
-        const head = workspaceHead(decl.base.slice("workspace:".length));
+        const head = workspaceHead(worktreeAt(decl.base.slice("workspace:".length), level));
         if (head === null) return Result.fail(`${decl.base} has no HEAD yet`);
         baseRef = head;
       } else {
@@ -642,16 +714,19 @@ export const decide = (
       record({
         _tag: "PrepareWorkspace",
         key,
-        name: use,
+        name,
         projectRef: project.success,
         baseRef,
-        branch: branch.success,
+        branch: branch === null ? null : branch.success,
+        ...(agentBranch
+          ? { agentBranch: { protect: [...DEFAULT_PROTECTED_REFS, ...(definition.protect ?? [])] } }
+          : {}),
       });
       return Result.succeed(null);
     }
     if (access === "write")
-      return Result.succeed({ name: use, path: ready.path, project: project.success });
-    return disposable(project.success, workspaceHead(use) ?? ready.headSha);
+      return Result.succeed({ name, path: ready.path, project: project.success });
+    return disposable(project.success, workspaceHead(name) ?? ready.headSha);
   };
 
   // wf-engine slice 7: what a finished block exported, from its resolution's `exports`.
@@ -699,16 +774,17 @@ export const decide = (
     level: Level,
   ): Result.Result<Extract<Intent, { readonly _tag: "OpenPullRequest" }>, string> => {
     const exported = blockExport(level, pr.workspace);
-    const ready = state.workspaces.get(pr.workspace);
+    const name = worktreeAt(pr.workspace, level);
+    const ready = state.workspaces.get(name);
     const workspace =
       exported !== null
         ? { name: exported.name, branch: exported.branch, head: exported.head }
         : ready === undefined
           ? null
           : {
-              name: pr.workspace,
+              name,
               branch: ready.branch,
-              head: workspaceHead(pr.workspace) ?? ready.headSha,
+              head: workspaceHead(name) ?? ready.headSha,
             };
     if (workspace === null) return Result.fail(`workspace ${pr.workspace} was never prepared`);
     if (workspace.branch === null || !/^wf\/[A-Za-z0-9._/-]{1,120}$/.test(workspace.branch))
@@ -752,9 +828,10 @@ export const decide = (
     render: (template, roots) => render(template, envFor(level, roots)),
     evaluate: (expr, roots) => evaluate(expr, envFor(level, roots)),
     model: (use) => resolveModelUse(use, definition.models),
-    namedWorkspace: (name) => {
-      const exported = blockExport(level, name);
+    namedWorkspace: (declared) => {
+      const exported = blockExport(level, declared);
       if (exported !== null) return { ...exported, headSha: exported.head };
+      const name = worktreeAt(declared, level);
       const ready = state.workspaces.get(name);
       const prepared = state.intents.get(`ws:${name}`)?.intent;
       if (ready === undefined || prepared?._tag !== "PrepareWorkspace") return null;
@@ -779,12 +856,17 @@ export const decide = (
     level: Level,
   ): void => {
     const access = node.access ?? "read";
-    const continued = node.thread?.startsWith("continue:")
-      ? node.thread.slice("continue:".length)
-      : null;
+    const thread = node.thread;
+    const continued =
+      typeof thread === "string" && thread.startsWith("continue:")
+        ? thread.slice("continue:".length)
+        : null;
+    // Read before this attempt is recorded, so a retry dispatched in the same pass sees its reason.
+    const prior = latest(step);
+    const previous = attempt > 1 && prior?.attempt === attempt - 1 ? prior : undefined;
     if (continued !== null) {
-      const previous = findStep(level, continued);
-      const prevAttempt = previous === null ? undefined : latest(previous);
+      const prior = findStep(level, continued);
+      const prevAttempt = prior === null ? undefined : latest(prior);
       const prevIntent =
         prevAttempt === undefined
           ? undefined
@@ -806,7 +888,7 @@ export const decide = (
         attempt,
         threadId: prevAttempt.threadId,
         mode: "continue",
-        prompt: prompt.success + outputInstruction(node.output),
+        prompt: retryNote(previous) + prompt.success + outputInstruction(node.output),
         // The compiler keeps a thread on one model; the reservation is this step's own.
         // wf-engine slice 8: estimated like a new turn when the node names none.
         reservation: node.tokenReservation ?? turnEstimate(step),
@@ -827,24 +909,85 @@ export const decide = (
     if (Result.isFailure(prompt))
       return void resolve(step, attempt, "failed", "fail", null, prompt.failure);
     const key = `turn:${stepKey(step, attempt)}`;
-    record({
+    const base = {
       _tag: "StartTurn",
       key,
       step,
       attempt,
-      threadId: stepThreadId(runId, key),
-      mode: "new",
       projectRef: workspace.success.project,
-      title: `${definition.title} · ${step}`,
       workspace: { name: workspace.success.name, path: workspace.success.path },
-      prompt: prompt.success + outputInstruction(node.output),
       model: model.success,
       access,
       // wf-engine slice 8: the node's own reservation, else its history, else the host default.
       reservation: node.tokenReservation ?? turnEstimate(step),
       // Only agent turns work for the bound bot; continues and nudges copy it from here.
       ...(definition.bot === undefined ? {} : { bot: definition.bot }),
+    } as const;
+    if (typeof thread !== "object") {
+      record({
+        ...base,
+        threadId: stepThreadId(runId, key),
+        mode: "new",
+        title: `${definition.title} · ${step}`,
+        prompt: prompt.success + outputInstruction(node.output),
+      });
+      return;
+    }
+    // A visible thread is one per step instance, so a retry or a restart finds the same thread.
+    const threadId = workflowItemThreadId(runId, keyHash(runId, `thread:${step}`));
+    const launched = attemptsOf(step).some(
+      (x) =>
+        x.attempt < attempt &&
+        state.intents.get(`turn:${stepKey(step, x.attempt)}`)?.result?._tag === "TurnStarted",
+    );
+    if (launched) {
+      record({
+        ...base,
+        threadId,
+        mode: "continue",
+        title: `${definition.title} · ${step}`,
+        prompt: retryNote(previous) + prompt.success + outputInstruction(node.output),
+      });
+      return;
+    }
+    const ticket = visibleTicket(thread, level);
+    if (ticket === "wait") return;
+    if (Result.isFailure(ticket))
+      return void resolve(step, attempt, "failed", "fail", null, ticket.failure);
+    const env = envFor(level);
+    const title = thread.title === undefined ? null : render(thread.title, env);
+    if (title !== null && Result.isFailure(title))
+      return void resolve(step, attempt, "failed", "fail", null, title.failure);
+    const card = ticket.success;
+    record({
+      ...base,
+      threadId,
+      mode: "new",
+      title: title?.success ?? card?.title ?? `${definition.title} · ${step}`,
+      prompt:
+        (card === null ? "" : `${card.message}\n\n`) +
+        prompt.success +
+        outputInstruction(node.output),
     });
+  };
+
+  /** The kanban ticket a visible thread opens with: null without `kanbanCard`, "wait" while read. */
+  const visibleTicket = (
+    thread: Extract<WorkflowAgentNode["thread"], object>,
+    level: Level,
+  ):
+    | "wait"
+    | Result.Result<Extract<IntentResult, { readonly _tag: "TicketRead" }> | null, string> => {
+    if (thread.kanbanCard === undefined) return Result.succeed(null);
+    const ref = render(thread.kanbanCard, envFor(level));
+    if (Result.isFailure(ref)) return Result.fail(ref.failure);
+    if (ref.success.trim() === "") return Result.succeed(null);
+    const key = `ticket:${ref.success.trim()}`;
+    const read = resultOf(key);
+    if (read?._tag === "IntentFailed") return Result.fail(read.error);
+    if (read?._tag === "TicketRead") return Result.succeed(read);
+    record({ _tag: "ReadTicket", key, ref: ref.success.trim() });
+    return "wait";
   };
 
   /** The owner's gate before a command: refused at once, waiting for Israel, or cleared. */
@@ -907,6 +1050,19 @@ export const decide = (
     const launched = resultOf(key);
     if (launched?._tag === "IntentFailed") {
       return resolve(step, a.attempt, "failed", "fail", null, launched.error);
+    }
+    // A visible thread joins its card once it exists; the link never holds the step back.
+    if (launched?._tag === "TurnStarted" && typeof node.thread === "object") {
+      const ticket = visibleTicket(node.thread, level);
+      if (ticket !== "wait" && Result.isSuccess(ticket) && ticket.success !== null) {
+        const { ticketId } = ticket.success;
+        record({
+          _tag: "LinkThread",
+          key: `link:${ticketId}:${launched.threadId}`,
+          ticketId,
+          threadId: launched.threadId,
+        });
+      }
     }
     const settled = a.settled;
     if (settled === null) return;
@@ -1013,13 +1169,12 @@ export const decide = (
       );
       if (Result.isFailure(check))
         return resolve(step, a.attempt, "failed", "fail", output, check.failure);
-      return resolve(
-        step,
-        a.attempt,
-        "succeeded",
-        isTruthy(check.success) ? "pass" : "fail",
-        output,
-      );
+      if (isTruthy(check.success)) return resolve(step, a.attempt, "succeeded", "pass", output);
+      const ran = state.intents.get(acceptKey)?.intent;
+      const command = ran?._tag === "StartUnit" ? ran.argv.join(" ") : "the acceptance check";
+      const tail = exited.tail.trim().slice(-ACCEPT_TAIL_CHARS);
+      const why = `\`${command}\` exited ${exited.exit ?? "without a code"}${tail === "" ? "" : `:\n${tail}`}`;
+      return resolve(step, a.attempt, "succeeded", "fail", output, why);
     }
     const judgeKey = `judge:${stepKey(step, a.attempt)}`;
     if (!has(judgeKey)) {
@@ -1056,7 +1211,8 @@ export const decide = (
     if (verdict === undefined) return;
     if (verdict === null)
       return resolve(step, a.attempt, "failed", "fail", output, "the judge gave no verdict");
-    return resolve(step, a.attempt, "succeeded", verdict ? "pass" : "fail", output);
+    if (verdict.pass) return resolve(step, a.attempt, "succeeded", "pass", output);
+    return resolve(step, a.attempt, "succeeded", "fail", output, `the judge: ${verdict.reason}`);
   };
 
   /** Accept and judge run as sub-steps keyed `<step>/accept` and `<step>/judge`. */
@@ -1065,7 +1221,9 @@ export const decide = (
     if (intent?._tag !== "StartUnit") return null;
     return attemptsOf(intent.step).find((x) => x.attempt === intent.attempt)?.exited ?? null;
   };
-  const judgeVerdict = (key: string): boolean | null | undefined => {
+  const judgeVerdict = (
+    key: string,
+  ): { readonly pass: boolean; readonly reason: string } | null | undefined => {
     const intent = state.intents.get(key)?.intent;
     if (intent?._tag !== "StartTurn") return undefined;
     const settled = attemptsOf(intent.step).find((x) => x.attempt === intent.attempt)?.settled;
@@ -1074,8 +1232,10 @@ export const decide = (
     if (settled.status !== "completed" || settled.outputError !== null) return null;
     const output = settled.output;
     if (output === null || typeof output !== "object" || Array.isArray(output)) return null;
-    const pass = (output as { readonly [k: string]: Json })["pass"];
-    return typeof pass === "boolean" ? pass : null;
+    const fields = output as { readonly [k: string]: Json };
+    const pass = fields["pass"];
+    const reason = typeof fields["reason"] === "string" ? fields["reason"] : "no reason given";
+    return typeof pass === "boolean" ? { pass, reason } : null;
   };
 
   const renderArgv = (
@@ -1340,13 +1500,11 @@ export const decide = (
         }
         // The report goes to the bound bot's conversation once per run; an empty one is no news.
         const posted = report?.success.trim() ?? "";
-        if (
-          node.postToBot === true &&
-          definition.bot !== undefined &&
-          level.parent === null &&
-          posted !== ""
-        ) {
-          const post = `post:${step}`;
+        if (node.postToBot === true && definition.bot !== undefined && posted !== "") {
+          // Once per run at the top (`post:<node>`), once per item in a body (`post:<node>:<item>`).
+          const item = level.parent === null ? null : itemKeyOf(level);
+          const post =
+            item === null ? `post:${step}` : `post:${step.slice(level.prefix.length)}:${item}`;
           record({
             _tag: "PostToBot",
             key: post,
@@ -1579,6 +1737,7 @@ export const decide = (
       node,
       a.attempt,
       r.status,
+      r.port,
       r.at,
       markedFailed(step, a.attempt),
       rerunWanted(a),
@@ -1923,7 +2082,11 @@ export const decide = (
             });
       // A report posted to the bot's conversation is the notice: the bot's reply pushes.
       const postedToBot = [...state.intents.values()].some(
-        (entry) => entry.result?._tag === "BotPosted" && entry.result.threadId !== null,
+        (entry) =>
+          entry.intent._tag === "PostToBot" &&
+          !entry.intent.step.includes("[") &&
+          entry.result?._tag === "BotPosted" &&
+          entry.result.threadId !== null,
       );
       // A reopened run ends again under its generation's key.
       if (finished !== null && !postedToBot) record({ ...finished, key: once(finished.key) });
@@ -2086,7 +2249,15 @@ export const nextDeadline = (
     if (a?.resolved == null || node === undefined) continue;
     const marked = state.gates.get(`ambiguous:${a.step}@${a.attempt}`)?.decision?.option === "fail";
     // A rerun is dispatched in the pass that sees it, so it needs no deadline.
-    const ready = retryReadyAt(node, a.attempt, a.resolved.status, a.resolved.at, marked, false);
+    const ready = retryReadyAt(
+      node,
+      a.attempt,
+      a.resolved.status,
+      a.resolved.port,
+      a.resolved.at,
+      marked,
+      false,
+    );
     if (ready !== null) candidates.push(ready);
   }
   const future = candidates.filter((at) => Number.isFinite(at) && at > now);

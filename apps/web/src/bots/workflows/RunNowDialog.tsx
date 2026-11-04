@@ -143,7 +143,13 @@ function RunNowForm(props: {
               <BotsField
                 key={name}
                 label={name}
-                hint={spec.description ?? ""}
+                hint={
+                  spec.type === "string[]"
+                    ? [spec.description, "Separate values with commas or spaces."]
+                        .filter(Boolean)
+                        .join(" ")
+                    : (spec.description ?? "")
+                }
                 htmlFor={`run-param-${name}`}
               >
                 <Input

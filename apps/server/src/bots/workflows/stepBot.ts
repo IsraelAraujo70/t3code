@@ -3,7 +3,12 @@
  * `StartTurn` intent carries the bot of the run's pinned definition, and only `agent` turns carry
  * it. Nothing the caller controls takes part, so HostMcpForward can trust the answer.
  */
-import { BotId, parseWorkflowStepThreadId, type ThreadId } from "@t3tools/contracts";
+import {
+  BotId,
+  parseWorkflowItemThreadId,
+  parseWorkflowStepThreadId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,7 +35,8 @@ const make = Effect.gen(function* () {
   const store = yield* BotsStore.BotsStore;
   const botOf = Effect.fn("WorkflowStepBots.botOf")(
     function* (threadId: ThreadId) {
-      const step = parseWorkflowStepThreadId(threadId);
+      // A visible step thread (`wfi:`) works for the bot like a hidden one.
+      const step = parseWorkflowStepThreadId(threadId) ?? parseWorkflowItemThreadId(threadId);
       if (step === null) return Option.none<BotId>();
       const rows = yield* sql<{ readonly bot: unknown }>`
         SELECT json_extract(payload_json, '$.intent.bot') AS bot FROM workflow_facts

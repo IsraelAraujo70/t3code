@@ -106,6 +106,18 @@ describe("occurrences", () => {
       ),
     ).toBe(false);
   });
+  it.each([
+    ["thread-1", true],
+    ["wf:wfr_00000000000000000000:0123456789abcdef", false],
+    ["wfi:wfr_00000000000000000000:0123456789abcdef", false],
+  ] as const)("settled %s without filters matches: %s", (threadId, expected) => {
+    const lineage = {
+      parentThreadId: null,
+      rootThreadId: ThreadId.make(threadId),
+      relationshipToParent: null,
+    };
+    expect(settledMatches({}, { threadId, projectId: "p", title: "Hi", lineage })).toBe(expected);
+  });
   it.each(["bot:b:1", "bot:b:t-abc", "wf:b:1", "bot:bb:1"])("settled %s", (threadId) => {
     expect(
       settledMatches(

@@ -3,6 +3,7 @@ import {
   isListedThreadLineage,
   isWorkflowStepThreadId,
   type OrchestrationV2AppThreadLineage,
+  WORKFLOW_ITEM_THREAD_PREFIX,
 } from "@t3tools/contracts";
 import * as Cron from "effect/Cron";
 import * as Result from "effect/Result";
@@ -113,7 +114,10 @@ export const latestTag = (
   return tags.at(-1) ?? null;
 };
 
-/** Matches all supplied filters while excluding workflow step threads. */
+/**
+ * Matches all supplied filters while excluding workflow step threads, visible ones included: each
+ * of their phases settles, and a run must not start other runs from its own steps.
+ */
 export const settledMatches = (
   trigger: { readonly projectId?: string; readonly botId?: string; readonly titlePrefix?: string },
   thread: {
@@ -124,6 +128,7 @@ export const settledMatches = (
   },
 ): boolean =>
   !isWorkflowStepThreadId(thread.threadId) &&
+  !thread.threadId.startsWith(WORKFLOW_ITEM_THREAD_PREFIX) &&
   isListedThreadLineage(thread.lineage) &&
   (trigger.projectId === undefined || trigger.projectId === thread.projectId) &&
   (trigger.botId === undefined || thread.threadId.startsWith(`bot:${trigger.botId}:`)) &&

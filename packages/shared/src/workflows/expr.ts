@@ -97,7 +97,8 @@ export const parseExpr = (text: string): Result.Result<Expr, ExprError> => {
           : fn === "contains" || fn === "startsWith"
             ? 2
             : null;
-      if (count === null ? args.length < 1 : args.length !== count) fail("wrong arity", start);
+      const least = fn === "table" ? 2 : 1;
+      if (count === null ? args.length < least : args.length !== count) fail("wrong arity", start);
       if (fn === "ledgerDigest" || fn === "ledgerBest") {
         const a = args[0];
         if (
@@ -309,6 +310,33 @@ export const evalExpr = (expr: Expr, env: EvalEnv): Result.Result<JsonValue, Eva
         return typeof a === "string" && typeof b === "string"
           ? a.startsWith(b)
           : fail("expected strings");
+      case "table": {
+        if (!Array.isArray(a)) return fail("table expects a list of rows");
+        const columns = args.slice(1);
+        if (!columns.every((c): c is string => typeof c === "string"))
+          return fail("table columns are strings");
+        const cell = (value: JsonValue | undefined): string =>
+          (value === undefined || value === null
+            ? ""
+            : typeof value === "object"
+              ? JSON.stringify(value)
+              : String(value)
+          )
+            .replace(/\|/g, "\\|")
+            .replace(/\s*\n\s*/g, " ");
+        const line = (cells: ReadonlyArray<string>) => `| ${cells.join(" | ")} |`;
+        return [
+          line(columns),
+          line(columns.map(() => "---")),
+          ...a.map((row) =>
+            line(
+              columns.map((c) =>
+                row !== null && typeof row === "object" && !Array.isArray(row) ? cell(row[c]) : "",
+              ),
+            ),
+          ),
+        ].join("\n");
+      }
       case "min":
       case "max": {
         const values = args.length === 1 && Array.isArray(a) ? a : args;

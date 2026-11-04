@@ -13,6 +13,8 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
+import { FORWARDED_HOOKS, forwardingHook, prePushGuard } from "./pushGuard.ts";
+
 export class WorkflowGitError extends Data.TaggedError("WorkflowGitError")<{
   readonly message: string;
   /** The compare-and-swap of `advance` lost: the ref is neither `from` nor `to`. */
@@ -44,6 +46,11 @@ export class WorkflowGit extends Context.Service<
       readonly baseRef: string;
       readonly branch: string | null;
       readonly runId: string;
+      /**
+       * The agent's worktree (`branchPolicy: agent`): detached at `baseRef` when created, adopted
+       * on whatever branch the agent moved it to, and guarded by `pushGuard.ts` for this worktree.
+       */
+      readonly agentBranch?: { readonly protect: ReadonlyArray<string> } | undefined;
     }) => Effect.Effect<PreparedWorktree, WorkflowGitError>;
     /** Gives up an owned branch while retaining its commits and worktrees. */
     readonly release: (input: {
@@ -132,6 +139,79 @@ const deleteDirectory = (path: string) =>
     catch: (error) => new WorkflowGitError({ message: String(error) }),
   });
 
+/**
+ * Sets the push guard as this worktree's hooks directory, inside its private git dir so it goes
+ * with the worktree. `extensions.worktreeConfig` lets `--worktree` config hold for one worktree;
+ * the repository's own hooks directory, read before, stays what every hook forwards to.
+ */
+const guardPushes = Effect.fn("WorkflowGit.guardPushes")(function* (
+  path: string,
+  protect: ReadonlyArray<string>,
+) {
+  const gitDir = yield* git(path, ["rev-parse", "--absolute-git-dir"]);
+  const hooks = NodePath.join(gitDir, "t3-push-guard");
+  const configured = yield* Effect.forEach(["--local", "--global", "--system"], (scope) =>
+    git(path, ["config", scope, "--get", "core.hooksPath"]).pipe(Effect.option),
+  );
+  const own = configured.find((c) => c._tag === "Some" && c.value !== "");
+  const original =
+    own?._tag === "Some"
+      ? own.value
+      : NodePath.resolve(path, yield* git(path, ["rev-parse", "--git-common-dir"]), "hooks");
+  yield* Effect.try({
+    try: () => {
+      NodeFS.mkdirSync(hooks, { recursive: true });
+      const write = (name: string, text: string) =>
+        NodeFS.writeFileSync(NodePath.join(hooks, name), text, { mode: 0o755 });
+      write("pre-push", prePushGuard(protect, original));
+      for (const name of FORWARDED_HOOKS) write(name, forwardingHook(name, original));
+    },
+    catch: (error) => new WorkflowGitError({ message: String(error) }),
+  });
+  const common = NodePath.resolve(path, yield* git(path, ["rev-parse", "--git-common-dir"]));
+  const moved = yield* mainWorktreeKeys(path, common);
+  yield* git(path, ["config", "extensions.worktreeConfig", "true"]);
+  for (const key of moved)
+    yield* git(path, ["config", "--file", NodePath.join(common, "config"), "--unset", key]);
+  yield* git(path, ["config", "--worktree", "core.hooksPath", hooks]);
+});
+
+/**
+ * With `extensions.worktreeConfig` on, a `core.worktree` or `core.bare = true` left in the shared
+ * config applies to every worktree (git-worktree(1)), so the agent's would work in the main
+ * checkout. Copies them into the main worktree's own `config.worktree` and returns the keys the
+ * caller unsets once the extension is on; refuses a value it cannot move as it is.
+ */
+const mainWorktreeKeys = Effect.fn("WorkflowGit.mainWorktreeKeys")(function* (
+  path: string,
+  common: string,
+) {
+  const shared = NodePath.join(common, "config");
+  const own = NodePath.join(common, "config.worktree");
+  const refuse = (message: string) =>
+    new WorkflowGitError({
+      message: `branchPolicy agent cannot guard this repository: ${message}`,
+      permanent: true,
+    });
+  const moved: string[] = [];
+  for (const key of ["core.worktree", "core.bare"]) {
+    const found = yield* git(path, ["config", "--file", shared, "--get-all", key]).pipe(
+      Effect.option,
+    );
+    if (found._tag === "None") continue;
+    const values = found.value.split("\n");
+    if (values.length > 1) return yield* refuse(`${key} is set more than once in ${shared}`);
+    const value = values[0]!;
+    if (key === "core.bare" && value !== "true") continue;
+    const current = yield* git(path, ["config", "--file", own, "--get", key]).pipe(Effect.option);
+    if (current._tag === "Some" && current.value !== value)
+      return yield* refuse(`${key} differs between ${shared} and ${own}`);
+    if (current._tag === "None") yield* git(path, ["config", "--file", own, key, value]);
+    moved.push(key);
+  }
+  return moved;
+});
+
 const head = Effect.fn("WorkflowGit.head")((path: string) => git(path, ["rev-parse", "HEAD"]));
 const tree = Effect.fn("WorkflowGit.tree")((path: string) =>
   git(path, ["rev-parse", "HEAD^{tree}"]),
@@ -146,7 +226,9 @@ const make = Effect.sync(() =>
       yield* git(repoRoot, ["worktree", "prune"]);
       const entry = yield* worktree(repoRoot, path);
       const expected = branch === null ? "detached" : `branch refs/heads/${branch}`;
-      if (!entry?.split("\n").includes(expected)) {
+      // The agent may have switched its worktree to its own branch: that is its work, kept as is.
+      const adopted = input.agentBranch !== undefined && entry !== undefined;
+      if (!adopted && !entry?.split("\n").includes(expected)) {
         if (entry) yield* git(repoRoot, ["worktree", "remove", "--force", path]);
         else yield* deleteDirectory(path);
         const exists =
@@ -180,7 +262,14 @@ const make = Effect.sync(() =>
           );
         }
       }
-      return { path, branch, headSha: yield* head(path) };
+      if (input.agentBranch !== undefined) yield* guardPushes(path, input.agentBranch.protect);
+      const current =
+        input.agentBranch === undefined
+          ? branch
+          : yield* git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+              Effect.orElseSucceed(() => null),
+            );
+      return { path, branch: current === "" ? null : current, headSha: yield* head(path) };
     }),
     resolveRef: Effect.fn("WorkflowGit.resolveRef")(function* ({ repoRoot, ref }) {
       return yield* git(repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`]).pipe(

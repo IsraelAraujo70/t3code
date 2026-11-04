@@ -109,10 +109,18 @@ export const WorkflowOutputShape = Schema.Record(Schema.String, WorkflowFieldSpe
 export type WorkflowOutputShape = typeof WorkflowOutputShape.Type;
 
 export const WorkflowParamSpec = Schema.Struct({
-  type: Schema.Literals(["string", "number", "boolean"]),
-  default: Schema.optional(Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
-  /** A string param is trusted in argv, env and branch names only with a pattern. */
+  /** `string[]` is a list a `map` iterates (`items: params.tickets`). */
+  type: Schema.Literals(["string", "number", "boolean", "string[]"]),
+  default: Schema.optional(
+    Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Array(Schema.String)]),
+  ),
+  /**
+   * A string param is trusted in argv, env and branch names only with a pattern. On a `string[]`
+   * every element must match it whole.
+   */
   pattern: Schema.optional(Schema.String),
+  /** `string[]` only: a run with more elements is refused, never cut. */
+  maxItems: Schema.optional(PositiveInt),
   description: Schema.optional(Schema.String),
 });
 export type WorkflowParamSpec = typeof WorkflowParamSpec.Type;
@@ -125,8 +133,21 @@ export const WorkflowWorkspaceDecl = Schema.Struct({
   project: WorkflowTemplate,
   /** A ref, or `workspace:<name>` to start from another workspace's HEAD. */
   base: WorkflowTemplate,
-  branch: WorkflowTemplate,
+  /** Required with the `engine` branch policy; refused with `agent`. */
+  branch: Schema.optional(WorkflowTemplate),
   retain: Schema.optional(Schema.Literals(["always", "on_failure", "never"])),
+  /**
+   * One worktree per `map` item instead of one per run: `project`, `base` and `branch` may read
+   * `item`, and only nodes inside a map body may use it.
+   */
+  perItem: Schema.optional(Schema.Boolean),
+  /**
+   * `engine` (default): the engine creates and pushes the `wf/…` branch. `agent`: the worktree
+   * starts detached at `base`; the agent creates its own branch, pushes and opens the pull request.
+   * A pre-push hook set for that worktree alone refuses a force push, a deletion and a push to
+   * main, master, friend/main or a ref in `protect`.
+   */
+  branchPolicy: Schema.optional(Schema.Literals(["engine", "agent"])),
 });
 export type WorkflowWorkspaceDecl = typeof WorkflowWorkspaceDecl.Type;
 export const WorkflowWorkspaceUse = Schema.Union([
@@ -177,15 +198,30 @@ const GraphFields = {
   continueOnFail: Schema.optional(Schema.Boolean),
 };
 
+/**
+ * A step thread the user sees: listed in the sidebar like any thread (id `wfi:<runId>:<hash>`, one
+ * per step instance, so a retry or restart reuses it), and linked to a kanban card when
+ * `kanbanCard` renders to a ticket id or identifier. The card's issue opens the first message.
+ */
+export const WorkflowVisibleThread = Schema.Struct({
+  visible: Schema.Literal(true),
+  kanbanCard: Schema.optional(WorkflowTemplate),
+  /** Default: the card's identifier and title, else the workflow title and step. */
+  title: Schema.optional(WorkflowTemplate),
+});
+export type WorkflowVisibleThread = typeof WorkflowVisibleThread.Type;
+
 const AgentFields = {
   model: WorkflowModelUse,
   prompt: WorkflowTemplate,
   workspace: WorkflowWorkspaceUse,
   /**
-   * `new` (default) or `continue:<nodeId>`. A thread keeps one access and one worktree for life,
-   * so the compiler accepts a continuation only with the continued node's workspace and access.
+   * `new` (default), `continue:<nodeId>`, or a visible thread. A thread keeps one access and one
+   * worktree for life, so the compiler accepts a continuation only with the continued node's
+   * workspace and access. A retry of a node whose acceptance failed continues the same thread
+   * (a continuation's, or a visible one) with the reason.
    */
-  thread: Schema.optional(Schema.String),
+  thread: Schema.optional(Schema.Union([Schema.String, WorkflowVisibleThread])),
   /** `read` = disposable worktree; default `read`. */
   access: Schema.optional(Schema.Literals(["read", "write"])),
   output: Schema.optional(WorkflowOutputShape),
@@ -293,9 +329,9 @@ export const WorkflowOutputNode = Schema.Struct({
   promote: Schema.optional(Schema.Struct({ ledger: WorkflowLedgerKey, sha: WorkflowTemplate })),
   notify: Schema.optional(Schema.Boolean),
   /**
-   * Posts the rendered `report` to the current main thread of the workflow's `bot`, once per run.
-   * Top level only; an empty report posts nothing. The post wakes the bot, and replaces the
-   * finished push.
+   * Posts the rendered `report` to the current main thread of the workflow's `bot`, once per step
+   * instance: once per run at the top level, once per item inside a `map` body. An empty report
+   * posts nothing. The post wakes the bot; a top-level post replaces the finished push.
    */
   postToBot: Schema.optional(Schema.Boolean),
 });
