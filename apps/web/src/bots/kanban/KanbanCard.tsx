@@ -35,6 +35,7 @@ import { memo, type KeyboardEvent, type MouseEvent, type ReactNode } from "react
 
 import { cn } from "~/lib/utils";
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import {
   Menu,
   MenuGroup,
@@ -83,10 +84,16 @@ export interface KanbanTicketViewProps {
   /** The T3 project, on the board of every project; null on one project's board. */
   readonly projectTitle: string | null;
   readonly selected: boolean;
+  /** In the multi-selection that the selection bar acts on. */
+  readonly checked: boolean;
+  /** Some card is checked: every card shows its checkbox. */
+  readonly selecting: boolean;
   readonly canEdit: boolean;
   /** Threads of the ticket's project that are not linked yet, newest first. */
   readonly linkableThreads: ReadonlyArray<KanbanThreadOption>;
   readonly onOpen: () => void;
+  /** Checkbox click or shift-click; `range` selects from the last card clicked. */
+  readonly onCheck: (range: boolean) => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly onLinkThread: (threadId: ThreadId) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
@@ -155,10 +162,13 @@ function opensTicket(event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>
   return target.closest("button, a") === null;
 }
 
-export function ticketOpenHandlers(onOpen: () => void) {
+/** Click opens the ticket; shift-click selects it instead. */
+export function ticketOpenHandlers(onOpen: () => void, onCheck: (range: boolean) => void) {
   return {
     onClick: (event: MouseEvent<HTMLElement>) => {
-      if (opensTicket(event)) onOpen();
+      if (!opensTicket(event)) return;
+      if (event.shiftKey) onCheck(true);
+      else onOpen();
     },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
       if (event.key !== "Enter" || !opensTicket(event)) return;
@@ -166,6 +176,27 @@ export function ticketOpenHandlers(onOpen: () => void) {
       onOpen();
     },
   };
+}
+
+/** The selection checkbox; a shift-click on it selects a range. */
+export function KanbanTicketCheckbox(
+  props: Pick<KanbanTicketViewProps, "ticket" | "checked" | "onCheck"> & {
+    readonly className: string;
+  },
+) {
+  return (
+    <span className={props.className}>
+      <Checkbox
+        checked={props.checked}
+        aria-label={`Select ${props.ticket.identifier}`}
+        onPointerDown={stopDragStart}
+        onClick={(event) => {
+          event.stopPropagation();
+          props.onCheck(event.shiftKey);
+        }}
+      />
+    </span>
+  );
 }
 
 /** Open, link a thread, open in Linear, and delete for a local ticket. */
@@ -371,14 +402,26 @@ export const KanbanCard = memo(function KanbanCard(
       // A read-only card still opens: only an editable one carries the draggable semantics.
       {...(props.canEdit ? attributes : { role: "button", tabIndex: 0 })}
       {...listeners}
-      {...ticketOpenHandlers(props.onOpen)}
+      {...ticketOpenHandlers(props.onOpen, props.onCheck)}
       className={cn(
         "group/card relative w-full cursor-pointer rounded-lg border bg-card px-3 py-2.5 text-card-foreground shadow-xs/5 outline-none hover:border-ring/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-        props.selected && "ring-2 ring-ring ring-inset",
+        props.selecting && "pl-8",
+        (props.selected || props.checked) && "ring-2 ring-ring ring-inset",
+        props.checked && "bg-accent/40",
         isDragging && "opacity-40",
       )}
       data-testid="kanban-card"
     >
+      <KanbanTicketCheckbox
+        ticket={ticket}
+        checked={props.checked}
+        onCheck={props.onCheck}
+        className={cn(
+          "absolute top-2.5 left-2.5 z-10 flex rounded-sm bg-card",
+          !props.selecting &&
+            "opacity-0 group-focus-within/card:opacity-100 group-hover/card:opacity-100",
+        )}
+      />
       {showHeader ? (
         <div className="flex h-4 items-center gap-1 text-muted-foreground text-xs">
           {show.has("id") ? <span className="shrink-0">{ticket.identifier}</span> : null}

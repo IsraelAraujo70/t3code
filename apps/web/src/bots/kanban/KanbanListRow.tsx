@@ -9,6 +9,7 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 import {
   KanbanLabelList,
+  KanbanTicketCheckbox,
   KanbanTicketMenu,
   responsibleBots,
   ticketLabels,
@@ -38,13 +39,23 @@ export const KanbanListRow = memo(function KanbanListRow(props: KanbanTicketView
     <div
       role="button"
       tabIndex={0}
-      {...ticketOpenHandlers(props.onOpen)}
+      {...ticketOpenHandlers(props.onOpen, props.onCheck)}
       className={cn(
         "group/row flex h-9 w-full cursor-pointer items-center gap-2 border-b px-3 text-sm outline-none hover:bg-accent/50 focus-visible:bg-accent/50",
-        props.selected && "bg-accent",
+        (props.selected || props.checked) && "bg-accent",
       )}
       data-testid="kanban-list-row"
     >
+      <KanbanTicketCheckbox
+        ticket={ticket}
+        checked={props.checked}
+        onCheck={props.onCheck}
+        className={cn(
+          "flex shrink-0",
+          !props.selecting &&
+            "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100",
+        )}
+      />
       {show.has("priority") ? <KanbanPriorityIcon priority={ticket.priority} /> : null}
       {show.has("id") ? (
         <span className="w-16 shrink-0 truncate text-muted-foreground text-xs">

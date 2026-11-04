@@ -39,7 +39,7 @@ import {
   SquareKanbanIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { isElectron } from "~/env";
@@ -87,6 +87,15 @@ import { KanbanFilterBar, type KanbanAiFilterOutcome } from "./KanbanFilterBar";
 import { minuteEpoch } from "./kanbanIssue.logic";
 import { KanbanIssueView } from "./KanbanIssueView";
 import { KanbanList } from "./KanbanList";
+import { KanbanSelectionBar } from "./KanbanRunWorkflow";
+import {
+  EMPTY_SELECTION,
+  selectedTickets,
+  selectRange,
+  toggleTicket,
+  visibleTickets,
+  type KanbanSelection,
+} from "./kanbanRunWorkflow.logic";
 import {
   applyPendingDrops,
   draftOf,
@@ -238,6 +247,7 @@ function KanbanWorkspace(props: {
   const [drafts, setDrafts] = useState<KanbanDrafts>(new Map());
   const [searchText, setSearchText] = useState("");
   const [pending, setPending] = useState<KanbanPendingDrops>(new Map());
+  const [selection, setSelection] = useState<KanbanSelection>(EMPTY_SELECTION);
 
   const move = useAtomCommand(botsEnvironment.kanbanMoveTicket, { label: "kanban move" });
   const update = useAtomCommand(botsEnvironment.kanbanUpdateTicket, { label: "kanban update" });
@@ -302,6 +312,33 @@ function KanbanWorkspace(props: {
       ? null
       : findIssue(shown.tickets, scope, search.issue, search.issueProject);
   const maximized = issueOpen && search.full === 1;
+
+  // The list shows no swimlanes, so a shift-click range follows its sections.
+  const onScreen = visibleTickets(draft.layout === "list" ? { ...view, swimlanes: null } : view);
+  const onScreenIds = onScreen.map((ticket) => ticket.id);
+  const checkedTickets = selectedTickets(selection, onScreen);
+  const checkedIds = new Set(checkedTickets.map((ticket) => ticket.id));
+  const clearSelection = () => setSelection(EMPTY_SELECTION);
+  const hasSelection = checkedTickets.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Esc anywhere outside a field or popup clears the selection
+  useEffect(() => {
+    if (!hasSelection || issueOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest(
+            "input, textarea, select, [role='menu'], [role='dialog'], [role='listbox']",
+          ))
+      )
+        return;
+      setSelection(EMPTY_SELECTION);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [hasSelection, issueOpen]);
 
   const go = (next: KanbanSearch, replace: boolean) =>
     void navigate({ to: "/kanban", search: next, replace });
@@ -542,6 +579,12 @@ function KanbanWorkspace(props: {
       threads: links?.threads ?? NO_THREADS,
       projectTitle: scope === null ? (projectTitles.get(ticket.projectId) ?? null) : null,
       selected: ticket.id === openTicket?.id,
+      checked: checkedIds.has(ticket.id),
+      selecting: hasSelection,
+      onCheck: (range: boolean) =>
+        setSelection((current) =>
+          range ? selectRange(current, ticket.id, onScreenIds) : toggleTicket(current, ticket.id),
+        ),
       canEdit,
       linkableThreads: links?.linkable ?? NO_OPTIONS,
       onOpenThread: openThread,
@@ -661,6 +704,14 @@ function KanbanWorkspace(props: {
           ) : null}
           {props.error ? <span className="text-destructive"> · {props.error}</span> : null}
         </p>
+        {hasSelection ? (
+          <KanbanSelectionBar
+            environmentId={environmentId}
+            tickets={checkedTickets}
+            projectTitles={projectTitles}
+            onClear={clearSelection}
+          />
+        ) : null}
         {draft.layout === "list" ? (
           <KanbanList
             view={view}

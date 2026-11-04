@@ -353,6 +353,14 @@ model (or one picked), in the project root, whose first message carries the issu
 title, link and description. "Ask <bot>" sends the same message to a bot's conversation instead.
 Either way the thread is linked to the ticket. Nothing starts by itself.
 
+On the web, cards can be selected together (checkbox, shift-click for a range, Esc to clear) and
+handed to a workflow as one run. The menu lists the workflows whose `params.tickets` is a
+`string[]`; the run gets each card's identifier (`BACK-222`), which `kanbanCard: "{{ item }}"`
+reads (workflows-design §6.2). A run takes at most the param's `maxItems`, never more than 10:
+above that the UI refuses instead of cutting the selection. Two selected local tickets with the
+same identifier from different projects are refused too, since the identifier alone does not say
+which card the run means. Android has no selection yet.
+
 ### Not done in v2
 
 - **Linear images in descriptions and comments.** `uploads.linear.app` files need the account's
