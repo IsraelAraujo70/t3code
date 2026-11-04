@@ -349,6 +349,10 @@ export const decide = (
   const decidedNow = new Map<string, GateDecided>();
   const decisionOf = (gateKey: string): GateDecided | null =>
     state.gates.get(gateKey)?.decision ?? decidedNow.get(gateKey) ?? null;
+  /** Bot gates this pass handed to Israel, read alongside the folded handovers. */
+  const handedNow = new Set<string>();
+  const handedOver = (gateKey: string) =>
+    (state.gates.get(gateKey)?.handedOver ?? null) !== null || handedNow.has(gateKey);
   const emit = (key: string, fact: Fact, target = stream) => {
     if (emittedKeys.has(`${target}\u0000${key}`)) return;
     if (target === stream && state.keys.has(key)) return;
@@ -356,6 +360,7 @@ export const decide = (
     if (fact._tag === "GateDecided" && !decidedNow.has(fact.gateKey))
       decidedNow.set(fact.gateKey, fact);
     if (fact._tag === "RunResumed") pausedNow = false;
+    if (fact._tag === "GateHandedOver") handedNow.add(fact.gateKey);
     emittedKeys.add(`${target}\u0000${key}`);
     if (target === stream) emittedKeys.add(key);
     out.push({ stream: target, key, fact });
@@ -538,7 +543,7 @@ export const decide = (
 
   /** The text of whoever decided a gate (a bot's answer, Israel's note), escalation followed. */
   const gateAnswer = (gateKey: string): string | null => {
-    const decision = decisionOf(gateKey);
+    const decision = handedOver(gateKey) ? null : decisionOf(gateKey);
     const final =
       decision !== null && decision.option !== ESCALATE
         ? decision
@@ -549,18 +554,31 @@ export const decide = (
   /**
    * The decision a gate's step reads. A gate routed to the bot hands its ask to Israel, as gate
    * `escalated:<key>`, when the bot picks `escalate` or the ask can never reach it; that gate's
-   * decision is then the one that counts. Opens Israel's gate when it is not open yet.
+   * decision is then the only one that counts. An ask that cannot arrive hands the open gate over
+   * (`GateHandedOver`), so a late decision of it is refused. Opens Israel's gate when not open yet.
    */
   const gateDecision = (gateKey: string): GateDecided | null => {
-    const decision = decisionOf(gateKey);
     const gate = state.gates.get(gateKey)?.intent;
-    if (gate?.bot === undefined) return decision;
-    const posted = resultOf(`ask:${gateKey}`);
-    const unreachable =
-      (posted?._tag === "IntentFailed" && !posted.retryable) ||
-      (posted?._tag === "BotPosted" && posted.threadId === null);
-    if (decision === null ? !unreachable : decision.option !== ESCALATE) return decision;
+    if (gate?.bot === undefined) return decisionOf(gateKey);
     const escalatedKey = `escalated:${gateKey}`;
+    if (!handedOver(gateKey)) {
+      const decision = decisionOf(gateKey);
+      if (decision !== null && decision.option !== ESCALATE) return decision;
+      if (decision === null) {
+        const posted = resultOf(`ask:${gateKey}`);
+        const unreachable =
+          (posted?._tag === "IntentFailed" && !posted.retryable) ||
+          (posted?._tag === "BotPosted" && posted.threadId === null);
+        if (!unreachable) return null;
+        emit(`handover:${gateKey}`, {
+          _tag: "GateHandedOver",
+          gateKey,
+          to: escalatedKey,
+          at: nowIso,
+        });
+      }
+    }
+    const decision = decisionOf(gateKey);
     const escalated = decisionOf(escalatedKey);
     if (escalated !== null) return escalated;
     const { bot: _routed, ...ask } = gate;
@@ -2043,17 +2061,23 @@ export const decide = (
             options: ["answer", "decline"],
             expiresAt: null,
           },
-          node.askBot === true,
+          // Only a question goes to the bot: an approval to run something stays Israel's.
+          node.askBot === true && request.requestKind === "user_input",
           request.threadId,
         );
         continue;
       }
+      // A bot answers questions; its decision never approves (defence beside the routing).
+      const byBot = decision.by.startsWith("bot:");
+      const answers =
+        decision.option === "answer" && (!byBot || request.requestKind === "user_input");
       record({
         _tag: "AnswerRequest",
         key: answerKey,
         threadId: request.threadId,
         requestId: request.requestId,
-        answer: decision.option === "answer" ? { text: decision.note ?? "" } : "decline",
+        answer: answers ? { text: decision.note ?? "" } : "decline",
+        by: decision.by,
       });
       continue;
     }
@@ -2084,6 +2108,7 @@ export const decide = (
   for (const [gateKey, gate] of state.gates) {
     const expiresAt = gate.intent.expiresAt;
     if (gate.decision !== null || expiresAt === null || ctx.now < Date.parse(expiresAt)) continue;
+    if (handedOver(gateKey)) continue;
     const node = nodeAt(compiled, gate.intent.step);
     const option = node?.kind === "gate" ? node.expires?.decision : undefined;
     if (option === undefined) continue;

@@ -39,6 +39,7 @@ export type IntentResult = Exclude<
       | "UnitExited"
       | "RuntimeRequest"
       | "GateDecided"
+      | "GateHandedOver"
       | "ControlRequested"
       | "ChildRunEnded"
       | "RunWarned"
@@ -85,6 +86,8 @@ export interface GateState {
   readonly intent: Extract<Intent, { readonly _tag: "OpenGate" }>;
   readonly openedAt: string | null;
   readonly decision: GateDecided | null;
+  /** The gate that took over a bot's gate (`GateHandedOver`); this one takes no decision then. */
+  readonly handedOver: string | null;
   /** Seq of the last fact that changed this gate. */
   readonly lastSeq: number;
 }

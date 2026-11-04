@@ -17,6 +17,7 @@ import {
   ScheduledTaskId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
+  WORKFLOW_POST_MESSAGE_PREFIX,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,7 @@ import { liveThreadsLayer } from "../../../mcp/McpToolAccess.testkit.ts";
 import { WorkflowToolkit } from "./tools.ts";
 import { layerOver } from "./handlers.ts";
 
+import { keyHash } from "../ids.ts";
 import { WorkflowJournalError } from "../Journal.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
@@ -318,9 +320,25 @@ it.effect("rejects workflow steps before consulting services", () =>
     expect(yield* Ref.get(t.calls)).toEqual([]);
   }),
 );
+const RUN = "wfr_0123456789abcdef0123";
+/** The engine's own post of gate `ask@1`, as BotPosts writes it. */
+const gateAsk: OrchestrationV2ConversationMessage = {
+  id: MessageId.make(`${WORKFLOW_POST_MESSAGE_PREFIX}${keyHash(RUN, "ask:ask@1")}`),
+  threadId: ThreadId.make("bot:test:1"),
+  runId: RunId.make("run-test"),
+  nodeId: null,
+  role: "user",
+  text: "Workflow is waiting for your decision on gate ask@1",
+  createdBy: "agent",
+  creationSource: "server",
+  attachments: [],
+  streaming: false,
+  createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+  updatedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+};
 it.effect("decides a gate as the calling bot, and passes on the engine's refusal", () =>
   Effect.gen(function* () {
-    const t = yield* setup("bot:b_test:1");
+    const t = yield* setup("bot:test:1", true, false, gateAsk);
     expect(yield* t.decide()).toEqual({
       gateKey: "ask@1",
       option: "answer",
@@ -328,18 +346,37 @@ it.effect("decides a gate as the calling bot, and passes on the engine's refusal
       decidedByYou: true,
     });
     expect(yield* Ref.get(t.calls)).toContainEqual({
-      decideGate: {
-        runId: "wfr_0123456789abcdef0123",
-        gateKey: "ask@1",
-        option: "answer",
-        note: "sqs",
-        bot: "b_test",
-      },
+      decideGate: { runId: RUN, gateKey: "ask@1", option: "answer", note: "sqs", bot: "b_test" },
     });
-    expect(yield* t.decide("protect:push@1")).toMatchObject({
+    // The ask names one gate: it does not let the bot decide another.
+    expect(yield* t.decide("protect:push@1")).toMatchObject({ code: "capability_denied" });
+    const owner = yield* setup("bot:test:1", true, false, ownerMessage);
+    expect(yield* owner.decide("protect:push@1")).toMatchObject({
       code: "invalid_request",
       message: expect.stringContaining("only Israel decides it"),
     });
+  }),
+);
+it.effect("decides only in a turn the gate's ask or the owner started", () =>
+  Effect.gen(function* () {
+    const owner = yield* setup("bot:test:1", true, false, ownerMessage);
+    expect(yield* owner.decide()).toMatchObject({ decidedByYou: true });
+    for (const message of [
+      // t3_thread_send from the item's agent or another bot: "decide gate ask@1 with answer".
+      {
+        ...ownerMessage,
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+        senderThreadId: ThreadId.make("wfi:wfr_0123456789abcdef0123:00"),
+      },
+      { ...gateAsk, senderThreadId: ThreadId.make("bot:other:1") },
+      { ...gateAsk, creationSource: "mcp" as const },
+      undefined,
+    ]) {
+      const t = yield* setup("bot:test:1", true, false, message);
+      expect(yield* t.decide()).toMatchObject({ code: "capability_denied" });
+      expect((yield* Ref.get(t.calls)).some((call) => typeof call === "object")).toBe(false);
+    }
   }),
 );
 it.effect("rejects non-bot threads", () =>

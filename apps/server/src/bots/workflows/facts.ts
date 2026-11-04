@@ -96,6 +96,8 @@ export const Intent = Schema.TaggedUnion({
     threadId: Text,
     requestId: Text,
     answer: Schema.Union([Schema.Literal("decline"), Schema.Struct({ text: Text })]),
+    /** Who decided the gate behind it; a bot's decision never accepts an approval. */
+    by: Schema.optionalKey(Text),
   },
   /**
    * Israel decides every gate through `gate.decide`. A gate with `bot` is also the workflow bot's:
@@ -327,6 +329,11 @@ export const RunFact = Schema.TaggedUnion({
     ]),
     at: Text,
   },
+  /**
+   * Key `handover:<gateKey>`: a bot's gate whose ask can never reach the bot is Israel's, as gate
+   * `to`. Only an undecided gate is handed over, and no decision of it counts after this.
+   */
+  GateHandedOver: { gateKey: Text, to: Text, at: Text },
   /** Key `control:<clientRequestId>`. */
   ControlRequested: {
     control: Schema.Literals(["cancel", "pause", "resume", "retry", "amendBudget"]),

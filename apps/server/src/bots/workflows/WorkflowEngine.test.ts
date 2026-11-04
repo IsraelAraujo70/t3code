@@ -1324,7 +1324,7 @@ it.effect(
   "escalate hands the bot's gate to Israel with a push; Israel may answer a bot's gate",
   () =>
     Effect.gen(function* () {
-      const { layer } = yield* makeFakeInterpreter({});
+      const { fake, layer } = yield* makeFakeInterpreter({});
       yield* Effect.gen(function* () {
         const subscription = yield* (yield* Journal).subscribe;
         const engine = yield* make({ runsDir: "/runs" });
@@ -1390,6 +1390,33 @@ it.effect(
         assert.equal(state.gates.get("ask@1")?.decision?.by, "user");
         assert.isFalse(state.gates.has("escalated:ask@1"));
         assert.include(turnOf(state, "turn:resume@1").prompt, "The answer: MySQL");
+
+        // An ask that cannot reach the bot hands the gate to Israel: the original takes no decision.
+        fake.missingBots.add(BOT);
+        const unreachable = yield* engine.start(request("manual:unreachable"));
+        yield* waitFor(unreachable.runId, "result:notify:gate:escalated:ask@1");
+        for (const late of [{ bot: BOT }, {}]) {
+          const refused = yield* engine
+            .decideGate({
+              runId: unreachable.runId,
+              gateKey: "ask@1",
+              option: "answer",
+              note: "late",
+              ...late,
+            })
+            .pipe(Effect.flip);
+          assert.include(refused.message, "went to Israel as escalated:ask@1");
+        }
+        yield* engine.decideGate({
+          runId: unreachable.runId,
+          gateKey: "escalated:ask@1",
+          option: "answer",
+          note: "Redis",
+        });
+        yield* waitFor(unreachable.runId, "ended");
+        const handed = yield* engine.runState(unreachable.runId);
+        assert.isNull(handed.gates.get("ask@1")?.decision);
+        assert.include(turnOf(handed, "turn:resume@1").prompt, "The answer: Redis");
       }).pipe(
         Effect.scoped,
         Effect.provide(

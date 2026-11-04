@@ -145,7 +145,7 @@ describe("run decider primitives", () => {
       attempt: 1,
       threadId: "thread-a",
       requestId: "r1",
-      requestKind: "user-input",
+      requestKind: "user_input",
       text: "Postgres or SQLite?",
     });
     const asked = keysOf(run.drive());
@@ -182,6 +182,72 @@ describe("run decider primitives", () => {
     });
     run.drive();
     expect(run.intent("answer:r1")).toMatchObject({ answer: { text: "SQLite" } });
+
+    // An approval to run something never goes to the bot, and a bot's decision never accepts it.
+    run.add("request:r2", {
+      _tag: "RuntimeRequest",
+      step: "a",
+      attempt: 1,
+      threadId: "thread-a",
+      requestId: "r2",
+      requestKind: "command",
+      text: "git push --force",
+    });
+    const approval = keysOf(run.drive());
+    const gate = run.intent("open:ask:r2");
+    expect(gate).toMatchObject({ options: ["answer", "decline"] });
+    expect(gate !== undefined && "bot" in gate).toBe(false);
+    expect(run.intent("ask:ask:r2")).toBeUndefined();
+    expect(approval).toContain("notify:gate:ask:r2");
+    run.add("gate:ask:r2", {
+      _tag: "GateDecided",
+      gateKey: "ask:r2",
+      option: "answer",
+      note: "go",
+      by: `bot:${BOT}`,
+      at: iso(T0),
+    });
+    run.drive();
+    expect(run.intent("answer:r2")).toMatchObject({ answer: "decline", by: `bot:${BOT}` });
+  });
+
+  it("hands a bot's gate whose ask cannot arrive to Israel; a late decision of it does not count", () => {
+    const BOT = `b_${"b".repeat(32)}`;
+    const run = TestRun.start(
+      compile({
+        bot: BOT,
+        nodes: {
+          ask: { kind: "gate", answerBy: "bot", ask: "Ship it?" },
+          done: { kind: "output", status: "no_change", value: {} },
+        },
+        edges: ["ask:approve -> done"],
+      }),
+    );
+    run.drive();
+    expect(run.intent("ask:ask@1")).toMatchObject({ _tag: "PostToBot" });
+    run.result("ask:ask@1", { _tag: "BotPosted", threadId: null });
+    const handed = keysOf(run.drive());
+    expect(handed).toContain("handover:ask@1");
+    expect(handed).toContain("notify:gate:escalated:ask@1");
+    run.add("gate:escalated:ask@1", {
+      _tag: "GateDecided",
+      gateKey: "escalated:ask@1",
+      option: "reject",
+      note: null,
+      by: "user",
+      at: iso(T0),
+    });
+    // The bot's answer to the original lands after the handover: it does not count.
+    run.add("gate:ask@1", {
+      _tag: "GateDecided",
+      gateKey: "ask@1",
+      option: "approve",
+      note: null,
+      by: `bot:${BOT}`,
+      at: iso(T0),
+    });
+    expect(run.state().gates.get("ask@1")?.decision).toBeNull();
+    expect(resolved(run, "resolved:ask@1")).toMatchObject({ port: "reject" });
   });
 
   it.each([
