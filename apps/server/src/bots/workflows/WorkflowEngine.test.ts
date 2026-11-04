@@ -187,6 +187,12 @@ it.effect("promotes behind 200 finished runs reading only the facts that can dec
         }),
       );
       assert.equal(ended.fact._tag === "RunEnded" && ended.fact.status, "succeeded");
+      // The ended run stays live, its actor still reading, until its end notice and cleanup settle.
+      yield* PubSub.take(subscription).pipe(
+        Effect.repeat({
+          until: () => journal.liveRuns.pipe(Effect.map((ids) => !ids.includes(runId))),
+        }),
+      );
       assert.isBelow(reads.facts, 100);
 
       // The fatigue limit still trips on the latest outcomes, behind 201 successes.
@@ -963,15 +969,12 @@ it.effect("posts a bot routine's report once, also when a restart replays the po
       layerCatalog([botRoutine("ready_for_review")]),
     );
     const runId = yield* Effect.gen(function* () {
-      const subscription = yield* (yield* Journal).subscribe;
       const engine = yield* make({ runsDir: "/runs" });
       const { runId } = yield* engine.start({
         ...request("manual:post"),
         params: { news: "BTC -8%" },
       });
-      yield* PubSub.take(subscription).pipe(
-        Effect.repeat({ until: (f) => f.stream === runStream(runId) && f.key === "post:done" }),
-      );
+      yield* Queue.take(fake.stalled).pipe(Effect.repeat({ until: (key) => key === "post:done" }));
       return runId;
     }).pipe(Effect.scoped, Effect.provide(services));
     fake.stall.delete("post:done");
