@@ -56,18 +56,38 @@ export const isGateAsk = (
   message.scheduledTaskId === undefined &&
   message.senderThreadId === undefined;
 
-type TurnMessage = OrchestrationV2ConversationMessage | undefined;
+/**
+ * The caller's running turn: the message that opened it and whether another agent's message
+ * (`t3_thread_send` from another thread, or an agent's MCP send) was delivered into it since,
+ * as a steer. Any doubt is undefined.
+ */
+interface TurnOrigin {
+  readonly opener: OrchestrationV2ConversationMessage;
+  readonly relayed: ReadonlyArray<OrchestrationV2ConversationMessage>;
+}
 
-/** The message that opened the caller's running turn. Any doubt is undefined. */
-const turnMessageFrom = Effect.fn("WorkflowHandlers.turnMessage")(
+const turnOriginFrom = Effect.fn("WorkflowHandlers.turnOrigin")(
   function* (projections: Projections) {
     const scope = yield* McpInvocationContext.McpInvocationContext;
     if (!scope.thread) return undefined;
-    const { run } = yield* projections.getRunningTurnContext(scope.thread.threadId);
+    const threadId = scope.thread.threadId;
+    const { run } = yield* projections.getRunningTurnContext(threadId);
     if (!run) return undefined;
-    return yield* projections.getRunMessage(scope.thread.threadId, run.id);
+    const opener = yield* projections.getRunMessage(threadId, run.id);
+    if (opener === undefined) return undefined;
+    // A steer joins the running turn under the same run: every message the run holds counts.
+    const { messages } = yield* projections.getThreadRecords(threadId, ["messages"], {
+      messageRunIds: [run.id],
+      messageRoles: ["user"],
+    });
+    const relayed = messages.filter(
+      (message) =>
+        (message.senderThreadId !== undefined && message.senderThreadId !== threadId) ||
+        (message.createdBy === "agent" && message.creationSource === "mcp"),
+    );
+    return { opener, relayed } satisfies TurnOrigin;
   },
-  Effect.orElseSucceed((): TurnMessage => undefined),
+  Effect.orElseSucceed((): TurnOrigin | undefined => undefined),
 );
 
 const failure = (error: WorkflowsError) =>
@@ -143,11 +163,14 @@ const manage = (allowed: boolean) =>
 type WorkflowTools = typeof WorkflowToolkit extends Toolkit.Toolkit<infer Tools> ? Tools : never;
 
 const handlers = (
-  turnMessage: ReturnType<typeof turnMessageFrom>,
+  turnOrigin: ReturnType<typeof turnOriginFrom>,
 ): McpToolAccess.Handlers<WorkflowTools> => {
-  /** Whether the caller's running turn opened with the owner's own message. */
-  const ownerTurn = turnMessage.pipe(
-    Effect.map((message) => message !== undefined && isOwnerMessage(message)),
+  /** Whether the owner's own message opened the caller's turn and no other agent steered it. */
+  const ownerTurn = turnOrigin.pipe(
+    Effect.map(
+      (origin) =>
+        origin !== undefined && isOwnerMessage(origin.opener) && origin.relayed.length === 0,
+    ),
   );
   return {
     workflow_list: McpToolAccess.readsAsCaller((input) =>
@@ -371,12 +394,13 @@ const handlers = (
     workflow_gate_decide: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const { bot } = yield* callerBot;
-        // Only the turn the gate's own ask started, or one the owner started: another agent's
-        // message (`t3_thread_send`, a relay) cannot make the bot decide.
-        const message = yield* turnMessage;
+        // Only the turn the gate's own ask started, or one the owner started, and no other
+        // agent's message in it: a relay or steer (`t3_thread_send`) cannot make the bot decide.
+        const origin = yield* turnOrigin;
         if (
-          message === undefined ||
-          !(isOwnerMessage(message) || isGateAsk(message, input.runId, input.gateKey))
+          origin === undefined ||
+          origin.relayed.length > 0 ||
+          !(isOwnerMessage(origin.opener) || isGateAsk(origin.opener, input.runId, input.gateKey))
         )
           return yield* new OrchestratorMcpFailure({
             code: "capability_denied",
@@ -421,11 +445,11 @@ const handlers = (
 
 /** The handlers over a given projection store; tests pass their own. */
 export const layerOver = (projections: Projections) =>
-  McpToolAccess.toLayer(WorkflowToolkit, handlers(turnMessageFrom(projections)));
+  McpToolAccess.toLayer(WorkflowToolkit, handlers(turnOriginFrom(projections)));
 
 export const layer = McpToolAccess.toLayer(
   WorkflowToolkit,
   Effect.gen(function* () {
-    return handlers(turnMessageFrom(yield* ProjectionStore.ProjectionStoreV2));
+    return handlers(turnOriginFrom(yield* ProjectionStore.ProjectionStoreV2));
   }).pipe(Effect.provide(ProjectionStore.layer)),
 );
