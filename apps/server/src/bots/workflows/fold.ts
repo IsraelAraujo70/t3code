@@ -32,6 +32,7 @@ export const emptyRunState = (runId: string): RunState => ({
   warnings: [],
   usage: new Map(),
   releasedBranches: new Set(),
+  retried: new Map(),
 });
 
 /**
@@ -138,6 +139,27 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       const live = [...next.skipped].filter(([, reason]) => reason !== "dead-path");
       next.skipped = new Map(live);
       next.skippedSeq = new Map([...next.skippedSeq].filter(([step]) => next.skipped.has(step)));
+      break;
+    }
+    case "RetryApplied": {
+      next.retried = new Map(next.retried).set(fact.step, stored.seq);
+      for (const step of fact.superseded) {
+        const latest = next.attempts.get(step)?.at(-1);
+        if (latest !== undefined) updateAttempt(step, latest.attempt, { superseded: true });
+      }
+      for (const step of fact.reopened) {
+        const latest = next.attempts.get(step)?.at(-1);
+        if (latest?.resolved == null) continue;
+        updateAttempt(step, latest.attempt, {
+          resolved: null,
+          stoppedByEnd: false,
+          reopens: (latest.reopens ?? 0) + 1,
+        });
+      }
+      // A step after the retried one is decided again, whatever skipped it.
+      const reset = new Set(fact.superseded);
+      next.skipped = new Map([...next.skipped].filter(([step]) => !reset.has(step)));
+      next.skippedSeq = new Map([...next.skippedSeq].filter(([step]) => !reset.has(step)));
       break;
     }
     case "OutputSet":

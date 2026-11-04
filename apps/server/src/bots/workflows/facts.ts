@@ -260,6 +260,17 @@ export const RunFact = Schema.TaggedUnion({
   },
   /** Key `reopen:<control key>`: a retry of `step` brought a failed run back to running. */
   RunReopened: { step: Text, by: Text, at: Text },
+  /**
+   * Key `retry:<control key>`: `step` runs again. The steps after it, in its level and in every map
+   * that holds it, start over (`superseded`); those maps resolve again (`reopened`).
+   */
+  RetryApplied: {
+    step: Text,
+    by: Text,
+    superseded: Schema.Array(Text),
+    reopened: Schema.Array(Text),
+    at: Text,
+  },
   /** Key `released:<branch>`: run `to` took over this ended run's branch; it cannot reopen on it. */
   BranchReleased: { branch: Text, to: Text },
 

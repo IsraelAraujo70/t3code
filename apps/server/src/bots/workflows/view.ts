@@ -323,6 +323,25 @@ export const stepViews = (
       cost: null,
       evidence: null,
     });
+  // A retry before a step started it over: its next attempt waits, or never came if the run ended.
+  for (const attempts of state.attempts.values()) {
+    const last = attempts.at(-1);
+    if (last?.superseded !== true) continue;
+    views.push({
+      key: WorkflowStepKey.make(last.step),
+      ...nodeInfo(last.step),
+      attempt: last.attempt + 1,
+      status: state.ended === null ? "pending" : "skipped",
+      threadId: null,
+      startedAt: null,
+      endedAt: null,
+      queuedMs: null,
+      port: null,
+      summary: null,
+      cost: null,
+      evidence: null,
+    });
+  }
   // A gate step, or a command waiting for approval, has no attempt yet: it waits on its gate,
   // unless the run ended without a decision.
   for (const gate of state.ended === null ? state.gates.values() : []) {
@@ -405,8 +424,13 @@ const changedAfter = (
   view: WorkflowStepAttemptView,
   afterSeq: number,
 ): boolean => {
+  const attempts = state.attempts.get(view.key) ?? [];
+  // The row a retry added after a superseded attempt changes with it (and with the run's end).
+  const before = attempts.find((a) => a.attempt === view.attempt - 1);
+  if (before?.superseded === true && attempts.at(-1) === before)
+    return before.lastSeq > afterSeq || (state.ended !== null && state.endedSeq > afterSeq);
   if (view.status === "skipped") return (state.skippedSeq.get(view.key) ?? 0) > afterSeq;
-  const attempt = state.attempts.get(view.key)?.find((a) => a.attempt === view.attempt);
+  const attempt = attempts.find((a) => a.attempt === view.attempt);
   if (attempt !== undefined) return attempt.lastSeq > afterSeq;
   return [...state.gates.values()].some((g) => g.intent.step === view.key && g.lastSeq > afterSeq);
 };

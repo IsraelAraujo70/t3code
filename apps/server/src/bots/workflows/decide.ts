@@ -132,7 +132,7 @@ const retryReadyAt = (
   rerun: boolean,
 ): number | null => {
   const at = Date.parse(resolvedAt);
-  if (rerun && status !== "succeeded") return at;
+  if (rerun && (status !== "succeeded" || port === "fail")) return at;
   if (markedFailed) return null;
   if (status === "ambiguous") return at;
   const policy = node.retry;
@@ -235,41 +235,173 @@ const interruptsAfterEnd = (state: RunState): ReadonlyArray<NewFact> =>
   });
 const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
-/** The top-level steps an edge from `step` leads to. */
-const successorsOf = (compiled: CompiledWorkflow, step: string): ReadonlyArray<string> =>
-  compiled.root.edges.filter((edge) => edge.from === step).map((edge) => edge.to);
+/** What a retry of a step starts over: the steps after it and the maps that hold it. */
+export interface RetryPlan {
+  readonly superseded: ReadonlyArray<string>;
+  readonly reopened: ReadonlyArray<string>;
+}
+
+/** Every node an edge path leads to from `id` in one level, `id` excluded. */
+const descendantsOf = (graph: CompiledGraph, id: string): ReadonlyArray<string> => {
+  const found = new Set<string>();
+  const pending = [id];
+  for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+    for (const edge of graph.nodes.get(current)?.outgoing ?? []) {
+      if (edge.to === id || found.has(edge.to)) continue;
+      found.add(edge.to);
+      pending.push(edge.to);
+    }
+  }
+  return [...found];
+};
+
+/** One level a step key walks through, and the attempt of the map whose item it is. */
+interface PathLevel {
+  readonly graph: CompiledGraph;
+  readonly prefix: string;
+  readonly id: string;
+  /** For every level but the last: the attempt of this map whose item the next level runs. */
+  readonly attempt: number;
+}
 
 /**
- * Why `step` cannot be retried now, or null. A retry runs the step's latest attempt again like
- * Israel's "rerun", so the failure must not have led anywhere yet; a failed run reopens for it.
+ * The levels of a graph step key (`fleet[1]/review`, `fleet/r2[1]/review`), or why it names no
+ * step a retry can reach: a block's child, an accept or judge sub-step, a step inside a loop.
  */
+const pathOf = (
+  compiled: CompiledWorkflow,
+  step: string,
+): ReadonlyArray<PathLevel> | { readonly refused: string } => {
+  const segments = step.split("/");
+  const levels: PathLevel[] = [];
+  let graph: CompiledGraph | null = compiled.root;
+  let prefix = "";
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i] ?? "";
+    const id = segment.replace(/\[\d+\]$/, "");
+    const node: CompiledNode | undefined = graph?.nodes.get(id);
+    if (graph === null || node === undefined) {
+      return levels.length === 0
+        ? { refused: `${step} has not run` }
+        : { refused: `retry the step that contains ${step}` };
+    }
+    const last = i === segments.length - 1;
+    if (last) {
+      levels.push({ graph, prefix, id, attempt: 1 });
+      break;
+    }
+    if (node.node.kind === "loop")
+      return { refused: `retry the loop ${prefix}${id} that contains ${step}` };
+    if (node.body === null) return { refused: `retry the step that contains ${step}` };
+    // A map item is `<map>[i]` on the first attempt and `<map>/r<n>[i]` on a retried one.
+    const scope = /^r(\d+)\[\d+\]$/.exec(segments[i + 1] ?? "");
+    if (id !== segment) {
+      levels.push({ graph, prefix, id, attempt: 1 });
+      prefix = `${prefix}${segment}/`;
+    } else if (scope !== null) {
+      levels.push({ graph, prefix, id, attempt: Number(scope[1]) });
+      prefix = `${prefix}${id}/${segments[i + 1]}/`;
+      i++;
+    } else return { refused: `${step} has not run` };
+    graph = node.body;
+  }
+  return levels;
+};
+
+/**
+ * What retrying `step` starts over, or why it cannot be retried now. The step runs again from its
+ * failed attempt; the steps after it in its item, and after each map that holds it, start over and
+ * those maps resolve again, so the item, and an ended run, reach their outputs again.
+ */
+export const planRetry = (
+  compiled: CompiledWorkflow,
+  state: RunState,
+  step: string,
+): RetryPlan | { readonly refused: string } => {
+  if (state.started === null) return { refused: "the run has not started" };
+  if (isSubStep(step)) return { refused: `retry the step that contains ${step}` };
+  const path = pathOf(compiled, step);
+  if ("refused" in path) return path;
+  const latestOf = (key: string) => {
+    const a = state.attempts.get(key)?.at(-1);
+    return a?.superseded === true ? undefined : a;
+  };
+  /** A map, loop or block begun at its next attempt has no attempt until it resolves. */
+  const runningUnresolved = (key: string) => {
+    const next = (state.attempts.get(key)?.at(-1)?.attempt ?? 0) + 1;
+    const scope = next === 1 ? key : `${key}/r${next}`;
+    return (
+      state.expansions.has(scope) || state.iterations.has(scope) || blockBegun(state, key, next)
+    );
+  };
+  const levels = path;
+  for (const level of levels.slice(0, -1)) {
+    const container = level.prefix + level.id;
+    const recorded = state.attempts.get(container)?.at(-1);
+    const begun = runningUnresolved(container);
+    const current = (recorded?.attempt ?? 0) + (begun ? 1 : 0);
+    if (current !== level.attempt || (recorded?.superseded === true && !begun))
+      return { refused: `${step} belongs to an earlier attempt of ${container}` };
+  }
+  const latest = latestOf(step);
+  if (latest === undefined)
+    return {
+      refused: runningUnresolved(step) ? `${step} is still running` : `${step} has not run`,
+    };
+  if (latest.resolved === null) return { refused: `${step} is still running` };
+  if (latest.resolved.status === "succeeded" && latest.resolved.port !== "fail")
+    return { refused: `${step} succeeded` };
+
+  const superseded: string[] = [];
+  const reopened: string[] = [];
+  for (const [i, level] of [...levels].entries()) {
+    const inner = i === levels.length - 1;
+    const after = descendantsOf(level.graph, level.id).map((id) => level.prefix + id);
+    const running = after.find((key) => latestOf(key)?.resolved === null || runningUnresolved(key));
+    if (running !== undefined) return { refused: `${running} is still running after ${step}` };
+    superseded.push(...after.filter((key) => state.attempts.has(key) || state.skipped.has(key)));
+    if (!inner && latestOf(level.prefix + level.id)?.resolved != null)
+      reopened.push(level.prefix + level.id);
+  }
+
+  if (state.ended === null) return { superseded, reopened };
+  if (state.ended.status === "cancelled" || state.ended.status === "budget_exhausted")
+    return { refused: `the run ended ${state.ended.status}` };
+  if (state.started.parent !== null) return { refused: "retry the call step in the parent run" };
+  // Only the worktrees the step can reach: shared ones and its own item's.
+  const removed = [...state.workspaces.keys()].find((name) => {
+    if (declarationOf(compiled.definition, name) === undefined || !state.keys.has(`rm:${name}`))
+      return false;
+    const hash = name.indexOf("#");
+    return hash < 0 || step.startsWith(`${name.slice(hash + 1)}/`);
+  });
+  if (removed !== undefined) return { refused: `the worktree ${removed} was already removed` };
+  const given = [...state.workspaces.values()].find(
+    (w) => w.branch !== null && state.releasedBranches.has(w.branch),
+  );
+  if (given?.branch != null) return { refused: `its branch ${given.branch} went to a newer run` };
+  return { superseded, reopened };
+};
+
+/** Why `step` cannot be retried now, or null. */
 export const retryRefusal = (
   compiled: CompiledWorkflow,
   state: RunState,
   step: string,
 ): string | null => {
-  if (state.started === null) return "the run has not started";
-  if (step.includes("/")) return `retry the step that contains ${step}`;
-  const node = nodeAt(compiled, step);
-  const latestAttempt = state.attempts.get(step)?.at(-1);
-  if (node === undefined || latestAttempt === undefined) return `${step} has not run`;
-  if (latestAttempt.resolved === null) return `${step} is still running`;
-  if (latestAttempt.resolved.status === "succeeded") return `${step} succeeded`;
-  const after = successorsOf(compiled, step).find((next) => state.attempts.has(next));
-  if (after !== undefined) return `${after} already ran after ${step}`;
-  if (state.ended === null) return null;
-  if (state.ended.status !== "failed") return `the run ended ${state.ended.status}`;
-  if (state.started.parent !== null) return "retry the call step in the parent run";
-  const removed = [...state.workspaces.keys()].find(
-    (name) =>
-      declarationOf(compiled.definition, name) !== undefined && state.keys.has(`rm:${name}`),
-  );
-  if (removed !== undefined) return `the worktree ${removed} was already removed`;
-  const given = [...state.workspaces.values()].find(
-    (w) => w.branch !== null && state.releasedBranches.has(w.branch),
-  );
-  return given?.branch == null ? null : `its branch ${given.branch} went to a newer run`;
+  const plan = planRetry(compiled, state, step);
+  return "refused" in plan ? plan.refused : null;
 };
+
+/** The retry requests not yet applied: newer than the last end, and not started since. */
+const pendingRetries = (state: RunState) =>
+  state.controls.filter((c) => {
+    const step = c.control.step;
+    if (c.control.control !== "retry" || step === null || c.seq <= state.endedSeq) return false;
+    if (state.keys.has(`retry:${c.key}`) || state.keys.has(`reopen:${c.key}`)) return false;
+    // A request an engine before RetryApplied already ran again.
+    return (state.attempts.get(step)?.at(-1)?.firstSeq ?? 0) < c.seq;
+  });
 
 /**
  * The graph steps whose latest attempt ended in failure, a failed check included. A map item that
@@ -279,7 +411,9 @@ const failedStepsOf = (compiled: CompiledWorkflow, state: RunState): ReadonlyArr
   [...state.attempts].flatMap(([step, attempts]) => {
     // A block's children and an agent's accept or judge are not graph steps.
     if (isSubStep(step) || nodeAt(compiled, step) === undefined) return [];
-    const r = attempts.at(-1)?.resolved;
+    const latest = attempts.at(-1);
+    if (latest?.superseded === true) return [];
+    const r = latest?.resolved;
     const failed =
       r != null && (r.port === "fail" || (r.status !== "succeeded" && r.status !== "cancelled"));
     return failed ? [step] : [];
@@ -304,22 +438,28 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
   if (interrupts.length > 0 || live.length > 0) return interrupts;
   const ended = state.ended;
   if (ended === null) return [];
-  const retry = state.controls.find(
-    (c) =>
-      c.seq > state.endedSeq &&
-      c.control.control === "retry" &&
-      c.control.step !== null &&
-      retryRefusal(compiled, state, c.control.step) === null,
-  );
-  if (retry?.control.step != null) {
+  for (const retry of pendingRetries(state)) {
+    const step = retry.control.step;
+    if (step === null) continue;
+    const plan = planRetry(compiled, state, step);
+    if ("refused" in plan) continue;
     // A newer run taking a branch over after this read refuses the reopening, atomically.
-    const reopened: NewFact = {
-      stream: runStream(state.runId),
-      key: `reopen:${retry.key}`,
-      fact: { _tag: "RunReopened", step: retry.control.step, by: retry.control.by, at: isoOf(now) },
-      guard: { absent: ["BranchReleased"], after: state.lastSeq },
-    };
-    return [reopened];
+    const guard = { absent: ["BranchReleased"], after: state.lastSeq };
+    const at = isoOf(now);
+    return [
+      {
+        stream: runStream(state.runId),
+        key: `reopen:${retry.key}`,
+        fact: { _tag: "RunReopened", step, by: retry.control.by, at },
+        guard,
+      },
+      {
+        stream: runStream(state.runId),
+        key: `retry:${retry.key}`,
+        fact: { _tag: "RetryApplied", step, by: retry.control.by, ...plan, at },
+        guard,
+      },
+    ];
   }
   const failedSteps = failedStepsOf(compiled, state);
   return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
@@ -444,8 +584,10 @@ export const decide = (
       error,
       at: nowIso,
     };
-    emit(`resolved:${stepKey(step, attempt)}`, fact);
     const base = latest(step);
+    // A map a retry reopened resolves its same attempt again, under a new key.
+    const reopens = base?.attempt === attempt ? (base.reopens ?? 0) : 0;
+    emit(`resolved:${stepKey(step, attempt)}${reopens === 0 ? "" : `:${reopens}`}`, fact);
     overlay.set(step, {
       ...(base?.attempt === attempt ? base : emptyAttempt(step, attempt)),
       resolved: fact,
@@ -455,8 +597,13 @@ export const decide = (
   // ── Reading the state ───────────────────────────────────────────────────────────────────────
 
   const attemptsOf = (step: string): ReadonlyArray<StepAttempt> => state.attempts.get(step) ?? [];
-  const latest = (step: string): StepAttempt | undefined =>
-    overlay.get(step) ?? attemptsOf(step).at(-1);
+  /** The step's current attempt; none once a retry before it superseded its last one. */
+  const latest = (step: string): StepAttempt | undefined => {
+    const a = overlay.get(step) ?? attemptsOf(step).at(-1);
+    return a?.superseded === true ? undefined : a;
+  };
+  /** The attempt a step starts next: after every attempt it had, superseded ones included. */
+  const nextAttempt = (step: string): number => (attemptsOf(step).at(-1)?.attempt ?? 0) + 1;
   const resultOf = (key: string) => state.intents.get(key)?.result ?? null;
   const resolutionOf = (a: StepAttempt): Resolution | null => a.resolved;
   const emptyAttempt = (step: string, attempt: number): StepAttempt => ({
@@ -487,16 +634,9 @@ export const decide = (
 
   const markedFailed = (step: string, attempt: number) =>
     decisionOf(`ambiguous:${stepKey(step, attempt)}`)?.option === "fail";
-  /** Israel's retry of the step after this attempt, or the run's end stopped it and it reopened. */
+  /** A retry of the step applied after this attempt, or the run's end stopped it and it reopened. */
   const rerunWanted = (a: StepAttempt) =>
-    a.stoppedByEnd ||
-    state.controls.some(
-      (c) =>
-        c.control.control === "retry" &&
-        c.control.step === a.step &&
-        c.seq > a.firstSeq &&
-        retryRefusal(compiled, state, a.step) === null,
-    );
+    a.stoppedByEnd || (state.retried.get(a.step) ?? 0) > a.firstSeq;
   const willRetry = (node: WorkflowNode, a: StepAttempt, r: Resolution): boolean =>
     retryReadyAt(
       node,
@@ -1672,8 +1812,10 @@ export const decide = (
         if (node.postToBot === true && definition.bot !== undefined && posted !== "") {
           // Once per run at the top (`post:<node>`), once per item in a body (`post:<node>:<item>`).
           const item = level.parent === null ? null : itemKeyOf(level);
+          // An output a retry ran again posts its new report under its attempt.
           const post =
-            item === null ? `post:${step}` : `post:${step.slice(level.prefix.length)}:${item}`;
+            (item === null ? `post:${step}` : `post:${step.slice(level.prefix.length)}:${item}`) +
+            (attempt === 1 ? "" : `@${attempt}`);
           record({
             _tag: "PostToBot",
             key: post,
@@ -1891,8 +2033,8 @@ export const decide = (
     const node = compiled.node;
     const current = latest(step);
     // wf-engine slice 7: a block has no attempt until it resolves; once begun it keeps running.
-    if (current === undefined && isBlock(node) && blockBegun(state, step, 1)) {
-      runBlockStep(node, step, 1, level);
+    if (current === undefined && isBlock(node) && blockBegun(state, step, nextAttempt(step))) {
+      runBlockStep(node, step, nextAttempt(step), level);
     } else if (current === undefined) {
       if (!startStep(compiled, step, level)) return;
     } else if (resolutionOf(current) === null) {
@@ -1927,7 +2069,7 @@ export const decide = (
     if (node.when !== undefined) {
       const guard = evaluate(node.when, envFor(level));
       if (Result.isFailure(guard)) {
-        resolve(step, 1, "failed", "fail", null, guard.failure);
+        resolve(step, nextAttempt(step), "failed", "fail", null, guard.failure);
         return true;
       }
       if (!isTruthy(guard.success)) {
@@ -1939,7 +2081,7 @@ export const decide = (
     if (node.once !== undefined) {
       const key = render(node.once.key, envFor(level));
       if (Result.isFailure(key)) {
-        resolve(step, 1, "failed", "fail", null, key.failure);
+        resolve(step, nextAttempt(step), "failed", "fail", null, key.failure);
         return true;
       }
       const owner = ctx.ledgers?.get(node.once.ledger)?.entries.get(key.success);
@@ -1965,7 +2107,7 @@ export const decide = (
         return false;
       }
     }
-    dispatch(node, step, 1, level);
+    dispatch(node, step, nextAttempt(step), level);
     return true;
   }
 
@@ -2049,6 +2191,23 @@ export const decide = (
   // Controls before the run last reopened were for the run that ended.
   const liveControls = state.controls.filter((c) => c.seq > state.reopenedSeq);
   for (const { control } of liveControls) if (control.control === "cancel") cancelling = true;
+  // A retry rewrites what the graph reads: the pass ends with it, and the next one decides anew.
+  const retry = cancelling ? undefined : pendingRetries(state)[0];
+  if (retry?.control.step != null) {
+    const step = retry.control.step;
+    const plan = planRetry(compiled, state, step);
+    emit(
+      `retry:${retry.key}`,
+      "refused" in plan
+        ? {
+            _tag: "RunWarned",
+            message: `The retry of ${step} was refused: ${plan.refused}.`,
+            at: nowIso,
+          }
+        : { _tag: "RetryApplied", step, by: retry.control.by, ...plan, at: nowIso },
+    );
+    return out;
+  }
   const toggle = [...liveControls]
     .reverse()
     .find(({ control }) => control.control === "pause" || control.control === "resume");
