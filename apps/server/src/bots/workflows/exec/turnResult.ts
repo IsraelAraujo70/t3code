@@ -65,6 +65,8 @@ export const stepReply = (
     stepRuns(thread.runs, first, last).findLast(
       (candidate) =>
         candidate.id === first.id ||
+        // A restart continuation opens with a system notice but carries the turn's own outcome.
+        candidate.restartContinuationOfRunId !== undefined ||
         !notices.has(candidate.userMessageId) ||
         replied.has(candidate.id),
     ) ?? last;

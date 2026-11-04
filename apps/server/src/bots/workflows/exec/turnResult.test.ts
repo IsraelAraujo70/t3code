@@ -133,10 +133,22 @@ describe("stepReply", () => {
   });
 
   it("still settles on a silent run the engine or a restart opened, never on one before the step", () => {
-    const continuation = stepReply(thread("completed"), fullRun(2), fullRun(3));
-    expect(continuation).toEqual({
-      run: fullRun(3),
-      text: "Child task completed without an assistant result.",
+    const restart = {
+      ...command,
+      message: {
+        ...command.message,
+        notification: {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: "T3 Code restarted and resumed this turn",
+        },
+      },
+    } satisfies ReturnType<typeof message>;
+    const resumed = { ...fullRun(3, "failed"), restartContinuationOfRunId: RunId.make("run:2") };
+    const continuation = { ...thread("failed", restart), runs: [fullRun(1), fullRun(2), resumed] };
+    expect(stepReply(continuation, fullRun(2), resumed)).toEqual({
+      run: resumed,
+      text: "Child task ended with status failed.",
     });
     const silent = { ...thread("completed", notice), messages: [notice.message] };
     expect(stepReply(silent, fullRun(2), fullRun(3)).run.id).toBe("run:2");
