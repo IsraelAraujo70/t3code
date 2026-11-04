@@ -200,6 +200,14 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       );
       next.workspaces = advanceHead(next, fact);
       break;
+    case "SlotAcquired": {
+      // A node's later turns (the JSON nudge) wait again: the attempt shows the sum.
+      const before = next.attempts.get(fact.step)?.find((a) => a.attempt === fact.attempt)?.slot;
+      updateAttempt(fact.step, fact.attempt, {
+        slot: before ? { ...fact, waitedMs: before.waitedMs + fact.waitedMs } : fact,
+      });
+      break;
+    }
     case "UnitExited":
       updateAttempt(fact.step, fact.attempt, { exited: fact, settledAt: stored.at });
       next.workspaces = advanceHead(next, fact);

@@ -77,6 +77,11 @@ export interface WorkflowRunApi {
   ) => ReadonlyArray<WorkflowStepRow>;
   /** Running time of an attempt: end (or `nowMs` while it runs) minus start; null before it starts. */
   readonly stepDurationMs: (step: WorkflowStepAttemptView, nowMs: number) => number | null;
+  /**
+   * `Waiting for a slot in <resource>` while the attempt waits for one, then how long it waited for
+   * its slot or the heavy lock; null when it never waited.
+   */
+  readonly stepWaitLine: (step: WorkflowStepAttemptView) => string | null;
   /** `850ms`, `42s`, `4m 12s`, `2h 05m`. */
   readonly formatDuration: (ms: number) => string;
   /** `950`, `12.4k`, `3.1M`. */
@@ -247,6 +252,11 @@ export const stepDurationMs: WorkflowRunApi["stepDurationMs"] = (step, nowMs) =>
         0,
         (step.endedAt === null ? nowMs : Date.parse(step.endedAt)) - Date.parse(step.startedAt),
       );
+export const stepWaitLine: WorkflowRunApi["stepWaitLine"] = (step) => {
+  if (step.waitingFor) return `Waiting for a slot in ${step.waitingFor}`;
+  if (!step.queuedMs) return null;
+  return `Waited ${formatDuration(step.queuedMs)} for ${step.resource ? `a slot in ${step.resource}` : "the heavy lock"}`;
+};
 export const formatDuration: WorkflowRunApi["formatDuration"] = (ms) => {
   const seconds = Math.floor(ms / 1000);
   return ms < 1000

@@ -188,6 +188,24 @@ describe("run views", () => {
     });
   });
 
+  it("shows a step waiting for a slot, then how long it waited for it", () => {
+    const run = prepare(
+      compile({ resources: { verify: { slots: 2 } }, nodes: { a: { ...agent, uses: "verify" } } }),
+    );
+    const view = () => stepViews(run.compiled, run.state()).find((v) => v.key === "a");
+    expect(view()).toMatchObject({ resource: "verify", waitingFor: "verify", queuedMs: null });
+    run.add("slot:turn:a@1", {
+      _tag: "SlotAcquired",
+      step: "a",
+      attempt: 1,
+      resource: "verify",
+      slot: 1,
+      waitedMs: 42_000,
+    });
+    run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "wf:x" });
+    expect(view()).toMatchObject({ resource: "verify", waitingFor: null, queuedMs: 42_000 });
+  });
+
   it("shows an accept command the run's end stopped as cancelled after its interrupt lands", () => {
     const run = prepare(
       compile({

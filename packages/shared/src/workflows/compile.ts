@@ -6,7 +6,9 @@ import * as SchemaIssue from "effect/SchemaIssue";
 
 import {
   isWebhookDedupeTemplate,
+  WORKFLOW_MAX_RESOURCE_SLOTS,
   WORKFLOW_NODE_ID_PATTERN,
+  WORKFLOW_RESOURCE_PATTERN,
   WorkflowDefinition,
   type WorkflowAgentNode,
   type WorkflowCommandSpec,
@@ -105,6 +107,7 @@ const ENV_DENIED = new Set([
   "GIT_CONFIG_GLOBAL",
   "GIT_SSH_COMMAND",
   "WF_TOKEN_BUDGET",
+  "WF_SLOT",
 ]);
 
 /** Where an expression or template is evaluated: what it may read. */
@@ -199,6 +202,29 @@ export const compileWorkflow = (
     return built.graph;
   };
   const root = buildLevel(definition.nodes, definition.edges, "");
+
+  for (const [name, resource] of Object.entries(definition.resources ?? {})) {
+    if (!WORKFLOW_RESOURCE_PATTERN.test(name))
+      report(`resources.${name}`, "resource", `"${name}" must match ${WORKFLOW_RESOURCE_PATTERN}`);
+    if (resource.slots > WORKFLOW_MAX_RESOURCE_SLOTS)
+      report(
+        `resources.${name}.slots`,
+        "resource",
+        `a resource has at most ${WORKFLOW_MAX_RESOURCE_SLOTS} slots`,
+      );
+  }
+  /** `uses` names a declared resource; heavy is a resource too, and one step waits for one. */
+  const checkUses = (uses: string | undefined, heavy: boolean, path: string) => {
+    if (uses === undefined) return;
+    if (own(definition.resources, uses) === undefined)
+      report(`${path}.uses`, "resource", `"${uses}" is not in resources`);
+    if (heavy)
+      report(
+        `${path}.uses`,
+        "resource",
+        "heavy is the host's one-slot resource: use heavy or uses, not both",
+      );
+  };
 
   // ── Patterns, params and models ─────────────────────────────────────────────────────────────
 
@@ -631,6 +657,7 @@ export const compileWorkflow = (
     if (accept === undefined) return;
     if ("argv" in accept) {
       checkArgv(accept.argv, `${path}.accept`, ctx.scope, accept.heavy === true, false);
+      checkUses(accept.uses, accept.heavy === true, `${path}.accept`);
       checkExpr(accept.check, `${path}.accept.check`, withRoots(ctx.scope, CHECK_ROOTS));
     } else {
       resolveModel(accept.judge, `${path}.accept.judge`);
@@ -738,11 +765,13 @@ export const compileWorkflow = (
     switch (node.kind) {
       case "agent":
         checkAgent(node, path, ctx, true);
+        checkUses(node.uses, false, path);
         if (node.askBot === true && definition.bot === undefined)
           report(`${path}.askBot`, "bot", "askBot asks the workflow's bot: set bot at the top");
         return;
       case "command":
         checkCommand(node, path, ctx, []);
+        checkUses(node.uses, node.heavy === true, path);
         return;
       case "gate": {
         checkTemplate(node.ask, `${path}.ask`, scope);

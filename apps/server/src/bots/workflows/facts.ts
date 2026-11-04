@@ -15,6 +15,10 @@ const NullableText = Schema.NullOr(Schema.String);
 export const WorkspaceRef = Schema.Struct({ name: Text, path: Text });
 export type WorkspaceRef = typeof WorkspaceRef.Type;
 
+/** A resource of the definition a start waits for: one of `slots` flock files must be free. */
+export const SlotUse = Schema.Struct({ resource: Text, slots: Schema.Number });
+export type SlotUse = typeof SlotUse.Type;
+
 // ── Intents: what the interpreter executes, each under its own key ────────────────────────────
 
 export const Intent = Schema.TaggedUnion({
@@ -39,8 +43,13 @@ export const Intent = Schema.TaggedUnion({
      * thread that bot's host MCP servers. Judges and block children never carry it.
      */
     bot: Schema.optional(Text),
+    /** An `agent` node's `uses`: the turn starts once it holds a slot and keeps it until it ends. */
+    uses: Schema.optional(SlotUse),
   },
-  /** One command in its own systemd unit; `heavy` takes the heavy.sh lock inside the unit. */
+  /**
+   * One command in its own systemd unit; `heavy` takes the heavy.sh lock and `uses` a slot of a
+   * resource inside the unit, before the argv starts.
+   */
   StartUnit: {
     key: Text,
     step: Text,
@@ -56,6 +65,7 @@ export const Intent = Schema.TaggedUnion({
     // wf-engine slice 8: a paid command reserves tokens and is charged `out[tokensFrom]`.
     reservation: Schema.optional(Schema.Number),
     tokensFrom: Schema.optional(Text),
+    uses: Schema.optional(SlotUse),
   },
   /** A git worktree of `projectRef` at `baseRef`; `branch` null makes it detached and disposable. */
   PrepareWorkspace: {
@@ -306,6 +316,19 @@ export const RunFact = Schema.TaggedUnion({
     started: Schema.Boolean,
     parseError: Schema.optional(NullableText),
     headSha: Schema.optional(NullableText),
+    /** stderr's last 8 KiB; absent from receipts written before it was kept. */
+    stderr: Schema.optional(Text),
+  },
+  /**
+   * Key `slot:<intent key>`: the start got slot `slot` of `resource` after `waitedMs`. A start
+   * with `uses` and no such fact is still waiting.
+   */
+  SlotAcquired: {
+    step: Text,
+    attempt: Schema.Number,
+    resource: Text,
+    slot: Schema.Number,
+    waitedMs: Schema.Number,
   },
   // wf-engine slice 8: usage a provider reports mid-turn, key `usage:<intent key>:<n>` (n = multiple of the reservation).
   TurnUsageReported: { step: Text, attempt: Schema.Number, billable: Schema.Number, at: Text },

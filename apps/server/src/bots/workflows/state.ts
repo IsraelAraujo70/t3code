@@ -12,6 +12,7 @@ export type RunPaused = FactOf<"RunPaused">;
 export type StepResolved = FactOf<"StepResolved">;
 export type TurnSettled = FactOf<"TurnSettled">;
 export type UnitExited = FactOf<"UnitExited">;
+export type SlotAcquired = FactOf<"SlotAcquired">;
 export type RuntimeRequest = FactOf<"RuntimeRequest">;
 export type GateDecided = FactOf<"GateDecided">;
 export type ControlRequested = FactOf<"ControlRequested">;
@@ -37,6 +38,7 @@ export type IntentResult = Exclude<
       | "BranchReleased"
       | "TurnSettled"
       | "UnitExited"
+      | "SlotAcquired"
       | "RuntimeRequest"
       | "GateDecided"
       | "GateHandedOver"
@@ -73,6 +75,8 @@ export interface StepAttempt {
   /** The follow-up turn that asked for the missing JSON. */
   readonly nudge: TurnSettled | null;
   readonly exited: UnitExited | null;
+  /** The slot its turn or unit got, when the step `uses` a resource. */
+  readonly slot?: SlotAcquired | null;
   readonly child: ChildRunEnded | null;
   readonly resolved: StepResolved | null;
   // wf-engine slice 8: when each charge lands in a workflow day (the main turn or unit, and the nudge).

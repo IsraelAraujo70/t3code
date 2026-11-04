@@ -220,6 +220,34 @@ const subStepStatus = (a: StepAttempt, state: RunState): WorkflowStepAttemptView
 };
 
 /** One view per attempt of every step, in the order the attempts started (`firstSeq`). */
+
+/**
+ * By `<step>@<attempt>`, the resource its starts `uses` and whether one of them waits for a slot
+ * now: a turn that has not started, or a unit that has neither started its argv nor exited.
+ */
+const slotUses = (state: RunState) => {
+  const uses = new Map<string, { readonly resource: string; readonly waiting: boolean }>();
+  for (const [key, { intent, result }] of state.intents) {
+    if ((intent._tag !== "StartTurn" && intent._tag !== "StartUnit") || intent.uses === undefined)
+      continue;
+    const id = `${intent.step}@${intent.attempt}`;
+    const exited = state.attempts
+      .get(intent.step)
+      ?.find((a) => a.attempt === intent.attempt)?.exited;
+    const waiting =
+      state.ended === null &&
+      !state.keys.has(`slot:${key}`) &&
+      (intent._tag === "StartTurn"
+        ? result === null
+        : result?._tag === "UnitSpawned" && exited == null);
+    uses.set(id, {
+      resource: intent.uses.resource,
+      waiting: (uses.get(id)?.waiting ?? false) || waiting,
+    });
+  }
+  return uses;
+};
+
 export const stepViews = (
   compiled: CompiledWorkflow,
   state: RunState,
@@ -238,6 +266,7 @@ export const stepViews = (
     };
     return { node: WorkflowNodeId.make(id), kind: find(compiled.root) ?? "unknown" };
   };
+  const slots = slotUses(state);
   const views: WorkflowStepAttemptView[] = [...state.attempts.values()]
     .flat()
     .sort((a, b) => a.firstSeq - b.firstSeq)
@@ -257,7 +286,12 @@ export const stepViews = (
       threadId: a.threadId ? ThreadId.make(a.threadId) : null,
       startedAt: a.startedAt,
       endedAt: a.resolved?.at ?? null,
-      queuedMs: a.exited?.queuedMs ?? null,
+      queuedMs: a.exited?.queuedMs ?? a.slot?.waitedMs ?? null,
+      resource: slots.get(`${a.step}@${a.attempt}`)?.resource ?? null,
+      waitingFor:
+        a.resolved === null && slots.get(`${a.step}@${a.attempt}`)?.waiting === true
+          ? (slots.get(`${a.step}@${a.attempt}`)?.resource ?? null)
+          : null,
       port: a.resolved?.port ?? null,
       summary:
         (a.resolved?.error ?? a.nudge?.text ?? a.settled?.text ?? a.exited?.tail)?.slice(0, 500) ??

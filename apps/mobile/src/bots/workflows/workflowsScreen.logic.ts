@@ -313,6 +313,7 @@ export function stepMetaLine(step: WorkflowStepAttemptView, nowMs: number): stri
     step.attempt > 1 ? `attempt ${step.attempt}` : null,
     duration === null ? null : formatDuration(duration),
     step.cost && step.cost.billable > 0 ? `${formatTokens(step.cost.billable)} tokens` : null,
+    step.waitingFor ? `waiting for a slot in ${step.waitingFor}` : null,
   ]
     .filter((part) => part !== null)
     .join(" · ");

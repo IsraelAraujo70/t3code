@@ -209,6 +209,8 @@ const WorkflowRunStatusTool = Tool.make("workflow_run_status", {
         key: Schema.String,
         status: Schema.String,
         summary: Schema.NullOr(Schema.String),
+        /** The resource whose slot the step waits for now. */
+        waitingFor: Schema.optional(Schema.String),
       }),
     ),
     gates: Schema.Array(

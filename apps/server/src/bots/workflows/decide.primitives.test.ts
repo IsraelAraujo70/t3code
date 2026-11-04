@@ -70,6 +70,57 @@ describe("run decider primitives", () => {
     expect(resolved(run, "resolved:a@1")).toMatchObject({ port: exit === 0 ? "pass" : "fail" });
   });
 
+  // A command that failed prints no JSON: its stderr says why, the parse error only on exit 0.
+  it.each([
+    [1, "exited 1:\nCannot tell whether main contains v0.1.6"],
+    [0, "SyntaxError: Unexpected end of JSON input"],
+  ])("explains a json command that exited %i", (exit, why) => {
+    const run = ready({ c: { ...command, parse: "json" } });
+    run.add(
+      "exited:c@1",
+      unitExited("c", 1, exit, {
+        parseError: "SyntaxError: Unexpected end of JSON input",
+        stderr: "Cannot tell whether main contains v0.1.6\n",
+      }),
+    );
+    expect(resolved(run, "resolved:c@1")).toMatchObject({ status: "failed", error: why });
+  });
+
+  it("gives an agent's turns, a command and an accept check the slot of the resource they use", () => {
+    const run = TestRun.start(
+      compile({
+        resources: { verify: { slots: 2 } },
+        nodes: {
+          a: {
+            ...agent,
+            uses: "verify",
+            accept: { argv: ["node", "check.ts"], check: "exit == 0", uses: "verify" },
+          },
+          c: { ...command, uses: "verify" },
+        },
+        edges: ["a -> c"],
+      }),
+    );
+    run.drive();
+    run.add("result:ws:integ", {
+      _tag: "WorkspaceReady",
+      name: "integ",
+      path: "/work/integ",
+      branch: "wf/demo",
+      headSha: "abc",
+    });
+    run.drive();
+    const uses = { resource: "verify", slots: 2 };
+    expect(run.intent("turn:a@1")).toMatchObject({ _tag: "StartTurn", uses });
+    run.add("result:turn:a@1", { _tag: "TurnStarted", threadId: "thread-a" });
+    run.add("settled:a@1", turnSettled("a", 1, "completed"));
+    run.drive();
+    expect(run.intent("accept:a@1")).toMatchObject({ _tag: "StartUnit", uses });
+    run.add("exited:a/accept@1", unitExited("a/accept", 1, 0));
+    run.drive();
+    expect(run.intent("unit:c@1")).toMatchObject({ _tag: "StartUnit", uses, heavy: false });
+  });
+
   it.each(["succeeded", "failed"])("propagates child %s", (status) => {
     const run = TestRun.start(
       compile({ nodes: { c: { kind: "call", workflow: "other", params: {} } } }),

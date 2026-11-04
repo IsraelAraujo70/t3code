@@ -4,9 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { it as itEffect } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
@@ -21,6 +23,8 @@ import { WorkflowBotPosts } from "../publish/BotPosts.ts";
 import * as Journal from "../Journal.ts";
 import { RUN_ID, runStarted } from "../testkit/decideHarness.ts";
 import { layer, retryable } from "./HostInterpreter.ts";
+import { make as makeSlots, WorkflowSlots } from "./Slots.ts";
+import { slotFile, tryLock } from "./slotLock.ts";
 import { WorkflowTurnError, WorkflowTurns } from "./Turns.ts";
 import { WorkflowUnitError, WorkflowUnits } from "./Units.ts";
 
@@ -64,7 +68,7 @@ describe("observe", () => {
         ),
         Layer.succeed(
           WorkflowUnits,
-          WorkflowUnits.of({ start: unused, observe: unused, stop: unused }),
+          WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
         ),
         Layer.succeed(
           WorkflowGit,
@@ -180,7 +184,7 @@ describe("prepare", () => {
         ),
         Layer.succeed(
           WorkflowUnits,
-          WorkflowUnits.of({ start: unused, observe: unused, stop: unused }),
+          WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
         ),
         Layer.succeed(
           WorkflowGit,
@@ -292,7 +296,7 @@ describe("bot binding", () => {
         ),
         Layer.succeed(
           WorkflowUnits,
-          WorkflowUnits.of({ start: unused, observe: unused, stop: unused }),
+          WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
         ),
         Layer.succeed(
           WorkflowGit,
@@ -369,3 +373,137 @@ describe("bot binding", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+describe("resource slots", () => {
+  // Real holders on flock files in a temporary directory; the turns are fakes the test ends.
+  itEffect.live(
+    "four agent turns on two slots run two at a time, and an abandoned start frees its slot",
+    () =>
+      Effect.gen(function* () {
+        const slotsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-slots-"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(slotsDir, { recursive: true })),
+        );
+        const unused = () => Effect.die("not used by slots");
+        const starts = yield* Queue.unbounded<string>();
+        const ends = new Map<string, Deferred.Deferred<void>>();
+        let active = 0;
+        let most = 0;
+        const prompts: string[] = [];
+        const executors = Layer.mergeAll(
+          Layer.succeed(
+            WorkflowTurns,
+            WorkflowTurns.of({
+              start: (_runId, intent) =>
+                Effect.gen(function* () {
+                  active++;
+                  most = Math.max(most, active);
+                  prompts.push(intent.prompt);
+                  ends.set(intent.threadId, yield* Deferred.make<void>());
+                  yield* Queue.offer(starts, intent.threadId);
+                  return intent.threadId;
+                }),
+              observe: (_runId, intent) =>
+                Stream.fromEffectDrain(
+                  Deferred.await(ends.get(intent.threadId)!).pipe(
+                    Effect.andThen(Effect.sync(() => void active--)),
+                  ),
+                ),
+              interrupt: () => Effect.void,
+              answer: unused,
+            }),
+          ),
+          Layer.succeed(
+            WorkflowUnits,
+            WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
+          ),
+          Layer.succeed(
+            WorkflowGit,
+            WorkflowGit.of({
+              prepare: unused,
+              head: unused,
+              tree: unused,
+              advance: unused,
+              mergeLocal: unused,
+              remove: unused,
+              release: unused,
+              resolveRef: unused,
+            }),
+          ),
+          Layer.succeed(ProjectService, ProjectService.of({} as ProjectService["Service"])),
+          Layer.succeed(
+            WorkflowSlots,
+            makeSlots({
+              node: process.execPath,
+              wfSlotPath: NodePath.join(import.meta.dirname, "wfSlot.ts"),
+              slotsDir,
+            }),
+          ),
+          Journal.layerMemory,
+        );
+        const turn = (item: number): Intent => ({
+          _tag: "StartTurn",
+          key: `turn:fleet[${item}]/verify@1`,
+          step: `fleet[${item}]/verify`,
+          attempt: 1,
+          threadId: `wfi:x:${item}`,
+          mode: "new",
+          projectRef: "moneria-api",
+          title: "verify",
+          workspace: { name: `ticket#fleet[${item}]`, path: `/runs/ticket-${item}` },
+          prompt: "Verify",
+          model: { provider: "claude", model: "claude-opus-5-5" },
+          access: "write",
+          reservation: 0,
+          uses: { resource: "moneria-verify", slots: 2 },
+        });
+        yield* Effect.gen(function* () {
+          const interpreter = yield* WorkflowInterpreter;
+          const phase = (intent: Intent) =>
+            interpreter
+              .execute(RUN_ID, intent)
+              .pipe(
+                Effect.tap(() =>
+                  interpreter
+                    .observe(RUN_ID, intent, { _tag: "TurnStarted", threadId: "unused" })
+                    .pipe(Stream.runDrain),
+                ),
+              );
+          const fibers = yield* Effect.forEach([0, 1, 2, 3], (item) =>
+            Effect.forkChild(phase(turn(item))),
+          );
+          for (let round = 0; round < 2; round++) {
+            const running = [yield* Queue.take(starts), yield* Queue.take(starts)];
+            expect(active).toBe(2);
+            for (const threadId of running) yield* Deferred.succeed(ends.get(threadId)!, undefined);
+          }
+          const facts = yield* Effect.forEach(fibers, Fiber.join);
+          expect(most).toBe(2);
+          // The agent learns which slot it holds, for per-slot state such as a compose project.
+          expect(
+            prompts.every((p) =>
+              /This turn holds slot [01] of the resource moneria-verify \(WF_SLOT=[01]\)/.test(p),
+            ),
+          ).toBe(true);
+          expect(facts.map((batch) => batch.map((f) => f.fact._tag))).toEqual(
+            Array.from({ length: 4 }, () => ["SlotAcquired", "TurnStarted"]),
+          );
+          expect(allSlotsFree(slotsDir)).toBe(true);
+
+          const abandoned = turn(4);
+          yield* interpreter.execute(RUN_ID, abandoned);
+          expect(allSlotsFree(slotsDir)).toBe(false);
+          yield* interpreter.abandon(RUN_ID, abandoned);
+          expect(allSlotsFree(slotsDir)).toBe(true);
+        }).pipe(Effect.provide(layer({ runsDir: "/runs" }).pipe(Layer.provideMerge(executors))));
+      }).pipe(Effect.scoped),
+  );
+});
+
+/** Both slots of moneria-verify can be locked by this process right now. */
+const allSlotsFree = (dir: string) =>
+  [0, 1].every((slot) => {
+    const fd = tryLock(slotFile(dir, "moneria-verify", slot));
+    if (fd !== null) NodeFS.closeSync(fd);
+    return fd !== null;
+  });
