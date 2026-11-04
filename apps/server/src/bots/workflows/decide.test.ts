@@ -761,6 +761,35 @@ describe("review regressions", () => {
       expect.arrayContaining(["resolved:l@1", "iter:l/r2:0", "unit:l/r2[0]/w@1"]),
     );
   });
+
+  it("finds a retried loop body's step even when the body has a node named like the scope", () => {
+    const run = ready(
+      {
+        l: {
+          kind: "loop",
+          max: 1,
+          until: "false",
+          retry: { max: 1, on: ["failed"] },
+          body: {
+            nodes: {
+              r2: commandNode,
+              w: { ...commandNode, retry: { max: 1, on: ["failed"], backoff: "10m" } },
+            },
+            edges: ["r2 -> w"],
+          },
+        },
+      },
+      [],
+    );
+    for (const step of ["l[0]/r2", "l[0]/w", "l/r2[0]/r2", "l/r2[0]/w"]) {
+      run.drive();
+      run.add(`result:unit:${step}@1`, { _tag: "UnitSpawned", unit: `u-${step}`, at: iso(T0) });
+      run.add(`exited:${step}@1`, unitExited(step, 1, step === "l/r2[0]/w" ? 1 : 0));
+    }
+    run.drive();
+    expect(run.state().attempts.get("l/r2[0]/w")?.[0]?.resolved?.status).toBe("failed");
+    expect(run.deadline(T0 + 1_000)).toBe(T0 + 601_000);
+  });
   it("counts an accept command against the step budget", () => {
     const run = ready(
       {

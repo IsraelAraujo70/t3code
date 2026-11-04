@@ -2358,17 +2358,22 @@ const nodeAt = (compiled: CompiledWorkflow, step: string): WorkflowNode | undefi
   let found: WorkflowNode | undefined;
   // An agent's `accept`/`judge` sub-step belongs to the agent's node.
   const path = isSubStep(step) ? step.slice(0, step.lastIndexOf("/")) : step;
+  /** The last segment was a container without an item index: a retry scope `r<n>[i]` follows. */
+  let scoped = false;
   for (const segment of path.split("/")) {
     if (graph === null) return undefined;
+    // A retried container's fresh body is scoped `<step>/r<n>`; it stays on the same body, even
+    // when the body has a node named `r<n>` too.
+    if (scoped) {
+      scoped = false;
+      if (/^r\d+\[\d+\]$/.test(segment)) continue;
+    }
     const id = segment.replace(/\[\d+\]$/, "");
     const node = graph.nodes.get(id);
-    if (node === undefined) {
-      // A retried container's fresh body is scoped `<step>/r<n>`; it stays on the same body.
-      if (found !== undefined && /^r\d+$/.test(id)) continue;
-      return undefined;
-    }
+    if (node === undefined) return undefined;
     found = node.node;
     graph = node.body;
+    scoped = node.body !== null && id === segment;
   }
   return found;
 };
