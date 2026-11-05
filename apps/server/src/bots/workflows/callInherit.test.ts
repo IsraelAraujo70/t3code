@@ -19,7 +19,8 @@ import { type Project, WorkflowId } from "@t3tools/contracts";
 
 import * as BotsDb from "../BotsDb.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
-import { type Intent, type NewFact, runStream } from "./facts.ts";
+import { type Intent, type NewFact, runStream, workflowStream } from "./facts.ts";
+import { runIdFor } from "./ids.ts";
 import { WorkflowGit } from "./git/Workspaces.ts";
 import type { WorkflowCatalog } from "./Catalog.ts";
 import type { WorkflowInterpreter } from "./Interpreter.ts";
@@ -582,6 +583,49 @@ it.effect("a call skipped because its workflow is busy says why and is listed", 
       assert.equal(listed?.runId, ended?.childRunId);
       assert.isNotNull(listed?.endedAt);
       assert.equal(runs.length, 2);
+    }),
+  ),
+);
+
+it.effect("a skipped call whose row a crash lost is listed once at boot", () =>
+  harness([slow], 0, () =>
+    Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/unused" });
+      const occurrence = "call:wfr_parent:hold@1";
+      const runId = runIdFor("slow", occurrence);
+      // The decider's facts were appended; the crash came before the row was written.
+      yield* journal.append([
+        {
+          stream: workflowStream("slow"),
+          key: occurrence,
+          fact: {
+            _tag: "TriggerFired",
+            runId,
+            triggerId: "call",
+            kind: "call",
+            occurrence,
+            label: "Call",
+            params: {},
+            payload: null,
+            causalDepth: 1,
+            parent: { runId: "wfr_parent", step: "hold" },
+            at: "2026-11-05T00:00:00.000Z",
+          },
+        },
+        {
+          stream: workflowStream("slow"),
+          key: `skipped:${occurrence}`,
+          fact: { _tag: "TriggerSkipped", occurrence, reason: "busy" },
+        },
+      ]);
+      yield* engine.rebuildProjection;
+      yield* engine.rebuildProjection;
+      const { runs } = yield* engine.listRuns({ workflowId: WorkflowId.make("slow") });
+      assert.deepEqual(
+        runs.map((run) => [run.runId, run.status, run.skipReason, run.endedAt !== null]),
+        [[runId, "skipped", "busy", true]],
+      );
     }),
   ),
 );
