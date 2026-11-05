@@ -2054,6 +2054,11 @@ export const decide = (
       // The compiler hands over declared workspaces only, so the worktree is in the state.
       const ready = state.workspaces.get(ws.success.name);
       if (ready === undefined) return Result.fail(`workspace ${parent} is not ready`);
+      // One call borrows a worktree at a time, so the head a child reports is the newest one.
+      if (lentElsewhere(ws.success.path, step)) {
+        preparing = true;
+        continue;
+      }
       workspaces[child] = {
         path: ws.success.path,
         project: ws.success.project,
@@ -2082,6 +2087,25 @@ export const decide = (
     }
     return preparing ? "wait" : Result.succeed({ workspaces, threads });
   };
+
+  /** Another call of this run holds the worktree at `path` and its child has not reported yet. */
+  const lentElsewhere = (path: string, step: string) =>
+    [...state.intents.values()].some(
+      ({ intent, result }) =>
+        intent._tag === "StartChildRun" &&
+        intent.step !== step &&
+        (result === null ||
+          (result._tag === "ChildRunStarted" && !state.children.has(result.childRunId))) &&
+        Object.values(intent.inherit?.workspaces ?? {}).some((w) => w.path === path),
+    ) ||
+    // A start recorded this pass has no result yet: its child is about to take the worktree.
+    out.some(
+      (f) =>
+        f.fact._tag === "IntentRecorded" &&
+        f.fact.intent._tag === "StartChildRun" &&
+        f.fact.intent.step !== step &&
+        Object.values(f.fact.intent.inherit?.workspaces ?? {}).some((w) => w.path === path),
+    );
 
   /** Map items and loop iterations run their body as levels with their own step-key prefix. */
   const progressBody = (

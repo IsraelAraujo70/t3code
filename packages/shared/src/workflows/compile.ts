@@ -159,6 +159,19 @@ export const compileWorkflow = (
   /** The nearest map whose body holds each node (a loop body keeps its map's item); null at the top. */
   const itemMapById = new Map<string, string | null>();
   const itemMapOf = (id: string) => itemMapById.get(id) ?? null;
+  /** The agent that opened the thread `id` runs in, following `continue:` (a cycle stops it). */
+  const threadOrigin = (id: string): string => {
+    const seen = new Set<string>();
+    let current = id;
+    for (;;) {
+      const node = nodeById.get(current);
+      const thread = node?.kind === "agent" ? node.thread : undefined;
+      if (typeof thread !== "string" || !thread.startsWith("continue:") || seen.has(current))
+        return current;
+      seen.add(current);
+      current = thread.slice("continue:".length);
+    }
+  };
   const collectNodes = (
     nodes: { readonly [id: string]: WorkflowNode },
     prefix: string,
@@ -1005,12 +1018,13 @@ export const compileWorkflow = (
         report(at, "thread-continue", `${parent} is not an agent node that ran before this call`);
         continue;
       }
-      // A per-item worktree is the instance of the nearest map item: the thread must be that item's.
+      // A per-item worktree is the instance of the nearest map item: the thread must be that item's,
+      // from the agent that opened it, through any `continue:` in between.
       const decl =
         typeof source.workspace === "string"
           ? own(definition.workspaces, source.workspace)
           : undefined;
-      if (decl?.perItem === true && itemMapOf(ctx.node) !== itemMapOf(parent))
+      if (decl?.perItem === true && itemMapOf(ctx.node) !== itemMapOf(threadOrigin(parent)))
         report(
           at,
           "thread-continue",

@@ -1160,8 +1160,10 @@ nível de cima com `thread: new`, os dois nós com `access: write` (a thread de 
 num checkout descartável) e um workspace ligado em `workspaces` ao workspace do nó do pai (uma thread
 fica numa worktree só). O `ChildRunEnded` desse filho leva o último HEAD de cada worktree herdada que ele moveu, e o
 pai, achando-a pelo caminho, parte dele no passo seguinte e no PR; um filho que não mexeu nela não
-desfaz o que outro `call` paralelo gravou. Com worktree `perItem`, a thread vem de um agente do mesmo
-item de map que o `call`. Sem os dois campos nada muda. O template
+desfaz o que outro `call` gravou. Uma worktree vai a um `call` por vez: outro `call` do mesmo run
+que pede a mesma espera o filho anterior relatar, e começa do HEAD que ele deixou. Com worktree
+`perItem`, a thread vem de um agente do mesmo item de map que o `call`, seguindo os `continue:` até o
+agente que a abriu. Sem os dois campos nada muda. O template
 `pr-ci` mostra o lado do filho.
 
 ### 5.1 Switches e quem dispara
