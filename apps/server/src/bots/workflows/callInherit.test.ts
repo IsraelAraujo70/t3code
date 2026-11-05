@@ -15,7 +15,7 @@ import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type { Project } from "@t3tools/contracts";
+import { type Project, WorkflowId } from "@t3tools/contracts";
 
 import * as BotsDb from "../BotsDb.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
@@ -540,6 +540,48 @@ it.effect("a sharing child that ends while its own child runs reports once that 
       assert.isTrue(mid.keys.has("reported"));
       const grandchild = yield* childOf(engine, mid, "child:slow@1");
       assert.equal(grandchild.ended?.status, "cancelled");
+    }),
+  ),
+);
+
+/** Two items call `slow`, which runs one at a time: one call starts it, the other is skipped. */
+const busyFleet = compile({
+  id: "busyfleet",
+  title: "Busy fleet",
+  triggers: { run: { kind: "manual" } },
+  budget: { steps: 20, wall: "2h", tokens: 5_000_000 },
+  params: { tickets: { type: "string[]", maxItems: 10, pattern: "[a-z]+" } },
+  nodes: {
+    fleet: {
+      kind: "map",
+      items: "params.tickets",
+      maxItems: 10,
+      concurrency: 2,
+      body: { nodes: { hold: { kind: "call", workflow: "slow", params: {} } }, edges: [] },
+    },
+  },
+});
+
+it.effect("a call skipped because its workflow is busy says why and is listed", () =>
+  harness([busyFleet, slow], 0, () =>
+    Effect.gen(function* () {
+      const { engine, runId, state } = yield* runToEnd("busyfleet", { tickets: ["one", "two"] });
+      assert.equal(state.ended?.status, "failed");
+      const view = yield* engine.runView({ runId });
+      const skippedStep = view.steps.find(
+        (step) => step.node === "hold" && step.status === "failed",
+      );
+      assert.isDefined(skippedStep);
+      assert.include(skippedStep?.summary, "child run skipped (busy)");
+      assert.include(skippedStep?.summary, "concurrency: single");
+      const ended = [...state.children.values()].find((child) => child.status === "skipped");
+      const { runs } = yield* engine.listRuns({ workflowId: WorkflowId.make("slow") });
+      const listed = runs.find((run) => run.status === "skipped");
+      assert.equal(listed?.skipReason, "busy");
+      assert.isDefined(ended);
+      assert.equal(listed?.runId, ended?.childRunId);
+      assert.isNotNull(listed?.endedAt);
+      assert.equal(runs.length, 2);
     }),
   ),
 );

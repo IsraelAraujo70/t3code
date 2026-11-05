@@ -166,9 +166,9 @@ export const pendingSummary = (
     const f = entry.fact;
     const workflowId = entry.stream.slice("workflow:".length);
     if (f._tag !== "TriggerFired" || runIdFor(workflowId, f.occurrence) !== runId) continue;
-    const skipped = workflowFacts
-      .map((e) => e.fact)
-      .find((fact) => fact._tag === "TriggerSkipped" && fact.occurrence === f.occurrence);
+    const skipped = workflowFacts.find(
+      (e) => e.fact._tag === "TriggerSkipped" && e.fact.occurrence === f.occurrence,
+    );
     return {
       runId: WorkflowRunId.make(runId),
       workflowId: WorkflowId.make(workflowId),
@@ -176,11 +176,11 @@ export const pendingSummary = (
       hash: null,
       commit: null,
       status: skipped ? "skipped" : "queued",
-      skipReason: skipped?._tag === "TriggerSkipped" ? skipped.reason : null,
+      skipReason: skipped?.fact._tag === "TriggerSkipped" ? skipped.fact.reason : null,
       pausedFor: null,
       trigger: { id: f.triggerId, kind: f.kind, label: f.label },
       startedAt: f.at,
-      endedAt: null,
+      endedAt: skipped?.at ?? null,
       outputStatus: null,
       stepsUsed: 0,
       cost: {

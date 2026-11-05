@@ -121,6 +121,11 @@ export class Journal extends Context.Service<
      * result or a sharing child's end not yet reported to its caller (`reportPending`).
      */
     readonly liveRuns: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
+    /** Each skipped call's TriggerFired and TriggerSkipped whose run has no row yet. */
+    readonly unlistedSkippedCalls: Effect.Effect<
+      ReadonlyArray<{ readonly fired: StoredFact; readonly skipped: StoredFact }>,
+      WorkflowJournalError
+    >;
     /** Workflow ids with a TriggerFired that has neither RunCreated nor TriggerSkipped. */
     readonly pendingTriggers: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     /** The live runs, as `liveRuns` counts them, whose RunStarted names this workflow. */
@@ -368,8 +373,8 @@ const make = Effect.gen(function* () {
       const rows = yield* sql<{
         readonly summary_json: string;
       }>`SELECT r.summary_json FROM workflow_runs r
-        WHERE r.summary_json != '' AND NOT EXISTS (SELECT 1 FROM workflow_runs n
-          WHERE n.summary_json != '' AND n.workflow_id = r.workflow_id AND
+        WHERE r.summary_json != '' AND r.status != 'skipped' AND NOT EXISTS (SELECT 1 FROM workflow_runs n
+          WHERE n.summary_json != '' AND n.status != 'skipped' AND n.workflow_id = r.workflow_id AND
           (n.started_at > r.started_at OR (n.started_at = r.started_at AND n.run_id < r.run_id)))`;
       const summaries = yield* Effect.forEach(rows, decodeSummary);
       return new Map(summaries.map((s) => [s.workflowId, s]));
@@ -494,6 +499,33 @@ const make = Effect.gen(function* () {
         decode,
       );
     }, Effect.mapError(fail)),
+    unlistedSkippedCalls: Effect.gen(function* () {
+      const rows = yield* sql<
+        Row & {
+          readonly skipped_seq: number;
+          readonly skipped_payload: string;
+          readonly skipped_at: string;
+        }
+      >`
+        SELECT f.*, s.seq AS skipped_seq, s.payload_json AS skipped_payload, s.at AS skipped_at
+        FROM workflow_facts s INDEXED BY workflow_facts_kind
+        JOIN workflow_facts f ON f.stream = s.stream AND f.key = substr(s.key, 9)
+        WHERE s.kind = 'TriggerSkipped' AND json_extract(f.payload_json, '$.parent') IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM workflow_runs r WHERE r.run_id = json_extract(f.payload_json, '$.runId'))
+        ORDER BY s.stream, s.seq`;
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.all({
+          fired: decode(row),
+          skipped: decode({
+            stream: row.stream,
+            seq: row.skipped_seq,
+            key: `skipped:${row.key}`,
+            payload_json: row.skipped_payload,
+            at: row.skipped_at,
+          }),
+        }),
+      );
+    }).pipe(Effect.mapError(fail)),
     pendingTriggers: sql<{
       readonly id: string;
     }>`SELECT DISTINCT substr(stream, 10) AS id FROM workflow_facts f
