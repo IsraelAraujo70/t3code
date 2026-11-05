@@ -75,6 +75,7 @@ const callee = (): HostLimits => ({
           id: "other",
           workspaces: {
             pr: { project: "t3code", base: "friend/main", branch: "wf/other" },
+            pr2: { project: "t3code", base: "friend/main", branch: "wf/other2" },
             each: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
           },
           nodes: {
@@ -205,6 +206,35 @@ const FAILING: ReadonlyArray<FailingCase> = [
     path: "nodes.ci.workspaces.pr",
     host: callee(),
     change: callWith({ workspaces: { pr: "missing" } }),
+  },
+  {
+    name: "a call passes one worktree under two names",
+    code: "schema",
+    path: "nodes.ci.workspaces.pr2",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "integ", pr2: "integ" } }),
+  },
+  {
+    name: "a call passes a block's export",
+    code: "unknown-node",
+    path: "nodes.ci.workspaces.pr",
+    host: callee(),
+    change: (def) => {
+      def.budget = { steps: 500, wall: "2h", tokens: 30_000_000 };
+      def.nodes.build = {
+        kind: "graph",
+        goal: "Ship the feature",
+        lead: "$lead",
+        leaf: "$sol",
+        workspace: { project: "t3code", base: "friend/main" },
+        finalChecks: [{ argv: ["node", "check.ts"], cwd: "build.integration" }],
+        reworkCap: 1,
+        maxLeaves: 4,
+        maxParallel: 2,
+      };
+      callWith({ workspaces: { pr: "build.integration" } })(def);
+      def.edges.push("build -> ci");
+    },
   },
   {
     name: "a call passes a per-item workspace of the callee",

@@ -2050,15 +2050,14 @@ export const decide = (
         preparing = true;
         continue;
       }
-      const exported = blockExport(level, parent);
+      // The compiler hands over declared workspaces only, so the worktree is in the state.
       const ready = state.workspaces.get(ws.success.name);
-      const headSha = exported?.head ?? ready?.headSha;
-      if (headSha === undefined) return Result.fail(`workspace ${parent} has no HEAD yet`);
+      if (ready === undefined) return Result.fail(`workspace ${parent} is not ready`);
       workspaces[child] = {
         path: ws.success.path,
         project: ws.success.project,
-        branch: exported?.branch ?? ready?.branch ?? null,
-        headSha,
+        branch: ready.branch,
+        headSha: ready.headSha,
       };
     }
     const threads: Record<string, CallInherit["threads"][string]> = {};

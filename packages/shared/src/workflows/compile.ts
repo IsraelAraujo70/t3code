@@ -969,9 +969,16 @@ export const compileWorkflow = (
   ) {
     const callee = host.callTargets?.get(node.workflow)?.definition;
     const workspaces = node.workspaces ?? {};
+    const handed = new Set<string>();
     for (const [child, parent] of Object.entries(workspaces)) {
       const at = `${path}.workspaces.${child}`;
-      checkWorkspaceName(parent, at, ctx);
+      // A block's export would not see the child's commits; two names would report two heads.
+      if (own(definition.workspaces, parent) === undefined)
+        report(at, "unknown-node", `"${parent}" is not a declared workspace`);
+      else checkWorkspaceName(parent, at, ctx);
+      if (handed.has(parent))
+        report(at, "schema", `${parent} is already handed to ${node.workflow} under another name`);
+      handed.add(parent);
       if (callee === undefined) continue;
       const decl = own(callee.workspaces, child);
       if (decl === undefined)

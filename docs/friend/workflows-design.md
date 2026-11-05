@@ -1154,7 +1154,8 @@ retomam. `GitOp` e o PR do filho acham a worktree herdada pelo `RunStarted`; `Re
 A promoção confere o mapa contra a versão do filho que vai rodar e pula com `invalid` e o motivo
 quando o filho mudou desde que o pai compilou. Retry de um passo do filho, ou do `call` no pai, volta à mesma
 thread e worktree; um neto herda o que o filho herdou. O compilador do pai lê a definição atual do
-filho: o workspace recebido é declarado e compartilhado (não `perItem`), o nó recebido é `agent` de
+filho: o pai passa só workspaces declarados (não export de bloco), cada um sob um nome só; o
+workspace recebido é declarado e compartilhado (não `perItem`), o nó recebido é `agent` de
 nível de cima com `thread: new`, os dois nós com `access: write` (a thread de um nó de leitura roda
 num checkout descartável) e um workspace ligado em `workspaces` ao workspace do nó do pai (uma thread
 fica numa worktree só). O `ChildRunEnded` desse filho leva o último HEAD de cada worktree herdada, e o
