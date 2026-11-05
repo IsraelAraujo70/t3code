@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -16,7 +17,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -25,6 +28,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 
 import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
 
@@ -192,6 +196,28 @@ describe("idleCompactionWindow", () => {
   });
 });
 
+// Fork (friend): the session opens in the project root or worktree, so the service checks it exists.
+const layerWorkspace = (workspaceRoot: string) =>
+  Layer.mock(ProjectStore.ProjectStoreV2)({
+    get: (projectId) =>
+      Effect.succeedSome({
+        projectId,
+        title: "Project",
+        workspaceRoot,
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        autoPull: false,
+        faviconPath: null,
+        projectIcon: null,
+        scripts: [],
+        pinnedAt: null,
+        archivedAt: null,
+        createdAt: "2026-10-19T11:00:00.000Z",
+        updatedAt: "2026-10-19T11:00:00.000Z",
+        deletedAt: null,
+      }),
+  });
+
 describe("IdleCompactionService", () => {
   it.effect.each([
     { mode: "onReturn", reads: 0 },
@@ -205,8 +231,12 @@ describe("IdleCompactionService", () => {
     { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
     { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
     { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
+    // Fork (friend): no compaction when the folder the session would open is gone.
+    { mode: "beforeCacheExpires", workspace: "worktree", reads: 1 },
+    { mode: "beforeCacheExpires", workspace: "removedWorktree", reads: 1, dispatches: 0 },
+    { mode: "beforeCacheExpires", workspace: "removedProjectRoot", reads: 1, dispatches: 0 },
   ] as const)(
-    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
+    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured/$workspace",
     (scenario) => {
       const test = {
         override: "default",
@@ -217,6 +247,12 @@ describe("IdleCompactionService", () => {
       return Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(NOW_MS);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "idle-compaction-" });
+          const workspace = "workspace" in test ? test.workspace : "projectRoot";
+          const worktreePath = path.join(root, "worktree");
+          if (workspace === "worktree") yield* fs.makeDirectory(worktreePath);
           const selectedInstance = ProviderInstanceId.make(
             "instance" in test ? test.instance : "claudeAgent",
           );
@@ -228,6 +264,8 @@ describe("IdleCompactionService", () => {
               ...base.thread,
               providerInstanceId: selectedInstance,
               modelSelection: { ...base.thread.modelSelection, instanceId: selectedInstance },
+              worktreePath:
+                workspace === "worktree" || workspace === "removedWorktree" ? worktreePath : null,
             },
             runs: base.runs.map((run) => ({
               ...run,
@@ -266,6 +304,9 @@ describe("IdleCompactionService", () => {
             },
           });
           const dependencies = Layer.mergeAll(
+            layerWorkspace(
+              workspace === "removedProjectRoot" ? path.join(root, "removed-project") : root,
+            ),
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.make({
                 id: EventId.make("idle-completed"),
@@ -319,8 +360,8 @@ describe("IdleCompactionService", () => {
             yield* Deferred.await(done);
           }).pipe(Effect.provide(dependencies), Effect.withTracer(tracer));
           expect(historyReads).toBe(test.reads);
-          expect(dispatches).toBe(test.reads);
-        }),
+          expect(dispatches).toBe("dispatches" in test ? test.dispatches : test.reads);
+        }).pipe(Effect.provide(NodeServices.layer)),
       );
     },
   );
@@ -376,7 +417,9 @@ describe("IdleCompactionService", () => {
         });
         const dispatched: Array<string> = [];
         const streamDone = yield* Deferred.make<void>();
+        const firstDispatch = yield* Deferred.make<void>();
         const dependencies = Layer.mergeAll(
+          layerWorkspace(yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped()),
           Layer.mock(Orchestrator.OrchestratorV2)({
             // A delegated completion on the earlier run lands after the later run completed.
             streamDomainEvents: Stream.make(completed(laterRun), completed(earlierRun)).pipe(
@@ -385,6 +428,7 @@ describe("IdleCompactionService", () => {
             dispatch: (command) =>
               Effect.sync(() => {
                 dispatched.push(command.commandId);
+                Deferred.doneUnsafe(firstDispatch, Effect.void);
                 return { sequence: 1, storedEvents: [] };
               }),
           }),
@@ -412,9 +456,10 @@ describe("IdleCompactionService", () => {
           yield* service.start();
           yield* Deferred.await(streamDone);
           yield* TestClock.adjust(9 * MINUTE_MS);
+          yield* Deferred.await(firstDispatch);
         }).pipe(Effect.provide(dependencies));
         expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-2"]);
-      }),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 });
