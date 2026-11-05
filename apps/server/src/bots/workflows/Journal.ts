@@ -115,8 +115,11 @@ export class Journal extends Context.Service<
       stream: string,
       key: string,
     ) => Effect.Effect<Option.Option<StoredFact>, WorkflowJournalError>;
-    /** Run ids that started and did not end, plus ended runs with an intent still waiting for its result. */
     readonly ledgerIds: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
+    /**
+     * Run ids that started and did not end, plus ended runs with an intent still waiting for its
+     * result or a sharing child's end not yet reported to its caller (`reportPending`).
+     */
     readonly liveRuns: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
     /** Workflow ids with a TriggerFired that has neither RunCreated nor TriggerSkipped. */
     readonly pendingTriggers: Effect.Effect<ReadonlyArray<string>, WorkflowJournalError>;
@@ -235,7 +238,8 @@ const make = Effect.gen(function* () {
     readonly id: string;
   }>`SELECT substr(stream, 5) AS id FROM workflow_facts f WHERE stream LIKE 'run:%' AND
       ((kind = 'RunStarted' AND (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunEnded') <= (SELECT COUNT(*) FROM workflow_facts e WHERE e.stream = f.stream AND e.kind = 'RunReopened'))
-      OR (kind = 'IntentRecorded' AND NOT EXISTS (SELECT 1 FROM workflow_facts r WHERE r.stream = f.stream AND r.key = 'result:' || f.key)))
+      OR (kind = 'IntentRecorded' AND NOT EXISTS (SELECT 1 FROM workflow_facts r WHERE r.stream = f.stream AND r.key = 'result:' || f.key))
+      OR (kind = 'RunStarted' AND json_extract(payload_json, '$.inherit') IS NOT NULL AND json_extract(payload_json, '$.parent') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workflow_facts r WHERE r.stream = f.stream AND r.key = 'reported')))
       GROUP BY stream ORDER BY id`.pipe(Effect.map((rows) => rows.map((row) => row.id)));
   const get = Effect.fn("Journal.get")(function* (stream: string, key: string) {
     const rows =

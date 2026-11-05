@@ -156,8 +156,29 @@ export const compileWorkflow = (
 
   // Every node of every level, by id: ids are unique across levels so `nodes.<id>` is never ambiguous.
   const nodeById = new Map<string, WorkflowNode>();
-  const collectNodes = (nodes: { readonly [id: string]: WorkflowNode }, prefix: string) => {
+  /** The nearest map whose body holds each node (a loop body keeps its map's item); null at the top. */
+  const itemMapById = new Map<string, string | null>();
+  const itemMapOf = (id: string) => itemMapById.get(id) ?? null;
+  /** The agent that opened the thread `id` runs in, following `continue:` (a cycle stops it). */
+  const threadOrigin = (id: string): string => {
+    const seen = new Set<string>();
+    let current = id;
+    for (;;) {
+      const node = nodeById.get(current);
+      const thread = node?.kind === "agent" ? node.thread : undefined;
+      if (typeof thread !== "string" || !thread.startsWith("continue:") || seen.has(current))
+        return current;
+      seen.add(current);
+      current = thread.slice("continue:".length);
+    }
+  };
+  const collectNodes = (
+    nodes: { readonly [id: string]: WorkflowNode },
+    prefix: string,
+    itemMap: string | null = null,
+  ) => {
     for (const [id, node] of Object.entries(nodes)) {
+      itemMapById.set(id, itemMap);
       const path = `${prefix}nodes.${id}`;
       if (!WORKFLOW_NODE_ID_PATTERN.test(id)) {
         report(path, "schema", `node id "${id}" must match ${WORKFLOW_NODE_ID_PATTERN}`);
@@ -168,7 +189,7 @@ export const compileWorkflow = (
       }
       nodeById.set(id, node);
       if (node.kind === "map" || node.kind === "loop")
-        collectNodes(node.body.nodes, `${path}.body.`);
+        collectNodes(node.body.nodes, `${path}.body.`, node.kind === "map" ? id : itemMap);
     }
   };
   collectNodes(definition.nodes, "");
@@ -833,6 +854,7 @@ export const compileWorkflow = (
         for (const [key, value] of Object.entries(node.params)) {
           checkTemplate(value, `${path}.params.${key}`, scope);
         }
+        checkInherit(node, path, ctx);
         return;
       case "map": {
         const itemsExpr = checkExpr(node.items, `${path}.items`, scope);
@@ -953,6 +975,88 @@ export const compileWorkflow = (
         ...outer,
         nodes: new Set([...outer.nodes, ...upstream]),
       });
+    }
+  }
+
+  /**
+   * A call's `workspaces` and `threads`: each parent name exists here (an agent node that ran
+   * before the call, for a thread), and each child name is a shared workspace or a top-level agent
+   * node of the callee that opens a new thread, in the workspace and with the access of the thread.
+   */
+  function checkInherit(
+    node: Extract<WorkflowNode, { readonly kind: "call" }>,
+    path: string,
+    ctx: UseContext,
+  ) {
+    const callee = host.callTargets?.get(node.workflow)?.definition;
+    const workspaces = node.workspaces ?? {};
+    const handed = new Set<string>();
+    for (const [child, parent] of Object.entries(workspaces)) {
+      const at = `${path}.workspaces.${child}`;
+      // A block's export would not see the child's commits; two names would report two heads.
+      if (own(definition.workspaces, parent) === undefined)
+        report(at, "unknown-node", `"${parent}" is not a declared workspace`);
+      else checkWorkspaceName(parent, at, ctx);
+      if (handed.has(parent))
+        report(at, "schema", `${parent} is already handed to ${node.workflow} under another name`);
+      handed.add(parent);
+      if (callee === undefined) continue;
+      const decl = own(callee.workspaces, child);
+      if (decl === undefined)
+        report(at, "unknown-node", `${node.workflow} declares no workspace ${child}`);
+      else if (decl.perItem === true)
+        report(
+          at,
+          "schema",
+          `${child} is per item in ${node.workflow}: only a shared workspace is inherited`,
+        );
+    }
+    for (const [child, parent] of Object.entries(node.threads ?? {})) {
+      const at = `${path}.threads.${child}`;
+      const source = nodeById.get(parent);
+      if (source?.kind !== "agent" || !ctx.scope.nodes.has(parent)) {
+        report(at, "thread-continue", `${parent} is not an agent node that ran before this call`);
+        continue;
+      }
+      // A per-item worktree is the instance of the nearest map item: the thread must be that item's,
+      // from the agent that opened it, through any `continue:` in between.
+      const decl =
+        typeof source.workspace === "string"
+          ? own(definition.workspaces, source.workspace)
+          : undefined;
+      if (decl?.perItem === true && itemMapOf(ctx.node) !== itemMapOf(threadOrigin(parent)))
+        report(
+          at,
+          "thread-continue",
+          `${parent} runs in another map item than this call: its per-item worktree is not this item's`,
+        );
+      if (callee === undefined) continue;
+      const target = own(callee.nodes, child);
+      if (target?.kind !== "agent") {
+        report(at, "thread-continue", `${node.workflow} has no top-level agent node ${child}`);
+        continue;
+      }
+      if (target.thread !== undefined && target.thread !== "new")
+        report(
+          at,
+          "thread-continue",
+          `${child} in ${node.workflow} opens its own thread: give it thread: new`,
+        );
+      // A read-only agent's thread works in a disposable checkout, not in a worktree to share.
+      if ((source.access ?? "read") !== "write")
+        report(at, "thread-continue", `only a thread of an agent with access: write is inherited`);
+      else if ((target.access ?? "read") !== "write")
+        report(at, "thread-continue", `a thread keeps one access: give ${child} access: write`);
+      const mapped =
+        typeof target.workspace === "string" ? own(workspaces, target.workspace) : undefined;
+      if (typeof source.workspace !== "string" || mapped !== source.workspace)
+        report(
+          at,
+          "thread-continue",
+          typeof source.workspace === "string" && typeof target.workspace === "string"
+            ? `a thread keeps one workspace: add workspaces: { ${target.workspace}: ${source.workspace} }`
+            : `a thread keeps one workspace: ${child} and ${parent} need named workspaces passed in workspaces`,
+        );
     }
   }
 

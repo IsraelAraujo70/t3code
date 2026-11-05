@@ -120,9 +120,18 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       next.usage = new Map(next.usage).set(key, Math.max(next.usage.get(key) ?? 0, fact.billable));
       break;
     }
-    case "RunStarted":
+    case "RunStarted": {
       next.started = fact;
+      // An inherited worktree is the parent's: ready from the start, its head tracked here too.
+      const inherited = Object.entries(fact.inherit?.workspaces ?? {});
+      if (inherited.length > 0) {
+        const workspaces = new Map(next.workspaces);
+        for (const [name, { path, branch, headSha }] of inherited)
+          workspaces.set(name, { _tag: "WorkspaceReady", name, path, branch, headSha });
+        next.workspaces = workspaces;
+      }
       break;
+    }
     case "RunEnded":
       next.ended = fact;
       next.endedSeq = stored.seq;
@@ -246,11 +255,19 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       next.children = new Map(next.children).set(fact.childRunId, fact);
       for (const { intent, result } of next.intents.values()) {
         if (
-          intent._tag === "StartChildRun" &&
-          result?._tag === "ChildRunStarted" &&
-          result.childRunId === fact.childRunId
+          intent._tag !== "StartChildRun" ||
+          result?._tag !== "ChildRunStarted" ||
+          result.childRunId !== fact.childRunId
         )
-          updateAttempt(intent.step, intent.attempt, { child: fact });
+          continue;
+        updateAttempt(intent.step, intent.attempt, { child: fact });
+        // A worktree the call handed over carries the child's commits back, found by its path.
+        for (const [name, headSha] of Object.entries(fact.heads ?? {})) {
+          const path = intent.inherit?.workspaces[name]?.path;
+          for (const [own, ready] of next.workspaces)
+            if (ready.path === path)
+              next.workspaces = new Map(next.workspaces).set(own, { ...ready, headSha });
+        }
       }
       break;
     case "StepSkipped":

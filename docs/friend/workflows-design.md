@@ -275,6 +275,8 @@ export const CallNode = Schema.Struct({
   ...NodeCommon,
   workflow: WorkflowId, // fixado no hash da versão quando a execução pai começa
   params: Schema.Record(Schema.String, Template),
+  workspaces: Schema.optional(Schema.Record(Schema.String, Schema.String)), // { <ws do filho>: <ws daqui> }
+  threads: Schema.optional(Schema.Record(NodeId, NodeId)), // { <agent do filho>: <agent daqui> }
 });
 
 export interface WorkflowGraph {
@@ -1137,6 +1139,32 @@ com os nós: o id também chaveia a posição do nó de entrada no canvas. Há t
 para os parâmetros com `params`. Qualquer gatilho começa o grafo inteiro: o motor não roteia por
 gatilho, e um ramo por gatilho se escreve com `when` sobre `trigger.id`. Um nó `call` só compila
 contra um workflow com gatilho `call` que o aceite em `from`.
+
+Um `call` pode entregar ao filho a worktree e a thread de quem chama. `workspaces: { pr: ticket }` faz
+o workspace `pr` do filho ser a worktree `ticket` do pai no nível do `call` (a do item, num map); o pai
+a prepara se ainda não existe. `threads: { ci: implement }` faz o nó `ci` do filho agir como
+`continue:` da thread da última tentativa do `implement` do pai, em toda tentativa. O pai resolve os
+dois em `StartChildRun.inherit`, que segue no `TriggerFired` e no `RunStarted` do filho; o filho dobra
+as worktrees herdadas como prontas, nunca grava `PrepareWorkspace` nem `RemoveWorkspace` para elas, e
+o `retain` do pai continua decidindo. Por isso esse filho só grava `ChildRunEnded` no pai quando
+nada dele roda mais (`EndReported`, chave `reported`), e não no lote do fim: um turno ainda
+interrompendo não escreve numa worktree que o pai já removeu, nem divide a thread com um retry do
+`call`. Até lá o run conta como vivo (`journal.liveRuns`), então o ator não sai e o boot e o tick o
+retomam. `GitOp` e o PR do filho acham a worktree herdada pelo `RunStarted`; `RemoveWorkspace` nunca.
+A promoção confere o mapa contra a versão do filho que vai rodar e pula com `invalid` e o motivo
+quando o filho mudou desde que o pai compilou. Retry de um passo do filho, ou do `call` no pai, volta à mesma
+thread e worktree; um neto herda o que o filho herdou. O compilador do pai lê a definição atual do
+filho: o pai passa só workspaces declarados (não export de bloco), cada um sob um nome só; o
+workspace recebido é declarado e compartilhado (não `perItem`), o nó recebido é `agent` de
+nível de cima com `thread: new`, os dois nós com `access: write` (a thread de um nó de leitura roda
+num checkout descartável) e um workspace ligado em `workspaces` ao workspace do nó do pai (uma thread
+fica numa worktree só). O `ChildRunEnded` desse filho leva o último HEAD de cada worktree herdada que ele moveu, e o
+pai, achando-a pelo caminho, parte dele no passo seguinte e no PR; um filho que não mexeu nela não
+desfaz o que outro `call` gravou. Uma worktree vai a um `call` por vez: outro `call` do mesmo run
+que pede a mesma espera o filho anterior relatar, e começa do HEAD que ele deixou. Com worktree
+`perItem`, a thread vem de um agente do mesmo item de map que o `call`, seguindo os `continue:` até o
+agente que a abriu. Sem os dois campos nada muda. O template
+`pr-ci` mostra o lado do filho.
 
 ### 5.1 Switches e quem dispara
 

@@ -371,6 +371,16 @@ export const WorkflowCallNode = Schema.Struct({
   /** Pinned to the version hash when the parent run starts. */
   workflow: WorkflowKey,
   params: Schema.Record(Schema.String, WorkflowTemplate),
+  /**
+   * `{ <child workspace>: <this workflow's workspace> }`: the child works in this run's worktree
+   * (the current map item's, when per item) instead of preparing its own, and never removes it.
+   */
+  workspaces: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /**
+   * `{ <child agent node>: <agent node of this workflow> }`: that top-level child node continues
+   * the thread of this node (the current item's run of it) instead of opening a new one.
+   */
+  threads: Schema.optional(Schema.Record(WorkflowNodeKey, WorkflowNodeKey)),
 });
 export type WorkflowCallNode = typeof WorkflowCallNode.Type;
 

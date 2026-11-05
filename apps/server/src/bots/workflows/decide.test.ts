@@ -1522,6 +1522,149 @@ describe("retry, reopening and cleanup", () => {
     expect(ended("never", 1)).toEqual(["rm:r@1", "rm:integ"]);
   });
 
+  it("never prepares or removes a worktree a call handed it, failed or succeeded", () => {
+    const ended = (exit: number) => {
+      const run = TestRun.start(
+        compile({ nodes: { w: commandNode, done }, edges: ["w -> done"] }),
+        runStarted({
+          parent: { runId: "wfr_parent", step: "ci" },
+          inherit: {
+            workspaces: {
+              integ: {
+                path: "/runs/parent/integ",
+                project: "t3code",
+                branch: "wf/p",
+                headSha: "a1",
+              },
+            },
+            threads: {},
+          },
+        }),
+      );
+      run.drive();
+      expect(run.intent("unit:w@1")).toMatchObject({
+        cwd: { name: "integ", path: "/runs/parent/integ" },
+      });
+      spawned(run, "w");
+      run.add("exited:w@1", unitExited("w", 1, exit));
+      run.drive();
+      expect(run.state().ended?.status).toBe(exit === 0 ? "succeeded" : "failed");
+      run.drive();
+      return [...run.state().intents.keys()].filter((k) => /^(ws|rm):/.test(k));
+    };
+    expect(ended(0)).toEqual([]);
+    expect(ended(1)).toEqual([]);
+  });
+
+  it.each([
+    ["moved", "b2", { integ: "b2" }],
+    ["left alone", undefined, {}],
+  ] as const)(
+    "tells the caller a sharing child ended only once its last turn stopped, with the heads it %s",
+    (_, moved, heads) => {
+      const parent = "wfr_00000000000000000009";
+      const run = TestRun.start(
+        compile({
+          nodes: {
+            slow: {
+              kind: "agent",
+              model: "$lead",
+              prompt: "Slow",
+              workspace: "integ",
+              access: "write",
+            },
+            fast: commandNode,
+            done,
+            late: { kind: "output", status: "no_change", value: {} },
+          },
+          edges: ["fast -> done", "slow -> late"],
+        }),
+        runStarted({
+          parent: { runId: parent, step: "ci" },
+          inherit: {
+            workspaces: {
+              integ: {
+                path: "/runs/parent/integ",
+                project: "t3code",
+                branch: "wf/p",
+                headSha: "a1",
+              },
+            },
+            threads: {},
+          },
+        }),
+      );
+      const toParent = (out: ReadonlyArray<NewFact>) =>
+        out.filter((f) => f.stream === `run:${parent}`).map((f) => f.fact._tag);
+      run.drive();
+      run.result("turn:slow@1", { _tag: "TurnStarted", threadId: "wf:slow" });
+      spawned(run, "fast");
+      run.add(
+        "exited:fast@1",
+        unitExited("fast", 1, 0, moved === undefined ? {} : { headSha: moved }),
+      );
+      // The output ends the run while `slow` still writes in the caller's worktree.
+      expect(toParent(run.drive())).toEqual([]);
+      expect(run.state().ended?.status).toBe("succeeded");
+      expect(run.intent("interrupt:turn:slow@1")).toBeDefined();
+      expect(toParent(run.drive())).toEqual([]);
+      run.add("settled:slow@1", turnSettled("slow", 1, "interrupted"));
+      const reported = run.drive().filter((f) => f.stream === `run:${parent}`);
+      expect(reported.map((f) => f.fact)).toEqual([
+        expect.objectContaining({ _tag: "ChildRunEnded", status: "succeeded", heads }),
+      ]);
+      expect(toParent(run.drive())).toEqual([]);
+    },
+  );
+
+  it("lends a worktree to one call at a time, so each child starts from the last one's head", () => {
+    const call = { kind: "call", workflow: "other", params: {}, workspaces: { pr: "integ" } };
+    // Room for both children's reservations, so only the lending can hold `b` back.
+    const run = TestRun.start(
+      compile({
+        budget: { steps: 20, wall: "2h", tokens: 30_000_000 },
+        nodes: { a: call, b: call, done },
+        edges: ["a -> done", "b -> done"],
+      }),
+      runStarted({ budget: { steps: 20, wallMs: 7_200_000, tokens: 30_000_000, usd: null } }),
+    );
+    run.drive();
+    run.result("ws:integ", {
+      _tag: "WorkspaceReady",
+      name: "integ",
+      path: "/runs/x/integ",
+      branch: "wf/demo",
+      headSha: "h0",
+    });
+    run.drive();
+    const children = () =>
+      [...run.state().intents.keys()].filter((k) => k.startsWith("child:")).toSorted();
+    expect(children()).toEqual(["child:a@1"]);
+    run.result("child:a@1", { _tag: "ChildRunStarted", childRunId: "wfr_child_a" });
+    run.drive();
+    expect(children()).toEqual(["child:a@1"]);
+    run.add("child:wfr_child_a", {
+      _tag: "ChildRunEnded",
+      childRunId: "wfr_child_a",
+      status: "succeeded",
+      output: {},
+      cost: {
+        billable: 0,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        usage: "complete",
+        usdEstimate: null,
+      },
+      heads: { pr: "h1" },
+    });
+    run.drive();
+    expect(children()).toEqual(["child:a@1", "child:b@1"]);
+    expect(run.intent("child:b@1")).toMatchObject({
+      inherit: { workspaces: { pr: { path: "/runs/x/integ", headSha: "h1" } } },
+    });
+  });
+
   it("keeps an item's worktree when its failure went to an output and the run succeeded", () => {
     const run = TestRun.start(
       compile({

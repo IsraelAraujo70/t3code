@@ -39,6 +39,7 @@ import {
 } from "@t3tools/shared/workflows";
 
 import {
+  type CallInherit,
   type Fact,
   type Intent,
   type NewFact,
@@ -204,6 +205,16 @@ const declarationOf = (
   return base !== null && Object.hasOwn(declared, base) && declared[base]?.perItem === true
     ? declared[base]
     : undefined;
+};
+
+/** Why a child run failed the call: its status, and the reason a skipped one gives. */
+const childFailure = (ended: { readonly status: string; readonly output: Json }): string => {
+  const out = ended.output;
+  const detail =
+    out !== null && typeof out === "object" && !Array.isArray(out)
+      ? (out as { readonly [key: string]: Json })["detail"]
+      : undefined;
+  return `child run ${ended.status}${typeof detail === "string" ? `: ${detail}` : ""}`;
 };
 
 /** The note a retried attempt opens with when it continues the thread its last attempt used. */
@@ -382,6 +393,16 @@ export const planRetry = (
   return { superseded, reopened };
 };
 
+/**
+ * An ended child that shares its caller's worktree or thread and has not told the caller yet
+ * (`afterEnd` does once nothing of it runs): its actor stays, and recovery revives it.
+ */
+export const reportPending = (state: RunState): boolean =>
+  state.ended !== null &&
+  state.started?.parent != null &&
+  state.started.inherit !== undefined &&
+  !state.keys.has("reported");
+
 /** Why `step` cannot be retried now, or null. */
 export const retryRefusal = (
   compiled: CompiledWorkflow,
@@ -437,6 +458,42 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
   if (interrupts.length > 0 || live.length > 0) return interrupts;
   const ended = state.ended;
   if (ended === null) return [];
+  const parent = state.started?.parent ?? null;
+  // Until now a turn of this child could still be writing in the caller's worktree or thread.
+  if (parent !== null && reportPending(state)) {
+    const fact: Fact = {
+      _tag: "ChildRunEnded",
+      childRunId: state.runId,
+      status: ended.status,
+      output: state.output?.value ?? null,
+      // The child's commits in the caller's worktree: the caller's next step starts from them.
+      // Only the heads it moved, so a child that left one alone never sets back another's commits.
+      heads: Object.fromEntries(
+        Object.entries(state.started?.inherit?.workspaces ?? {}).flatMap(([name, handed]) => {
+          const head = state.workspaces.get(name)?.headSha;
+          return head === undefined || head === handed.headSha ? [] : [[name, head]];
+        }),
+      ),
+      cost: {
+        billable: spentTokens(state),
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        usage: "complete",
+        usdEstimate: null,
+      },
+    };
+    const report: ReadonlyArray<NewFact> = [
+      { stream: runStream(parent.runId), key: `child:${state.runId}`, fact },
+      // Its own record of the report: the parent's stream is not folded here.
+      {
+        stream: runStream(state.runId),
+        key: "reported",
+        fact: { _tag: "EndReported", at: isoOf(now) },
+      },
+    ];
+    return report;
+  }
   for (const retry of pendingRetries(state)) {
     const step = retry.control.step;
     if (step === null) continue;
@@ -462,7 +519,10 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
     return reopening;
   }
   const failedSteps = failedStepsOf(compiled, state);
+  const inherited = state.started?.inherit?.workspaces ?? {};
   return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
+    // The parent's worktree: its retain policy, not this run's, decides when it goes.
+    if (Object.hasOwn(inherited, name)) return [];
     const decl = declarationOf(compiled.definition, name);
     const retain = decl?.retain ?? "on_failure";
     // A per-item instance is `<name>#<item>`: only its item's steps failing keep it.
@@ -698,8 +758,15 @@ export const decide = (
     const decl = Object.hasOwn(definition.workspaces ?? {}, name)
       ? definition.workspaces?.[name]
       : undefined;
-    return decl === undefined ? name : (instanceOf(name, decl, level) ?? name);
+    if (decl === undefined || inheritedWorkspace(name) !== undefined) return name;
+    return instanceOf(name, decl, level) ?? name;
   };
+
+  /** The parent's worktree a call handed this run under a declared name. */
+  function inheritedWorkspace(name: string) {
+    const inherited = started?.inherit?.workspaces;
+    return inherited !== undefined && Object.hasOwn(inherited, name) ? inherited[name] : undefined;
+  }
 
   /** The fold keeps each workspace's head at the last observation that reported one. */
   const workspaceHead = (name: string): string | null =>
@@ -972,6 +1039,12 @@ export const decide = (
         });
       return disposable(exported.project, exported.head);
     }
+    const inherited = inheritedWorkspace(use);
+    if (inherited !== undefined) {
+      if (access === "write")
+        return Result.succeed({ name: use, path: inherited.path, project: inherited.project });
+      return disposable(inherited.project, workspaceHead(use) ?? inherited.headSha);
+    }
     const env = envFor(level);
     const project = render(decl.project, env);
     if (Result.isFailure(project)) return Result.fail(project.failure);
@@ -1121,6 +1194,15 @@ export const decide = (
       if (exported !== null) return { ...exported, headSha: exported.head };
       const name = worktreeAt(declared, level);
       const ready = state.workspaces.get(name);
+      const inherited = inheritedWorkspace(declared);
+      if (inherited !== undefined && ready !== undefined)
+        return {
+          name,
+          path: ready.path,
+          project: inherited.project,
+          branch: ready.branch,
+          headSha: ready.headSha,
+        };
       const prepared = state.intents.get(`ws:${name}`)?.intent;
       if (ready === undefined || prepared?._tag !== "PrepareWorkspace") return null;
       return {
@@ -1163,6 +1245,42 @@ export const decide = (
     // Read before this attempt is recorded, so a retry dispatched in the same pass sees its reason.
     const prior = latest(step);
     const previous = attempt > 1 && prior?.attempt === attempt - 1 ? prior : undefined;
+    const inheritedThreads = level.parent === null ? started.inherit?.threads : undefined;
+    const inherited =
+      inheritedThreads !== undefined && Object.hasOwn(inheritedThreads, step)
+        ? inheritedThreads[step]
+        : undefined;
+    if (inherited !== undefined) {
+      // The caller's thread, as a `continue:` of it: every attempt, a retry included, goes there.
+      const prompt = promptRender(
+        node.prompt,
+        envFor(level, { step: { dir: stepDir(step, attempt) } }),
+      );
+      if (Result.isFailure(prompt))
+        return void resolve(step, attempt, "failed", "fail", null, prompt.failure);
+      record({
+        _tag: "StartTurn",
+        key: `turn:${stepKey(step, attempt)}`,
+        step,
+        attempt,
+        threadId: inherited.threadId,
+        mode: "continue",
+        projectRef: inherited.projectRef,
+        title: `${definition.title} · ${step}`,
+        // The compiler maps this node's workspace to the worktree the thread works in.
+        workspace: {
+          name: typeof node.workspace === "string" ? node.workspace : step,
+          path: inherited.path,
+        },
+        model: inherited.model,
+        access: inherited.access,
+        prompt: retryNote(previous) + prompt.success + outputInstruction(node.output),
+        reservation: node.tokenReservation ?? turnEstimate(step),
+        ...(inherited.bot === undefined ? {} : { bot: inherited.bot }),
+        ...slotUse(node.uses),
+      });
+      return;
+    }
     if (continued !== null) {
       const prior = findStep(level, continued);
       const prevAttempt = prior === null ? undefined : latest(prior);
@@ -1892,6 +2010,10 @@ export const decide = (
     const params = renderAll(node.params, envFor(level));
     if (Result.isFailure(params))
       return resolve(step, attempt, "failed", "fail", null, params.failure);
+    const inherit = callInherit(node, step, attempt, level);
+    if (inherit === "wait") return;
+    if (Result.isFailure(inherit))
+      return resolve(step, attempt, "failed", "fail", null, inherit.failure);
     record({
       _tag: "StartChildRun",
       key,
@@ -1899,6 +2021,7 @@ export const decide = (
       attempt,
       workflowId: node.workflow,
       params: params.success as { readonly [key: string]: Json },
+      ...(inherit.success === null ? {} : { inherit: inherit.success }),
       // wf-engine slice 8: the child's whole budget, so concurrent calls never spend the same balance.
       // A child larger than what is left is refused, never clipped.
       reservation:
@@ -1906,6 +2029,83 @@ export const decide = (
         Math.min(DEFAULT_TURN_RESERVATION, ceilings.tokens),
     });
   };
+
+  /**
+   * A call's `workspaces` and `threads`, resolved at its level: the worktree each parent name is
+   * there (the item's own instance; prepared first when it is not yet) and the thread its agent
+   * node's latest attempt ran in. "wait" while a worktree is being prepared.
+   */
+  const callInherit = (
+    node: Extract<WorkflowNode, { readonly kind: "call" }>,
+    step: string,
+    attempt: number,
+    level: Level,
+  ): Result.Result<CallInherit | null, string> | "wait" => {
+    if (node.workspaces === undefined && node.threads === undefined) return Result.succeed(null);
+    const workspaces: Record<string, CallInherit["workspaces"][string]> = {};
+    let preparing = false;
+    for (const [child, parent] of Object.entries(node.workspaces ?? {})) {
+      const ws = workspaceFor(parent, "write", step, attempt, level);
+      if (Result.isFailure(ws)) return Result.fail(ws.failure);
+      if (ws.success === null) {
+        preparing = true;
+        continue;
+      }
+      // The compiler hands over declared workspaces only, so the worktree is in the state.
+      const ready = state.workspaces.get(ws.success.name);
+      if (ready === undefined) return Result.fail(`workspace ${parent} is not ready`);
+      // One call borrows a worktree at a time, so the head a child reports is the newest one.
+      if (lentElsewhere(ws.success.path, step)) {
+        preparing = true;
+        continue;
+      }
+      workspaces[child] = {
+        path: ws.success.path,
+        project: ws.success.project,
+        branch: ready.branch,
+        headSha: ready.headSha,
+      };
+    }
+    const threads: Record<string, CallInherit["threads"][string]> = {};
+    for (const [child, parent] of Object.entries(node.threads ?? {})) {
+      const source = findStep(level, parent);
+      const ran = source === null ? undefined : latest(source);
+      const turn =
+        ran === undefined
+          ? undefined
+          : state.intents.get(`turn:${stepKey(ran.step, ran.attempt)}`)?.intent;
+      if (ran?.threadId == null || turn?._tag !== "StartTurn")
+        return Result.fail(`the thread of ${parent} does not exist`);
+      threads[child] = {
+        threadId: ran.threadId,
+        projectRef: turn.projectRef,
+        path: turn.workspace.path,
+        model: turn.model,
+        access: turn.access,
+        ...(turn.bot === undefined ? {} : { bot: turn.bot }),
+      };
+    }
+    return preparing ? "wait" : Result.succeed({ workspaces, threads });
+  };
+
+  /** Another call of this run holds the worktree at `path` and its child has not reported yet. */
+  const lentElsewhere = (path: string, step: string) =>
+    [...state.intents.values()].some(
+      ({ intent, result }) =>
+        intent._tag === "StartChildRun" &&
+        intent.step !== step &&
+        (result === null ||
+          (result._tag === "ChildRunStarted" && !state.children.has(result.childRunId))) &&
+        Object.values(intent.inherit?.workspaces ?? {}).some((w) => w.path === path),
+    ) ||
+    // A start recorded this pass has no result yet: its child is about to take the worktree.
+    out.some(
+      (f) =>
+        f.fact._tag === "IntentRecorded" &&
+        f.fact.intent._tag === "StartChildRun" &&
+        f.fact.intent.step !== step &&
+        Object.values(f.fact.intent.inherit?.workspaces ?? {}).some((w) => w.path === path),
+    );
 
   /** Map items and loop iterations run their body as levels with their own step-key prefix. */
   const progressBody = (
@@ -2147,7 +2347,7 @@ export const decide = (
         if (ended === null) return;
         return ended.status === "succeeded"
           ? resolve(step, a.attempt, "succeeded", "ok", ended.output)
-          : resolve(step, a.attempt, "failed", "fail", ended.output, `child run ${ended.status}`);
+          : resolve(step, a.attempt, "failed", "fail", ended.output, childFailure(ended));
       }
       case "map":
       case "loop":
@@ -2391,7 +2591,8 @@ export const decide = (
       { _tag: "RunOutcome", runId, status },
       workflowStream(started.workflowId),
     );
-    if (started.parent !== null) {
+    // A child sharing the caller's worktree or thread reports its end once its work stopped (afterEnd).
+    if (started.parent !== null && started.inherit === undefined) {
       let value: Json = state.output?.value ?? null;
       for (const f of out) if (f.fact._tag === "OutputSet") value = f.fact.value;
       emit(
