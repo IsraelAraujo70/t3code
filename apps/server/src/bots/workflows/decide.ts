@@ -393,6 +393,16 @@ export const planRetry = (
   return { superseded, reopened };
 };
 
+/**
+ * An ended child that shares its caller's worktree or thread and has not told the caller yet
+ * (`afterEnd` does once nothing of it runs): its actor stays, and recovery revives it.
+ */
+export const reportPending = (state: RunState): boolean =>
+  state.ended !== null &&
+  state.started?.parent != null &&
+  state.started.inherit !== undefined &&
+  !state.keys.has("reported");
+
 /** Why `step` cannot be retried now, or null. */
 export const retryRefusal = (
   compiled: CompiledWorkflow,
@@ -450,7 +460,7 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
   if (ended === null) return [];
   const parent = state.started?.parent ?? null;
   // Until now a turn of this child could still be writing in the caller's worktree or thread.
-  if (parent !== null && state.started?.inherit !== undefined && !state.keys.has("reported")) {
+  if (parent !== null && reportPending(state)) {
     const fact: Fact = {
       _tag: "ChildRunEnded",
       childRunId: state.runId,

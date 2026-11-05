@@ -62,7 +62,7 @@ import { blockViews } from "./blocks/registry.ts";
 import { chargeOf, workflowDay } from "./budget/budget.ts";
 import { budgetContext, calledWorkflowsOf } from "./budget/context.ts";
 import { WorkflowCatalog } from "./Catalog.ts";
-import { decide, nextDeadline, retryRefusal } from "./decide.ts";
+import { decide, nextDeadline, reportPending, retryRefusal } from "./decide.ts";
 import { decideWorkflow } from "./decideWorkflow.ts";
 import {
   type StoredFact,
@@ -466,6 +466,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
       }
       if (
         state.ended !== null &&
+        !reportPending(state) &&
         [...state.intents.values()].every((e) => e.result !== null) &&
         (yield* FiberMap.size(work)) === 0
       ) {

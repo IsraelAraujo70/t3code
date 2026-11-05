@@ -230,6 +230,12 @@ it.each([
     "demo no longer has the agent test that continues the caller's thread",
   ],
   [
+    "moves the agent to another inherited worktree than its thread's",
+    { integ: "/runs/p/other" },
+    { plan: "write" },
+    "demo no longer has the agent plan that continues the caller's thread",
+  ],
+  [
     "hands a write thread to an agent that reads",
     { integ: "/runs/p/integ" },
     { plan: "read" },

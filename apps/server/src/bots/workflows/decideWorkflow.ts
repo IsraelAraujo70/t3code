@@ -32,7 +32,8 @@ const inheritMismatch = (definition: WorkflowDefinition, inherit: CallInherit): 
       (node.thread !== undefined && node.thread !== "new") ||
       (node.access ?? "read") !== thread.access ||
       typeof node.workspace !== "string" ||
-      !Object.hasOwn(inherit.workspaces, node.workspace)
+      !Object.hasOwn(inherit.workspaces, node.workspace) ||
+      inherit.workspaces[node.workspace]?.path !== thread.path
     )
       return `${definition.id} no longer has the agent ${id} that continues the caller's thread`;
   }

@@ -8,6 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -171,6 +172,15 @@ const project: Project = {
 const fakeProvider = (ciFailures: number) => {
   let ciTurns = 0;
   const threads = new Map<string, { readonly path: string; readonly messages: string[] }>();
+  // A turn asked to hold runs until its thread is interrupted.
+  const holds = new Map<string, Deferred.Deferred<void>>();
+  const holdOf = (threadId: string) => {
+    const existing = holds.get(threadId);
+    if (existing !== undefined) return existing;
+    const created = Deferred.makeUnsafe<void>();
+    holds.set(threadId, created);
+    return created;
+  };
   const turns = WorkflowTurns.of({
     start: (_runId, intent) =>
       Effect.suspend(() => {
@@ -184,45 +194,49 @@ const fakeProvider = (ciFailures: number) => {
         threads.get(intent.threadId)?.messages.push(intent.prompt);
         return Effect.succeed(intent.threadId);
       }),
-    observe: (runId, intent: StartTurn) =>
-      Stream.fromEffect(
-        Effect.sync((): NewFact => {
-          const thread = threads.get(intent.threadId);
-          const file = NodePath.join(intent.workspace.path, EVIDENCE);
-          let output: { readonly [key: string]: string } | null = null;
-          let failed = false;
-          const implement = /^Implement (\S+)\./.exec(intent.prompt);
-          // The first implementer of a worktree leaves the evidence; a continuation keeps it.
-          if (implement !== null && !NodeFS.existsSync(file)) {
-            NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
-            NodeFS.writeFileSync(file, `evidence of ${implement[1]}`);
-          } else if (intent.prompt.includes("CI until green.") && ++ciTurns <= ciFailures) {
-            failed = true;
-          } else if (intent.prompt.includes("CI until green.")) {
-            output = {
-              evidence: NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : "missing",
-              thread: intent.threadId,
-              history: (thread?.messages ?? []).join(" | "),
-            };
-          }
-          return {
-            stream: runStream(runId),
-            key: `settled:${intent.step}@${intent.attempt}`,
-            fact: {
-              _tag: "TurnSettled",
-              step: intent.step,
-              attempt: intent.attempt,
-              status: failed ? "failed" : "completed",
-              text: output === null ? "done" : `\`\`\`json\n${JSON.stringify(output)}\n\`\`\``,
-              output,
-              outputError: null,
-              cost,
-              headSha: "head1",
-            },
+    observe: (runId, intent: StartTurn) => {
+      const held = intent.prompt.startsWith("Hold.");
+      const settle = Effect.sync((): NewFact => {
+        const thread = threads.get(intent.threadId);
+        const file = NodePath.join(intent.workspace.path, EVIDENCE);
+        let output: { readonly [key: string]: string } | null = null;
+        let failed = false;
+        const implement = /^Implement (\S+)\./.exec(intent.prompt);
+        // The first implementer of a worktree leaves the evidence; a continuation keeps it.
+        if (implement !== null && !NodeFS.existsSync(file)) {
+          NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+          NodeFS.writeFileSync(file, `evidence of ${implement[1]}`);
+        } else if (intent.prompt.includes("CI until green.") && ++ciTurns <= ciFailures) {
+          failed = true;
+        } else if (intent.prompt.includes("CI until green.")) {
+          output = {
+            evidence: NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : "missing",
+            thread: intent.threadId,
+            history: (thread?.messages ?? []).join(" | "),
           };
-        }),
-      ),
-    interrupt: () => Effect.void,
+        }
+        return {
+          stream: runStream(runId),
+          key: `settled:${intent.step}@${intent.attempt}`,
+          fact: {
+            _tag: "TurnSettled",
+            step: intent.step,
+            attempt: intent.attempt,
+            status: held ? "interrupted" : failed ? "failed" : "completed",
+            text: output === null ? "done" : `\`\`\`json\n${JSON.stringify(output)}\n\`\`\``,
+            output,
+            outputError: null,
+            cost,
+            headSha: "head1",
+          },
+        };
+      });
+      return Stream.fromEffect(
+        held ? Deferred.await(holdOf(intent.threadId)).pipe(Effect.andThen(settle)) : settle,
+      );
+    },
+    interrupt: (_runId, _key, threadId) =>
+      Deferred.succeed(holdOf(threadId), undefined).pipe(Effect.asVoid),
     answer: () => Effect.void,
   });
   return { threads, turns };
@@ -461,6 +475,68 @@ it.effect("a retried child step and a retried call stay in the inherited thread 
       });
       // Kept through the failure for the retry, removed once by its owner when it succeeded.
       assert.deepEqual(removed, [implement.workspace.path]);
+    }),
+  ),
+);
+
+/** Called with the caller's worktree; ends by `fast` while the grandchild it called still runs. */
+const middle = compile({
+  id: "middle",
+  title: "Middle",
+  triggers: { call: { kind: "call" } },
+  // The call reserves the grandchild's whole budget; `fast` needs room beside it.
+  budget: { steps: 20, wall: "2h", tokens: 1_000_000 },
+  workspaces: { ws: { project: "t3code", base: "friend/main", branch: "wf/middle" } },
+  nodes: {
+    slow: { kind: "call", workflow: "slow", params: {} },
+    fast: { kind: "agent", model: "$lead", prompt: "Quick.", workspace: "ws", access: "write" },
+    done: { kind: "output", status: "ready_for_review", value: {} },
+    late: { kind: "output", status: "no_change", value: {} },
+  },
+  edges: ["fast -> done", "slow -> late"],
+});
+/** A grandchild whose only turn runs until it is interrupted. */
+const slow = compile({
+  id: "slow",
+  title: "Slow",
+  triggers: { call: { kind: "call" } },
+  workspaces: { own: { project: "t3code", base: "friend/main", branch: "wf/slow" } },
+  nodes: {
+    hold: { kind: "agent", model: "$lead", prompt: "Hold.", workspace: "own", access: "write" },
+    done: { kind: "output", status: "no_change", value: {} },
+  },
+  edges: ["hold -> done"],
+});
+const top = compile({
+  id: "top",
+  title: "Top",
+  triggers: { run: { kind: "manual" } },
+  budget: { steps: 20, wall: "2h", tokens: 5_000_000 },
+  workspaces: { ticket: { project: "t3code", base: "friend/main", branch: "wf/top" } },
+  nodes: {
+    implement: {
+      kind: "agent",
+      model: "$lead",
+      prompt: "Implement top.",
+      workspace: "ticket",
+      access: "write",
+    },
+    mid: { kind: "call", workflow: "middle", params: {}, workspaces: { ws: "ticket" } },
+    done: { kind: "output", status: "ready_for_review", value: {} },
+  },
+  edges: ["implement -> mid", "mid -> done"],
+});
+
+it.effect("a sharing child that ends while its own child runs reports once that one stopped", () =>
+  harness([top, middle, slow], 0, () =>
+    Effect.gen(function* () {
+      const { engine, state } = yield* runToEnd("top");
+      assert.equal(state.ended?.status, "succeeded");
+      const mid = yield* childOf(engine, state, "child:mid@1");
+      assert.equal(mid.ended?.status, "succeeded");
+      assert.isTrue(mid.keys.has("reported"));
+      const grandchild = yield* childOf(engine, mid, "child:slow@1");
+      assert.equal(grandchild.ended?.status, "cancelled");
     }),
   ),
 );

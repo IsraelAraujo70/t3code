@@ -1149,7 +1149,8 @@ as worktrees herdadas como prontas, nunca grava `PrepareWorkspace` nem `RemoveWo
 o `retain` do pai continua decidindo. Por isso esse filho só grava `ChildRunEnded` no pai quando
 nada dele roda mais (`EndReported`, chave `reported`), e não no lote do fim: um turno ainda
 interrompendo não escreve numa worktree que o pai já removeu, nem divide a thread com um retry do
-`call`. `GitOp` e o PR do filho acham a worktree herdada pelo `RunStarted`; `RemoveWorkspace` nunca.
+`call`. Até lá o run conta como vivo (`journal.liveRuns`), então o ator não sai e o boot e o tick o
+retomam. `GitOp` e o PR do filho acham a worktree herdada pelo `RunStarted`; `RemoveWorkspace` nunca.
 A promoção confere o mapa contra a versão do filho que vai rodar e pula com `invalid` e o motivo
 quando o filho mudou desde que o pai compilou. Retry de um passo do filho, ou do `call` no pai, volta à mesma
 thread e worktree; um neto herda o que o filho herdou. O compilador do pai lê a definição atual do

@@ -130,6 +130,36 @@ it.effect("finds orphan triggers and unresolved intents on ended runs", () =>
       },
     ]);
     assert.deepEqual(yield* journal.liveRuns, ["z"]);
+    // An ended child sharing its caller's worktree stays live until it reported its end.
+    yield* journal.append([
+      {
+        stream: "run:c",
+        key: "started",
+        fact: {
+          _tag: "RunStarted",
+          workflowId: "demo",
+          commit: "c1",
+          hash: "h",
+          title: "Demo",
+          params: {},
+          trigger: { kind: "call", occurrence: "child:1", label: "call", payload: null },
+          budget: { steps: 1, wallMs: 1000, tokens: 1, usd: null },
+          parent: { runId: "p", step: "ci" },
+          inherit: {
+            workspaces: { pr: { path: "/p/pr", project: "t3code", branch: null, headSha: "a1" } },
+            threads: {},
+          },
+          causalDepth: 1,
+          at: "now",
+        },
+      },
+      { stream: "run:c", key: "ended", fact: { _tag: "RunEnded", status: "succeeded", at: "now" } },
+    ]);
+    assert.deepEqual(yield* journal.liveRuns, ["c", "z"]);
+    yield* journal.append([
+      { stream: "run:c", key: "reported", fact: { _tag: "EndReported", at: "now" } },
+    ]);
+    assert.deepEqual(yield* journal.liveRuns, ["z"]);
   }).pipe(Effect.provide(layerMemory)),
 );
 
