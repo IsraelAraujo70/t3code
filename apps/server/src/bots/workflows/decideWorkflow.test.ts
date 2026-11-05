@@ -257,13 +257,16 @@ it.each([
             threadId: "wf:parent:t",
             projectRef: "t3code",
             path: "/runs/p/integ",
-            model: { provider: "claude", model: "claude-opus-5-5" },
+            model: { provider: "claude" as const, model: "claude-opus-5-5" },
             access,
           },
         ]),
       ),
     };
-    const definition = { ...compiled.definition, triggers: { parent: { kind: "call" } } };
+    const definition = {
+      ...compiled.definition,
+      triggers: { parent: { kind: "call" as const } },
+    };
     const result = decideWorkflow({
       ...base,
       facts: [

@@ -211,7 +211,9 @@ const declarationOf = (
 const childFailure = (ended: { readonly status: string; readonly output: Json }): string => {
   const out = ended.output;
   const detail =
-    out !== null && typeof out === "object" && !Array.isArray(out) ? out["detail"] : undefined;
+    out !== null && typeof out === "object" && !Array.isArray(out)
+      ? (out as { readonly [key: string]: Json })["detail"]
+      : undefined;
   return `child run ${ended.status}${typeof detail === "string" ? `: ${detail}` : ""}`;
 };
 
@@ -463,7 +465,7 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
         usdEstimate: null,
       },
     };
-    return [
+    const report: ReadonlyArray<NewFact> = [
       { stream: runStream(parent.runId), key: `child:${state.runId}`, fact },
       // Its own record of the report: the parent's stream is not folded here.
       {
@@ -472,6 +474,7 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
         fact: { _tag: "EndReported", at: isoOf(now) },
       },
     ];
+    return report;
   }
   for (const retry of pendingRetries(state)) {
     const step = retry.control.step;
