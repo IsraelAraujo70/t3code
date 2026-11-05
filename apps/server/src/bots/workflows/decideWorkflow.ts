@@ -9,7 +9,35 @@ import { runIdFor } from "./ids.ts";
 import { suspendedNotice } from "./notices/notices.ts";
 import { callerOf, originOf, resolveTrigger, triggerBlock } from "./triggers/policy.ts";
 import type { CurrentVersion } from "./Catalog.ts";
-import type { NewFact, StoredFact } from "./facts.ts";
+import type { CallInherit, NewFact, StoredFact } from "./facts.ts";
+import type { WorkflowDefinition } from "@t3tools/contracts";
+
+/**
+ * Why a call's worktrees and threads do not fit the callee version that would run (it changed
+ * since the caller compiled), or null. The caller's compiler checked the same against the then
+ * current version.
+ */
+const inheritMismatch = (definition: WorkflowDefinition, inherit: CallInherit): string | null => {
+  const own = <V>(record: { readonly [key: string]: V } | undefined, key: string) =>
+    record !== undefined && Object.hasOwn(record, key) ? record[key] : undefined;
+  for (const name of Object.keys(inherit.workspaces)) {
+    const decl = own(definition.workspaces, name);
+    if (decl === undefined || decl.perItem === true)
+      return `${definition.id} no longer declares a shared workspace ${name}`;
+  }
+  for (const [id, thread] of Object.entries(inherit.threads)) {
+    const node = own(definition.nodes, id);
+    if (
+      node?.kind !== "agent" ||
+      (node.thread !== undefined && node.thread !== "new") ||
+      (node.access ?? "read") !== thread.access ||
+      typeof node.workspace !== "string" ||
+      !Object.hasOwn(inherit.workspaces, node.workspace)
+    )
+      return `${definition.id} no longer has the agent ${id} that continues the caller's thread`;
+  }
+  return null;
+};
 
 export interface DecideWorkflowInput {
   readonly workflowId: string;
@@ -51,7 +79,7 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
     if (trigger._tag !== "TriggerFired") continue;
     const occurrence = trigger.occurrence;
     if (keys.has(`created:${occurrence}`) || keys.has(`skipped:${occurrence}`)) continue;
-    const skip = (reason: "invalid" | "disabled" | "suspended" | "busy") => {
+    const skip = (reason: "invalid" | "disabled" | "suspended" | "busy", detail?: string) => {
       const key = `skipped:${occurrence}`;
       keys.add(key);
       output.push({
@@ -68,7 +96,7 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
             _tag: "ChildRunEnded",
             childRunId: trigger.runId,
             status: "skipped",
-            output: { reason },
+            output: detail === undefined ? { reason } : { reason, detail },
             cost: {
               billable: 0,
               input: 0,
@@ -101,6 +129,12 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
     });
     if (block !== null || resolved === undefined) {
       skip(block ?? "invalid");
+      continue;
+    }
+    const mismatch =
+      trigger.inherit === undefined ? null : inheritMismatch(definition, trigger.inherit);
+    if (mismatch !== null) {
+      skip("invalid", mismatch);
       continue;
     }
     const decoded = decodeRunParams(definition.params, trigger.params);

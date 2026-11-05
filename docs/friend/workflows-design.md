@@ -1146,7 +1146,12 @@ a prepara se ainda não existe. `threads: { ci: implement }` faz o nó `ci` do f
 `continue:` da thread da última tentativa do `implement` do pai, em toda tentativa. O pai resolve os
 dois em `StartChildRun.inherit`, que segue no `TriggerFired` e no `RunStarted` do filho; o filho dobra
 as worktrees herdadas como prontas, nunca grava `PrepareWorkspace` nem `RemoveWorkspace` para elas, e
-o `retain` do pai continua decidindo. Retry de um passo do filho, ou do `call` no pai, volta à mesma
+o `retain` do pai continua decidindo. Por isso esse filho só grava `ChildRunEnded` no pai quando
+nada dele roda mais (`EndReported`, chave `reported`), e não no lote do fim: um turno ainda
+interrompendo não escreve numa worktree que o pai já removeu, nem divide a thread com um retry do
+`call`. `GitOp` e o PR do filho acham a worktree herdada pelo `RunStarted`; `RemoveWorkspace` nunca.
+A promoção confere o mapa contra a versão do filho que vai rodar e pula com `invalid` e o motivo
+quando o filho mudou desde que o pai compilou. Retry de um passo do filho, ou do `call` no pai, volta à mesma
 thread e worktree; um neto herda o que o filho herdou. O compilador do pai lê a definição atual do
 filho: o workspace recebido é declarado e compartilhado (não `perItem`), o nó recebido é `agent` de
 nível de cima com `thread: new`, o mesmo `access` do nó do pai e um workspace ligado em `workspaces`

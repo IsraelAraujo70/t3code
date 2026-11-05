@@ -109,6 +109,20 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
       "ws",
       `${name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 40)}-${keyHash(runId, `ws:${name}`).slice(0, 8)}`,
     );
+  /**
+   * Where GitOp and a pull request find a workspace: the caller's worktree when a call handed it
+   * to this run. RemoveWorkspace keeps `workspacePath`, so a run never deletes an inherited one.
+   */
+  const worktreeOf = Effect.fn("HostInterpreter.worktreeOf")(function* (
+    runId: string,
+    name: string,
+  ) {
+    const started = Option.getOrUndefined(yield* journal.get(runStream(runId), "started"))?.fact;
+    const inherited = started?._tag === "RunStarted" ? started.inherit?.workspaces : undefined;
+    return inherited !== undefined && Object.hasOwn(inherited, name)
+      ? (inherited[name]?.path ?? workspacePath(runId, name))
+      : workspacePath(runId, name);
+  });
   const unitOf = (runId: string, key: string) => {
     const hash = keyHash(runId, key);
     return { unit: `wf-${hash}`, receiptDir: NodePath.join(runDir(runId), "units", hash) };
@@ -373,7 +387,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
       case "PrepareWorkspace":
         return yield* prepare(runId, intent);
       case "GitOp": {
-        const path = workspacePath(runId, intent.workspace);
+        const path = yield* worktreeOf(runId, intent.workspace);
         const op = intent.op;
         const sha =
           op.kind === "advance"
@@ -448,7 +462,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           return failed(runId, intent, "Pull requests are not available on this host.");
         return yield* pullRequests.value
           .open({
-            path: workspacePath(runId, intent.workspace),
+            path: yield* worktreeOf(runId, intent.workspace),
             branch: intent.branch,
             sha: intent.sha,
             base: intent.base,

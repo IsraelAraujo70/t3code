@@ -215,6 +215,88 @@ it("tells the parent when its child's trigger is skipped", () => {
   });
 });
 
+it.each([
+  ["fits", { integ: "/runs/p/integ" }, { plan: "write" }, null],
+  [
+    "names a workspace the version lost",
+    { gone: "/runs/p/gone" },
+    {},
+    "demo no longer declares a shared workspace gone",
+  ],
+  [
+    "hands a thread to a node that is no agent",
+    { integ: "/runs/p/integ" },
+    { test: "write" },
+    "demo no longer has the agent test that continues the caller's thread",
+  ],
+  [
+    "hands a write thread to an agent that reads",
+    { integ: "/runs/p/integ" },
+    { plan: "read" },
+    "demo no longer has the agent plan that continues the caller's thread",
+  ],
+] as const)(
+  "promotes a call's inherited worktrees and threads only when they fit the version: %s",
+  (_, workspaces, threads, detail) => {
+    const base = input();
+    if (base.current._tag !== "Ready") throw new Error("fixture");
+    const fired = trigger(3);
+    if (fired.fact._tag !== "TriggerFired") throw new Error("fixture");
+    const parent = { runId: "wfr_00000000000000000009", step: "ci" };
+    const inherit = {
+      workspaces: Object.fromEntries(
+        Object.entries(workspaces).map(([name, path]) => [
+          name,
+          { path, project: "t3code", branch: "wf/p", headSha: "a1" },
+        ]),
+      ),
+      threads: Object.fromEntries(
+        Object.entries(threads).map(([id, access]) => [
+          id,
+          {
+            threadId: "wf:parent:t",
+            projectRef: "t3code",
+            path: "/runs/p/integ",
+            model: { provider: "claude", model: "claude-opus-5-5" },
+            access,
+          },
+        ]),
+      ),
+    };
+    const definition = { ...compiled.definition, triggers: { parent: { kind: "call" } } };
+    const result = decideWorkflow({
+      ...base,
+      facts: [
+        {
+          ...fired,
+          fact: {
+            ...fired.fact,
+            kind: "call",
+            triggerId: "call",
+            occurrence: "child:3",
+            parent,
+            causalDepth: 1,
+            inherit,
+          },
+        },
+      ],
+      current: {
+        ...base.current,
+        version: { ...base.current.version, compiled: { ...compiled, definition } },
+      },
+    });
+    if (detail === null) {
+      expect(result.find((x) => x.fact._tag === "RunStarted")?.fact).toMatchObject({ inherit });
+      return;
+    }
+    expect(result.find((x) => x.stream === `run:${parent.runId}`)?.fact).toMatchObject({
+      _tag: "ChildRunEnded",
+      status: "skipped",
+      output: { reason: "invalid", detail },
+    });
+  },
+);
+
 it("matches a param's pattern against the whole value", () => {
   const base = input();
   if (base.current._tag !== "Ready") throw new Error("fixture");

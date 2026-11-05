@@ -297,6 +297,11 @@ export const RunFact = Schema.TaggedUnion({
     reopened: Schema.Array(Text),
     at: Text,
   },
+  /**
+   * Key `reported`: a child that shares its caller's worktree or thread wrote its ChildRunEnded,
+   * which waits until nothing of the child still runs.
+   */
+  EndReported: { at: Text },
   /** Key `released:<branch>`: run `to` took over this ended run's branch; it cannot reopen on it. */
   BranchReleased: { branch: Text, to: Text },
 

@@ -207,6 +207,14 @@ const declarationOf = (
     : undefined;
 };
 
+/** Why a child run failed the call: its status, and the reason a skipped one gives. */
+const childFailure = (ended: { readonly status: string; readonly output: Json }): string => {
+  const out = ended.output;
+  const detail =
+    out !== null && typeof out === "object" && !Array.isArray(out) ? out["detail"] : undefined;
+  return `child run ${ended.status}${typeof detail === "string" ? `: ${detail}` : ""}`;
+};
+
 /** The note a retried attempt opens with when it continues the thread its last attempt used. */
 const retryNote = (previous: StepAttempt | undefined): string => {
   const r = previous?.resolved;
@@ -438,6 +446,33 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
   if (interrupts.length > 0 || live.length > 0) return interrupts;
   const ended = state.ended;
   if (ended === null) return [];
+  const parent = state.started?.parent ?? null;
+  // Until now a turn of this child could still be writing in the caller's worktree or thread.
+  if (parent !== null && state.started?.inherit !== undefined && !state.keys.has("reported")) {
+    const fact: Fact = {
+      _tag: "ChildRunEnded",
+      childRunId: state.runId,
+      status: ended.status,
+      output: state.output?.value ?? null,
+      cost: {
+        billable: spentTokens(state),
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        usage: "complete",
+        usdEstimate: null,
+      },
+    };
+    return [
+      { stream: runStream(parent.runId), key: `child:${state.runId}`, fact },
+      // Its own record of the report: the parent's stream is not folded here.
+      {
+        stream: runStream(state.runId),
+        key: "reported",
+        fact: { _tag: "EndReported", at: isoOf(now) },
+      },
+    ];
+  }
   for (const retry of pendingRetries(state)) {
     const step = retry.control.step;
     if (step === null) continue;
@@ -2268,7 +2303,7 @@ export const decide = (
         if (ended === null) return;
         return ended.status === "succeeded"
           ? resolve(step, a.attempt, "succeeded", "ok", ended.output)
-          : resolve(step, a.attempt, "failed", "fail", ended.output, `child run ${ended.status}`);
+          : resolve(step, a.attempt, "failed", "fail", ended.output, childFailure(ended));
       }
       case "map":
       case "loop":
@@ -2512,7 +2547,8 @@ export const decide = (
       { _tag: "RunOutcome", runId, status },
       workflowStream(started.workflowId),
     );
-    if (started.parent !== null) {
+    // A child sharing the caller's worktree or thread reports its end once its work stopped (afterEnd).
+    if (started.parent !== null && started.inherit === undefined) {
       let value: Json = state.output?.value ?? null;
       for (const f of out) if (f.fact._tag === "OutputSet") value = f.fact.value;
       emit(

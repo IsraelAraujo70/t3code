@@ -53,6 +53,82 @@ describe("retryable", () => {
   });
 });
 
+describe("inherited worktrees", () => {
+  itEffect.effect("a GitOp of a child works in the caller's worktree, a removal never does", () =>
+    Effect.gen(function* () {
+      const runsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-inherit-"));
+      // The caller's worktree, a linked one a removal would find and delete.
+      const callerPath = NodePath.join(runsDir, "caller", "ticket");
+      NodeFS.mkdirSync(callerPath, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(callerPath, ".git"), "gitdir: /repo/.git/worktrees/t\n");
+      const merged: string[] = [];
+      const removed: string[] = [];
+      const unused = () => Effect.die("not used");
+      const executors = Layer.mergeAll(
+        Layer.succeed(
+          WorkflowTurns,
+          WorkflowTurns.of({
+            start: unused,
+            observe: () => Stream.die("not used"),
+            interrupt: unused,
+            answer: unused,
+          }),
+        ),
+        Layer.succeed(
+          WorkflowUnits,
+          WorkflowUnits.of({ start: unused, observe: unused, started: unused, stop: unused }),
+        ),
+        Layer.succeed(
+          WorkflowGit,
+          WorkflowGit.of({
+            prepare: unused,
+            head: unused,
+            tree: unused,
+            advance: unused,
+            mergeLocal: (input) => Effect.sync(() => (merged.push(input.path), "m1")),
+            remove: (input) => Effect.sync(() => void removed.push(input.path)),
+            release: unused,
+            resolveRef: unused,
+          }),
+        ),
+        Layer.succeed(ProjectService, ProjectService.of({} as ProjectService["Service"])),
+        Journal.layerMemory,
+      );
+      yield* Effect.gen(function* () {
+        const interpreter = yield* WorkflowInterpreter;
+        const journal = yield* Journal.Journal;
+        const started = runStarted({
+          parent: { runId: "wfr_00000000000000000009", step: "ci" },
+          inherit: {
+            workspaces: {
+              pr: { path: callerPath, project: "t3code", branch: "wf/t", headSha: "a1" },
+            },
+            threads: {},
+          },
+        });
+        yield* journal.append([{ stream: runStream(RUN_ID), key: "started", fact: started }]);
+        for (const workspace of ["pr", "own"])
+          yield* interpreter.execute(RUN_ID, {
+            _tag: "GitOp",
+            key: `git:${workspace}`,
+            workspace,
+            op: { kind: "mergeLocal", from: "x", expectHead: "a1" },
+          });
+        yield* interpreter.execute(RUN_ID, { _tag: "RemoveWorkspace", key: "rm:pr", name: "pr" });
+        expect(merged[0]).toBe(callerPath);
+        expect(merged[1]?.startsWith(NodePath.join(runsDir, RUN_ID, "ws"))).toBe(true);
+        expect(removed).toEqual([]);
+        expect(NodeFS.existsSync(callerPath)).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => NodeFS.rmSync(runsDir, { recursive: true, force: true })),
+        ),
+        Effect.provide(layer({ runsDir }).pipe(Layer.provideMerge(executors))),
+      );
+    }),
+  );
+});
+
 describe("observe", () => {
   itEffect.effect("stops a turn it cannot observe and settles it as unknown, never as lost", () =>
     Effect.gen(function* () {
