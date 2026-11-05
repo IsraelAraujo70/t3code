@@ -156,8 +156,16 @@ export const compileWorkflow = (
 
   // Every node of every level, by id: ids are unique across levels so `nodes.<id>` is never ambiguous.
   const nodeById = new Map<string, WorkflowNode>();
-  const collectNodes = (nodes: { readonly [id: string]: WorkflowNode }, prefix: string) => {
+  /** The nearest map whose body holds each node (a loop body keeps its map's item); null at the top. */
+  const itemMapById = new Map<string, string | null>();
+  const itemMapOf = (id: string) => itemMapById.get(id) ?? null;
+  const collectNodes = (
+    nodes: { readonly [id: string]: WorkflowNode },
+    prefix: string,
+    itemMap: string | null = null,
+  ) => {
     for (const [id, node] of Object.entries(nodes)) {
+      itemMapById.set(id, itemMap);
       const path = `${prefix}nodes.${id}`;
       if (!WORKFLOW_NODE_ID_PATTERN.test(id)) {
         report(path, "schema", `node id "${id}" must match ${WORKFLOW_NODE_ID_PATTERN}`);
@@ -168,7 +176,7 @@ export const compileWorkflow = (
       }
       nodeById.set(id, node);
       if (node.kind === "map" || node.kind === "loop")
-        collectNodes(node.body.nodes, `${path}.body.`);
+        collectNodes(node.body.nodes, `${path}.body.`, node.kind === "map" ? id : itemMap);
     }
   };
   collectNodes(definition.nodes, "");
@@ -997,6 +1005,17 @@ export const compileWorkflow = (
         report(at, "thread-continue", `${parent} is not an agent node that ran before this call`);
         continue;
       }
+      // A per-item worktree is the instance of the nearest map item: the thread must be that item's.
+      const decl =
+        typeof source.workspace === "string"
+          ? own(definition.workspaces, source.workspace)
+          : undefined;
+      if (decl?.perItem === true && itemMapOf(ctx.node) !== itemMapOf(parent))
+        report(
+          at,
+          "thread-continue",
+          `${parent} runs in another map item than this call: its per-item worktree is not this item's`,
+        );
       if (callee === undefined) continue;
       const target = own(callee.nodes, child);
       if (target?.kind !== "agent") {

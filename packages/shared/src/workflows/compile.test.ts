@@ -208,6 +208,58 @@ const FAILING: ReadonlyArray<FailingCase> = [
     change: callWith({ workspaces: { pr: "missing" } }),
   },
   {
+    name: "a call in an inner map takes the thread of the outer item's agent",
+    code: "thread-continue",
+    path: "nodes.outer.body.nodes.inner.body.nodes.ci.threads.ci",
+    host: callee(),
+    change: (def) => {
+      def.workspaces.item = {
+        project: "t3code",
+        base: "friend/main",
+        perItem: true,
+        branchPolicy: "agent",
+      };
+      const agent = {
+        kind: "agent",
+        model: "$lead",
+        prompt: "Go",
+        workspace: "item",
+        access: "write",
+      };
+      def.nodes.outer = {
+        kind: "map",
+        items: "nodes.test.output",
+        maxItems: 2,
+        concurrency: 1,
+        body: {
+          nodes: {
+            implement: agent,
+            inner: {
+              kind: "map",
+              items: "nodes.test.output",
+              maxItems: 2,
+              concurrency: 1,
+              body: {
+                nodes: {
+                  ci: {
+                    kind: "call",
+                    workflow: "other",
+                    params: {},
+                    workspaces: { pr: "item" },
+                    threads: { ci: "implement" },
+                  },
+                },
+                edges: [],
+              },
+            },
+          },
+          edges: ["implement -> inner"],
+        },
+      };
+      def.edges.push("test:pass -> outer");
+    },
+  },
+  {
     name: "a call passes one worktree under two names",
     code: "schema",
     path: "nodes.ci.workspaces.pr2",

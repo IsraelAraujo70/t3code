@@ -1556,49 +1556,66 @@ describe("retry, reopening and cleanup", () => {
     expect(ended(1)).toEqual([]);
   });
 
-  it("tells the caller a sharing child ended only once its last turn stopped", () => {
-    const parent = "wfr_00000000000000000009";
-    const run = TestRun.start(
-      compile({
-        nodes: {
-          slow: {
-            kind: "agent",
-            model: "$lead",
-            prompt: "Slow",
-            workspace: "integ",
-            access: "write",
+  it.each([
+    ["moved", "b2", { integ: "b2" }],
+    ["left alone", undefined, {}],
+  ] as const)(
+    "tells the caller a sharing child ended only once its last turn stopped, with the heads it %s",
+    (_, moved, heads) => {
+      const parent = "wfr_00000000000000000009";
+      const run = TestRun.start(
+        compile({
+          nodes: {
+            slow: {
+              kind: "agent",
+              model: "$lead",
+              prompt: "Slow",
+              workspace: "integ",
+              access: "write",
+            },
+            fast: commandNode,
+            done,
+            late: { kind: "output", status: "no_change", value: {} },
           },
-          fast: commandNode,
-          done,
-          late: { kind: "output", status: "no_change", value: {} },
-        },
-        edges: ["fast -> done", "slow -> late"],
-      }),
-      runStarted({
-        parent: { runId: parent, step: "ci" },
-        inherit: {
-          workspaces: {
-            integ: { path: "/runs/parent/integ", project: "t3code", branch: "wf/p", headSha: "a1" },
+          edges: ["fast -> done", "slow -> late"],
+        }),
+        runStarted({
+          parent: { runId: parent, step: "ci" },
+          inherit: {
+            workspaces: {
+              integ: {
+                path: "/runs/parent/integ",
+                project: "t3code",
+                branch: "wf/p",
+                headSha: "a1",
+              },
+            },
+            threads: {},
           },
-          threads: {},
-        },
-      }),
-    );
-    const toParent = (out: ReadonlyArray<NewFact>) =>
-      out.filter((f) => f.stream === `run:${parent}`).map((f) => f.fact._tag);
-    run.drive();
-    run.result("turn:slow@1", { _tag: "TurnStarted", threadId: "wf:slow" });
-    spawned(run, "fast");
-    run.add("exited:fast@1", unitExited("fast", 1, 0));
-    // The output ends the run while `slow` still writes in the caller's worktree.
-    expect(toParent(run.drive())).toEqual([]);
-    expect(run.state().ended?.status).toBe("succeeded");
-    expect(run.intent("interrupt:turn:slow@1")).toBeDefined();
-    expect(toParent(run.drive())).toEqual([]);
-    run.add("settled:slow@1", turnSettled("slow", 1, "interrupted"));
-    expect(toParent(run.drive())).toEqual(["ChildRunEnded"]);
-    expect(toParent(run.drive())).toEqual([]);
-  });
+        }),
+      );
+      const toParent = (out: ReadonlyArray<NewFact>) =>
+        out.filter((f) => f.stream === `run:${parent}`).map((f) => f.fact._tag);
+      run.drive();
+      run.result("turn:slow@1", { _tag: "TurnStarted", threadId: "wf:slow" });
+      spawned(run, "fast");
+      run.add(
+        "exited:fast@1",
+        unitExited("fast", 1, 0, moved === undefined ? {} : { headSha: moved }),
+      );
+      // The output ends the run while `slow` still writes in the caller's worktree.
+      expect(toParent(run.drive())).toEqual([]);
+      expect(run.state().ended?.status).toBe("succeeded");
+      expect(run.intent("interrupt:turn:slow@1")).toBeDefined();
+      expect(toParent(run.drive())).toEqual([]);
+      run.add("settled:slow@1", turnSettled("slow", 1, "interrupted"));
+      const reported = run.drive().filter((f) => f.stream === `run:${parent}`);
+      expect(reported.map((f) => f.fact)).toEqual([
+        expect.objectContaining({ _tag: "ChildRunEnded", status: "succeeded", heads }),
+      ]);
+      expect(toParent(run.drive())).toEqual([]);
+    },
+  );
 
   it("keeps an item's worktree when its failure went to an output and the run succeeded", () => {
     const run = TestRun.start(

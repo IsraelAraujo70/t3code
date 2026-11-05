@@ -467,10 +467,11 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
       status: ended.status,
       output: state.output?.value ?? null,
       // The child's commits in the caller's worktree: the caller's next step starts from them.
+      // Only the heads it moved, so a child that left one alone never sets back another's commits.
       heads: Object.fromEntries(
-        Object.keys(state.started?.inherit?.workspaces ?? {}).flatMap((name) => {
+        Object.entries(state.started?.inherit?.workspaces ?? {}).flatMap(([name, handed]) => {
           const head = state.workspaces.get(name)?.headSha;
-          return head === undefined ? [] : [[name, head]];
+          return head === undefined || head === handed.headSha ? [] : [[name, head]];
         }),
       ),
       cost: {

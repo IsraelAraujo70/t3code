@@ -1158,8 +1158,10 @@ filho: o pai passa só workspaces declarados (não export de bloco), cada um sob
 workspace recebido é declarado e compartilhado (não `perItem`), o nó recebido é `agent` de
 nível de cima com `thread: new`, os dois nós com `access: write` (a thread de um nó de leitura roda
 num checkout descartável) e um workspace ligado em `workspaces` ao workspace do nó do pai (uma thread
-fica numa worktree só). O `ChildRunEnded` desse filho leva o último HEAD de cada worktree herdada, e o
-pai, achando-a pelo caminho, parte dele no passo seguinte e no PR. Sem os dois campos nada muda. O template
+fica numa worktree só). O `ChildRunEnded` desse filho leva o último HEAD de cada worktree herdada que ele moveu, e o
+pai, achando-a pelo caminho, parte dele no passo seguinte e no PR; um filho que não mexeu nela não
+desfaz o que outro `call` paralelo gravou. Com worktree `perItem`, a thread vem de um agente do mesmo
+item de map que o `call`. Sem os dois campos nada muda. O template
 `pr-ci` mostra o lado do filho.
 
 ### 5.1 Switches e quem dispara
