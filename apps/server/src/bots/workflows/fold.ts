@@ -255,11 +255,19 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       next.children = new Map(next.children).set(fact.childRunId, fact);
       for (const { intent, result } of next.intents.values()) {
         if (
-          intent._tag === "StartChildRun" &&
-          result?._tag === "ChildRunStarted" &&
-          result.childRunId === fact.childRunId
+          intent._tag !== "StartChildRun" ||
+          result?._tag !== "ChildRunStarted" ||
+          result.childRunId !== fact.childRunId
         )
-          updateAttempt(intent.step, intent.attempt, { child: fact });
+          continue;
+        updateAttempt(intent.step, intent.attempt, { child: fact });
+        // A worktree the call handed over carries the child's commits back, found by its path.
+        for (const [name, headSha] of Object.entries(fact.heads ?? {})) {
+          const path = intent.inherit?.workspaces[name]?.path;
+          for (const [own, ready] of next.workspaces)
+            if (ready.path === path)
+              next.workspaces = new Map(next.workspaces).set(own, { ...ready, headSha });
+        }
       }
       break;
     case "StepSkipped":

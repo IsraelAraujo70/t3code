@@ -466,6 +466,13 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
       childRunId: state.runId,
       status: ended.status,
       output: state.output?.value ?? null,
+      // The child's commits in the caller's worktree: the caller's next step starts from them.
+      heads: Object.fromEntries(
+        Object.keys(state.started?.inherit?.workspaces ?? {}).flatMap((name) => {
+          const head = state.workspaces.get(name)?.headSha;
+          return head === undefined ? [] : [[name, head]];
+        }),
+      ),
       cost: {
         billable: spentTokens(state),
         input: 0,

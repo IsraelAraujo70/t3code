@@ -227,7 +227,8 @@ const fakeProvider = (ciFailures: number) => {
             output,
             outputError: null,
             cost,
-            headSha: "head1",
+            // The commit this turn left, so a test can tell whose work a head is.
+            headSha: `${intent.step}@${intent.attempt}:${runId}`,
           },
         };
       });
@@ -381,6 +382,8 @@ it.effect("a called agent continues the caller's thread in the caller's worktree
       assert.notEqual(look.threadId, implement.threadId);
       for (const turn of [ci, look]) assert.equal(turn.workspace.path, implement.workspace.path);
       assert.equal(provider.threads.size, 2);
+      // The child's last commit in the worktree is the caller's head again.
+      assert.equal(state.workspaces.get("ticket")?.headSha, `look@1:${child.runId}`);
       assert.deepEqual(state.output?.value, {
         ci: { evidence: "evidence of solo", thread: implement.threadId, look: "evidence of solo" },
       });

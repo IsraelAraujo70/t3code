@@ -1155,8 +1155,10 @@ A promoção confere o mapa contra a versão do filho que vai rodar e pula com `
 quando o filho mudou desde que o pai compilou. Retry de um passo do filho, ou do `call` no pai, volta à mesma
 thread e worktree; um neto herda o que o filho herdou. O compilador do pai lê a definição atual do
 filho: o workspace recebido é declarado e compartilhado (não `perItem`), o nó recebido é `agent` de
-nível de cima com `thread: new`, o mesmo `access` do nó do pai e um workspace ligado em `workspaces`
-ao workspace do nó do pai (uma thread fica numa worktree só). Sem os dois campos nada muda. O template
+nível de cima com `thread: new`, os dois nós com `access: write` (a thread de um nó de leitura roda
+num checkout descartável) e um workspace ligado em `workspaces` ao workspace do nó do pai (uma thread
+fica numa worktree só). O `ChildRunEnded` desse filho leva o último HEAD de cada worktree herdada, e o
+pai, achando-a pelo caminho, parte dele no passo seguinte e no PR. Sem os dois campos nada muda. O template
 `pr-ci` mostra o lado do filho.
 
 ### 5.1 Switches e quem dispara

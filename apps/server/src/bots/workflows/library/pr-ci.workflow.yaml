@@ -15,10 +15,11 @@ home: { project: t3code }
 #     threads: { fix: implement }   # <nó agent daqui>: <nó agent de quem chama>
 # Com `workspaces`, `pr` é a worktree `ticket` de quem chama (a do item, dentro de um map): mesmo
 # caminho, nada é preparado, e só quem chama a remove. Com `threads`, o nó `fix` continua a thread do
-# `implement` de quem chama, em toda tentativa, retry incluído. O nó que recebe a thread fica no nível
-# de cima, com `thread: new` (o padrão), o mesmo `access` e um workspace ligado em `workspaces` ao
-# workspace do nó de quem chama. Sem os dois campos, este workflow prepara a própria worktree e abre
-# thread nova, como numa execução manual.
+# `implement` de quem chama, em toda tentativa, retry incluído. Os dois nós têm `access: write`; o que
+# recebe a thread fica no nível de cima, com `thread: new` (o padrão) e um workspace ligado em
+# `workspaces` ao workspace do nó de quem chama. Os commits feitos aqui voltam a ser o HEAD da worktree
+# de quem chama. Sem os dois campos, este workflow prepara a própria worktree e abre thread nova, como
+# numa execução manual.
 triggers:
   run: { kind: manual, title: Run now }
   call: { kind: call }

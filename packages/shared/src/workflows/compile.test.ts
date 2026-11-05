@@ -249,6 +249,16 @@ const FAILING: ReadonlyArray<FailingCase> = [
     change: callWith({ workspaces: { pr: "integ" }, threads: { own: "plan" } }),
   },
   {
+    name: "a call passes the thread of a read-only agent",
+    code: "thread-continue",
+    path: "nodes.ci.threads.ci",
+    host: callee(),
+    change: (def) => {
+      def.nodes.plan.access = "read";
+      callWith({ workspaces: { pr: "integ" }, threads: { ci: "plan" } })(def);
+    },
+  },
+  {
     name: "a call passes a write thread to a read-only node",
     code: "thread-continue",
     path: "nodes.ci.threads.look",

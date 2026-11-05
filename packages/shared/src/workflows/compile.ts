@@ -1002,8 +1002,11 @@ export const compileWorkflow = (
           "thread-continue",
           `${child} in ${node.workflow} opens its own thread: give it thread: new`,
         );
-      if ((target.access ?? "read") !== (source.access ?? "read"))
-        report(at, "thread-continue", `a thread keeps one access: ${child} and ${parent} differ`);
+      // A read-only agent's thread works in a disposable checkout, not in a worktree to share.
+      if ((source.access ?? "read") !== "write")
+        report(at, "thread-continue", `only a thread of an agent with access: write is inherited`);
+      else if ((target.access ?? "read") !== "write")
+        report(at, "thread-continue", `a thread keeps one access: give ${child} access: write`);
       const mapped =
         typeof target.workspace === "string" ? own(workspaces, target.workspace) : undefined;
       if (typeof source.workspace !== "string" || mapped !== source.workspace)

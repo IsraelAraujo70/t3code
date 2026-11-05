@@ -429,6 +429,8 @@ export const RunFact = Schema.TaggedUnion({
     status: Text,
     output: Json,
     cost: WorkflowStepCost,
+    /** The last HEAD of each worktree the call handed the child, by the child's name for it. */
+    heads: Schema.optional(Schema.Record(Schema.String, Text)),
   },
 });
 export type RunFact = typeof RunFact.Type;
