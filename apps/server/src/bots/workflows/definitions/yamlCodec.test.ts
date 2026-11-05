@@ -24,11 +24,12 @@ const compileSource = (source: string) => {
 };
 
 describe("library templates", () => {
-  it("has the four §11 routines", () => {
+  it("has the four §11 routines and the callable pr-ci", () => {
     expect(TEMPLATES.toSorted()).toEqual([
       "argo35-hillclimb.workflow.yaml",
       "corrections-quality.workflow.yaml",
       "mcp-token-cut.workflow.yaml",
+      "pr-ci.workflow.yaml",
       "upstream-merge.workflow.yaml",
     ]);
   });
@@ -66,6 +67,48 @@ describe("library templates", () => {
     const again = compileSource(canonical);
     expect(again.hash).toBe(compiled.hash);
     expect(toCanonicalYaml(again.definition)).toBe(canonical);
+  });
+});
+
+describe("the pr-ci template", () => {
+  it("documents a call with workspaces and threads that compiles against it", () => {
+    const source = NodeFS.readFileSync(NodePath.join(LIBRARY, "pr-ci.workflow.yaml"), "utf8");
+    const callee = compileSource(source).definition;
+    // The caller's `ci` node, as the template's comment spells it.
+    const snippet = source
+      .split("\n")
+      .filter((line) => line.startsWith("#   "))
+      .map((line) => line.slice(2).replace(/\s+# .*$/, ""));
+    expect(snippet[0]).toBe("  ci:");
+    const caller = [
+      "schema: t3.workflow/v1",
+      "id: ticket",
+      "title: Ticket",
+      "home: { project: t3code }",
+      "triggers: { run: { kind: manual } }",
+      "budget: { steps: 40, wall: 4h, tokens: 3000000 }",
+      "fatigue: { consecutiveFailures: 3 }",
+      "models: { lead: { provider: claude, model: claude-opus-5-5 } }",
+      "workspaces: { ticket: { project: t3code, base: friend/main, branch: wf/ticket } }",
+      "nodes:",
+      "  implement: { kind: agent, model: $lead, prompt: Implement., workspace: ticket, access: write }",
+      "  publish:",
+      "    { kind: agent, model: $lead, prompt: Publish., workspace: ticket, access: write,",
+      '      thread: "continue:implement", output: { pr: { type: string, pattern: "^https://github\\\\.com/[A-Za-z0-9._/-]+/pull/\\\\d+$" } } }',
+      ...snippet,
+      "edges: [implement -> publish, publish -> ci]",
+    ].join("\n");
+    const parsed = parseWorkflowSource(caller);
+    if (Result.isFailure(parsed)) throw new Error(parsed.failure.message);
+    const compiled = compileWorkflow(parsed.success, {
+      ...HOST,
+      callTargets: new Map([["pr-ci", { from: null, definition: callee }]]),
+    });
+    expect(Result.isFailure(compiled) ? compiled.failure : []).toEqual([]);
+    expect(Result.isSuccess(compiled) && compiled.success.definition.nodes.ci).toMatchObject({
+      workspaces: { pr: "ticket" },
+      threads: { fix: "implement" },
+    });
   });
 });
 

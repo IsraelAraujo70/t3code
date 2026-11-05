@@ -119,7 +119,7 @@ it.live("copies templates and restores deleted workflows disabled", () =>
       expect(yield* definitions.list).toHaveLength(0);
       const snapshot = yield* definitions.snapshot.pipe(Stream.take(1), Stream.runCollect);
       expect(snapshot[0]?.deleted).toHaveLength(1);
-      expect(snapshot[0]?.templates).toHaveLength(4);
+      expect(snapshot[0]?.templates).toHaveLength(5);
       expect(yield* definitions.restore({ workflowId: id }, { kind: "user" })).toMatchObject({
         enabled: false,
       });

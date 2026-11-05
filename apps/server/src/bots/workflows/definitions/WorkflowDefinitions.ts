@@ -207,7 +207,10 @@ const make = Effect.gen(function* () {
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const status = journal.workflowStatus;
   const callGraph = new Map<string, ReadonlyArray<string>>();
-  const callTargets = new Map<string, { readonly from: ReadonlyArray<string> | null }>();
+  const callTargets = new Map<
+    string,
+    { readonly from: ReadonlyArray<string> | null; readonly definition: WorkflowDefinition }
+  >();
   const calls = (nodes: Readonly<Record<string, WorkflowNode>>): string[] =>
     Object.values(nodes).flatMap((node) =>
       node.kind === "call"
@@ -230,7 +233,11 @@ const make = Effect.gen(function* () {
         const trigger = Object.values(compiled.success.definition.triggers ?? {}).find(
           (trigger) => trigger.kind === "call",
         );
-        if (trigger?.kind === "call") callTargets.set(id, { from: trigger.from ?? null });
+        if (trigger?.kind === "call")
+          callTargets.set(id, {
+            from: trigger.from ?? null,
+            definition: compiled.success.definition,
+          });
       }
     }
   });

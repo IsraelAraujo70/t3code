@@ -224,6 +224,7 @@ export const make = Effect.fn("HostInterpreter.make")(function* (options: HostIn
           payload: { parent: { runId, workflowId: parent.workflowId, step: intent.step } },
           causalDepth: parent.causalDepth + 1,
           parent: { runId, step: intent.step },
+          ...(intent.inherit === undefined ? {} : { inherit: intent.inherit }),
           at,
         },
       },

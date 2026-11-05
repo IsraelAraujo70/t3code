@@ -833,6 +833,7 @@ export const compileWorkflow = (
         for (const [key, value] of Object.entries(node.params)) {
           checkTemplate(value, `${path}.params.${key}`, scope);
         }
+        checkInherit(node, path, ctx);
         return;
       case "map": {
         const itemsExpr = checkExpr(node.items, `${path}.items`, scope);
@@ -953,6 +954,66 @@ export const compileWorkflow = (
         ...outer,
         nodes: new Set([...outer.nodes, ...upstream]),
       });
+    }
+  }
+
+  /**
+   * A call's `workspaces` and `threads`: each parent name exists here (an agent node that ran
+   * before the call, for a thread), and each child name is a shared workspace or a top-level agent
+   * node of the callee that opens a new thread, in the workspace and with the access of the thread.
+   */
+  function checkInherit(
+    node: Extract<WorkflowNode, { readonly kind: "call" }>,
+    path: string,
+    ctx: UseContext,
+  ) {
+    const callee = host.callTargets?.get(node.workflow)?.definition;
+    const workspaces = node.workspaces ?? {};
+    for (const [child, parent] of Object.entries(workspaces)) {
+      const at = `${path}.workspaces.${child}`;
+      checkWorkspaceName(parent, at, ctx);
+      if (callee === undefined) continue;
+      const decl = own(callee.workspaces, child);
+      if (decl === undefined)
+        report(at, "unknown-node", `${node.workflow} declares no workspace ${child}`);
+      else if (decl.perItem === true)
+        report(
+          at,
+          "schema",
+          `${child} is per item in ${node.workflow}: only a shared workspace is inherited`,
+        );
+    }
+    for (const [child, parent] of Object.entries(node.threads ?? {})) {
+      const at = `${path}.threads.${child}`;
+      const source = nodeById.get(parent);
+      if (source?.kind !== "agent" || !ctx.scope.nodes.has(parent)) {
+        report(at, "thread-continue", `${parent} is not an agent node that ran before this call`);
+        continue;
+      }
+      if (callee === undefined) continue;
+      const target = own(callee.nodes, child);
+      if (target?.kind !== "agent") {
+        report(at, "thread-continue", `${node.workflow} has no top-level agent node ${child}`);
+        continue;
+      }
+      if (target.thread !== undefined && target.thread !== "new")
+        report(
+          at,
+          "thread-continue",
+          `${child} in ${node.workflow} opens its own thread: give it thread: new`,
+        );
+      if ((target.access ?? "read") !== (source.access ?? "read"))
+        report(at, "thread-continue", `a thread keeps one access: ${child} and ${parent} differ`);
+      const mapped =
+        typeof target.workspace === "string" ? own(workspaces, target.workspace) : undefined;
+      if (typeof source.workspace !== "string" || mapped !== source.workspace)
+        report(
+          at,
+          "thread-continue",
+          typeof source.workspace === "string" && typeof target.workspace === "string"
+            ? `a thread keeps one workspace: add workspaces: { ${target.workspace}: ${source.workspace} }`
+            : `a thread keeps one workspace: ${child} and ${parent} need named workspaces passed in workspaces`,
+        );
     }
   }
 

@@ -62,6 +62,47 @@ const diagnosticsOf = (input: Json, host?: HostLimits) => {
   return Result.isFailure(result) ? result.failure : [];
 };
 
+/** A callee with a shared and a per-item workspace and an agent that can take a thread. */
+const callee = (): HostLimits => ({
+  ...HOST,
+  callTargets: new Map([
+    [
+      "other",
+      {
+        from: null,
+        definition: {
+          ...base(),
+          id: "other",
+          workspaces: {
+            pr: { project: "t3code", base: "friend/main", branch: "wf/other" },
+            each: { project: "t3code", base: "friend/main", perItem: true, branchPolicy: "agent" },
+          },
+          nodes: {
+            ci: { kind: "agent", model: "$lead", prompt: "CI", workspace: "pr", access: "write" },
+            own: {
+              kind: "agent",
+              model: "$lead",
+              prompt: "Own",
+              workspace: "pr",
+              access: "write",
+              thread: "continue:ci",
+            },
+            look: { kind: "agent", model: "$lead", prompt: "Look", workspace: "pr" },
+          },
+          edges: [],
+        } as never,
+      },
+    ],
+  ]),
+});
+/** `plan -> test -> call`, the call handing `inherit` to `other`. */
+const callWith =
+  (inherit: Json) =>
+  (def: Json): void => {
+    def.nodes.ci = { kind: "call", workflow: "other", params: {}, ...inherit };
+    def.edges.push("test:pass -> ci");
+  };
+
 interface FailingCase {
   readonly name: string;
   readonly code: WorkflowDiagnosticCode;
@@ -150,6 +191,69 @@ const FAILING: ReadonlyArray<FailingCase> = [
     change: (def) => {
       def.nodes.plan = { kind: "call", workflow: "other", params: {} };
     },
+  },
+  {
+    name: "a call passes a workspace the callee does not declare",
+    code: "unknown-node",
+    path: "nodes.ci.workspaces.nope",
+    host: callee(),
+    change: callWith({ workspaces: { nope: "integ" } }),
+  },
+  {
+    name: "a call passes a workspace it does not have",
+    code: "unknown-node",
+    path: "nodes.ci.workspaces.pr",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "missing" } }),
+  },
+  {
+    name: "a call passes a per-item workspace of the callee",
+    code: "schema",
+    path: "nodes.ci.workspaces.each",
+    host: callee(),
+    change: callWith({ workspaces: { each: "integ" } }),
+  },
+  {
+    name: "a call passes a thread to a node the callee does not have",
+    code: "thread-continue",
+    path: "nodes.ci.threads.nope",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "integ" }, threads: { nope: "plan" } }),
+  },
+  {
+    name: "a call passes the thread of a node it does not have",
+    code: "thread-continue",
+    path: "nodes.ci.threads.ci",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "integ" }, threads: { ci: "ghost" } }),
+  },
+  {
+    name: "a call passes the thread of a node that is not an agent",
+    code: "thread-continue",
+    path: "nodes.ci.threads.ci",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "integ" }, threads: { ci: "test" } }),
+  },
+  {
+    name: "a call passes a thread without the worktree it works in",
+    code: "thread-continue",
+    path: "nodes.ci.threads.ci",
+    host: callee(),
+    change: callWith({ threads: { ci: "plan" } }),
+  },
+  {
+    name: "a call passes a thread to a node that continues its own",
+    code: "thread-continue",
+    path: "nodes.ci.threads.own",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "integ" }, threads: { own: "plan" } }),
+  },
+  {
+    name: "a call passes a write thread to a read-only node",
+    code: "thread-continue",
+    path: "nodes.ci.threads.look",
+    host: callee(),
+    change: callWith({ workspaces: { pr: "integ" }, threads: { look: "plan" } }),
   },
   {
     name: "a field of the wrong type",
@@ -618,6 +722,12 @@ describe("compileWorkflow", () => {
     const def = base();
     change(def);
     expect(diagnosticsOf(def, host)).toContainEqual(expect.objectContaining({ code, path }));
+  });
+
+  it("compiles a call that hands its worktree and its agent's thread to the callee", () => {
+    const def = base();
+    callWith({ workspaces: { pr: "integ" }, threads: { ci: "plan" } })(def);
+    expect(diagnosticsOf(def, callee())).toEqual([]);
   });
 
   it("compiles a ticket fleet: list param, per-item agent worktree, visible thread, item posts", () => {

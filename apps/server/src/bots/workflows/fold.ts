@@ -120,9 +120,18 @@ export const applyRunFact = (state: RunState, stored: StoredFact): RunState => {
       next.usage = new Map(next.usage).set(key, Math.max(next.usage.get(key) ?? 0, fact.billable));
       break;
     }
-    case "RunStarted":
+    case "RunStarted": {
       next.started = fact;
+      // An inherited worktree is the parent's: ready from the start, its head tracked here too.
+      const inherited = Object.entries(fact.inherit?.workspaces ?? {});
+      if (inherited.length > 0) {
+        const workspaces = new Map(next.workspaces);
+        for (const [name, { path, branch, headSha }] of inherited)
+          workspaces.set(name, { _tag: "WorkspaceReady", name, path, branch, headSha });
+        next.workspaces = workspaces;
+      }
       break;
+    }
     case "RunEnded":
       next.ended = fact;
       next.endedSeq = stored.seq;

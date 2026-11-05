@@ -151,6 +151,7 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
           usd: definition.budget.usd ?? null,
         },
         parent: trigger.parent,
+        ...(trigger.inherit === undefined ? {} : { inherit: trigger.inherit }),
         causalDepth: trigger.causalDepth,
         at: DateTime.formatIso(DateTime.makeUnsafe(input.now)),
       },

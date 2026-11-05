@@ -1,0 +1,48 @@
+schema: t3.workflow/v1
+id: pr-ci
+title: Cuidar do CI de um PR até ficar verde
+description: >-
+  Chamado no fim de um workflow que implementou e abriu o PR. Quem chama entrega a worktree e a
+  thread do agente que implementou, então o CI é cuidado com o contexto dele e com os arquivos não
+  rastreados (evidência, node_modules) que ficaram lá.
+home: { project: t3code }
+# Quem chama, num nó `call`, liga nomes deste workflow aos dele:
+#   ci:
+#     kind: call
+#     workflow: pr-ci
+#     params: { pr: "{{ nodes.publish.output.pr }}" }
+#     workspaces: { pr: ticket }    # <workspace daqui>: <workspace de quem chama>
+#     threads: { fix: implement }   # <nó agent daqui>: <nó agent de quem chama>
+# Com `workspaces`, `pr` é a worktree `ticket` de quem chama (a do item, dentro de um map): mesmo
+# caminho, nada é preparado, e só quem chama a remove. Com `threads`, o nó `fix` continua a thread do
+# `implement` de quem chama, em toda tentativa, retry incluído. O nó que recebe a thread fica no nível
+# de cima, com `thread: new` (o padrão), o mesmo `access` e um workspace ligado em `workspaces` ao
+# workspace do nó de quem chama. Sem os dois campos, este workflow prepara a própria worktree e abre
+# thread nova, como numa execução manual.
+triggers:
+  run: { kind: manual, title: Run now }
+  call: { kind: call }
+params:
+  pr: { type: string, pattern: "^https://github\\.com/[A-Za-z0-9._/-]+/pull/\\d+$" }
+budget: { steps: 40, wall: 4h, tokens: 3000000 }
+fatigue: { consecutiveFailures: 3 }
+models: { lead: { provider: claude, model: claude-opus-5-5, effort: high } }
+workspaces:
+  pr: { project: t3code, base: friend/main, branchPolicy: agent }
+nodes:
+  fix:
+    kind: agent
+    model: $lead
+    workspace: pr
+    access: write
+    prompt: |
+      Cuide do CI de {{ params.pr }} até ficar verde: leia os checks com `gh pr checks`, corrija o que
+      falhar nesta worktree, faça commit e push, e espere os checks de novo. Não enfraqueça teste nem
+      gate para passar. Responda com o estado final dos checks.
+    output: { green: { type: boolean }, summary: { type: string } }
+  done:
+    kind: output
+    status: ready_for_review
+    value: { green: "{{ nodes.fix.output.green }}" }
+    report: "{{ nodes.fix.output.summary }}"
+edges: ["fix -> done"]

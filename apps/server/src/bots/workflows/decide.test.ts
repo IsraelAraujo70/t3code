@@ -1522,6 +1522,40 @@ describe("retry, reopening and cleanup", () => {
     expect(ended("never", 1)).toEqual(["rm:r@1", "rm:integ"]);
   });
 
+  it("never prepares or removes a worktree a call handed it, failed or succeeded", () => {
+    const ended = (exit: number) => {
+      const run = TestRun.start(
+        compile({ nodes: { w: commandNode, done }, edges: ["w -> done"] }),
+        runStarted({
+          parent: { runId: "wfr_parent", step: "ci" },
+          inherit: {
+            workspaces: {
+              integ: {
+                path: "/runs/parent/integ",
+                project: "t3code",
+                branch: "wf/p",
+                headSha: "a1",
+              },
+            },
+            threads: {},
+          },
+        }),
+      );
+      run.drive();
+      expect(run.intent("unit:w@1")).toMatchObject({
+        cwd: { name: "integ", path: "/runs/parent/integ" },
+      });
+      spawned(run, "w");
+      run.add("exited:w@1", unitExited("w", 1, exit));
+      run.drive();
+      expect(run.state().ended?.status).toBe(exit === 0 ? "succeeded" : "failed");
+      run.drive();
+      return [...run.state().intents.keys()].filter((k) => /^(ws|rm):/.test(k));
+    };
+    expect(ended(0)).toEqual([]);
+    expect(ended(1)).toEqual([]);
+  });
+
   it("keeps an item's worktree when its failure went to an output and the run succeeded", () => {
     const run = TestRun.start(
       compile({

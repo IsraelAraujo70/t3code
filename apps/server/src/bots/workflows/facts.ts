@@ -19,6 +19,29 @@ export type WorkspaceRef = typeof WorkspaceRef.Type;
 export const SlotUse = Schema.Struct({ resource: Text, slots: Schema.Number });
 export type SlotUse = typeof SlotUse.Type;
 
+/**
+ * What a `call` hands its child, resolved in the parent's item: worktrees the child works in
+ * without preparing or removing them, and threads its agent nodes continue, by child name.
+ */
+export const CallInherit = Schema.Struct({
+  workspaces: Schema.Record(
+    Schema.String,
+    Schema.Struct({ path: Text, project: Text, branch: NullableText, headSha: Text }),
+  ),
+  threads: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      threadId: Text,
+      projectRef: Text,
+      path: Text,
+      model: WorkflowModelRef,
+      access: Schema.Literals(["read", "write"]),
+      bot: Schema.optional(Text),
+    }),
+  ),
+});
+export type CallInherit = typeof CallInherit.Type;
+
 // ── Intents: what the interpreter executes, each under its own key ────────────────────────────
 
 export const Intent = Schema.TaggedUnion({
@@ -177,6 +200,7 @@ export const Intent = Schema.TaggedUnion({
     params: Schema.Record(Schema.String, Json),
     // wf-engine slice 8: the child's whole token budget, reserved in the parent until it ends.
     reservation: Schema.optional(Schema.Number),
+    inherit: Schema.optional(CallInherit),
   },
 });
 export type Intent = typeof Intent.Type;
@@ -215,6 +239,8 @@ export const RunFact = Schema.TaggedUnion({
       usd: Schema.NullOr(Schema.Number),
     }),
     parent: Schema.NullOr(Schema.Struct({ runId: Text, step: Text })),
+    /** A call's `workspaces` and `threads`, as the parent resolved them. */
+    inherit: Schema.optional(CallInherit),
     causalDepth: Schema.Number,
     at: Text,
   },
@@ -417,6 +443,7 @@ export const WorkflowFact = Schema.TaggedUnion({
     payload: Json,
     causalDepth: Schema.Number,
     parent: Schema.NullOr(Schema.Struct({ runId: Text, step: Text })),
+    inherit: Schema.optional(CallInherit),
     at: Text,
   },
   /** Key `created:<occurrence>`, appended with the run's RunStarted. */

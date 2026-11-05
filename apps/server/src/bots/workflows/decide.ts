@@ -39,6 +39,7 @@ import {
 } from "@t3tools/shared/workflows";
 
 import {
+  type CallInherit,
   type Fact,
   type Intent,
   type NewFact,
@@ -462,7 +463,10 @@ const afterEnd = (compiled: CompiledWorkflow, state: RunState, now: number) => {
     return reopening;
   }
   const failedSteps = failedStepsOf(compiled, state);
+  const inherited = state.started?.inherit?.workspaces ?? {};
   return [...state.workspaces.keys()].flatMap((name): ReadonlyArray<NewFact> => {
+    // The parent's worktree: its retain policy, not this run's, decides when it goes.
+    if (Object.hasOwn(inherited, name)) return [];
     const decl = declarationOf(compiled.definition, name);
     const retain = decl?.retain ?? "on_failure";
     // A per-item instance is `<name>#<item>`: only its item's steps failing keep it.
@@ -698,8 +702,15 @@ export const decide = (
     const decl = Object.hasOwn(definition.workspaces ?? {}, name)
       ? definition.workspaces?.[name]
       : undefined;
-    return decl === undefined ? name : (instanceOf(name, decl, level) ?? name);
+    if (decl === undefined || inheritedWorkspace(name) !== undefined) return name;
+    return instanceOf(name, decl, level) ?? name;
   };
+
+  /** The parent's worktree a call handed this run under a declared name. */
+  function inheritedWorkspace(name: string) {
+    const inherited = started?.inherit?.workspaces;
+    return inherited !== undefined && Object.hasOwn(inherited, name) ? inherited[name] : undefined;
+  }
 
   /** The fold keeps each workspace's head at the last observation that reported one. */
   const workspaceHead = (name: string): string | null =>
@@ -972,6 +983,12 @@ export const decide = (
         });
       return disposable(exported.project, exported.head);
     }
+    const inherited = inheritedWorkspace(use);
+    if (inherited !== undefined) {
+      if (access === "write")
+        return Result.succeed({ name: use, path: inherited.path, project: inherited.project });
+      return disposable(inherited.project, workspaceHead(use) ?? inherited.headSha);
+    }
     const env = envFor(level);
     const project = render(decl.project, env);
     if (Result.isFailure(project)) return Result.fail(project.failure);
@@ -1121,6 +1138,15 @@ export const decide = (
       if (exported !== null) return { ...exported, headSha: exported.head };
       const name = worktreeAt(declared, level);
       const ready = state.workspaces.get(name);
+      const inherited = inheritedWorkspace(declared);
+      if (inherited !== undefined && ready !== undefined)
+        return {
+          name,
+          path: ready.path,
+          project: inherited.project,
+          branch: ready.branch,
+          headSha: ready.headSha,
+        };
       const prepared = state.intents.get(`ws:${name}`)?.intent;
       if (ready === undefined || prepared?._tag !== "PrepareWorkspace") return null;
       return {
@@ -1163,6 +1189,42 @@ export const decide = (
     // Read before this attempt is recorded, so a retry dispatched in the same pass sees its reason.
     const prior = latest(step);
     const previous = attempt > 1 && prior?.attempt === attempt - 1 ? prior : undefined;
+    const inheritedThreads = level.parent === null ? started.inherit?.threads : undefined;
+    const inherited =
+      inheritedThreads !== undefined && Object.hasOwn(inheritedThreads, step)
+        ? inheritedThreads[step]
+        : undefined;
+    if (inherited !== undefined) {
+      // The caller's thread, as a `continue:` of it: every attempt, a retry included, goes there.
+      const prompt = promptRender(
+        node.prompt,
+        envFor(level, { step: { dir: stepDir(step, attempt) } }),
+      );
+      if (Result.isFailure(prompt))
+        return void resolve(step, attempt, "failed", "fail", null, prompt.failure);
+      record({
+        _tag: "StartTurn",
+        key: `turn:${stepKey(step, attempt)}`,
+        step,
+        attempt,
+        threadId: inherited.threadId,
+        mode: "continue",
+        projectRef: inherited.projectRef,
+        title: `${definition.title} · ${step}`,
+        // The compiler maps this node's workspace to the worktree the thread works in.
+        workspace: {
+          name: typeof node.workspace === "string" ? node.workspace : step,
+          path: inherited.path,
+        },
+        model: inherited.model,
+        access: inherited.access,
+        prompt: retryNote(previous) + prompt.success + outputInstruction(node.output),
+        reservation: node.tokenReservation ?? turnEstimate(step),
+        ...(inherited.bot === undefined ? {} : { bot: inherited.bot }),
+        ...slotUse(node.uses),
+      });
+      return;
+    }
     if (continued !== null) {
       const prior = findStep(level, continued);
       const prevAttempt = prior === null ? undefined : latest(prior);
@@ -1892,6 +1954,10 @@ export const decide = (
     const params = renderAll(node.params, envFor(level));
     if (Result.isFailure(params))
       return resolve(step, attempt, "failed", "fail", null, params.failure);
+    const inherit = callInherit(node, step, attempt, level);
+    if (inherit === "wait") return;
+    if (Result.isFailure(inherit))
+      return resolve(step, attempt, "failed", "fail", null, inherit.failure);
     record({
       _tag: "StartChildRun",
       key,
@@ -1899,12 +1965,67 @@ export const decide = (
       attempt,
       workflowId: node.workflow,
       params: params.success as { readonly [key: string]: Json },
+      ...(inherit.success === null ? {} : { inherit: inherit.success }),
       // wf-engine slice 8: the child's whole budget, so concurrent calls never spend the same balance.
       // A child larger than what is left is refused, never clipped.
       reservation:
         ctx.budget?.childTokens?.(node.workflow) ??
         Math.min(DEFAULT_TURN_RESERVATION, ceilings.tokens),
     });
+  };
+
+  /**
+   * A call's `workspaces` and `threads`, resolved at its level: the worktree each parent name is
+   * there (the item's own instance; prepared first when it is not yet) and the thread its agent
+   * node's latest attempt ran in. "wait" while a worktree is being prepared.
+   */
+  const callInherit = (
+    node: Extract<WorkflowNode, { readonly kind: "call" }>,
+    step: string,
+    attempt: number,
+    level: Level,
+  ): Result.Result<CallInherit | null, string> | "wait" => {
+    if (node.workspaces === undefined && node.threads === undefined) return Result.succeed(null);
+    const workspaces: Record<string, CallInherit["workspaces"][string]> = {};
+    let preparing = false;
+    for (const [child, parent] of Object.entries(node.workspaces ?? {})) {
+      const ws = workspaceFor(parent, "write", step, attempt, level);
+      if (Result.isFailure(ws)) return Result.fail(ws.failure);
+      if (ws.success === null) {
+        preparing = true;
+        continue;
+      }
+      const exported = blockExport(level, parent);
+      const ready = state.workspaces.get(ws.success.name);
+      const headSha = exported?.head ?? ready?.headSha;
+      if (headSha === undefined) return Result.fail(`workspace ${parent} has no HEAD yet`);
+      workspaces[child] = {
+        path: ws.success.path,
+        project: ws.success.project,
+        branch: exported?.branch ?? ready?.branch ?? null,
+        headSha,
+      };
+    }
+    const threads: Record<string, CallInherit["threads"][string]> = {};
+    for (const [child, parent] of Object.entries(node.threads ?? {})) {
+      const source = findStep(level, parent);
+      const ran = source === null ? undefined : latest(source);
+      const turn =
+        ran === undefined
+          ? undefined
+          : state.intents.get(`turn:${stepKey(ran.step, ran.attempt)}`)?.intent;
+      if (ran?.threadId == null || turn?._tag !== "StartTurn")
+        return Result.fail(`the thread of ${parent} does not exist`);
+      threads[child] = {
+        threadId: ran.threadId,
+        projectRef: turn.projectRef,
+        path: turn.workspace.path,
+        model: turn.model,
+        access: turn.access,
+        ...(turn.bot === undefined ? {} : { bot: turn.bot }),
+      };
+    }
+    return preparing ? "wait" : Result.succeed({ workspaces, threads });
   };
 
   /** Map items and loop iterations run their body as levels with their own step-key prefix. */
