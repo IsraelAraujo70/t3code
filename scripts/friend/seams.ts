@@ -282,6 +282,16 @@ export const SEAMS: readonly Seam[] = [
     why: "idle-only release for restarting a bot's session",
   },
   {
+    file: "apps/server/src/orchestration-v2/IdleCompactionService.ts",
+    markers: 1,
+    why: "skip idle compaction when the thread's workspace folder is gone",
+  },
+  {
+    file: "apps/server/src/orchestration-v2/IdleCompaction.test.ts",
+    markers: 2,
+    why: "idle compaction skips a removed workspace folder",
+  },
+  {
     file: "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
     markers: 2,
     why: "mark messages a bot sends another thread",

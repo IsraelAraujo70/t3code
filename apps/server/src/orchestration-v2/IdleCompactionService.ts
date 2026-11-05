@@ -11,6 +11,8 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
@@ -18,6 +20,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 
 /**
  * Beta: when a run completes on a Claude instance set to compact before the
@@ -29,6 +32,8 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const projects = yield* ProjectStore.ProjectStoreV2;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, completedRunId: RunId) {
@@ -105,6 +110,25 @@ export const make = Effect.gen(function* () {
         if (nowMs < window.startMs) {
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
           continue;
+        }
+        // Fork (friend): the session opens in this folder (RuntimePolicy.layerFromProjectStore) and
+        // fails the run when it is gone, e.g. a workflow removed its worktree after succeeding.
+        const cwd =
+          records.thread.worktreePath ??
+          Option.getOrUndefined(yield* projects.get(records.thread.projectId))?.workspaceRoot;
+        const workspaceExists =
+          cwd !== undefined &&
+          (yield* fileSystem.stat(cwd).pipe(
+            Effect.map((stat) => stat.type === "Directory"),
+            Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+          ));
+        if (!workspaceExists) {
+          yield* Effect.logDebug("idle compaction skipped: workspace folder is missing", {
+            threadId,
+            runId,
+            cwd,
+          });
+          return;
         }
         yield* orchestrator.dispatch({
           type: "message.dispatch",
