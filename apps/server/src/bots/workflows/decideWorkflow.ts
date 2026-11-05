@@ -147,7 +147,10 @@ export const decideWorkflow = (input: DecideWorkflowInput): ReadonlyArray<NewFac
     const concurrency = definition.concurrency ?? "single";
     if (busy && concurrency === "queue") break;
     if (busy && concurrency === "single") {
-      skip("busy");
+      skip(
+        "busy",
+        `${definition.id} has concurrency: single and a run of it is live; concurrency: queue waits for it, parallel runs beside it`,
+      );
       continue;
     }
     const runId = runIdFor(input.workflowId, occurrence);

@@ -210,11 +210,16 @@ const declarationOf = (
 /** Why a child run failed the call: its status, and the reason a skipped one gives. */
 const childFailure = (ended: { readonly status: string; readonly output: Json }): string => {
   const out = ended.output;
-  const detail =
-    out !== null && typeof out === "object" && !Array.isArray(out)
-      ? (out as { readonly [key: string]: Json })["detail"]
-      : undefined;
-  return `child run ${ended.status}${typeof detail === "string" ? `: ${detail}` : ""}`;
+  const field = (key: string) => {
+    const value =
+      out !== null && typeof out === "object" && !Array.isArray(out)
+        ? (out as { readonly [key: string]: Json })[key]
+        : undefined;
+    return typeof value === "string" ? value : null;
+  };
+  const reason = ended.status === "skipped" ? field("reason") : null;
+  const detail = field("detail");
+  return `child run ${ended.status}${reason === null ? "" : ` (${reason})`}${detail === null ? "" : `: ${detail}`}`;
 };
 
 /** The note a retried attempt opens with when it continues the thread its last attempt used. */

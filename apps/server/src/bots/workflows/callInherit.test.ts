@@ -15,11 +15,12 @@ import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type { Project } from "@t3tools/contracts";
+import { type Project, WorkflowId } from "@t3tools/contracts";
 
 import * as BotsDb from "../BotsDb.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
-import { type Intent, type NewFact, runStream } from "./facts.ts";
+import { type Intent, type NewFact, runStream, workflowStream } from "./facts.ts";
+import { runIdFor } from "./ids.ts";
 import { WorkflowGit } from "./git/Workspaces.ts";
 import type { WorkflowCatalog } from "./Catalog.ts";
 import type { WorkflowInterpreter } from "./Interpreter.ts";
@@ -540,6 +541,91 @@ it.effect("a sharing child that ends while its own child runs reports once that 
       assert.isTrue(mid.keys.has("reported"));
       const grandchild = yield* childOf(engine, mid, "child:slow@1");
       assert.equal(grandchild.ended?.status, "cancelled");
+    }),
+  ),
+);
+
+/** Two items call `slow`, which runs one at a time: one call starts it, the other is skipped. */
+const busyFleet = compile({
+  id: "busyfleet",
+  title: "Busy fleet",
+  triggers: { run: { kind: "manual" } },
+  budget: { steps: 20, wall: "2h", tokens: 5_000_000 },
+  params: { tickets: { type: "string[]", maxItems: 10, pattern: "[a-z]+" } },
+  nodes: {
+    fleet: {
+      kind: "map",
+      items: "params.tickets",
+      maxItems: 10,
+      concurrency: 2,
+      body: { nodes: { hold: { kind: "call", workflow: "slow", params: {} } }, edges: [] },
+    },
+  },
+});
+
+it.effect("a call skipped because its workflow is busy says why and is listed", () =>
+  harness([busyFleet, slow], 0, () =>
+    Effect.gen(function* () {
+      const { engine, runId, state } = yield* runToEnd("busyfleet", { tickets: ["one", "two"] });
+      assert.equal(state.ended?.status, "failed");
+      const view = yield* engine.runView({ runId });
+      const skippedStep = view.steps.find(
+        (step) => step.node === "hold" && step.status === "failed",
+      );
+      assert.isDefined(skippedStep);
+      assert.include(skippedStep?.summary, "child run skipped (busy)");
+      assert.include(skippedStep?.summary, "concurrency: single");
+      const ended = [...state.children.values()].find((child) => child.status === "skipped");
+      const { runs } = yield* engine.listRuns({ workflowId: WorkflowId.make("slow") });
+      const listed = runs.find((run) => run.status === "skipped");
+      assert.equal(listed?.skipReason, "busy");
+      assert.isDefined(ended);
+      assert.equal(listed?.runId, ended?.childRunId);
+      assert.isNotNull(listed?.endedAt);
+      assert.equal(runs.length, 2);
+    }),
+  ),
+);
+
+it.effect("a skipped call whose row a crash lost is listed once at boot", () =>
+  harness([slow], 0, () =>
+    Effect.gen(function* () {
+      const journal = yield* Journal;
+      const engine = yield* make({ runsDir: "/unused" });
+      const occurrence = "call:wfr_parent:hold@1";
+      const runId = runIdFor("slow", occurrence);
+      // The decider's facts were appended; the crash came before the row was written.
+      yield* journal.append([
+        {
+          stream: workflowStream("slow"),
+          key: occurrence,
+          fact: {
+            _tag: "TriggerFired",
+            runId,
+            triggerId: "call",
+            kind: "call",
+            occurrence,
+            label: "Call",
+            params: {},
+            payload: null,
+            causalDepth: 1,
+            parent: { runId: "wfr_parent", step: "hold" },
+            at: "2026-11-05T00:00:00.000Z",
+          },
+        },
+        {
+          stream: workflowStream("slow"),
+          key: `skipped:${occurrence}`,
+          fact: { _tag: "TriggerSkipped", occurrence, reason: "busy" },
+        },
+      ]);
+      yield* engine.rebuildProjection;
+      yield* engine.rebuildProjection;
+      const { runs } = yield* engine.listRuns({ workflowId: WorkflowId.make("slow") });
+      assert.deepEqual(
+        runs.map((run) => [run.runId, run.status, run.skipReason, run.endedAt !== null]),
+        [[runId, "skipped", "busy", true]],
+      );
     }),
   ),
 );

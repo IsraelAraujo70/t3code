@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as BotsDb from "../BotsDb.ts";
 import { Journal, layerFromDb, layerMemory } from "./Journal.ts";
 import { type NewFact, runStream, workflowStream } from "./facts.ts";
+import { runIdFor } from "./ids.ts";
 import { runStarted } from "./testkit/decideHarness.ts";
 
 it.effect("stores independent sequences, deduplicates, reads, and publishes committed facts", () =>
@@ -269,6 +270,19 @@ it.effect(
         "example",
         "example",
       ]);
+      // A skipped call is listed but is not the workflow's last run, nor an active one.
+      const skipped = summary("wfr_00000000000000000009", "2026-11-02T02:00:00.000Z", {
+        status: "skipped",
+        skipReason: "busy",
+        endedAt: "2026-11-02T02:00:00.000Z",
+      });
+      yield* journal.putRun(row(skipped, 0));
+      assert.deepEqual(
+        (yield* journal.runs({ workflowId: "example", status: "skipped", offset: 0, limit: 10 }))
+          .runs,
+        [skipped],
+      );
+      assert.deepEqual((yield* journal.lastRuns).get("example"), newer);
       // A waiting run stays listed however many newer runs are going.
       for (let i = 0; i < 50; i++) {
         const id = `wfr_${String(100 + i).padStart(20, "0")}`;
@@ -389,6 +403,44 @@ it.effect("reports runs whose row is missing or behind, and counts a reopened ru
       },
     ]);
     assert.deepEqual(yield* journal.liveRuns, [missing]);
+    // A skipped call has no run stream: its row is missing until one is put.
+    const fired = (occurrence: string, parent: { runId: string; step: string } | null) => ({
+      stream: "workflow:example",
+      key: occurrence,
+      fact: {
+        _tag: "TriggerFired" as const,
+        runId: runIdFor("example", occurrence),
+        triggerId: "call",
+        kind: "call",
+        occurrence,
+        label: "Call",
+        params: {},
+        payload: null,
+        causalDepth: 1,
+        parent,
+        at: "2026-11-02T00:00:00.000Z",
+      },
+    });
+    const skip = (occurrence: string) => ({
+      stream: "workflow:example",
+      key: `skipped:${occurrence}`,
+      fact: { _tag: "TriggerSkipped" as const, occurrence, reason: "busy" as const },
+    });
+    yield* journal.append([
+      fired("call:1", { runId: stale, step: "fleet[1]/hold" }),
+      fired("manual:1", null),
+      fired("call:2", { runId: stale, step: "fleet[0]/hold" }),
+      skip("call:1"),
+      skip("manual:1"),
+    ]);
+    const unlisted = yield* journal.unlistedSkippedCalls;
+    assert.deepEqual(
+      unlisted.map(({ fired, skipped }) => [fired.key, skipped.key, skipped.fact._tag]),
+      [["call:1", "skipped:call:1", "TriggerSkipped"]],
+    );
+    const callRun = runIdFor("example", "call:1");
+    yield* journal.putRun(row(summary(callRun, "2026-11-02T00:00:00.000Z"), 0));
+    assert.deepEqual(yield* journal.unlistedSkippedCalls, []);
   }).pipe(Effect.provide(layerMemory)),
 );
 

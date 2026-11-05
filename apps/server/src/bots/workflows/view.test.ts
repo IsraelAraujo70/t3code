@@ -291,12 +291,13 @@ describe("run views", () => {
       stream: "workflow:demo",
       seq: 2,
       key: "skipped",
-      at: iso(T0),
+      at: iso(T0 + 1000),
       fact: { _tag: "TriggerSkipped", occurrence, reason: "busy" },
     });
     expect(pendingSummary(facts, runId, "Demo")).toMatchObject({
       status: "skipped",
       skipReason: "busy",
+      endedAt: iso(T0 + 1000),
     });
     facts.push({
       stream: "workflow:demo",

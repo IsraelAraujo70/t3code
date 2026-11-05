@@ -61,7 +61,7 @@ import { foldLedger, ledgerIdsOf } from "./blocks/ledger.ts";
 import { blockViews } from "./blocks/registry.ts";
 import { chargeOf, workflowDay } from "./budget/budget.ts";
 import { budgetContext, calledWorkflowsOf } from "./budget/context.ts";
-import { WorkflowCatalog } from "./Catalog.ts";
+import { type CurrentVersion, WorkflowCatalog } from "./Catalog.ts";
 import { decide, nextDeadline, reportPending, retryRefusal } from "./decide.ts";
 import { decideWorkflow } from "./decideWorkflow.ts";
 import {
@@ -533,17 +533,42 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           ),
         );
 
+  /**
+   * A skipped call's row, so the run id its caller got is listed with the reason. Other skips
+   * stay off the list: a busy schedule or poll would add one every time it fires.
+   */
+  const listSkippedCall = (fired: StoredFact, skipped: StoredFact, title: string) => {
+    if (fired.fact._tag !== "TriggerFired" || fired.fact.parent === null) return Effect.void;
+    const summary = pendingSummary([fired, skipped], fired.fact.runId, title);
+    if (summary === null) return Effect.void;
+    return journal
+      .putRun({ summary, lastSeq: 0, pendingIntents: 0, parentRunId: fired.fact.parent.runId })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("workflow run projection failed", { runId: summary.runId, error }),
+        ),
+      );
+  };
+
+  const titleOf = (workflowId: string, current: CurrentVersion) =>
+    current._tag === "Ready" ? current.version.compiled.definition.title : workflowId;
+
   /** At boot: rows missing or behind their stream are folded again (a crash between append and row). */
   const rebuildProjection = Effect.gen(function* () {
     for (const { runId, projected, stream } of yield* journal.projectionLag) {
       if (projected !== null && projected >= stream) continue;
       yield* project(foldRun(runId, yield* journal.read(runStream(runId))));
     }
+    for (const { fired, skipped } of yield* journal.unlistedSkippedCalls) {
+      const workflowId = fired.stream.slice("workflow:".length);
+      const title = titleOf(workflowId, yield* catalog.current(workflowId));
+      yield* listSkippedCall(fired, skipped, title);
+    }
   }).pipe(Effect.withSpan("WorkflowEngine.rebuildProjection"));
 
   /** Turns the workflow's pending TriggerFired facts into runs, skips or waits; one at a time. */
   const promote = Effect.fn("WorkflowEngine.promote")(function* (workflowId: string) {
-    const results = yield* promoting.withPermits(1)(
+    const { results, facts, title } = yield* promoting.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* catalog.current(workflowId);
         const facts = yield* journal.workflowBacklog(
@@ -564,10 +589,18 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
           liveRuns: running.length,
           now: yield* Clock.currentTimeMillis,
         });
-        return yield* journal.append(decided);
+        const results = yield* journal.append(decided);
+        return { results, facts, title: titleOf(workflowId, current) };
       }),
     );
-    for (const { fact } of results) {
+    for (const { fact, inserted } of results) {
+      if (fact.fact._tag === "TriggerSkipped" && inserted) {
+        const { occurrence } = fact.fact;
+        const fired = facts.find(
+          (f) => f.fact._tag === "TriggerFired" && f.fact.occurrence === occurrence,
+        );
+        if (fired !== undefined) yield* listSkippedCall(fired, fact, title);
+      }
       if (fact.fact._tag !== "RunCreated") continue;
       // Listed at once, before its actor's first pass.
       yield* project(foldRun(fact.fact.runId, yield* journal.read(runStream(fact.fact.runId))));
@@ -600,9 +633,7 @@ export const make = Effect.fn("WorkflowEngine.make")(function* (options: Workflo
     if (state.started !== null) return runSummary(state, yield* Clock.currentTimeMillis);
     const workflowId = yield* journal.workflowOfRun(runId);
     if (workflowId._tag === "None") return yield* unknownRun(runId);
-    const current = yield* catalog.current(workflowId.value);
-    const title =
-      current._tag === "Ready" ? current.version.compiled.definition.title : workflowId.value;
+    const title = titleOf(workflowId.value, yield* catalog.current(workflowId.value));
     const summary = pendingSummary(
       yield* journal.read(workflowStream(workflowId.value)),
       runId,
